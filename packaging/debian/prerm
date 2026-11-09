@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    remove|deconfigure)
+        if [ "${DPKG_ROOT:-/}" != / ]; then
+            printf '%s\n' 'ANDEIVA_UNSUPPORTED_PACKAGE_ROOT' >&2
+            exit 1
+        fi
+        if [ -d /run/systemd/system ]; then
+            deb-systemd-invoke stop andeiva-api.service
+            if systemctl --quiet is-active andeiva-api.service; then
+                printf '%s\n' 'ANDEIVA_SERVICE_STILL_ACTIVE' >&2
+                exit 1
+            fi
+        fi
+        ;;
+    upgrade|failed-upgrade) ;;
+    *) printf '%s\n' 'ANDEIVA_INVALID_PACKAGE_ACTION' >&2; exit 1 ;;
+esac
+exit 0

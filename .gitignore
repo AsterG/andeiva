@@ -20,6 +20,7 @@
 !/internal/
 !/frontend/
 !/scripts/
+!/packaging/
 
 # Build and dependency outputs
 **/node_modules/
@@ -27,6 +28,8 @@
 **/.test-dist/
 **/.test-build/
 *.tsbuildinfo
+*.deb
+*.ddeb
 .env
 .env.*
 !.env.example

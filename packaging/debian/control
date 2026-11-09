@@ -1,0 +1,13 @@
+Package: andeiva-experimental
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: ASTERG
+Depends: systemd (>= 257), init-system-helpers (>= 1.69~)
+Installed-Size: @INSTALLED_SIZE@
+Homepage: https://github.com/AsterG/andeiva
+Description: ANDEIVA experimental API and CLI scaffold
+ Local development liveness service and informational command line interface.
+ No firewall, authentication, traffic inspection, VPN, persistent application
+ state, appliance installer or signed update mechanism is included.

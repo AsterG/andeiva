@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    install|upgrade) ;;
+    abort-upgrade) exit 0 ;;
+    *) printf '%s\n' 'ANDEIVA_INVALID_PACKAGE_ACTION' >&2; exit 1 ;;
+esac
+
+if [ "$(id -u)" -ne 0 ] || [ "${DPKG_ROOT:-/}" != / ]; then
+    printf '%s\n' 'ANDEIVA_INSTALL_REQUIRES_ROOT_ON_TARGET' >&2
+    exit 1
+fi
+if [ ! -r /etc/os-release ]; then
+    printf '%s\n' 'ANDEIVA_UNSUPPORTED_PLATFORM' >&2
+    exit 1
+fi
+os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"')
+os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"')
+if [ "$os_id" != debian ] || [ "$os_version" != 13 ] || [ "$(dpkg --print-architecture)" != amd64 ]; then
+    printf '%s\n' 'ANDEIVA_REQUIRES_DEBIAN_13_AMD64' >&2
+    exit 1
+fi
+
+# DynamicUser must not silently reuse an unrelated static account or group.
+if grep -q '^andeiva-api:' /etc/passwd || grep -q '^andeiva-api:' /etc/group; then
+    printf '%s\n' 'ANDEIVA_SERVICE_IDENTITY_CONFLICT' >&2
+    exit 1
+fi
+for directory in /etc/andeiva /usr/lib/andeiva /usr/share/doc/andeiva-experimental; do
+    if [ -L "$directory" ]; then
+        printf '%s\n' 'ANDEIVA_INSTALL_PATH_CONFLICT' >&2
+        exit 1
+    fi
+done
+
+# Do not replace an unmanaged local installation or another package's files.
+for target in \
+    /usr/bin/andeiva \
+    /usr/lib/andeiva/andeiva-api \
+    /usr/lib/andeiva/wait-ready \
+    /usr/lib/systemd/system/andeiva-api.service \
+    /etc/andeiva/andeiva-api.env \
+    /usr/share/doc/andeiva-experimental/copyright \
+    /usr/share/doc/andeiva-experimental/LICENSE \
+    /usr/share/doc/andeiva-experimental/NOTICE \
+    /usr/share/doc/andeiva-experimental/LICENSE.Go \
+    /usr/share/doc/andeiva-experimental/build-info.txt
+do
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        owner=$(dpkg-query --search "$target" 2>/dev/null || true)
+        case "$owner" in
+            "andeiva-experimental: $target"|"andeiva-experimental:amd64: $target") ;;
+            *) printf '%s\n' 'ANDEIVA_INSTALL_PATH_CONFLICT' >&2; exit 1 ;;
+        esac
+    fi
+done
+exit 0
