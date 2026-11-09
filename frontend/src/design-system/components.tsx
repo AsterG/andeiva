@@ -50,7 +50,7 @@ export function Dialog({ open, onClose, title, closeLabel, children }: { open: b
     if (open && dialog && !dialog.open) dialog.showModal();
     if (!open && dialog?.open) dialog.close();
   }, [open]);
-  return <dialog ref={ref} className="ds-dialog" aria-labelledby={titleId} onCancel={onClose} onClose={onClose} onKeyDown={(event) => {
+  return <dialog ref={ref} className="ds-dialog" aria-labelledby={titleId} onClose={onClose} onKeyDown={(event) => {
     if (event.key !== 'Tab') return;
     const candidates = ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]');
     const controls = [...(candidates ?? [])].filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0 && !element.closest('[inert]'));
@@ -58,7 +58,7 @@ export function Dialog({ open, onClose, title, closeLabel, children }: { open: b
     const last = controls[controls.length - 1];
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-  }}><div className="ds-dialog-content"><h2 id={titleId}>{title}</h2>{children}<div className="ds-actions"><Button variant="secondary" onClick={onClose} data-testid="close-dialog">{closeLabel}</Button></div></div></dialog>;
+  }}><div className="ds-dialog-content"><h2 id={titleId}>{title}</h2>{children}<div className="ds-actions"><Button variant="secondary" onClick={() => ref.current?.close()} data-testid="close-dialog">{closeLabel}</Button></div></div></dialog>;
 }
 
 export function HelpTip({ label, text }: { label: string; text: string }) {

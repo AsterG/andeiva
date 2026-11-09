@@ -66,6 +66,12 @@ export function unauthorizedColors(source) {
   return results;
 }
 
+export function undeclaredTokenReferences(source, declarations) {
+  const clean = source.replace(/\/\*[\s\S]*?\*\//g, '');
+  const references = [...clean.matchAll(/\bvar\(\s*(--[a-zA-Z0-9_-]+)/g)].map((match) => match[1]);
+  return [...new Set(references)].filter((name) => !declarations.has(name));
+}
+
 export function checkDesignSystem() {
   const errors = [];
   const css = readFileSync(tokenPath, 'utf8');
@@ -73,9 +79,15 @@ export function checkDesignSystem() {
   const keys = (theme) => Object.keys(theme).filter((name) => name.startsWith('--color-')).sort();
   if (keys(themes.light).length < 35) errors.push('Semantic color contract is incomplete');
   if (JSON.stringify(keys(themes.light)) !== JSON.stringify(keys(themes.dark))) errors.push('Light and Dark must declare the same semantic color tokens');
-  for (const path of files(join(root, 'src')).filter((path) => /\.(css|[jt]sx?)$/.test(path))) {
+  const sources = files(join(root, 'src')).filter((path) => /\.(css|[jt]sx?)$/.test(path))
+    .map((path) => ({ path, content: readFileSync(path, 'utf8') }));
+  const declarations = new Set(sources.filter(({ path }) => path.endsWith('.css')).flatMap(({ content }) =>
+    [...content.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(--[a-zA-Z0-9_-]+)\s*:/g)].map((match) => match[1])));
+  for (const { path, content } of sources) {
+    for (const name of undeclaredTokenReferences(content, declarations)) {
+      errors.push(`${relative(root, path)}: undeclared CSS token ${name}`);
+    }
     if (path === tokenPath) continue;
-    const content = readFileSync(path, 'utf8');
     for (const problem of unauthorizedColors(content)) errors.push(`${relative(root, path)}: ${problem}`);
     if (/prefers-color-scheme/.test(content)) errors.push(`${relative(root, path)}: automatic system theme is prohibited`);
     if (/\.brand-image[^}]*\b(?:filter|mix-blend-mode)\s*:/s.test(content)) errors.push(`${relative(root, path)}: logo filters/blending are prohibited`);

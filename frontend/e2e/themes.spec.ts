@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 const preferenceKey = 'andeiva.preview.theme';
 const approvedLogo = '1f79f5ec7f33327c9285c702b63fc5c5a618a28395b2161d594001fdb0199f81';
@@ -19,6 +19,20 @@ async function expectAccessible(page: Page) {
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
     .analyze();
   expect(result.violations).toEqual([]);
+}
+
+async function expectVisibleFocus(target: Locator) {
+  await expect(target).toBeFocused();
+  await expect(target).toBeVisible();
+  await expect(target).toBeInViewport();
+  const outline = await target.evaluate((element) => {
+    const css = getComputedStyle(element);
+    return { width: parseFloat(css.outlineWidth), style: css.outlineStyle, color: css.outlineColor };
+  });
+  expect(outline.width).toBeGreaterThan(0);
+  expect(outline.style).not.toBe('none');
+  expect(outline.style).not.toBe('hidden');
+  expect(outline.color).not.toBe('rgba(0, 0, 0, 0)');
 }
 
 test('light stays default when the operating system prefers dark', async ({ page }) => {
@@ -90,6 +104,22 @@ test('stored theme is applied before the React bundle can execute', async ({ pag
 });
 
 for (const theme of ['light', 'dark'] as const) {
+  test(`${theme}: skip link and view navigation show focus on their content targets`, async ({ page }) => {
+    await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), { key: preferenceKey, value: theme });
+    await page.goto('/');
+    await expect(page.locator('#theme')).toHaveValue(theme);
+    await page.keyboard.press('Tab');
+    const skip = page.getByRole('link', { name: 'Skip to content', exact: true });
+    await expectVisibleFocus(skip);
+    await page.keyboard.press('Enter');
+    await expectVisibleFocus(page.getByRole('main'));
+    for (const [navigation, title] of [['nav-components', 'Component library'], ['nav-overview', 'A consistent foundation.']]) {
+      await page.getByTestId(navigation).focus();
+      await page.keyboard.press('Enter');
+      await expectVisibleFocus(page.getByRole('heading', { level: 1, name: title, exact: true }));
+    }
+  });
+
   test(`${theme}: filters, local form feedback, menu and tooltip work`, async ({ page }) => {
     await page.goto('/');
     await page.locator('#theme').selectOption(theme);
@@ -224,6 +254,12 @@ for (const theme of ['light', 'dark'] as const) {
       expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
     }
     await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(dialog).toBeVisible();
+    await page.getByTestId('close-dialog').focus();
+    await page.keyboard.press('Enter');
     await expect(dialog).not.toBeVisible();
     await expect(trigger).toBeFocused();
   });

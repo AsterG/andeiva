@@ -7,7 +7,6 @@ body { margin: 0; }
 button, input, select, textarea { font-family: inherit; }
 button, a, input, select, textarea, summary, [tabindex] { -webkit-tap-highlight-color: var(--color-nav-selected); }
 :focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
-h1:focus, main:focus { outline: none; }
 a { color: var(--color-link); }
 .app { display: grid; grid-template-columns: 15.5rem minmax(0, 1fr); min-height: 100svh; color: var(--color-text); background: var(--color-background); }
 .skip-link { position: fixed; z-index: 10; top: var(--space-3); left: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--color-button-primary); color: var(--color-button-primary-text); font-weight: var(--weight-medium); transform: translateY(-200%); }
