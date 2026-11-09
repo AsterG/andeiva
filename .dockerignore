@@ -15,6 +15,12 @@
 !frontend/src/**
 !frontend/public/
 !frontend/public/andeiva-logo.png
+!frontend/public/theme-init.js
+!frontend/scripts/
+!frontend/scripts/**
+!frontend/e2e/
+!frontend/e2e/**
+!frontend/playwright.config.ts
 !frontend/test/
 !frontend/test/**
 !frontend/tests/
@@ -32,3 +38,5 @@
 **/.env*
 **/*.key
 **/*.pem
+**/test-results/**
+**/playwright-report/**

@@ -19,7 +19,9 @@ RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY frontend/tsconfig.json frontend/tsconfig.test.json frontend/eslint.config.mjs frontend/index.html ./
 COPY frontend/src/ src/
 COPY frontend/public/andeiva-logo.png public/andeiva-logo.png
+COPY frontend/public/theme-init.js public/theme-init.js
 COPY frontend/tests/ tests/
+COPY frontend/scripts/ scripts/
 RUN npm run lint && npm run typecheck && npm test && npm run build \
     && cmp public/andeiva-logo.png dist/andeiva-logo.png
 
