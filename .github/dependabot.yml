@@ -12,3 +12,7 @@ updates:
     directory: /frontend
     schedule:
       interval: weekly
+    ignore:
+      # Revisit this range when typescript-eslint expands its supported versions.
+      - dependency-name: typescript
+        versions: [">=6.1.0"]
