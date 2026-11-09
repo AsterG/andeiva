@@ -43,6 +43,9 @@ cenário e observações de recursos. Exige um caminho absoluto novo para o esta
 um usuário Linux sem privilégios. Preserve o diretório e o relatório para inspeção.
 Ele não remove armazenamentos existentes, instala serviços nem aplica regras de
 motores reais.
+Use um caminho canônico sem `.` ou `..`, separadores repetidos ou links simbólicos.
+O diretório pai deve existir e permanecer sob controle confiável; caminhos
+inválidos são rejeitados antes da criação de diretórios.
 
 ## Transições e autorização
 
@@ -81,6 +84,8 @@ histórico; não constitui uma política automática de retenção ou backup. Co
 e diagnósticos podem conter informações sensíveis. Mantenha evidências privadas
 e compartilhe apenas o necessário para reproduzir o defeito, sem credenciais nem
 dados alheios ao caso.
+Ao reabrir, temporários órfãos validados e limitados podem ser removidos após
+verificar o histórico confirmado; registros de auditoria confirmados nunca são apagados.
 
 ## Interpretação dos resultados
 

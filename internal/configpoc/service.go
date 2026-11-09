@@ -378,25 +378,36 @@ func (s *Service) hookAt(point string) error {
 	return nil
 }
 func (s *Service) transition(ctx context.Context, target Revision, actor string, surface Surface, operation string, pending *Pending, critical bool, key, fingerprint string) error {
+	before := clone(s.state)
+	previous := clone(s.state.Snapshot.Running)
+	if s.state.Snapshot.RecoveryRequired {
+		previous = clone(s.state.Snapshot.LastGood)
+	}
+	if s.state.Intent != nil {
+		previous = clone(s.state.Intent.Previous)
+	}
+	if s.state.Snapshot.Pending != nil {
+		previous = clone(s.state.Snapshot.Pending.Previous)
+	}
+	// Boot applies Startup as a forward transition. Its failure anchor must remain
+	// the confirmed revision, even when the preceding controller was interrupted.
+	rollback := operation == "timeout" || operation == "open-recovery" || operation == OpRecover
+	if rollback {
+		previous = clone(target)
+	}
 	if operation != "timeout" && operation != "open-recovery" {
 		for _, engine := range s.engines {
 			if engine.Validate(clone(target.Config)) != nil {
+				if operation == "boot" && (before.Intent != nil || before.Snapshot.Pending != nil || before.Snapshot.RecoveryRequired) {
+					s.emergencyRollback(previous)
+				}
 				return ErrInvalid
 			}
 		}
 	}
-	before := clone(s.state)
-	previous := clone(s.state.Snapshot.Running)
-	if s.state.Intent != nil {
-		previous = clone(s.state.Intent.Previous)
-	}
-	rollback := operation == "timeout" || operation == "open-recovery" || operation == "boot" || operation == OpRecover
-	if rollback {
-		previous = clone(target)
-	}
 	s.state.Intent = &Intent{Previous: previous, Target: clone(target)}
 	if err := s.persist(actor, surface, operation, "intent", critical); err != nil {
-		if rollback {
+		if rollback || operation == "boot" {
 			s.emergencyRollback(previous)
 		}
 		return err

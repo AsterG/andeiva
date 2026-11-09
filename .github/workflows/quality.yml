@@ -34,12 +34,17 @@ jobs:
       - run: go test -race ./cmd/... ./internal/...
       - run: bash scripts/smoke-api.sh
       - name: Transactional configuration simulator and resource observations
-        run: bash scripts/poc-config.sh "${RUNNER_TEMP}/andeiva-config-poc"
+        run: |
+          bash scripts/test-poc-config-paths.sh
+          bash scripts/poc-config.sh "${RUNNER_TEMP}/andeiva-config-poc"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: configuration-poc-observations
           path: |
             ${{ runner.temp }}/andeiva-config-poc/run-*.json
+            ${{ runner.temp }}/andeiva-config-poc/andeiva-config-poc
+            ${{ runner.temp }}/andeiva-config-poc/warmup.json
+            ${{ runner.temp }}/andeiva-config-poc/SHA256SUMS
             ${{ runner.temp }}/andeiva-config-poc/toolchain.txt
             ${{ runner.temp }}/andeiva-config-poc/source-revision.txt
             ${{ runner.temp }}/andeiva-config-poc/source-state.txt

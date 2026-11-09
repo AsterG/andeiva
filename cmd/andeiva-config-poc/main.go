@@ -52,7 +52,7 @@ func run(args []string, out, stderr io.Writer) int {
 		}
 		return 2
 	}
-	if flags.NArg() != 0 || !filepath.IsAbs(*stateDir) || *iterations < 1 || *iterations > 100 {
+	if flags.NArg() != 0 || !validStatePath(*stateDir) || *iterations < 1 || *iterations > 100 {
 		fmt.Fprintln(stderr, "ANDEIVA_POC_INVALID_ARGUMENT")
 		return 2
 	}
@@ -74,6 +74,23 @@ func run(args []string, out, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// The parent must remain trusted while the experiment runs; this is not a
+// defense against another process replacing ancestors concurrently.
+func validStatePath(dir string) bool {
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == string(filepath.Separator) {
+		return false
+	}
+	for part := filepath.Dir(dir); ; part = filepath.Dir(part) {
+		info, err := os.Lstat(part)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+		if part == filepath.Dir(part) {
+			return true
+		}
+	}
 }
 
 func experiment(dir string, iterations int) (report, error) {

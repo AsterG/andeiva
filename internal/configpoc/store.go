@@ -5,15 +5,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
 const maxRecordBytes = 1024 * 1024
 const maxJournalBytes = 64 * 1024 * 1024
+const maxPendingFiles = 128
 
 type receipt struct {
 	Fingerprint string `json:"fingerprint"`
@@ -73,10 +76,21 @@ func openStore(dir string, limit int) (*fileStore, error) {
 	return s, nil
 }
 func (s *fileStore) load() error {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil || len(entries) > s.limit+10 {
+	directory, err := os.Open(s.dir)
+	if err != nil {
 		return ErrStorage
 	}
+	entries, readErr := directory.ReadDir(s.limit + maxPendingFiles + 2)
+	closeErr := directory.Close()
+	if (readErr != nil && !errors.Is(readErr, io.EOF)) || closeErr != nil || len(entries) > s.limit+maxPendingFiles+1 {
+		return ErrStorage
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	type pendingFile struct {
+		name string
+		info os.FileInfo
+	}
+	var pending []pendingFile
 	for _, entry := range entries {
 		if entry.Name() == "state.lock" {
 			continue
@@ -85,13 +99,18 @@ func (s *fileStore) load() error {
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || !owned(info) || info.Size() > maxRecordBytes {
 			return ErrStorage
 		}
+		// Only the store's bounded, unacknowledged staging files are eligible for
+		// cleanup. Do not remove anything until the complete committed chain is valid.
+		if strings.HasPrefix(entry.Name(), ".pending-") {
+			if !pendingName(entry.Name()) || len(pending) >= maxPendingFiles {
+				return ErrStorage
+			}
+			pending = append(pending, pendingFile{name: entry.Name(), info: info})
+			continue
+		}
 		s.bytes += info.Size()
 		if s.bytes > maxJournalBytes {
 			return ErrStorage
-		}
-		// A crash before rename leaves an unacknowledged temporary record.
-		if strings.HasPrefix(entry.Name(), ".pending-") {
-			continue
 		}
 		if entry.Name() != fmt.Sprintf("%08d.json", len(s.records)+1) || info.Size() > maxRecordBytes {
 			return ErrStorage
@@ -118,7 +137,44 @@ func (s *fileStore) load() error {
 			return ErrStorage
 		}
 	}
+	// The exclusive store lock prevents a cooperating writer from adding or changing
+	// staging files. Recheck metadata before deleting exactly the validated names.
+	for _, file := range pending {
+		info, err := os.Lstat(filepath.Join(s.dir, file.name))
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || !owned(info) || info.Size() != file.info.Size() || !os.SameFile(info, file.info) {
+			return ErrStorage
+		}
+	}
+	for _, file := range pending {
+		if err := os.Remove(filepath.Join(s.dir, file.name)); err != nil {
+			return ErrStorage
+		}
+	}
+	if len(pending) > 0 {
+		directory, err := os.Open(s.dir)
+		if err != nil {
+			return ErrStorage
+		}
+		syncErr := directory.Sync()
+		closeErr := directory.Close()
+		if syncErr != nil || closeErr != nil {
+			return ErrStorage
+		}
+	}
 	return nil
+}
+
+func pendingName(name string) bool {
+	suffix := strings.TrimPrefix(name, ".pending-")
+	if len(suffix) == 0 || len(suffix) > 10 {
+		return false
+	}
+	for _, digit := range suffix {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
 }
 func validState(s durableState) bool {
 	if s.Snapshot.Generation == 0 || s.Snapshot.ReplayedGeneration != 0 || s.Receipts == nil || len(s.Receipts) > 1024 || len(s.Snapshot.Revoked) > 128 {

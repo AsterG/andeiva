@@ -44,6 +44,9 @@ del escenario y observaciones de recursos. Requiere una ruta absoluta nueva para
 el estado y un usuario Linux sin privilegios. Conserva el directorio y el informe
 para inspección. No borra almacenes existentes, instala servicios ni aplica reglas
 de motores reales.
+Usa una ruta canónica sin `.` ni `..`, separadores repetidos ni enlaces simbólicos.
+El directorio padre debe existir y permanecer bajo control confiable; las rutas
+inválidas se rechazan antes de crear directorios.
 
 ## Transiciones y autorización
 
@@ -80,6 +83,8 @@ la recuperación del caso original que falló.
 
 El almacén tiene capacidad finita. Rechazar nuevas operaciones al alcanzar el
 límite conserva el historial; no constituye una política de retención o respaldo.
+Al reabrir se pueden retirar temporales huérfanos validados y acotados, después de
+verificar el historial confirmado; nunca se borran registros de auditoría confirmados.
 La configuración y los diagnósticos pueden contener información sensible. Mantén
 las evidencias privadas y comparte solo lo necesario para reproducir el defecto,
 sin credenciales ni datos ajenos al caso.

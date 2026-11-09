@@ -79,6 +79,8 @@ recovery reconciles the durable transaction state. An explicit boot selects
 Startup; an ordinary process restart must not silently discard a confirmed,
 unsaved Running revision. Neither path may clear protected audit or revocation
 state merely because Startup is older.
+If applying Startup fails, compensation targets the last confirmed recovery
+anchor, not the failed Startup revision or an unconfirmed Running revision.
 Prototype revocation restricts future calls by that service principal. It does
 not revoke an actual VPN peer, browser session or external identity-provider token.
 
@@ -100,6 +102,9 @@ The distinction between file and directory synchronization follows the
 [flock](https://man7.org/linux/man-pages/man2/flock.2.html) is advisory and only
 coordinates cooperating processes. A local process able to bypass the store's
 ownership boundary is outside that lock guarantee.
+The selected parent and all its ancestors must remain trusted. Path checks reject
+symlinks and noncanonical paths; they do not protect against another process
+replacing an ancestor concurrently.
 
 Records are bounded by record count, a 1 MiB individual record limit and a 64 MiB
 journal limit. Reaching the prototype capacity rejects further changes;
@@ -107,11 +112,21 @@ protected history is not rotated away to make a test pass. Checksums and hash
 links detect certain accidental changes. They do not authenticate a publisher,
 prevent a local writer from rewriting history or detect every rollback of an
 entire store without an external trusted anchor.
+Under the exclusive writer lock, reopening validates the entire committed chain
+before removing recognized orphan staging files. Cleanup accepts at most 128
+private, owned `.pending-<digits>` files of at most 1 MiB each. Invalid or excessive
+staging files block opening and remain available for investigation. Committed
+records are never deleted by this cleanup.
+The journal stores complete snapshots and receipts, so its disk limit is not a
+RAM or transaction-throughput budget for a production database.
 
 Tests that reopen files or terminate a process do not prove resistance to power
 loss. Storage hardware caches, filesystems, controller failures, physical media
 damage and real appliance backup/restore require separate evidence. There is no
 encryption, signed update chain or production retention policy in this prototype.
+Subprocess interruption tests use real processes and files, but recreate simulated
+engines on recovery; they do not demonstrate an independent dataplane surviving
+the controller process.
 
 ## Acceptance matrix
 

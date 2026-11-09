@@ -40,6 +40,9 @@ The command accepts 1–100 iterations and emits one JSON report containing scen
 assertions and resource observations. It requires a new absolute state path and
 an unprivileged Linux user. Retain the directory and report for inspection. It
 does not remove an existing store, install services or apply real engine rules.
+Use a canonical path without `.` or `..`, repeated separators or symlink
+components. The parent directory must already exist and remain trusted; invalid
+paths are rejected before directory creation.
 
 ## State transitions and authority
 
@@ -74,7 +77,9 @@ isolated test, not a substitute for recovering the original failed case.
 
 The store has finite capacity. Rejection at its bound preserves history; it is not
 an automatic retention or backup policy. Configuration contents and raw diagnostic
-reports may be sensitive. Keep evidence private and share only the minimum needed
+reports may be sensitive. Reopening can remove bounded, validated orphan staging
+files after verifying committed history; it never removes committed audit records.
+Keep evidence private and share only the minimum needed
 to reproduce a defect, with no credentials or unrelated machine data.
 
 ## What the result means
