@@ -248,28 +248,24 @@ func writePending(t *testing.T, dir, name string, size int64) string {
 func TestBoundedOrphanCleanupDoesNotConsumeJournalBudget(t *testing.T) {
 	s, _, dir := fixture(t, Options{})
 	_ = s.Close()
+	committedBytes := s.store.bytes
 	before, err := os.ReadFile(filepath.Join(dir, "00000001.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Sparse staging files exceed the committed journal budget without allocating it.
-	for i := 0; i < 65; i++ {
-		writePending(t, dir, fmt.Sprintf(".pending-%d", i), maxRecordBytes)
-	}
+	stage := filepath.Join(dir, stagingDirectory)
+	writePending(t, stage, stagingPayload, maxRecordBytes)
 	store, err := openStore(dir, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.lock.Close()
-	if store.bytes >= maxJournalBytes {
-		t.Fatal("orphan bytes retained in committed journal accounting")
+	if store.bytes != committedBytes {
+		t.Fatal("staging bytes consumed committed journal budget")
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != len(store.records)+1 {
-		t.Fatal("orphans not removed")
+	entries, err := os.ReadDir(stage)
+	if err != nil || len(entries) != 1 || entries[0].Name() != stagingMarker {
+		t.Fatal("registered payload not cleaned")
 	}
 	after, err := os.ReadFile(filepath.Join(dir, "00000001.json"))
 	if err != nil || string(before) != string(after) {
@@ -279,7 +275,7 @@ func TestBoundedOrphanCleanupDoesNotConsumeJournalBudget(t *testing.T) {
 
 func TestOrphanCleanupRequiresExclusiveLock(t *testing.T) {
 	s, _, dir := fixture(t, Options{})
-	pending := writePending(t, dir, ".pending-1", 0)
+	pending := writePending(t, filepath.Join(dir, stagingDirectory), stagingPayload, 0)
 	if store, err := openStore(dir, 2048); !errors.Is(err, ErrLocked) {
 		if store != nil {
 			_ = store.lock.Close()
@@ -296,36 +292,56 @@ func TestOrphanCleanupRequiresExclusiveLock(t *testing.T) {
 	}
 	defer store.lock.Close()
 	if _, err := os.Lstat(pending); !os.IsNotExist(err) {
-		t.Fatal("orphan was not removed after locking")
+		t.Fatal("registered orphan not removed after locking")
 	}
 }
 
 func TestInvalidOrExcessOrphansPreserveEvidence(t *testing.T) {
-	for _, kind := range []string{"name", "symlink", "mode", "size", "count", "committed-corruption"} {
+	for _, kind := range []string{"legacy-name", "unknown-name", "symlink", "hardlink", "mode", "size", "count", "committed-corruption", "committed-hardlink"} {
 		t.Run(kind, func(t *testing.T) {
 			s, _, dir := fixture(t, Options{})
 			_ = s.Close()
-			keep := writePending(t, dir, ".pending-1", 0)
+			stage := filepath.Join(dir, stagingDirectory)
+			keep := writePending(t, stage, stagingPayload, 0)
 			switch kind {
-			case "name":
-				writePending(t, dir, ".pending-not-generated", 0)
+			case "legacy-name":
+				writePending(t, dir, ".pending-123", 0)
+			case "unknown-name":
+				writePending(t, dir, ".pending-unrelated-format", 0)
 			case "symlink":
-				if err := os.Symlink(filepath.Join(dir, "00000001.json"), filepath.Join(dir, ".pending-2")); err != nil {
+				if err := os.Remove(keep); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(dir, "00000001.json"), keep); err != nil {
+					t.Fatal(err)
+				}
+			case "hardlink":
+				if err := os.Remove(keep); err != nil {
+					t.Fatal(err)
+				}
+				external := filepath.Join(t.TempDir(), "external")
+				if err := os.WriteFile(external, []byte("unrelated"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Link(external, keep); err != nil {
 					t.Fatal(err)
 				}
 			case "mode":
-				path := writePending(t, dir, ".pending-2", 0)
-				if err := os.Chmod(path, 0644); err != nil {
+				if err := os.Chmod(keep, 0644); err != nil {
 					t.Fatal(err)
 				}
 			case "size":
-				writePending(t, dir, ".pending-2", maxRecordBytes+1)
-			case "count":
-				for i := 2; i <= 129; i++ {
-					writePending(t, dir, fmt.Sprintf(".pending-%d", i), 0)
+				if err := os.Truncate(keep, maxRecordBytes+1); err != nil {
+					t.Fatal(err)
 				}
+			case "count":
+				writePending(t, stage, "unrelated.tmp", 0)
 			case "committed-corruption":
 				if err := os.WriteFile(filepath.Join(dir, "00000001.json"), []byte("corrupt"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "committed-hardlink":
+				if err := os.Link(filepath.Join(dir, "00000001.json"), filepath.Join(t.TempDir(), "audit-link")); err != nil {
 					t.Fatal(err)
 				}
 			}
