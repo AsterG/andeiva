@@ -5,7 +5,9 @@
 ANDEIVA is an ASTERG project in early development. This repository contains the
 initial Go backend and CLI, a React/TypeScript development page, and validation
 workflows. It does not yet implement a firewall, authentication, traffic inspection,
-VPN, persistent configuration, an installer or an appliance update mechanism.
+VPN, production configuration management, an appliance installer or an appliance
+update mechanism. Isolated native packaging and configuration experiments are
+described below.
 
 The intended appliance base is Debian 13. Container targets below are development
 checks, not appliance images. Web, CLI and API functional parity is a requirement
@@ -19,6 +21,8 @@ for future management features; those features are not present in this scaffold.
 | `cmd/andeiva-api` | Development liveness server |
 | `internal/cli` | CLI parsing, localized output and tests |
 | `internal/httpserver` | Bounded HTTP server, local probe and tests |
+| `internal/configpoc` | Experimental transaction coordinator and simulated engines |
+| `cmd/andeiva-config-poc` | Isolated configuration experiment runner |
 | `frontend` | React/TypeScript source, translations and tests |
 | `scripts` | Repeatable source and build checks |
 | `.github/workflows` | Quality and security checks; no publishing |
@@ -64,6 +68,30 @@ available. It is not the appliance installer or a signed offline system update.
 Build, verification and lifecycle instructions:
 [English](packaging/debian/docs/en.md), [Español](packaging/debian/docs/es.md),
 [Português](packaging/debian/docs/pt.md). Docker is not required in the Debian guest.
+
+## Transactional configuration experiment
+
+The isolated configuration POC exercises Candidate, Running and Startup revisions,
+validation, confirmed commits, recovery and an integrity-checked local journal.
+Its engines simulate acknowledgments and failures; they never change traffic.
+Web/CLI/API adapter labels exercise one authorization contract with trusted test
+identities. They are not deployed management endpoints, an authentication system
+or a working configuration UI. The existing API and official CLI remain unchanged.
+
+Run on Linux without root, using a new directory on the Linux filesystem:
+
+```bash
+go test -race -count=1 ./internal/configpoc ./cmd/andeiva-config-poc
+poc_parent=$(mktemp -d)
+bash scripts/poc-config.sh "$poc_parent/results"
+```
+
+The runner keeps three measured scenarios and their disposable stores for inspection.
+Results cover real file operations and simulated engines, not real firewall apply,
+power loss, signed updates, HA or production capacity. This prototype does not select
+the final database. See the [design and limitations](internal/configpoc/README.md)
+and guides in [English](internal/configpoc/docs/en.md),
+[Español](internal/configpoc/docs/es.md) and [Português](internal/configpoc/docs/pt.md).
 
 ## Container checks
 
