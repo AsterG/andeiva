@@ -13,6 +13,8 @@
 !frontend/vite.config.*
 !frontend/src/
 !frontend/src/**
+!frontend/public/
+!frontend/public/andeiva-logo.png
 !frontend/test/
 !frontend/test/**
 !frontend/tests/

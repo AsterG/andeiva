@@ -8,6 +8,7 @@ interface Messages {
   phase: string;
   title: string;
   description: string;
+  scope: string;
   limitation: string;
 }
 
@@ -18,8 +19,9 @@ export const messages: Record<Locale, Messages> = {
     light: 'Light',
     dark: 'Dark',
     phase: 'Development preview',
-    title: 'The foundation starts here.',
+    title: 'Development foundation',
     description: 'ANDEIVA Security Gateway is under development.',
+    scope: 'Phase 0 · Current scope',
     limitation: 'This page does not manage or protect network traffic.',
   },
   es: {
@@ -28,8 +30,9 @@ export const messages: Record<Locale, Messages> = {
     light: 'Claro',
     dark: 'Oscuro',
     phase: 'Vista previa de desarrollo',
-    title: 'La base comienza aquí.',
+    title: 'Base de desarrollo',
     description: 'ANDEIVA Security Gateway está en desarrollo.',
+    scope: 'Fase 0 · Alcance actual',
     limitation: 'Esta página no administra ni protege el tráfico de red.',
   },
   pt: {
@@ -38,8 +41,9 @@ export const messages: Record<Locale, Messages> = {
     light: 'Claro',
     dark: 'Escuro',
     phase: 'Prévia de desenvolvimento',
-    title: 'A base começa aqui.',
+    title: 'Base de desenvolvimento',
     description: 'ANDEIVA Security Gateway está em desenvolvimento.',
+    scope: 'Fase 0 · Escopo atual',
     limitation: 'Esta página não administra nem protege o tráfego de rede.',
   },
 };

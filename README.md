@@ -1,5 +1,7 @@
 # ANDEIVA Security Gateway
 
+![ANDEIVA Security Gateway](frontend/public/andeiva-logo.png)
+
 ANDEIVA is an ASTERG project in early development. This repository contains the
 initial Go backend and CLI, a React/TypeScript development page, and validation
 workflows. It does not yet implement a firewall, authentication, traffic inspection,
@@ -48,6 +50,8 @@ Stop the development server with Ctrl+C; it drains requests before exit.
 The page starts in English and light mode, with Spanish/Portuguese and an explicit
 dark option. Theme preference is local to this development page, not an account
 setting. No remote fonts, analytics or appliance connection are required.
+The approved logo is bundled locally and displayed without cropping or recoloring
+in either theme.
 
 ## Container checks
 

@@ -1,10 +1,22 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../.test-build/App.js';
 import { messages, parseLocale } from '../.test-build/messages.js';
 import { parseTheme, readTheme, saveTheme, themeKey } from '../.test-build/preferences.js';
+
+test('approved logo is preserved byte-for-byte and has an accessible product name', () => {
+  const logo = readFileSync(new URL('../public/andeiva-logo.png', import.meta.url));
+  assert.equal(createHash('sha256').update(logo).digest('hex'),
+    '1f79f5ec7f33327c9285c702b63fc5c5a618a28395b2161d594001fdb0199f81');
+  const html = renderToStaticMarkup(createElement(App));
+  const image = html.match(/<img\b[^>]*alt="ANDEIVA Security Gateway"[^>]*>/)?.[0];
+  assert.ok(image, 'logo needs the product name as its accessible text');
+  assert.ok(image.includes('src="/andeiva-logo.png"'));
+});
 
 test('first render is English and light without browser preferences', () => {
   const html = renderToStaticMarkup(createElement(App));
