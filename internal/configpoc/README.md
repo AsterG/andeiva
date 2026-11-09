@@ -105,6 +105,8 @@ ownership boundary is outside that lock guarantee.
 The selected parent and all its ancestors must remain trusted. Path checks reject
 symlinks and noncanonical paths; they do not protect against another process
 replacing an ancestor concurrently.
+Journal and staging operations use relative paths through the same scoped
+`os.Root` handle after acquisition and directory identity validation.
 
 Records are bounded by record count, a 1 MiB individual record limit and a 64 MiB
 journal limit. Reaching the prototype capacity rejects further changes;
@@ -112,11 +114,31 @@ protected history is not rotated away to make a test pass. Checksums and hash
 links detect certain accidental changes. They do not authenticate a publisher,
 prevent a local writer from rewriting history or detect every rollback of an
 entire store without an external trusted anchor.
-Under the exclusive writer lock, reopening validates the entire committed chain
-before removing recognized orphan staging files. Cleanup accepts at most 128
-private, owned `.pending-<digits>` files of at most 1 MiB each. Invalid or excessive
-staging files block opening and remain available for investigation. Committed
-records are never deleted by this cleanup.
+Staging uses a project-owned format, independent of Go's temporary-file naming.
+The store root contains `staging-v1.owner`; the private `.andeiva-stage-v1/`
+directory contains matching `owner.json` metadata and, while writing, one fixed
+`record.tmp` payload of at most 1 MiB, separate from the committed journal budget.
+Both metadata files contain identical canonical JSON, at most 256 bytes, with
+`format` set to `andeiva.config.staging.v1` and the same randomly assigned
+`store_id` of 32 lowercase hexadecimal characters. Directories
+must be owned by the current user with mode `0700`; metadata and payload files
+must be owned, single-link regular files with mode `0600`.
+
+Under the exclusive writer lock, reopening validates the entire committed chain,
+all directory entries and the ownership metadata before removing an orphan
+`record.tmp`. The payload may be incomplete; its registered location and validated
+metadata establish cleanup eligibility, not its JSON contents or filename suffix.
+No other file is eligible. Unexpected entries, foreign or mismatched metadata,
+and legacy `.pending-*` files block opening and remain available for investigation.
+Committed records are never deleted by this cleanup.
+
+A fully validated older journal without either ownership marker or staging
+directory can initialize this format. Partial initialization, such as a lone
+marker or missing inner metadata, blocks opening and requires investigation;
+it is not automatically repaired or deleted. Preserve the original directory and
+failure output. Do not edit ownership markers, rename unknown files into the staging
+namespace or delete files to force reopening. These markers are not authentication
+against a process using the same UID or root; both are outside this trust boundary.
 The journal stores complete snapshots and receipts, so its disk limit is not a
 RAM or transaction-throughput budget for a production database.
 
@@ -142,6 +164,7 @@ passed. Record the actual source revision, environment, exit code and limitation
 | Authorization | Unauthorized and revoked principals cannot mutate; Web/CLI/API labels yield equivalent decisions |
 | Engine failures | Failures before and after mutation, wrong acknowledgment and drift cannot publish an unverified Running state |
 | Store failures | Intent/audit failure prevents apply; interrupted writes and capacity exhaustion fail safely |
+| Staging recovery | Only the registered bounded payload is cleaned after complete validation; unexpected entries, legacy temporaries and partial ownership initialization are preserved and block opening |
 | Recovery | Partial apply, failed rollback and restart reconcile or remain explicitly blocked; explicit boot uses Startup |
 | Audit | Accepted changes and outcomes remain attributable; configuration save does not erase history or revocations |
 | Resources | Report operation latency, allocations, CPU/RAM and disk for the measured workload; do not extrapolate to packet processing |

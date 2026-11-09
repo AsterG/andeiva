@@ -76,11 +76,23 @@ state is not a successful commit. A fresh test directory is appropriate for a ne
 isolated test, not a substitute for recovering the original failed case.
 
 The store has finite capacity. Rejection at its bound preserves history; it is not
-an automatic retention or backup policy. Configuration contents and raw diagnostic
-reports may be sensitive. Reopening can remove bounded, validated orphan staging
-files after verifying committed history; it never removes committed audit records.
-Keep evidence private and share only the minimum needed
-to reproduce a defect, with no credentials or unrelated machine data.
+an automatic retention or backup policy. Under the writer lock, reopening checks
+the entire committed history, all entries and matching `staging-v1.owner` and
+`.andeiva-stage-v1/owner.json` metadata before removing the single orphan
+`.andeiva-stage-v1/record.tmp`, limited to 1 MiB. The metadata identifies format
+`andeiva.config.staging.v1` and a shared `store_id`; cleanup does not depend on Go's
+temporary-file suffix. Committed audit records are never removed by this cleanup.
+
+Unexpected or foreign files, legacy `.pending-*` files, mismatched metadata and
+partial ownership initialization block opening and are preserved. There is no
+automatic repair for these cases. Retain the original directory and failure output
+for investigation; do not delete or edit markers, rename files into the staging
+directory or remove unexplained files to make recovery pass. A process using the
+same UID or root is outside this ownership boundary.
+
+Configuration contents and raw diagnostic reports may be sensitive. Keep evidence
+private and share only the minimum needed to reproduce a defect, with no
+credentials or unrelated machine data.
 
 ## What the result means
 

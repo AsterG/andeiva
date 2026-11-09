@@ -83,8 +83,21 @@ la recuperación del caso original que falló.
 
 El almacén tiene capacidad finita. Rechazar nuevas operaciones al alcanzar el
 límite conserva el historial; no constituye una política de retención o respaldo.
-Al reabrir se pueden retirar temporales huérfanos validados y acotados, después de
-verificar el historial confirmado; nunca se borran registros de auditoría confirmados.
+Al reabrir, bajo el bloqueo de escritura, se comprueban todo el historial confirmado,
+todas las entradas y la coincidencia entre `staging-v1.owner` y
+`.andeiva-stage-v1/owner.json` antes de retirar el único temporal huérfano
+`.andeiva-stage-v1/record.tmp`, limitado a 1 MiB. Los metadatos identifican el formato
+`andeiva.config.staging.v1` y un `store_id` compartido; la limpieza no depende del
+sufijo de archivos temporales de Go. Esta limpieza nunca borra auditoría confirmada.
+
+Los archivos inesperados o ajenos, los temporales antiguos `.pending-*`, los
+metadatos incompatibles y la inicialización parcial de propiedad bloquean la
+apertura y se conservan. Estos casos no tienen reparación automática. Conserva
+el directorio original y la salida del fallo para investigar; no borres ni edites
+marcadores, no renombres archivos para introducirlos en el directorio de staging
+ni elimines archivos desconocidos para aprobar la recuperación. Un proceso con
+el mismo UID o root queda fuera de esta frontera de confianza.
+
 La configuración y los diagnósticos pueden contener información sensible. Mantén
 las evidencias privadas y comparte solo lo necesario para reproducir el defecto,
 sin credenciales ni datos ajenos al caso.

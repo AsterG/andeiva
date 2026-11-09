@@ -16,7 +16,6 @@ import (
 
 const maxRecordBytes = 1024 * 1024
 const maxJournalBytes = 64 * 1024 * 1024
-const maxPendingFiles = 128
 
 type receipt struct {
 	Fingerprint string `json:"fingerprint"`
@@ -39,6 +38,7 @@ type fileStore struct {
 	records []journalRecord
 	bytes   int64
 	limit   int
+	owner   []byte
 }
 
 func openStore(dir string, limit int) (*fileStore, error) {
@@ -75,47 +75,43 @@ func openStore(dir string, limit int) (*fileStore, error) {
 	}
 	return s, nil
 }
-func (s *fileStore) load() error {
-	directory, err := os.Open(s.dir)
+func (s *fileStore) load() (result error) {
+	root, err := s.openScopedRoot()
+	if err != nil {
+		return err
+	}
+	defer closeRoot(root, &result)
+	directory, err := root.Open(".")
 	if err != nil {
 		return ErrStorage
 	}
-	entries, readErr := directory.ReadDir(s.limit + maxPendingFiles + 2)
+	entries, readErr := directory.ReadDir(s.limit + 4)
 	closeErr := directory.Close()
-	if (readErr != nil && !errors.Is(readErr, io.EOF)) || closeErr != nil || len(entries) > s.limit+maxPendingFiles+1 {
+	if (readErr != nil && !errors.Is(readErr, io.EOF)) || closeErr != nil || len(entries) > s.limit+3 {
 		return ErrStorage
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	type pendingFile struct {
-		name string
-		info os.FileInfo
-	}
-	var pending []pendingFile
+	registration, stage := false, false
 	for _, entry := range entries {
-		if entry.Name() == "state.lock" {
+		switch entry.Name() {
+		case "state.lock":
+			continue
+		case stagingRegistration:
+			registration = true
+			continue
+		case stagingDirectory:
+			stage = true
 			continue
 		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || !owned(info) || info.Size() > maxRecordBytes {
+		info, err := root.Lstat(entry.Name())
+		if err != nil || !regularOwned(info, maxRecordBytes) {
 			return ErrStorage
-		}
-		// Only the store's bounded, unacknowledged staging files are eligible for
-		// cleanup. Do not remove anything until the complete committed chain is valid.
-		if strings.HasPrefix(entry.Name(), ".pending-") {
-			if !pendingName(entry.Name()) || len(pending) >= maxPendingFiles {
-				return ErrStorage
-			}
-			pending = append(pending, pendingFile{name: entry.Name(), info: info})
-			continue
 		}
 		s.bytes += info.Size()
-		if s.bytes > maxJournalBytes {
+		if s.bytes > maxJournalBytes || entry.Name() != fmt.Sprintf("%08d.json", len(s.records)+1) {
 			return ErrStorage
 		}
-		if entry.Name() != fmt.Sprintf("%08d.json", len(s.records)+1) || info.Size() > maxRecordBytes {
-			return ErrStorage
-		}
-		data, err := os.ReadFile(filepath.Join(s.dir, entry.Name()))
+		data, err := root.ReadFile(entry.Name())
 		if err != nil {
 			return ErrStorage
 		}
@@ -137,44 +133,22 @@ func (s *fileStore) load() error {
 			return ErrStorage
 		}
 	}
-	// The exclusive store lock prevents a cooperating writer from adding or changing
-	// staging files. Recheck metadata before deleting exactly the validated names.
-	for _, file := range pending {
-		info, err := os.Lstat(filepath.Join(s.dir, file.name))
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || !owned(info) || info.Size() != file.info.Size() || !os.SameFile(info, file.info) {
-			return ErrStorage
-		}
+	// Adoption of a clean older journal happens only after complete validation.
+	// Any partial ownership bootstrap is retained, never guessed or repaired.
+	if !registration && !stage {
+		return s.initializeStaging(root)
 	}
-	for _, file := range pending {
-		if err := os.Remove(filepath.Join(s.dir, file.name)); err != nil {
-			return ErrStorage
-		}
+	if !registration || !stage {
+		return ErrStorage
 	}
-	if len(pending) > 0 {
-		directory, err := os.Open(s.dir)
-		if err != nil {
-			return ErrStorage
-		}
-		syncErr := directory.Sync()
-		closeErr := directory.Close()
-		if syncErr != nil || closeErr != nil {
-			return ErrStorage
-		}
+	payload, err := s.validateStaging(root)
+	if err != nil {
+		return err
+	}
+	if payload != nil {
+		return s.removePayload(root, payload)
 	}
 	return nil
-}
-
-func pendingName(name string) bool {
-	suffix := strings.TrimPrefix(name, ".pending-")
-	if len(suffix) == 0 || len(suffix) > 10 {
-		return false
-	}
-	for _, digit := range suffix {
-		if digit < '0' || digit > '9' {
-			return false
-		}
-	}
-	return true
 }
 func validState(s durableState) bool {
 	if s.Snapshot.Generation == 0 || s.Snapshot.ReplayedGeneration != 0 || s.Receipts == nil || len(s.Receipts) > 1024 || len(s.Snapshot.Revoked) > 128 {
@@ -234,7 +208,12 @@ func recordHash(r journalRecord) string {
 func (s *fileStore) capacity(reserve int) bool {
 	return len(s.records)+reserve < s.limit && s.bytes+int64(reserve+1)*maxRecordBytes <= maxJournalBytes
 }
-func (s *fileStore) append(state durableState, audit Audit, critical bool, hook func(string) error) error {
+func (s *fileStore) append(state durableState, audit Audit, critical bool, hook func(string) error) (result error) {
+	root, err := s.openScopedRoot()
+	if err != nil {
+		return err
+	}
+	defer closeRoot(root, &result)
 	reserve := 2
 	if critical {
 		reserve = 0
@@ -253,46 +232,78 @@ func (s *fileStore) append(state durableState, audit Audit, critical bool, hook 
 	if err != nil || len(data) > maxRecordBytes {
 		return ErrStorage
 	}
+	if payload, err := s.validateStaging(root); err != nil || payload != nil {
+		return ErrStorage
+	}
 	if hook != nil {
 		if err = hook("before_persist"); err != nil {
 			return err
 		}
 	}
-	temp, err := os.CreateTemp(s.dir, ".pending-")
+	tempName := filepath.Join(stagingDirectory, stagingPayload)
+	temp, err := root.OpenFile(tempName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return ErrStorage
 	}
-	tempName := temp.Name()
-	defer func() { _ = temp.Close(); _ = os.Remove(tempName) }()
-	if _, err = temp.Write(data); err != nil {
+	created, err := temp.Stat()
+	if err != nil || !regularOwned(created, maxRecordBytes) {
+		_ = temp.Close()
+		return ErrStorage
+	}
+	published := false
+	defer func() {
+		_ = temp.Close()
+		if !published {
+			_ = s.removePayload(root, created)
+		}
+	}()
+	if err = stageHook(hook, "after_stage_create"); err != nil {
+		return err
+	}
+	middle := len(data) / 2
+	if _, err = temp.Write(data[:middle]); err != nil {
+		return ErrStorage
+	}
+	if err = stageHook(hook, "after_stage_partial_write"); err != nil {
+		return err
+	}
+	if _, err = temp.Write(data[middle:]); err != nil {
 		return ErrStorage
 	}
 	if err = temp.Sync(); err != nil {
 		return ErrStorage
 	}
+	if err = stageHook(hook, "after_stage_sync"); err != nil {
+		return err
+	}
 	if err = temp.Close(); err != nil {
 		return ErrStorage
 	}
-	final := filepath.Join(s.dir, fmt.Sprintf("%08d.json", len(s.records)+1))
-	if _, err = os.Lstat(final); !os.IsNotExist(err) {
+	final := fmt.Sprintf("%08d.json", len(s.records)+1)
+	if err = stageHook(hook, "before_publish"); err != nil {
+		return err
+	}
+	payload, err := s.validateStaging(root)
+	if err != nil || payload == nil || !os.SameFile(payload, created) {
 		return ErrStorage
 	}
-	if err = os.Rename(tempName, final); err != nil {
+	if _, err = root.Lstat(final); !os.IsNotExist(err) {
 		return ErrStorage
 	}
+	if err = root.Rename(tempName, final); err != nil {
+		return ErrStorage
+	}
+	published = true
 	if hook != nil {
 		if err = hook("after_rename"); err != nil {
 			return err
 		}
 	}
-	directory, err := os.Open(s.dir)
-	if err != nil {
-		return ErrStorage
+	if err = syncDirectory(root, "."); err != nil {
+		return err
 	}
-	err = directory.Sync()
-	closeErr := directory.Close()
-	if err != nil || closeErr != nil {
-		return ErrStorage
+	if err = syncDirectory(root, stagingDirectory); err != nil {
+		return err
 	}
 	s.records = append(s.records, record)
 	s.bytes += int64(len(data))

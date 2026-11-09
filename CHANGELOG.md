@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Registered staging for the configuration experiment, independent of temporary
+  filename conventions, with bounded recovery and preservation of unknown files.
+- Cross-platform source-selection checks and an isolated nftables experiment
+  proposal; no real firewall adapter is implemented.
+
 - Isolated transactional configuration experiment with simulated engines, shared
   authorization checks, local persistence, failure tests and resource observations.
   Includes regression coverage for failed boot compensation, orphan staging

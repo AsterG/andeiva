@@ -32,6 +32,8 @@ jobs:
         working-directory: frontend
       - run: bash scripts/check.sh
       - run: go test -race ./cmd/... ./internal/...
+      - name: Configuration experiment platform source selection
+        run: bash scripts/check-config-platforms.sh
       - run: bash scripts/smoke-api.sh
       - name: Transactional configuration simulator and resource observations
         run: |

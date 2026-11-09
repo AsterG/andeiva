@@ -80,12 +80,25 @@ Um diretório novo serve para outro teste isolado, não substitui a recuperaçã
 caso original que falhou.
 
 O armazenamento tem capacidade finita. Rejeitar operações no limite preserva o
-histórico; não constitui uma política automática de retenção ou backup. Configuração
-e diagnósticos podem conter informações sensíveis. Mantenha evidências privadas
-e compartilhe apenas o necessário para reproduzir o defeito, sem credenciais nem
-dados alheios ao caso.
-Ao reabrir, temporários órfãos validados e limitados podem ser removidos após
-verificar o histórico confirmado; registros de auditoria confirmados nunca são apagados.
+histórico; não constitui uma política automática de retenção ou backup. Ao reabrir,
+sob o bloqueio de escrita, são verificados todo o histórico confirmado, todas as
+entradas e a correspondência entre `staging-v1.owner` e
+`.andeiva-stage-v1/owner.json` antes de remover o único temporário órfão
+`.andeiva-stage-v1/record.tmp`, limitado a 1 MiB. Os metadados identificam o formato
+`andeiva.config.staging.v1` e um `store_id` compartilhado; a limpeza não depende do
+sufixo de arquivos temporários de Go. Esta limpeza nunca remove auditoria confirmada.
+
+Arquivos inesperados ou alheios, temporários antigos `.pending-*`, metadados
+incompatíveis e inicialização parcial de propriedade bloqueiam a abertura e são
+preservados. Esses casos não têm reparação automática. Preserve o diretório original
+e a saída da falha para investigação; não apague nem edite marcadores, não renomeie
+arquivos para introduzi-los no diretório de staging nem remova arquivos desconhecidos
+para aprovar a recuperação. Um processo com o mesmo UID ou root está fora deste
+limite de confiança.
+
+Configuração e diagnósticos podem conter informações sensíveis. Mantenha evidências
+privadas e compartilhe apenas o necessário para reproduzir o defeito, sem
+credenciais nem dados alheios ao caso.
 
 ## Interpretação dos resultados
 

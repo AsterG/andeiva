@@ -87,6 +87,8 @@ bash scripts/poc-config.sh "$poc_parent/results"
 ```
 
 The runner keeps three measured scenarios and their disposable stores for inspection.
+The [next nftables experiment proposal](internal/configpoc/NFTABLES_POC_PLAN.md)
+defines laboratory isolation and acceptance criteria; no real adapter is implemented.
 Results cover real file operations and simulated engines, not real firewall apply,
 power loss, signed updates, HA or production capacity. This prototype does not select
 the final database. See the [design and limitations](internal/configpoc/README.md)
