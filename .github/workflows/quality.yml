@@ -60,6 +60,35 @@ jobs:
           go build -trimpath -buildvcs=false -o dist/andeiva ./cmd/andeiva
           go build -trimpath -buildvcs=false -o dist/andeiva-api ./cmd/andeiva-api
 
+  debian-package:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build and inspect experimental Debian package
+        run: |
+          bash -n packaging/debian/tests/vm-lifecycle.sh
+          bash packaging/debian/build.sh '0.0.0~exp1' dist/debian
+          bash packaging/debian/build.sh '0.0.0~exp1' .tmp/debian-repro
+          cmp dist/debian/andeiva-experimental_0.0.0~exp1_amd64.deb .tmp/debian-repro/andeiva-experimental_0.0.0~exp1_amd64.deb
+          bash packaging/debian/tests/static-package.sh --package dist/debian/andeiva-experimental_0.0.0~exp1_amd64.deb --evidence-dir "${RUNNER_TEMP}/andeiva-package-check"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: experimental-debian-amd64
+          path: |
+            dist/debian/*.deb
+            dist/debian/SHA256SUMS
+            dist/debian/build-info.txt
+          if-no-files-found: error
+          retention-days: 7
+
   containers:
     needs: source
     runs-on: ubuntu-24.04

@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+if [ "${DPKG_ROOT:-/}" != / ]; then
+    printf '%s\n' 'ANDEIVA_UNSUPPORTED_PACKAGE_ROOT' >&2
+    exit 1
+fi
+case "${1:-}" in
+    remove)
+        if command -v deb-systemd-helper >/dev/null 2>&1; then
+            deb-systemd-helper mask andeiva-api.service >/dev/null
+        fi
+        ;;
+    purge)
+        if command -v deb-systemd-helper >/dev/null 2>&1; then
+            deb-systemd-helper purge andeiva-api.service >/dev/null
+            deb-systemd-helper unmask andeiva-api.service >/dev/null
+        fi
+        ;;
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear) ;;
+    *) printf '%s\n' 'ANDEIVA_INVALID_PACKAGE_ACTION' >&2; exit 1 ;;
+esac
+if [ -d /run/systemd/system ] && command -v deb-systemd-invoke >/dev/null 2>&1; then
+    deb-systemd-invoke --system daemon-reload
+fi
+# dpkg owns conffile removal; never recursively delete /etc/andeiva or user data.
+exit 0

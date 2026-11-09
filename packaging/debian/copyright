@@ -1,0 +1,12 @@
+ANDEIVA Security Gateway experimental scaffold
+Copyright 2026 ASTERG
+
+Original ANDEIVA code is licensed under Apache-2.0.
+The complete license is installed alongside this file as LICENSE.
+See NOTICE for project and third-party attribution.
+
+The Go runtime and standard library are Copyright 2009 The Go Authors
+and licensed under BSD-3-Clause. Their full license is installed as LICENSE.Go.
+
+This binary package contains the Go API/CLI scaffold only; it does not include
+the frontend, third-party traffic engines, an appliance image or an updater.

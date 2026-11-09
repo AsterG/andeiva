@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    configure) ;;
+    abort-upgrade|abort-remove|abort-deconfigure) exit 0 ;;
+    *) printf '%s\n' 'ANDEIVA_INVALID_PACKAGE_ACTION' >&2; exit 1 ;;
+esac
+
+if [ "$(id -u)" -ne 0 ] || [ "${DPKG_ROOT:-/}" != / ]; then
+    printf '%s\n' 'ANDEIVA_INSTALL_REQUIRES_ROOT_ON_TARGET' >&2
+    exit 1
+fi
+
+# Only remove masks previously created by the Debian helper, never operator masks.
+deb-systemd-helper unmask andeiva-api.service >/dev/null
+if deb-systemd-helper was-enabled andeiva-api.service >/dev/null; then
+    deb-systemd-helper enable andeiva-api.service >/dev/null
+else
+    deb-systemd-helper update-state andeiva-api.service >/dev/null
+fi
+
+if [ ! -d /run/systemd/system ]; then
+    printf '%s\n' 'ANDEIVA_SERVICE_DEFERRED: system manager is not running.' >&2
+    exit 0
+fi
+
+deb-systemd-invoke --system daemon-reload
+action=start
+if [ -n "${2:-}" ]; then
+    action=restart
+fi
+# This helper respects policy-rc.d and operator disabled/masked state.
+deb-systemd-invoke "$action" andeiva-api.service
+if ! systemctl --quiet is-active andeiva-api.service; then
+    printf '%s\n' 'ANDEIVA_SERVICE_DEFERRED: check local service policy and enablement.' >&2
+fi
+exit 0

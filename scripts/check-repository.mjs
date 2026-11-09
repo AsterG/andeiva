@@ -5,7 +5,7 @@ import { lstatSync, readFileSync } from 'node:fs';
 const paths = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
   encoding: 'utf8',
 }).split('\0').filter(Boolean);
-const allowed = /^(?:\.github|cmd|internal|frontend|scripts)\//;
+const allowed = /^(?:\.github|cmd|internal|frontend|scripts|packaging)\//;
 const rootFiles = new Set([
   '.gitignore', '.gitattributes', '.dockerignore', 'README.md', 'CONTRIBUTING.md',
   'LICENSE', 'NOTICE', 'SECURITY.md', 'CODE_OF_CONDUCT.md', 'CHANGELOG.md',
@@ -13,6 +13,7 @@ const rootFiles = new Set([
 ]);
 const errors = [];
 for (const path of new Set(paths)) {
+  if (/\.(?:deb|ddeb)$/.test(path)) errors.push(`${path}: package artifacts belong outside source control`);
   if (!allowed.test(path) && !rootFiles.has(path)) errors.push(`${path}: outside reviewed source roots`);
   if (lstatSync(path).isSymbolicLink()) errors.push(`${path}: symlinks require an explicit packaging review`);
   if (/\.(?:go|[cm]?[jt]sx?|json|ya?ml|md|css|html)$/.test(path)) {

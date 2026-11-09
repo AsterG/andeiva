@@ -53,6 +53,18 @@ setting. No remote fonts, analytics or appliance connection are required.
 The approved logo is bundled locally and displayed without cropping or recoloring
 in either theme.
 
+## Experimental native Debian package
+
+The native packaging experiment installs the Go API and `andeiva` CLI on Debian 13
+AMD64. It runs the API under a restricted systemd identity on loopback; it does not
+install a firewall, web administration server, inspection engine or boot theme.
+The package is unsigned and intended for an isolated development VM with recovery
+available. It is not the appliance installer or a signed offline system update.
+
+Build, verification and lifecycle instructions:
+[English](packaging/debian/docs/en.md), [Español](packaging/debian/docs/es.md),
+[Português](packaging/debian/docs/pt.md). Docker is not required in the Debian guest.
+
 ## Container checks
 
 With a running Docker engine:
