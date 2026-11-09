@@ -1,0 +1,16 @@
+name: Feature request
+description: Explain a use case and its acceptance criteria.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired behavior and constraints
+      description: Include security, usability and resource considerations.
+    validations:
+      required: true

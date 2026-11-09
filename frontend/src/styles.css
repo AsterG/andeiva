@@ -1,0 +1,66 @@
+:root {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+
+.app {
+  --surface: #ffffff;
+  --background: #f2f9fe;
+  --tint: #e5f5ff;
+  --text: #061b4b;
+  --muted: #52647d;
+  --border: #d8e6f3;
+  --blue: #087cf5;
+  --cyan: #00cfe8;
+  min-height: 100svh;
+  color: var(--text);
+  background: var(--background);
+  color-scheme: light;
+}
+
+.app[data-theme="dark"] {
+  --surface: #142338;
+  --background: #0b1626;
+  --tint: #1b3048;
+  --text: #eef7ff;
+  --muted: #bfcede;
+  --border: #42556c;
+  color-scheme: dark;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 1.5rem clamp(1rem, 5vw, 4rem);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.brand { margin: 0; font-size: 1.35rem; font-weight: 750; letter-spacing: .08em; }
+.brand span { display: block; margin-top: .25rem; font-size: .75rem; letter-spacing: .1em; font-weight: 500; }
+.preferences { display: flex; flex-wrap: wrap; gap: 1rem; }
+label { display: grid; gap: .35rem; font-size: .875rem; font-weight: 600; }
+select {
+  min-height: 2.75rem;
+  padding: .5rem 2rem .5rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+}
+select:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+.content { max-width: 72rem; margin: 0 auto; padding: clamp(2rem, 9vw, 7rem) clamp(1rem, 5vw, 4rem); }
+.intro { max-width: 45rem; }
+.eyebrow { width: fit-content; border-left: 3px solid var(--cyan); padding-left: .75rem; font-size: .875rem; font-weight: 650; }
+h1 { margin: 1.5rem 0; font-size: clamp(2.25rem, 6vw, 4rem); line-height: 1.1; letter-spacing: -.04em; }
+.intro > p:not(.eyebrow) { font-size: 1.125rem; line-height: 1.7; color: var(--muted); }
+.notice { margin-top: 2.5rem; padding: 1rem 1.25rem; border: 1px solid var(--border); border-radius: .75rem; background: var(--tint); }

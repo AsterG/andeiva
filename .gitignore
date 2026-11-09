@@ -1,0 +1,37 @@
+# Track only reviewed source roots.
+/*
+!/.gitignore
+!/.gitattributes
+!/.dockerignore
+!/README.md
+!/CONTRIBUTING.md
+!/LICENSE
+!/NOTICE
+!/SECURITY.md
+!/CODE_OF_CONDUCT.md
+!/CHANGELOG.md
+!/Makefile
+!/go.mod
+!/go.sum
+!/Dockerfile
+!/compose.yaml
+!/.github/
+!/cmd/
+!/internal/
+!/frontend/
+!/scripts/
+
+# Build and dependency outputs
+**/node_modules/
+**/dist/
+**/.test-dist/
+**/.test-build/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+*.pem
+*.key
+.DS_Store
+Thumbs.db

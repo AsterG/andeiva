@@ -1,0 +1,61 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.20.0
+      - run: node scripts/check-repository.mjs
+      - name: Scan history for secrets
+        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts=--all
+      - name: Go static security analysis
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 ./cmd/... ./internal/...
+      - name: Go vulnerability analysis
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/... ./internal/...
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: frontend
+      - name: Audit all frontend dependencies including build tools
+        run: npm audit --audit-level=moderate
+        working-directory: frontend
+      - name: Generate dependency and license inventories
+        run: |
+          mkdir -p dist
+          npm --prefix frontend sbom --sbom-format=cyclonedx > dist/frontend.cdx.json
+          node scripts/check-licenses.mjs > dist/frontend-licenses.json
+          go list -m -json all > dist/go-modules.json
+          cp LICENSE NOTICE dist/
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: dependency-inventory
+          path: |
+            dist/frontend.cdx.json
+            dist/frontend-licenses.json
+            dist/go-modules.json
+            dist/LICENSE
+            dist/NOTICE
+          if-no-files-found: error
+          retention-days: 7

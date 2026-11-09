@@ -1,0 +1,25 @@
+name: andeiva-dev
+services:
+  andeiva-api:
+    image: andeiva-api:dev
+    build:
+      context: .
+      target: api
+    read_only: true
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 1.0
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    networks: [smoke]
+networks:
+  smoke:
+    internal: true

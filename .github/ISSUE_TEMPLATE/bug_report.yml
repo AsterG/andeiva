@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible problem without sensitive information.
+body:
+  - type: markdown
+    attributes:
+      value: Do not report vulnerabilities or include credentials, private captures or customer data here. Read SECURITY.md first.
+  - type: input
+    id: revision
+    attributes:
+      label: Commit and environment
+      description: Commit hash, platform and relevant tool versions.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and observed behavior
+    validations:
+      required: true

@@ -1,0 +1,80 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.20.0
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: frontend
+      - run: bash scripts/check.sh
+      - run: go test -race ./cmd/... ./internal/...
+      - run: bash scripts/smoke-api.sh
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  linux-build:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Compile Linux artifacts (not a hardware compatibility test)
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          go build -trimpath -buildvcs=false -o dist/andeiva ./cmd/andeiva
+          go build -trimpath -buildvcs=false -o dist/andeiva-api ./cmd/andeiva-api
+
+  containers:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: docker build --target check-go -t andeiva-go-check .
+      - run: docker build --target check-web -t andeiva-web-check .
+      - run: docker compose config --quiet
+      - run: docker compose up --build --wait --wait-timeout 60
+      - name: Container liveness and CLI smoke
+        run: |
+          docker compose exec -T andeiva-api /andeiva-api --healthcheck
+          docker compose exec -T andeiva-api /andeiva --lang es status
+      - if: always()
+        run: docker compose down --remove-orphans
