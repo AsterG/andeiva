@@ -1,6 +1,21 @@
 ANDEIVA Security Gateway
 Copyright 2026 ASTERG
 
-Original project code is licensed under the Apache License, Version 2.0.
-Third-party components retain their own licenses. Dependency inventories
-generated during validation do not constitute legal redistribution approval.
+Original project code is licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+Third-party software retains its own licenses. Components used by the
+current source include:
+
+- React, React DOM and Scheduler (MIT) - https://github.com/react/react
+  Copyright (c) Meta Platforms, Inc. and affiliates.
+- Go runtime and standard library (BSD-3-Clause) - https://go.dev
+  Copyright 2009 The Go Authors.
+
+Upstream license texts must accompany redistributed copies as required by
+their respective licenses; this attribution summary does not replace them.
+
+Go module and toolchain requirements are recorded in go.mod. Frontend direct
+dependencies and development tools are listed in frontend/package.json;
+frontend/package-lock.json records resolved frontend dependencies.
+The Security workflow generates a frontend SBOM and license metadata inventory.
