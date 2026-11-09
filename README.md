@@ -90,6 +90,7 @@ the private reporting process, not public issues.
 
 ## License
 
-Original code: [Apache-2.0](LICENSE). Third-party components retain their licenses;
-dependency inventories are not a substitute for redistribution review. The ANDEIVA
-name and artwork do not imply registered trademark status.
+ANDEIVA's original code is licensed under the [Apache License 2.0](LICENSE).
+See [NOTICE](NOTICE) for third-party attributions.
+
+The ANDEIVA name and artwork do not imply registered trademark status.
