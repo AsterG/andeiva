@@ -3,7 +3,7 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
-  forbidOnly: Boolean(process.env.CI),
+  forbidOnly: true,
   retries: 0,
   workers: 2,
   timeout: 30_000,
