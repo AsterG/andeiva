@@ -94,7 +94,11 @@ func newFixture(ctx context.Context, self string, uid, gid uint32, globalReferen
 	if err != nil {
 		return nil, err
 	}
-	f.baseline, err = hostSnapshot(ctx)
+	if globalReferenceCheck {
+		f.baseline, err = hostSnapshot(ctx)
+	} else {
+		f.baseline, err = waitStableHost(ctx, hostSnapshot, time.Now, waitSnapshotInterval)
+	}
 	if err != nil {
 		return nil, err
 	}
