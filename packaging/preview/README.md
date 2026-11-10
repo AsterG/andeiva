@@ -46,6 +46,13 @@ a private filesystem namespace. It accepts no remote requests; its local probe
 socket is root-only. This trusted setup component is an explicit preview limitation.
 API and helper units use stricter filesystem and capability restrictions.
 
+Before creating namespaces, the preview requires ten continuous seconds of
+unchanged host snapshots, with a thirty-second deadline. This accommodates the
+observed DHCP startup race even when `network-online.target` is already active.
+It is a bounded stability check, not proof that every network manager has finished.
+The accepted snapshot remains the baseline: later host changes still stop the
+preview. There is no automatic rebasing, route modification or forced unmount.
+
 ## Persistence and package lifecycle
 
 Service accounts are allocated by Debian; existing unrelated identities are not

@@ -60,7 +60,11 @@ func Run(ctx context.Context, o Options) (result error) {
 	}
 	childCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Cancel setup promptly, but retain child processes for ordered cleanup once
+	// the fixture is ready and the supervisor receives a normal stop request.
+	stopStartupCancel := context.AfterFunc(ctx, cancel)
 	f, e := nftfixture.NewOwned(childCtx, o.Executable, o.UID, o.GID)
+	stopStartupCancel()
 	if e != nil {
 		return e
 	}

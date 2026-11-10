@@ -76,6 +76,13 @@ API restart creates a new observation stream and invalidates login sessions.
 
 ## Recovery, update and remove
 
+Startup waits for ten continuous seconds of unchanged host network snapshots,
+for at most thirty seconds, before creating the isolated namespaces. This check
+does not guarantee DHCP has completed. A later host network change still stops
+the preview; it does not change routes to restore its baseline. If cleanup finds
+a busy namespace pin, preserve it and follow the authorized reboot procedure
+below. Do not force-unmount or delete metadata to make startup pass.
+
 The optional native acceptance harness requires Bash and `jq` already installed
 from verified offline Debian packages. Review the script and snapshot first:
 

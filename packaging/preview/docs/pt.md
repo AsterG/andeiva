@@ -70,6 +70,13 @@ e cria um novo stream de tráfego.
 
 ## Recuperação, atualização e remoção
 
+Antes de criar os namespaces isolados, a inicialização exige dez segundos contínuos
+sem alterações nas observações de rede do host, com limite de trinta segundos.
+Isso não garante que o DHCP terminou. Uma alteração posterior continua interrompendo
+o preview; ele não modifica rotas para restaurar o estado inicial. Se a limpeza
+encontrar um pin ocupado, preserve-o e siga o procedimento de reinicialização
+autorizada abaixo. Não force a desmontagem nem apague metadados para iniciar.
+
 O teste nativo opcional requer Bash e `jq` previamente instalados a partir de
 pacotes Debian offline verificados. Revise o script e o snapshot primeiro:
 
