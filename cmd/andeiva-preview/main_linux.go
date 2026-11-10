@@ -19,7 +19,7 @@ import (
 func run(args []string) error {
 	if handled, code := nftfixture.HandleRole(args); handled {
 		if code != 0 {
-			return previewruntime.ErrUnavailable
+			return roleExit(code)
 		}
 		return nil
 	}
