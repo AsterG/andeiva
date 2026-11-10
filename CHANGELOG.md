@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — rule activation and administration table
+
+- Retain explicitly disabled forwarding rules in the versioned transaction
+  contract while compiling and observing only active rules.
+- Add a compact rules table with accessible drag ordering, a side editor and
+  separate Running and Startup indicators for content, activation and order.
+- Preserve legacy revision hashes and require explicit executor capabilities
+  before enabling the new rule-state contract in Web, CLI and API.
+- Record isolated Debian traffic and browser validation, resource observations
+  and limits in [the validation report](frontend/docs/firewall-rule-validation.md).
+  Updating source or CI does not deploy the installed Alpha appliance.
+
 ## Unreleased — isolated local service administration
 
 - Manage HTTPS and restricted SSH declarations through authenticated Web, CLI

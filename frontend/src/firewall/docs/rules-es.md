@@ -32,3 +32,6 @@ El tema claro es el predeterminado; el oscuro se selecciona explícitamente. Est
 controles no administran el firewall principal, forwarding, NAT ni interfaces de
 administración fuera del despliegue aislado autorizado. Siga la verificación
 nativa del despliegue antes de considerar validados el tráfico o la recuperación.
+
+Consulte el [informe de validación nativa](../../../docs/firewall-rule-validation.md#español)
+para conocer los escenarios observados, recursos medidos y límites pendientes.

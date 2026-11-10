@@ -30,3 +30,6 @@ Light is the default; Dark is an explicit preference. No host firewall, forwardi
 NAT or management interface is changed by these browser controls outside the
 authorized isolated deployment. Follow the deployment's native verification
 procedure before treating traffic enforcement or recovery as validated.
+
+See the [native validation report](../../../docs/firewall-rule-validation.md#english)
+for observed scenarios, measured resources and remaining limits.

@@ -32,3 +32,6 @@ O tema claro é padrão; o escuro exige escolha explícita. Estes controles não
 administram o firewall principal, forwarding, NAT ou interfaces de administração
 fora da implantação isolada autorizada. Siga a verificação nativa da implantação
 antes de considerar validados o tráfego ou a recuperação.
+
+Consulte o [relatório de validação nativa](../../../docs/firewall-rule-validation.md#português)
+para conhecer os cenários observados, recursos medidos e limites restantes.

@@ -48,8 +48,10 @@ The authenticated capabilities response advertises
 `firewall_config_schema_versions: [2, 4]` and `firewall_rule_enabled: true` only
 when the runtime explicitly enables support. Older runtimes remain at schema 2.
 Traffic history retains prior observations; disabling produces no synthetic zero
-record, and reenabling starts a new baseline. Native traffic and resource gates
-for this extension remain pending; unit tests are not appliance evidence.
+record, and reenabling starts a new baseline. The [native validation report](../../frontend/docs/firewall-rule-validation.md#english)
+records isolated API/CLI/Web transactions, real traffic and bounded resource
+observations. Appliance capacity benchmarks remain pending; unit tests alone are
+not appliance evidence.
 
 ### Español
 
@@ -60,8 +62,9 @@ política efectiva; el comentario de una tabla no basta. La migración desde sch
 2 es un cambio explícito de Candidate, con Validate/Commit/Save y rollback del
 coordinador existente. Los schemas 1–3 conservan su serialización; schema 4 no
 incluye LocalServices. El soporte debe anunciarse mediante capacidades del runtime.
-La reactivación inicia una nueva línea base de contadores. La validación nativa y
-las mediciones de recursos de esta extensión siguen pendientes.
+La reactivación inicia una nueva línea base de contadores. El [informe de validación nativa](../../frontend/docs/firewall-rule-validation.md#español)
+registra transacciones API/CLI/Web aisladas, tráfico real y mediciones acotadas de
+recursos. Las pruebas de capacidad del appliance siguen pendientes.
 
 ### Português
 
@@ -72,8 +75,9 @@ comentário de uma tabela não basta. A migração do schema 2 é uma alteraçã
 de Candidate, com Validate/Commit/Save e rollback pelo coordenador existente.
 Os schemas 1–3 preservam sua serialização; schema 4 não inclui LocalServices.
 O suporte deve ser anunciado pelas capacidades do runtime. A reativação inicia
-uma nova linha de base dos contadores. A validação nativa e as medições de recursos
-desta extensão continuam pendentes.
+uma nova linha de base dos contadores. O [relatório de validação nativa](../../frontend/docs/firewall-rule-validation.md#português)
+registra transações API/CLI/Web isoladas, tráfego real e medições limitadas de
+recursos. Os testes de capacidade do appliance continuam pendentes.
 
 ### Validation and references
 
@@ -92,7 +96,8 @@ go build ./...
 Unit tests cover semantic readback mutation, tuple/order enforcement, unsolicited
 reverse traffic, markless established flows, invalid/untracked/related state,
 revocation, counters and v1 compatibility. Their packet interpreter is not kernel
-evidence. Native isolated nft 1.1.3 checks, live negative probes, resource
-benchmarks and independent review remain required before any completion claim.
+evidence. The linked report records the executed native scenarios and negative
+probes; broader resource benchmarks, final CI and release review remain separate
+gates.
 Rollback is the coordinator's previous canonical revision, compiled into an atomic
 table replacement; no host networking or customer appliance changes are involved.

@@ -93,7 +93,8 @@ Automated accessibility checks do not replace assistive-technology review.
 This frontend consumes the versioned backend capability and schema 4 contract;
 it cannot enable unsupported runtime operations. No dependency, package lock,
 shared design tokens, runtime listener, container privilege or EKS/Helm
-configuration is changed. Bundle sizes
-are measured during the build. Browser CPU/RSS and real laboratory integration
-remain separate acceptance gates. Revert this feature's commit to roll back the
+configuration is changed. Bundle sizes are measured during the build.
+The [native validation report](../../docs/firewall-rule-validation.md) records
+real API/CLI/Web integration and a bounded renderer task-time/heap sample.
+Whole-browser RSS and appliance capacity benchmarks remain pending. Revert this feature's commit to roll back the
 UI; policy journals and effective firewall configuration are unaffected.
