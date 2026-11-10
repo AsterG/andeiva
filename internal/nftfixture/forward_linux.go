@@ -11,6 +11,14 @@ func enableForwarding(host uint64) error {
 	hostHandle := os.NewFile(4, "host-namespace")
 	defer gatewayHandle.Close()
 	defer hostHandle.Close()
+	// Reject missing inherited handles before opening any file that could reuse
+	// their descriptor numbers and accidentally satisfy the gateway check.
+	if _, err := networkNamespaceInode(3); err != nil {
+		return err
+	}
+	if _, err := networkNamespaceInode(4); err != nil {
+		return err
+	}
 	self, err := os.Open("/proc/self/ns/net")
 	if err != nil {
 		return err

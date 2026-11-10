@@ -70,6 +70,19 @@ e cria um novo stream de tráfego.
 
 ## Recuperação, atualização e remoção
 
+O teste nativo opcional requer Bash e `jq` previamente instalados a partir de
+pacotes Debian offline verificados. Revise o script e o snapshot primeiro:
+
+```bash
+sudo bash /usr/share/doc/andeiva-firewall-preview/tests/native.sh --ack-isolated-debian13-vm
+```
+
+Sem opções adicionais, observa saúde, sondas, recursos e invariância do host.
+`--api-failure` interrompe apenas a API; `--lifecycle` para e inicia a preview.
+Ambas interrompem a administração. Relatórios privados de root ficam em
+`/var/tmp`; não comprovam paridade transacional nem deduzem a política esperada
+de uma sonda bem-sucedida. Verifique separadamente contra a revisão pretendida.
+
 Reiniciar apenas a API preserva o prazo do helper. A falha deste encerra todo o
 preview. Pare o target, espere API, socket, helper e namespaces ficarem inativos
 e depois inicie; não presuma que `restart target` seja atômico. Reinício de serviço

@@ -15,6 +15,13 @@ for script in preinst postinst prerm postrm; do sh -n "$stage/control/$script"; 
 [[ -s "$stage/root/usr/share/andeiva-preview/web/index.html" ]]
 [[ -s "$stage/root/usr/share/doc/andeiva-firewall-preview/dependencies/npm-inventory.json" ]]
 [[ -s "$stage/root/usr/share/doc/andeiva-firewall-preview/dependencies/LICENSE.react" ]]
+bash -n "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/native.sh"
+bash "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/native.sh" --help >/dev/null
+if bash "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/native.sh" >/dev/null 2>&1; then
+  echo ANDEIVA_PREVIEW_MISSING_TEST_CONSENT >&2; exit 1
+else
+  [[ $? == 2 ]]
+fi
 for language in en es pt; do
   [[ -s "$stage/root/usr/share/doc/andeiva-firewall-preview/firewalladmin/docs/$language.md" ]]
   grep -q '../firewalladmin/docs/' "$stage/root/usr/share/doc/andeiva-firewall-preview/docs/$language.md"

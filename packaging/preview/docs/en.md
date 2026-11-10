@@ -76,6 +76,19 @@ API restart creates a new observation stream and invalidates login sessions.
 
 ## Recovery, update and remove
 
+The optional native acceptance harness requires Bash and `jq` already installed
+from verified offline Debian packages. Review the script and snapshot first:
+
+```bash
+sudo bash /usr/share/doc/andeiva-firewall-preview/tests/native.sh --ack-isolated-debian13-vm
+```
+
+Default execution only observes health, probes, resources and host invariance.
+Add `--api-failure` to interrupt only the API, or `--lifecycle` to stop and start
+the preview. Both options interrupt management. Reports are private, root-readable
+under `/var/tmp`; they do not prove transaction parity or infer expected traffic
+from a successful probe. Verify those separately against the intended revision.
+
 API-only restart retains the helper deadline. Losing the helper closes the entire
 preview. Stop the target, wait for all four service/socket units to be inactive,
 then start it; do not assume `restart target` is an atomic replacement. A restart

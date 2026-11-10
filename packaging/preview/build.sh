@@ -50,6 +50,8 @@ doc="$root/usr/share/doc/andeiva-firewall-preview"
 install -m 0644 LICENSE NOTICE "$templates/README.md" "$doc/"
 install -m 0644 "$(go env GOROOT)/LICENSE" "$doc/LICENSE.Go"
 cp -a "$templates/docs" "$doc/"
+install -d "$doc/tests"
+install -m 0755 "$templates/tests/native.sh" "$doc/tests/native.sh"
 install -d "$doc/firewalladmin/docs"
 install -m 0644 internal/firewalladmin/VALIDATION.md internal/firewalladmin/TRAFFIC.md internal/firewalladmin/MILESTONE.md "$doc/firewalladmin/"
 for language in en es pt; do

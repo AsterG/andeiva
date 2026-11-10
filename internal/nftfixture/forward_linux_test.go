@@ -3,10 +3,35 @@ package nftfixture
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strconv"
 	"syscall"
 	"testing"
 )
+
+func TestForwardRoleRejectsMissingInheritedDescriptor(t *testing.T) {
+	if os.Getenv("ANDEIVA_TEST_MISSING_GATEWAY_FD") == "1" {
+		if syscall.Close(3) != nil {
+			os.Exit(2)
+		}
+		err := enableForwarding(1)
+		if err == nil || err.Error() != "ANDEIVA_NFT_FIXTURE_NAMESPACE_DESCRIPTOR" {
+			os.Exit(3)
+		}
+		return
+	}
+	ns, err := os.Open("/proc/self/ns/net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ns.Close()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestForwardRoleRejectsMissingInheritedDescriptor$")
+	cmd.Env = append(os.Environ(), "ANDEIVA_TEST_MISSING_GATEWAY_FD=1")
+	cmd.ExtraFiles = []*os.File{ns, ns}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("missing descriptor guard: %v: %s", err, output)
+	}
+}
 
 func TestForwardIdentityRejectsSwappedOrInconsistentNamespaces(t *testing.T) {
 	if !validForwardIdentity(42, 43, 43, 42) {
