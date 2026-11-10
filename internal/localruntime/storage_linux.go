@@ -5,7 +5,9 @@ package localruntime
 import (
 	"bufio"
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -177,11 +179,13 @@ func randomID() (string, error) {
 }
 
 func certificates(c Config) (ca, cert, key, host, public []byte, err error) {
-	caPub, caKey, e := ed25519.GenerateKey(rand.Reader)
+	// P-256 certificates support the browser trust store used by the laboratory;
+	// the independent SSH host identity remains Ed25519.
+	caKey, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if e != nil {
 		return nil, nil, nil, nil, nil, e
 	}
-	pub, private, e := ed25519.GenerateKey(rand.Reader)
+	private, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if e != nil {
 		return nil, nil, nil, nil, nil, e
 	}
@@ -191,7 +195,7 @@ func certificates(c Config) (ca, cert, key, host, public []byte, err error) {
 		return nil, nil, nil, nil, nil, e
 	}
 	issuer := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "ANDEIVA local laboratory CA"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
-	caDER, e := x509.CreateCertificate(rand.Reader, issuer, issuer, caPub, caKey)
+	caDER, e := x509.CreateCertificate(rand.Reader, issuer, issuer, &caKey.PublicKey, caKey)
 	if e != nil {
 		return nil, nil, nil, nil, nil, e
 	}
@@ -205,7 +209,7 @@ func certificates(c Config) (ca, cert, key, host, public []byte, err error) {
 			leaf.IPAddresses = append(leaf.IPAddresses, net.ParseIP(address))
 		}
 	}
-	der, e := x509.CreateCertificate(rand.Reader, leaf, issuer, pub, caKey)
+	der, e := x509.CreateCertificate(rand.Reader, leaf, issuer, &private.PublicKey, caKey)
 	if e != nil {
 		return nil, nil, nil, nil, nil, e
 	}

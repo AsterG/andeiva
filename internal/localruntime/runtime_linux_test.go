@@ -5,10 +5,14 @@ package localruntime
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -175,6 +179,69 @@ func TestHTTPSProbeValidatesCAAndAuthentication(t *testing.T) {
 	p.CA = other
 	if r := probeHTTPS(context.Background(), p, d, "tcp4", server.Listener.Addr().String()); r.Error != probeTLS.Error() {
 		t.Fatal("untrusted peer was not TLS failure", r.Error)
+	}
+}
+
+func TestProvisionedTLSUsesP256AndRetainsSSHIdentityType(t *testing.T) {
+	c := testConfig()
+	caPEM, certPEM, keyPEM, hostPEM, hostPublic, err := certificates(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parse := func(data []byte) *x509.Certificate {
+		t.Helper()
+		block, rest := pem.Decode(data)
+		if block == nil || block.Type != "CERTIFICATE" || len(rest) != 0 {
+			t.Fatal("invalid certificate encoding")
+		}
+		cert, e := x509.ParseCertificate(block.Bytes)
+		if e != nil {
+			t.Fatal(e)
+		}
+		key, ok := cert.PublicKey.(*ecdsa.PublicKey)
+		if !ok || key.Curve != elliptic.P256() || cert.SignatureAlgorithm != x509.ECDSAWithSHA256 {
+			t.Fatal("TLS certificate is not ECDSA P-256/SHA-256")
+		}
+		return cert
+	}
+	ca, leaf := parse(caPEM), parse(certPEM)
+	if !ca.IsCA || leaf.IsCA || ca.CheckSignatureFrom(ca) != nil || leaf.CheckSignatureFrom(ca) != nil {
+		t.Fatal("invalid certificate chain")
+	}
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key, ok := pair.PrivateKey.(*ecdsa.PrivateKey); !ok || key.Curve != elliptic.P256() {
+		t.Fatal("server private key algorithm mismatch")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	addresses := []string{c.LANAddress, "127.0.0.1"}
+	for _, iface := range nftfixture.LocalInventory() {
+		addresses = append(addresses, iface.Addresses...)
+	}
+	if len(leaf.IPAddresses) != len(addresses) || len(leaf.DNSNames) != 0 {
+		t.Fatal("unexpected SAN exposure")
+	}
+	for _, address := range addresses {
+		if _, e := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: address, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); e != nil {
+			t.Fatal(address, e)
+		}
+	}
+	if _, e := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "192.0.2.99"}); e == nil {
+		t.Fatal("unregistered endpoint accepted")
+	}
+	if _, e := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: c.LANAddress, CurrentTime: ca.NotAfter.Add(time.Second)}); e == nil {
+		t.Fatal("expired certificate accepted")
+	}
+	hostKey, err := ssh.ParsePrivateKey(hostPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, _, _, rest, err := ssh.ParseAuthorizedKey(hostPublic)
+	if err != nil || len(rest) != 0 || public.Type() != ssh.KeyAlgoED25519 || !bytes.Equal(public.Marshal(), hostKey.PublicKey().Marshal()) {
+		t.Fatal("SSH identity changed or mismatched")
 	}
 }
 
