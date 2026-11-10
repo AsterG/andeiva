@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -62,8 +63,8 @@ func TestCommandPlanPinsNamespaceBeforeFixedExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := info.Sys().(*syscall.Stat_t).Ino
-	f := &Fixture{host: id + 1, uid: 1000, gid: 1000, namespaces: map[string]*namespace{"gateway": {handle: file, inode: id}}}
-	cmd, err := f.command(context.Background(), "gateway", nftPath, []string{"-j", "list", "table", "inet", "andeiva_poc"}, "", true, true)
+	f := &Fixture{self: "/fixture", host: id + 1, uid: 1000, gid: 1000, namespaces: map[string]*namespace{"gateway": {handle: file, inode: id}}}
+	cmd, err := f.command(context.Background(), "gateway", f.self, []string{"--guardian", strings.Repeat("a", 32), strconv.FormatUint(f.host, 10), strconv.Itoa(os.Getpid())}, "", true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +73,42 @@ func TestCommandPlanPinsNamespaceBeforeFixedExecutable(t *testing.T) {
 	}
 	if cmd.SysProcAttr.Pdeathsig != syscall.SIGKILL {
 		t.Fatal("missing parent-death signal")
+	}
+}
+
+func TestFixtureCommandAllowlistRejectsScopeExpansion(t *testing.T) {
+	f := &Fixture{self: "/fixture", host: 42, uid: 1000, gid: 1000}
+	for _, plan := range f.setupCommands() {
+		if !f.allowedCommand(plan.role, plan.binary, plan.args, plan.peer, false, false) {
+			t.Fatalf("setup plan denied: %+v", plan)
+		}
+		if f.allowedCommand("host", plan.binary, plan.args, plan.peer, false, false) || f.allowedCommand(plan.role, "/bin/sh", plan.args, plan.peer, false, false) || f.allowedCommand(plan.role, plan.binary, append(append([]string{}, plan.args...), "extra"), plan.peer, false, false) {
+			t.Fatalf("expanded plan accepted: %+v", plan)
+		}
+	}
+	guardian := []string{"--guardian", strings.Repeat("b", 32), "42", strconv.Itoa(os.Getpid())}
+	if !f.allowedCommand("gateway", f.self, guardian, "", true, true) {
+		t.Fatal("guardian denied")
+	}
+	for i, value := range []string{"--run-lab", "../arbitrary", "0", "1"} {
+		args := append([]string{}, guardian...)
+		args[i] = value
+		if f.allowedCommand("gateway", f.self, args, "", true, true) {
+			t.Fatalf("invalid guardian accepted: %v", args)
+		}
+	}
+	for _, role := range []string{"source", "sink"} {
+		for _, protocol := range []string{"tcp", "udp"} {
+			for port := 18080; port <= 18082; port++ {
+				args := []string{"--nft-fixture", "probe", protocol, strconv.Itoa(port), "42"}
+				if !f.allowedCommand(role, f.self, args, "", true, false) || f.allowedCommand(role, f.self, args, "", true, true) {
+					t.Fatal("probe privilege boundary")
+				}
+			}
+		}
+	}
+	if _, err := f.run(context.Background(), "gateway", nftPath, []string{"-f", "-"}, "", "flush ruleset\n"); err == nil {
+		t.Fatal("arbitrary nft input accepted")
 	}
 }
 

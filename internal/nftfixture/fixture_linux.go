@@ -3,6 +3,7 @@ package nftfixture
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +43,7 @@ type Fixture struct {
 	namespaces map[string]*namespace
 	children   []child
 	baseline   map[string][]byte
+	sentinel   []byte
 	closed     bool
 }
 
@@ -113,9 +116,25 @@ func New(ctx context.Context, self string, uid, gid uint32) (_ *Fixture, err err
 	if err := f.setup(ctx); err != nil {
 		return nil, err
 	}
+	f.sentinel, err = f.readSentinel(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if err := f.startListener(ctx); err != nil {
 		return nil, err
 	}
+	if err := f.CheckListeners(ctx); err != nil {
+		return nil, err
+	}
+	if err := f.CheckHost(ctx); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// CheckListeners verifies every positive control, including the always-denied
+// transit service, independently of the gateway policy.
+func (f *Fixture) CheckListeners(ctx context.Context) error {
 	for _, protocol := range []string{"tcp", "udp"} {
 		for port := 18080; port <= 18082; port++ {
 			ok, err := f.ProbeLocal(ctx, protocol, port)
@@ -123,14 +142,11 @@ func New(ctx context.Context, self string, uid, gid uint32) (_ *Fixture, err err
 				if err == nil {
 					err = errors.New("no echo response")
 				}
-				return nil, fmt.Errorf("ANDEIVA_NFT_FIXTURE_LISTENER: %s/%d: %w", protocol, port, err)
+				return fmt.Errorf("ANDEIVA_NFT_FIXTURE_LISTENER: %s/%d: %w", protocol, port, err)
 			}
 		}
 	}
-	if err := f.CheckHost(ctx); err != nil {
-		return nil, err
-	}
-	return f, nil
+	return nil
 }
 
 func fixedEnvironment() []string {
@@ -182,6 +198,9 @@ func (f *Fixture) checked(role string) (*namespace, error) {
 }
 
 func (f *Fixture) command(ctx context.Context, role, binary string, args []string, peer string, unprivileged, netAdmin bool) (*exec.Cmd, error) {
+	if !f.allowedCommand(role, binary, args, peer, unprivileged, netAdmin) {
+		return nil, errors.New("ANDEIVA_NFT_FIXTURE_COMMAND_DENIED")
+	}
 	ns, err := f.checked(role)
 	if err != nil {
 		return nil, err
@@ -239,6 +258,9 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 }
 
 func (f *Fixture) run(ctx context.Context, role, binary string, args []string, peer string, input string) ([]byte, error) {
+	if input != "" && !(role == "gateway" && binary == nftPath && slices.Equal(args, []string{"-f", "-"}) && input == "add table inet andeiva_sentinel\n") {
+		return nil, errors.New("ANDEIVA_NFT_FIXTURE_INPUT_DENIED")
+	}
 	deadline, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	cmd, err := f.command(deadline, role, binary, args, peer, false, false)
@@ -248,39 +270,95 @@ func (f *Fixture) run(ctx context.Context, role, binary string, args []string, p
 	return runBounded(deadline, cmd, input)
 }
 
-func (f *Fixture) setup(ctx context.Context) error {
+type setupCommand struct {
+	role, binary string
+	args         []string
+	peer, input  string
+}
+
+func (f *Fixture) setupCommands() []setupCommand {
+	var commands []setupCommand
 	for _, role := range []string{"source", "gateway", "sink"} {
-		if _, err := f.run(ctx, role, ipPath, []string{"link", "set", "lo", "up"}, "", ""); err != nil {
-			return err
-		}
+		commands = append(commands, setupCommand{role, ipPath, []string{"link", "set", "lo", "up"}, "", ""})
 	}
 	for _, link := range []struct{ gateway, peer, role string }{{"src0", "srcpeer", "source"}, {"dst0", "dstpeer", "sink"}} {
-		if _, err := f.run(ctx, "gateway", ipPath, []string{"link", "add", link.gateway, "type", "veth", "peer", "name", link.peer}, "", ""); err != nil {
-			return err
-		}
-		if _, err := f.run(ctx, "gateway", ipPath, []string{"link", "set", link.peer, "netns", "/proc/self/fd/4"}, link.role, ""); err != nil {
-			return err
-		}
+		commands = append(commands, setupCommand{"gateway", ipPath, []string{"link", "add", link.gateway, "type", "veth", "peer", "name", link.peer}, "", ""}, setupCommand{"gateway", ipPath, []string{"link", "set", link.peer, "netns", "/proc/self/fd/4"}, link.role, ""})
 	}
 	for _, item := range []struct{ role, dev, addr string }{{"source", "srcpeer", "198.18.0.2/30"}, {"gateway", "src0", "198.18.0.1/30"}, {"gateway", "dst0", "198.18.0.5/30"}, {"sink", "dstpeer", "198.18.0.6/30"}} {
-		if _, err := f.run(ctx, item.role, ipPath, []string{"address", "add", item.addr, "dev", item.dev}, "", ""); err != nil {
-			return err
-		}
-		if _, err := f.run(ctx, item.role, ipPath, []string{"link", "set", item.dev, "up"}, "", ""); err != nil {
-			return err
-		}
+		commands = append(commands, setupCommand{item.role, ipPath, []string{"address", "add", item.addr, "dev", item.dev}, "", ""}, setupCommand{item.role, ipPath, []string{"link", "set", item.dev, "up"}, "", ""})
 	}
 	for _, item := range []struct{ role, dst, via, dev string }{{"source", SinkIP + "/32", "198.18.0.1", "srcpeer"}, {"sink", SourceIP + "/32", "198.18.0.5", "dstpeer"}} {
-		if _, err := f.run(ctx, item.role, ipPath, []string{"route", "add", item.dst, "via", item.via, "dev", item.dev}, "", ""); err != nil {
+		commands = append(commands, setupCommand{item.role, ipPath, []string{"route", "add", item.dst, "via", item.via, "dev", item.dev}, "", ""})
+	}
+	// /proc/sys/net is namespace scoped; this child first enters the pinned gateway.
+	commands = append(commands, setupCommand{"gateway", f.self, []string{"--nft-fixture", "forward", strconv.FormatUint(f.host, 10)}, "", ""}, setupCommand{"gateway", nftPath, []string{"-f", "-"}, "", "add table inet andeiva_sentinel\n"})
+	return commands
+}
+
+func (f *Fixture) setup(ctx context.Context) error {
+	for _, command := range f.setupCommands() {
+		if _, err := f.run(ctx, command.role, command.binary, command.args, command.peer, command.input); err != nil {
 			return err
 		}
 	}
-	// /proc/sys/net is namespace scoped; this child first enters the pinned gateway.
-	if _, err := f.run(ctx, "gateway", f.self, []string{"--nft-fixture", "forward", strconv.FormatUint(f.host, 10)}, "", ""); err != nil {
+	return nil
+}
+
+func (f *Fixture) allowedCommand(role, binary string, args []string, peer string, unprivileged, netAdmin bool) bool {
+	if !unprivileged && !netAdmin {
+		for _, plan := range f.setupCommands() {
+			if role == plan.role && binary == plan.binary && peer == plan.peer && slices.Equal(args, plan.args) {
+				return true
+			}
+		}
+		return role == "gateway" && binary == nftPath && peer == "" && slices.Equal(args, sentinelArgs())
+	}
+	if !unprivileged || f.uid == 0 || f.gid == 0 || binary != f.self || peer != "" {
+		return false
+	}
+	if netAdmin {
+		if role != "gateway" || len(args) != 4 || args[0] != "--guardian" || len(args[1]) != 32 || args[2] != strconv.FormatUint(f.host, 10) || args[3] != strconv.Itoa(os.Getpid()) {
+			return false
+		}
+		id, err := hex.DecodeString(args[1])
+		return err == nil && len(id) == 16 && hex.EncodeToString(id) == args[1]
+	}
+	if role == "sink" && slices.Equal(args, []string{"--nft-fixture", "listen", strconv.FormatUint(f.host, 10)}) {
+		return true
+	}
+	if (role == "source" || role == "sink") && len(args) == 5 && args[0] == "--nft-fixture" && args[1] == "probe" && args[4] == strconv.FormatUint(f.host, 10) {
+		port, err := strconv.Atoi(args[3])
+		return err == nil && strconv.Itoa(port) == args[3] && validProbe(args[2], port)
+	}
+	return false
+}
+
+func sentinelArgs() []string { return []string{"-j", "list", "table", "inet", "andeiva_sentinel"} }
+
+func (f *Fixture) readSentinel(ctx context.Context) ([]byte, error) {
+	data, err := f.run(ctx, "gateway", nftPath, sentinelArgs(), "", "")
+	if err != nil {
+		return nil, err
+	}
+	var document any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, err
+	}
+	return json.Marshal(document)
+}
+
+// CheckSentinel detects changes to the separate inert table, including handles.
+func (f *Fixture) CheckSentinel(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	data, err := f.readSentinel(ctx)
+	if err != nil {
 		return err
 	}
-	_, err := f.run(ctx, "gateway", nftPath, []string{"-f", "-"}, "", "add table inet andeiva_sentinel\n")
-	return err
+	if len(f.sentinel) == 0 || !bytes.Equal(data, f.sentinel) {
+		return errors.New("ANDEIVA_NFT_FIXTURE_SENTINEL_CHANGED")
+	}
+	return nil
 }
 
 func (f *Fixture) startListener(ctx context.Context) error {
@@ -323,8 +401,8 @@ func (f *Fixture) startListener(ctx context.Context) error {
 	}
 }
 
-// StartGateway exposes no namespace selection. args are trusted harness arguments
-// to this same executable, not an external helper command or a shell fragment.
+// StartGateway starts only the fixed guardian role of this executable, with its
+// run identity bound to the retained host namespace and this supervisor PID.
 func (f *Fixture) StartGateway(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (*exec.Cmd, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

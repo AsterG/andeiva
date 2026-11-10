@@ -11,7 +11,8 @@ import (
 
 // DecodeObservation accepts the exact fixture semantics, preserving rule order.
 // Comments identify candidate rules; comparison of every expression establishes
-// their meaning. Only kernel-assigned object handles and metainfo are ignored.
+// their meaning. Kernel handles/metainfo and the documented redundant protocol
+// dependency elision in nft 1.1.3 are normalized; payload selectors stay mandatory.
 func DecodeObservation(data []byte) (configpoc.Revision, error) {
 	if len(data) == 0 || len(data) > MaxObservation || !uniqueJSONFields(data) {
 		return configpoc.Revision{}, ErrObservation
@@ -74,10 +75,10 @@ func DecodeObservation(data []byte) (configpoc.Revision, error) {
 			return configpoc.Revision{}, ErrObservation
 		}
 		expressions, ok := rule["expr"].([]any)
-		if !ok || len(expressions) != 8 {
+		if !ok || len(expressions) < 6 || len(expressions) > 8 {
 			return configpoc.Revision{}, ErrObservation
 		}
-		verdict, ok := expressions[7].(map[string]any)
+		verdict, ok := expressions[len(expressions)-1].(map[string]any)
 		if !ok || len(verdict) != 1 {
 			return configpoc.Revision{}, ErrObservation
 		}
@@ -97,12 +98,58 @@ func DecodeObservation(data []byte) (configpoc.Revision, error) {
 	if err != nil {
 		return configpoc.Revision{}, ErrObservation
 	}
-	actual, _ := json.Marshal(objects)
-	expected, _ := json.Marshal(policyObjects(compiled.Revision))
-	if !bytes.Equal(actual, expected) {
-		return configpoc.Revision{}, ErrObservation
+	expected := policyObjects(compiled.Revision)
+	for i := range objects {
+		if !sameObservedObject(objects[i], expected[i]) {
+			return configpoc.Revision{}, ErrObservation
+		}
 	}
 	return compiled.Revision, nil
+}
+
+func equalJSON(a, b any) bool {
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return bytes.Equal(left, right)
+}
+
+// nft's delinearizer removes nfproto/l4proto dependencies when the exact typed
+// payload expressions imply them (upstream v1.1.3 netlink_delinearize.c and
+// tests/py/inet/meta.t.json.output). Match only complete expected rule variants;
+// never discard arbitrary observed expressions or infer meaning from comments.
+func sameObservedObject(actual, expected object) bool {
+	rule, ok := expected["rule"].(object)
+	if !ok {
+		return equalJSON(actual, expected)
+	}
+	expressions := rule["expr"].([]object)
+	for mask := 0; mask < 4; mask++ {
+		for _, numeric := range []bool{false, true} {
+			variant := make([]object, 0, len(expressions))
+			for i, expression := range expressions {
+				if (i == 0 && mask&1 != 0) || (i == 5 && mask&2 != 0) {
+					continue
+				}
+				if i == 5 && numeric {
+					protocol := 6
+					if expression["match"].(object)["right"] == "udp" {
+						protocol = 17
+					}
+					expression = match(object{"meta": object{"key": "l4proto"}}, protocol)
+				}
+				variant = append(variant, expression)
+			}
+			candidate := make(object, len(rule))
+			for key, value := range rule {
+				candidate[key] = value
+			}
+			candidate["expr"] = variant
+			if equalJSON(actual, object{"rule": candidate}) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Reject duplicate keys rather than letting the decoder silently select a value.

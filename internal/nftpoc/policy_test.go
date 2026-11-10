@@ -104,3 +104,68 @@ func TestObservationRejectsSemanticDrift(t *testing.T) {
 		t.Fatalf("known volatile fields rejected: %v", err)
 	}
 }
+
+func TestObservationNft113ProtocolDependencyRendering(t *testing.T) {
+	artifact, err := Compile(FixtureConfig(true, true, true, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for mask := 0; mask < 4; mask++ {
+		objects := policyObjects(artifact.Revision)
+		for _, entry := range objects[2:] {
+			rule := entry["rule"].(object)
+			original := rule["expr"].([]object)
+			var rendered []object
+			for i, expression := range original {
+				if (i == 0 && mask&1 != 0) || (i == 5 && mask&2 != 0) {
+					continue
+				}
+				if i == 5 {
+					protocol := 6
+					if expression["match"].(object)["right"] == "udp" {
+						protocol = 17
+					}
+					expression = match(object{"meta": object{"key": "l4proto"}}, protocol)
+				}
+				rendered = append(rendered, expression)
+			}
+			rule["expr"] = rendered
+		}
+		data, _ := json.Marshal(object{"nftables": objects})
+		got, err := DecodeObservation(data)
+		if err != nil || got.Hash != artifact.Revision.Hash {
+			t.Fatalf("nft rendering mask=%d: %v", mask, err)
+		}
+		for name, changed := range map[string][]byte{
+			"wrong-payload-family":    bytes.Replace(data, []byte(`"protocol":"ip"`), []byte(`"protocol":"ip6"`), 1),
+			"wrong-payload-transport": bytes.Replace(data, []byte(`"protocol":"tcp"`), []byte(`"protocol":"udp"`), 1),
+			"wrong-input":             bytes.Replace(data, []byte(`"right":"src0"`), []byte(`"right":"dst0"`), 1),
+			"wrong-verdict":           bytes.Replace(data, []byte(`{"accept":null}`), []byte(`{"drop":null}`), 1),
+		} {
+			if _, err := DecodeObservation(changed); err == nil {
+				t.Fatalf("mask=%d accepted %s", mask, name)
+			}
+		}
+		// Even when protocol dependencies disappear, all five payload/interface
+		// selectors and their ordering remain required in both directions.
+		for index := range objects[2]["rule"].(object)["expr"].([]object) {
+			var changed struct {
+				Objects []object `json:"nftables"`
+			}
+			if err := json.Unmarshal(data, &changed); err != nil {
+				t.Fatal(err)
+			}
+			rule := changed.Objects[2]["rule"].(map[string]any)
+			exprs := rule["expr"].([]any)
+			rule["expr"] = append(exprs[:index], exprs[index+1:]...)
+			mutated, _ := json.Marshal(object{"nftables": changed.Objects})
+			_, err := DecodeObservation(mutated)
+			// Only nfproto and l4proto are allowed to be elided.
+			removed := objects[2]["rule"].(object)["expr"].([]object)[index]
+			dependency := equalJSON(removed, match(object{"meta": object{"key": "nfproto"}}, "ipv4")) || equalJSON(removed, match(object{"meta": object{"key": "l4proto"}}, 6))
+			if (err == nil) != dependency {
+				t.Fatalf("mask=%d selector deletion %d: %v", mask, index, err)
+			}
+		}
+	}
+}
