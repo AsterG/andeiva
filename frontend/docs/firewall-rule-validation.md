@@ -14,8 +14,9 @@ constitute production acceptance.
 The API/official CLI scenario completed **86 checks, 32 real probes** (6 allowed,
 26 denied) and **8 exact ruleset readbacks** across two sequential fixtures. It
 created disabled rules, staged and validated them, committed and saved them,
-enabled them through CLI, confirmed and saved, and verified a 30-second
-unconfirmed change reverted. Historical rollback restored disabled rules and
+enabled them through CLI, confirmed and saved, and requested a 30-second
+confirmation lease. Restoration was verified after the returned deadline;
+timer precision was not measured. Historical rollback restored disabled rules and
 then the original schema-2 revision. An API restart preserved unsaved Running;
 a fresh fixture using the same journal restored saved Startup.
 
@@ -41,7 +42,7 @@ The first browser attempt, run 001, failed when manual checkpoint transfer
 exceeded the coordination deadline. It is not counted as a pass. Run 002 used
 automated transfer and completed the four checkpoints, final Save and logout.
 Browser and controller reports were correlated; checkpoint files alone are not
-independent browser attestation. All three completed fixture reports recorded
+independent browser attestation. The three successful fixtures recorded
 successful cleanup and unchanged host state under the existing laboratory checks.
 
 ### Resource observations and limits
@@ -77,7 +78,8 @@ El recorrido API/CLI oficial completó **86 comprobaciones, 32 sondas reales**
 (6 permitidas, 26 denegadas) y **8 lecturas exactas del ruleset** en dos entornos
 aislados consecutivos. Creó reglas deshabilitadas, preparó y validó la candidata,
 aplicó y guardó, habilitó mediante CLI, confirmó y guardó; además verificó la
-reversión de un cambio no confirmado a los 30 segundos. El rollback histórico
+reversión después del plazo devuelto para una confirmación solicitada de 30 segundos,
+sin medir la precisión del temporizador. El rollback histórico
 restauró las reglas deshabilitadas y después la revisión original de esquema 2.
 Reiniciar la API conservó Running sin guardar; recrear el entorno con el mismo
 registro persistente restauró Startup guardada.
@@ -106,7 +108,7 @@ plazo de coordinación; no se contabiliza como aprobado. El intento 002 automati
 el traslado y completó los cuatro puntos, guardado final y cierre de sesión. Se
 correlacionaron los informes del navegador y del controlador; los archivos de
 coordinación solos no son una prueba independiente del navegador. Los tres
-informes completos registraron limpieza correcta y estado del host sin cambios
+entornos de las ejecuciones satisfactorias registraron limpieza correcta y estado del host sin cambios
 según las comprobaciones existentes del laboratorio.
 
 ### Recursos observados y límites
@@ -142,7 +144,8 @@ O cenário API/CLI oficial concluiu **86 verificações, 32 sondagens reais**
 (6 permitidas, 26 negadas) e **8 leituras exatas do conjunto de regras** em dois
 ambientes isolados consecutivos. Criou regras desabilitadas, preparou e validou a
 candidata, aplicou e salvou, habilitou pela CLI, confirmou e salvou; também verificou
-a reversão de uma alteração não confirmada após 30 segundos. O rollback histórico
+a reversão depois do prazo retornado para uma confirmação solicitada de 30 segundos,
+sem medir a precisão do temporizador. O rollback histórico
 restaurou as regras desabilitadas e depois a revisão original do esquema 2.
 Reiniciar a API preservou Running não salva; recriar o ambiente com o mesmo
 registro persistente restaurou Startup salva.
@@ -169,8 +172,8 @@ A tentativa 001 falhou porque a transferência manual dos pontos de controle
 excedeu o prazo de coordenação; não é contabilizada como aprovada. A tentativa 002
 automatizou a transferência e concluiu os quatro pontos, salvamento final e logout.
 Os relatórios do navegador e do controlador foram correlacionados; arquivos de
-coordenação isolados não são uma prova independente do navegador. Os três relatórios
-completos registraram limpeza correta e estado do host sem alterações conforme
+coordenação isolados não são uma prova independente do navegador. Os três ambientes
+das execuções bem-sucedidas registraram limpeza correta e estado do host sem alterações conforme
 as verificações existentes do laboratório.
 
 ### Recursos observados e limites
