@@ -15,7 +15,7 @@ Private credentials, raw reports, host inventory and screenshots are not distrib
 | Authorization | Anonymous Web requests returned 401; viewer writes returned 403. API denied viewer changes/history and preserved the configuration. |
 | Deadline | An unconfirmed change restored its verified predecessor after the returned deadline. This is not a precision measurement of timer duration. |
 | Process faults | API kill, helper kill and API suspension during a pending commit recovered through an owned-fixture reset. Suspension acknowledgement preceded the deadline by 29.02 s. |
-| Traffic after recovery | 28 authenticated HTTPS/SSH probes and 16 source-denial timeouts, across IPv4/IPv6, with positive controls and expected revision hashes. |
+| Traffic after recovery | 28 authenticated HTTPS/SSH probes, 12 timeouts from unauthorized sources and four timeouts to retired pending-revision ports, across IPv4/IPv6, with positive controls and expected revision hashes. |
 | Disable | Zero effective managed rules/listeners; four probes to retired HTTPS/SSH bindings timed out while the fixed recovery endpoint remained available. Running and Startup retained the disabled service definitions. |
 | Browser presentation | Real browser captures in EN/ES/PT, Light/Dark and desktop/mobile; original logo unchanged. No mocked requests or TLS-validation bypass. |
 | Cleanup | Owned processes and recovery listener stopped; host nftables and all route tables unchanged. Interface identity/address data unchanged apart from DHCP lifetime values. Installed Alpha and host SSH stayed active. |
@@ -66,7 +66,8 @@ y escritorio/móvil, conservando el logotipo y la validación TLS.
 
 Tras matar API/helper o suspender API durante un commit pendiente, la recuperación
 recreó la fixture. La suspensión se confirmó 29,02 s antes del vencimiento.
-Veintiocho sondas autenticadas y 16 timeouts de orígenes denegados verificaron
+Veintiocho sondas autenticadas, 12 timeouts desde orígenes no autorizados y cuatro
+timeouts a puertos retirados de la revisión pendiente verificaron
 HTTPS/SSH IPv4/IPv6 con controles positivos. La desactivación dejó cero reglas y
 listeners gestionados, conservó sus definiciones y el acceso fijo de recuperación;
 cuatro sondas a los puertos retirados terminaron en timeout. Las reglas y rutas
@@ -100,7 +101,8 @@ o logotipo original e a validação TLS.
 
 Após encerrar API/helper ou suspender a API durante um commit pendente, a recuperação
 recriou a fixture. A suspensão foi confirmada 29,02 s antes do prazo. Vinte e oito
-sondas autenticadas e 16 timeouts de origens negadas verificaram HTTPS/SSH IPv4/IPv6
+sondas autenticadas, 12 timeouts de origens não autorizadas e quatro timeouts em
+portas retiradas da revisão pendente verificaram HTTPS/SSH IPv4/IPv6
 com controles positivos. A desativação deixou zero regras/listeners gerenciados,
 preservou suas definições e o acesso fixo de recuperação; quatro sondas às portas
 retiradas terminaram em timeout. Regras e rotas do host permaneceram intactas;
