@@ -1,8 +1,7 @@
 # Laboratorio administrativo de firewall — Español
 
-Estado: implementación experimental y procedimiento reproducible. La integración
-nativa, las pruebas reales de fallos y las mediciones de recursos siguen pendientes
-hasta registrar evidencia de esta revisión exacta. No es una guía de appliance productivo.
+Estado: implementación experimental con validación acotada en Debian. Consulte
+[resultados y limitaciones](../VALIDATION.md). No es una guía de appliance productivo.
 
 ## Preparación e instalación versionada
 
@@ -271,7 +270,17 @@ reinicio API, Startup/arranque completo, denegación viewer, generaciones obsole
 vencimiento de sesión, cierre por fallo helper, invariancia del host y limpieza.
 Mida CPU, RSS máximo, tamaño del journal y duración real. El informe del supervisor
 aporta algunos valores; no constituye por sí solo un benchmark de capacidad. Aquí
-no se afirma ningún resultado nativo ni objetivo de recursos alcanzado.
+se registran mediciones separadas, sin afirmar objetivos de capacidad alcanzados.
+
+Las ejecuciones comprobaron creación desde Web, revisiones coincidentes CLI/API,
+TCP/UDP permitido y denegado, rechazos de permisos, concurrencia, save/rollback,
+vencimiento sin API, limpieza al caer el helper y recuperación de Startup. La repetición
+final duró 57,447 segundos, consumió 0,041 segundos CPU del supervisor y 0,609 de hijos;
+el mayor pico RSS de un hijo fue 19.096 KiB. Incluyen pausas, no RAM agregada ni throughput.
+Ante un rename ambiguo del journal, conserve evidencia y reinicie explícitamente
+el laboratorio completo desde Startup guardado; no se promete recuperar cambios sin guardar.
+No están validados cortes de energía, caída del supervisor completo, revocación de
+conexiones duraderas bajo carga ni MFA productivo. Los tests con fixtures son distintos del tráfico real.
 
 Este flujo no implementa IDS/IPS, antivirus, WAF, inspección TLS, filtro DNS, NAT,
 VPN, AD SSO, MFA, HA ni instalador de appliance. Sus permisos nunca habilitan tráfico

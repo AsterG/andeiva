@@ -61,8 +61,14 @@ func Compile(config configpoc.Config) (Artifact, error) {
 		create = append(create, object{"add": entry})
 	}
 	batch := append([]object{{"delete": object{"table": object{"family": "inet", "name": TableName}}}}, create...)
-	createData, _ := json.Marshal(object{"nftables": create})
-	batchData, _ := json.Marshal(object{"nftables": batch})
+	createData, err := json.Marshal(object{"nftables": create})
+	if err != nil {
+		return Artifact{}, ErrPolicy
+	}
+	batchData, err := json.Marshal(object{"nftables": batch})
+	if err != nil {
+		return Artifact{}, ErrPolicy
+	}
 	sum := sha256.Sum256(batchData)
 	return Artifact{Revision: revision, Digest: hex.EncodeToString(sum[:]), Batch: batchData, Create: createData}, nil
 }

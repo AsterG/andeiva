@@ -2,6 +2,7 @@ package nftengine
 
 import (
 	"errors"
+
 	"github.com/AsterG/andeiva/internal/configpoc"
 )
 

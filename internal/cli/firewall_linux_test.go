@@ -65,6 +65,11 @@ func TestOfficialCLIHTTPSLifecycle(t *testing.T) {
 				if json.NewDecoder(r.Body).Decode(&received) != nil {
 					t.Error("invalid transaction")
 				}
+				if received.Operation == "confirm" && received.Target != runningHash {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = fmt.Fprintf(w, `{"code":"ANDEIVA_CONFIG_INVALID","request_id":%q}`, strings.Repeat("a", 32))
+					return
+				}
 			}
 			_, _ = fmt.Fprintf(w, `{"snapshot":{"generation":7,"running":{"hash":%q}},"effective":{"state":"verified","rules":[]}}`, runningHash)
 		}
@@ -104,5 +109,21 @@ func TestOfficialCLIHTTPSLifecycle(t *testing.T) {
 	}
 	if len(events) != 4 || events[3].Action != "logout" {
 		t.Fatal("confirmation session leaked")
+	}
+	out.Reset()
+	errOut.Reset()
+	explicitTarget := strings.Repeat("d", 64)
+	explicitArgs := append(append([]string{}, args...), "--target", explicitTarget)
+	if code := RunInput(explicitArgs, nil, &out, &errOut); code != 2 || calls != 3 || received.Target != explicitTarget || out.Len() != 0 || !strings.Contains(errOut.String(), "ANDEIVA_CONFIG_INVALID") {
+		t.Fatal("explicit confirmation target was rejected locally or replaced", received, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	explicitArgs[len(explicitArgs)-1] = runningHash
+	if code := RunInput(explicitArgs, nil, &out, &errOut); code != 0 || calls != 4 || received.Target != runningHash {
+		t.Fatal("matching explicit confirmation target failed", received, errOut.String())
+	}
+	if len(events) != 8 || events[5].Action != "logout" || events[7].Action != "logout" {
+		t.Fatal("explicit confirmation session leaked")
 	}
 }

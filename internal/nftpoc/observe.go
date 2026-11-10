@@ -3,11 +3,11 @@ package nftpoc
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/AsterG/andeiva/internal/nftengine"
 	"io"
 	"strings"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/nftengine"
 )
 
 // DecodeObservation accepts the exact fixture semantics, preserving rule order.
