@@ -134,24 +134,42 @@ func API(ctx context.Context, c Config) error {
 	}
 	defer health()
 	server := &http.Server{Handler: admitted(handler), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{pair}}, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, ErrorLog: log.New(io.Discard, "", 0)}
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			_ = server.Shutdown(stop)
-		case <-done:
-		}
-	}()
 	allowed, _ := netip.ParsePrefix(c.AllowedCIDR)
 	if notifyReady() != nil {
 		return ErrUnavailable
 	}
-	e = server.ServeTLS(&boundedListener{Listener: listener, allowed: allowed}, "", "")
-	if errors.Is(e, http.ErrServerClosed) && ctx.Err() != nil {
+	return serveAndDrain(ctx, server, func() error {
+		return server.ServeTLS(&boundedListener{Listener: listener, allowed: allowed}, "", "")
+	}, 5*time.Second)
+}
+
+// Serve returns as soon as Shutdown closes the listener, before active handlers
+// finish. Join the drain before API's defers release their shared dependencies.
+func serveAndDrain(ctx context.Context, server *http.Server, serve func() error, timeout time.Duration) error {
+	serveFinished := make(chan struct{})
+	shutdownFinished := make(chan error, 1)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-serveFinished:
+		}
+		stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+		defer cancel()
+		err := server.Shutdown(stop)
+		if err != nil {
+			// A failed drain must cancel requests and close connections before
+			// dependency cleanup, preserving the failure (including timeout).
+			err = errors.Join(err, server.Close())
+		}
+		shutdownFinished <- err
+	}()
+	serveErr := serve()
+	close(serveFinished)
+	if err := <-shutdownFinished; err != nil {
+		return errors.Join(ErrUnavailable, err)
+	}
+	if errors.Is(serveErr, http.ErrServerClosed) && ctx.Err() != nil {
 		return nil
 	}
-	return ErrUnavailable
+	return errors.Join(ErrUnavailable, serveErr)
 }
