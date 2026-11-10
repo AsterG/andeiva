@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
@@ -199,6 +200,12 @@ func TestAdapterTransactionStatesAndRecovery(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the journal implementation requires Linux")
 	}
+	// Exercise lease expiry without charging filesystem or race-detector latency
+	// against the simulated transport's confirmation window.
+	synctest.Test(t, testAdapterTransactionStatesAndRecovery)
+}
+
+func testAdapterTransactionStatesAndRecovery(t *testing.T) {
 	transport := &memoryTransport{state: observation(t, DefaultConfig())}
 	dir := filepath.Join(t.TempDir(), "state")
 	service, err := configpoc.Open(dir, []configpoc.Engine{New(transport)}, configpoc.Options{})
@@ -243,10 +250,13 @@ func TestAdapterTransactionStatesAndRecovery(t *testing.T) {
 	if state.Pending == nil || state.Running.Hash != b.Revision.Hash {
 		t.Fatal("provisional commit not active")
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && status().Pending != nil {
-		time.Sleep(10 * time.Millisecond)
+	time.Sleep(time.Until(state.Pending.Deadline) - time.Millisecond)
+	synctest.Wait()
+	if state = status(); state.Pending == nil || state.Running.Hash != b.Revision.Hash {
+		t.Fatal("provisional revision expired before its deadline")
 	}
+	time.Sleep(time.Millisecond)
+	synctest.Wait()
 	state = status()
 	if state.Pending != nil || state.Running.Hash != a.Revision.Hash || state.Startup.Hash != a.Revision.Hash {
 		t.Fatal("expiry did not restore observed revision")
