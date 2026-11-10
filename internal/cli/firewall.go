@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/adminclient"
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/firewallipc"
 )
 
 var firewallCommands = []string{"list", "status", "stage", "validate", "commit", "confirm", "save", "rollback", "history", "traffic", "help", "completion"}
@@ -159,9 +159,7 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 		if readErr != nil || len(data) > 65536 {
 			return fail(nil)
 		}
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF {
+		if firewallipc.Decode(data, &request) != nil {
 			return fail(nil)
 		}
 		if request.Operation != "" && request.Operation != command {
@@ -171,6 +169,11 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 	request.Operation = command
 	if command == "stage" && request.Config == nil {
 		return fail(nil)
+	}
+	if request.Config != nil {
+		if _, err := configpoc.Canonical(*request.Config); err != nil {
+			return fail(err)
+		}
 	}
 	if options["--target"] != "" {
 		request.Target = options["--target"]
@@ -203,6 +206,24 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 		return fail(err)
 	}
 	credentials = adminclient.Credentials{}
+	if request.Config != nil && request.Config.SchemaVersion == 4 {
+		capabilities, e := client.Capabilities(ctx)
+		supported := false
+		for _, version := range capabilities.FirewallConfigSchemaVersions {
+			if version == 4 {
+				supported = true
+			}
+		}
+		if e == nil && (!capabilities.Firewall || !capabilities.FirewallRuleEnabled || !supported) {
+			e = configpoc.ErrInvalid
+		}
+		if e != nil {
+			logoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = client.Logout(logoutCtx)
+			return fail(e)
+		}
+	}
 	var result any
 	if command == "traffic" {
 		result, err = client.Traffic(ctx, before, limit, options["--stream"])

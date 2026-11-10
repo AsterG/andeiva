@@ -114,7 +114,7 @@ func API(ctx context.Context, c Config) error {
 		}
 		files.ServeHTTP(w, r)
 	})
-	handler, e := adminapi.New(adminapi.Options{Origin: c.Origin(), Auth: auth, Backend: service, Static: static, Observe: func(ctx context.Context) (adminapi.Effective, error) {
+	handler, e := adminapi.New(adminapi.Options{FirewallRuleState: true, Origin: c.Origin(), Auth: auth, Backend: service, Static: static, Observe: func(ctx context.Context) (adminapi.Effective, error) {
 		r, e := client.Observe(ctx)
 		if e != nil {
 			return adminapi.Effective{}, e

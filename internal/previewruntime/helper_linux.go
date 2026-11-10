@@ -177,12 +177,9 @@ func Helper(ctx context.Context, c Config) error {
 		return ErrUnavailable
 	}
 	run := hex.EncodeToString(nonce[:])
-	engine := NewCounterEngine(run, firewallnft.New(transport), func(ctx context.Context) (string, []firewallipc.Counter, error) {
-		data, e := transport.Observe(ctx)
-		if e != nil {
-			return "", nil, e
-		}
-		o, e := firewallnft.InspectObservation(data)
+	policyEngine := firewallnft.New(transport)
+	engine := NewCounterEngine(run, policyEngine, func(ctx context.Context) (string, []firewallipc.Counter, error) {
+		o, e := policyEngine.Inspect(ctx)
 		if e != nil {
 			return "", nil, ErrUnavailable
 		}

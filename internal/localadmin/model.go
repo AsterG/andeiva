@@ -126,7 +126,7 @@ func copyValue[T any](v T) T {
 
 func validateProfile(c configpoc.Config, inventory []localpolicy.Interface) error {
 	r, err := configpoc.Canonical(c)
-	if err != nil || len(r.Config.Rules) != 0 || r.Config.DefaultAction != "deny" {
+	if err != nil || r.Config.SchemaVersion == 4 || len(r.Config.Rules) != 0 || r.Config.DefaultAction != "deny" {
 		return configpoc.ErrInvalid
 	}
 	if r.Config.SchemaVersion != 3 {

@@ -227,12 +227,9 @@ func helperProcess(run, hostValue, parent string) error {
 	if transport.Check(context.Background(), initial.Create) != nil || transport.Apply(context.Background(), initial.Create) != nil {
 		return errHelper
 	}
-	engine := &counterEngine{run: run, engine: firewallnft.New(transport), read: func(ctx context.Context) (string, []firewallipc.Counter, error) {
-		data, err := transport.Observe(ctx)
-		if err != nil {
-			return "", nil, errHelper
-		}
-		observation, err := firewallnft.InspectObservation(data)
+	policyEngine := firewallnft.New(transport)
+	engine := &counterEngine{run: run, engine: policyEngine, read: func(ctx context.Context) (string, []firewallipc.Counter, error) {
+		observation, err := policyEngine.Inspect(ctx)
 		if err != nil {
 			return "", nil, errHelper
 		}

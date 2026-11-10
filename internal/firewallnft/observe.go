@@ -33,6 +33,20 @@ func DecodeObservation(data []byte) (configpoc.Revision, error) {
 // InspectObservation verifies semantic expressions and order before exposing
 // counters. IDs and revision comments alone never establish effective policy.
 func InspectObservation(data []byte) (Observation, error) {
+	return inspectObservation(data, nil)
+}
+
+// VerifyObservation uses a complete trusted revision, including disabled rules,
+// and compares every effective expression and its order against its compiler.
+func VerifyObservation(data []byte, expected configpoc.Revision) (Observation, error) {
+	r, err := configpoc.Canonical(expected.Config)
+	if err != nil || r.Hash != expected.Hash {
+		return Observation{}, ErrObservation
+	}
+	return inspectObservation(data, &r)
+}
+
+func inspectObservation(data []byte, trusted *configpoc.Revision) (Observation, error) {
 	if len(data) == 0 || len(data) > MaxObservation || !nftengine.UniqueJSONFields(data) {
 		return Observation{}, ErrObservation
 	}
@@ -113,44 +127,54 @@ func InspectObservation(data []byte) (Observation, error) {
 		return Observation{}, ErrObservation
 	}
 	config := DefaultConfig()
-	for i := 2; i < len(objects); i += 2 {
-		body, ok := objects[i]["rule"].(map[string]any)
-		if !ok {
-			return Observation{}, ErrObservation
+	if trusted != nil {
+		config = trusted.Config
+	} else {
+		for i := 2; i < len(objects); i += 2 {
+			body, ok := objects[i]["rule"].(map[string]any)
+			if !ok {
+				return Observation{}, ErrObservation
+			}
+			comment, _ := body["comment"].(string)
+			prefix := CompilerVersion + ":"
+			if !strings.HasPrefix(comment, prefix) || !strings.HasSuffix(comment, ":f") {
+				return Observation{}, ErrObservation
+			}
+			id := strings.TrimSuffix(strings.TrimPrefix(comment, prefix), ":f")
+			exprs, ok := body["expr"].([]any)
+			if !ok {
+				return Observation{}, ErrObservation
+			}
+			m, err := extractMatch(exprs)
+			if err != nil {
+				return Observation{}, err
+			}
+			last, ok := exprs[len(exprs)-1].(map[string]any)
+			if !ok || len(last) != 1 {
+				return Observation{}, ErrObservation
+			}
+			action := ""
+			if value, exists := last["accept"]; exists && value == nil {
+				action = "allow"
+			}
+			if value, exists := last["drop"]; exists && value == nil {
+				action = "deny"
+			}
+			config.Rules = append(config.Rules, configpoc.Rule{ID: id, Action: action, Match: m})
 		}
-		comment, _ := body["comment"].(string)
-		prefix := CompilerVersion + ":"
-		if !strings.HasPrefix(comment, prefix) || !strings.HasSuffix(comment, ":f") {
-			return Observation{}, ErrObservation
-		}
-		id := strings.TrimSuffix(strings.TrimPrefix(comment, prefix), ":f")
-		exprs, ok := body["expr"].([]any)
-		if !ok {
-			return Observation{}, ErrObservation
-		}
-		m, err := extractMatch(exprs)
-		if err != nil {
-			return Observation{}, err
-		}
-		last, ok := exprs[len(exprs)-1].(map[string]any)
-		if !ok || len(last) != 1 {
-			return Observation{}, ErrObservation
-		}
-		action := ""
-		if value, exists := last["accept"]; exists && value == nil {
-			action = "allow"
-		}
-		if value, exists := last["drop"]; exists && value == nil {
-			action = "deny"
-		}
-		config.Rules = append(config.Rules, configpoc.Rule{ID: id, Action: action, Match: m})
 	}
 	artifact, err := Compile(config)
 	if err != nil {
 		return Observation{}, ErrObservation
 	}
 	expected := policyObjects(artifact.Revision)
-	if len(expected) != len(objects) || len(counts) != len(config.Rules)*2 {
+	active := 0
+	for _, rule := range config.Rules {
+		if rule.IsEnabled() {
+			active++
+		}
+	}
+	if len(expected) != len(objects) || len(counts) != active*2 {
 		return Observation{}, ErrObservation
 	}
 	for i := range expected {
@@ -159,8 +183,13 @@ func InspectObservation(data []byte) (Observation, error) {
 		}
 	}
 	result := Observation{Revision: artifact.Revision, Rules: make([]RuleCounter, 0, len(config.Rules))}
-	for i, rule := range config.Rules {
+	i := 0
+	for _, rule := range config.Rules {
+		if !rule.IsEnabled() {
+			continue
+		}
 		a, b := counts[2*i], counts[2*i+1]
+		i++
 		if math.MaxUint64-a.Packets < b.Packets || math.MaxUint64-a.Bytes < b.Bytes {
 			return Observation{}, ErrObservation
 		}
