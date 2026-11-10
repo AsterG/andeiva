@@ -63,10 +63,16 @@ type Principal struct {
 	Role Role
 }
 type Rule struct {
-	ID     string `json:"id"`
-	Action string `json:"action"`
-	Match  *Match `json:"match,omitempty"`
+	ID      string `json:"id"`
+	Action  string `json:"action"`
+	Match   *Match `json:"match,omitempty"`
+	Enabled *bool  `json:"enabled,omitempty"`
 }
+
+// IsEnabled preserves the enabled meaning of rules in legacy schemas. Schema 4
+// requires an explicit value; callers must validate the configuration first.
+func (r Rule) IsEnabled() bool { return r.Enabled == nil || *r.Enabled }
+
 type PortRange struct {
 	From uint16 `json:"from"`
 	To   uint16 `json:"to"`
@@ -166,7 +172,7 @@ type Options struct {
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 
 func Canonical(config Config) (Revision, error) {
-	if (config.SchemaVersion != 1 && config.SchemaVersion != 2 && config.SchemaVersion != 3) || config.DefaultAction != "deny" || len(config.Rules) > 64 {
+	if (config.SchemaVersion != 1 && config.SchemaVersion != 2 && config.SchemaVersion != 3 && config.SchemaVersion != 4) || config.DefaultAction != "deny" || len(config.Rules) > 64 {
 		return Revision{}, ErrInvalid
 	}
 	if config.SchemaVersion != 3 {
@@ -185,6 +191,9 @@ func Canonical(config Config) (Revision, error) {
 	}
 	seen := make(map[string]bool)
 	for _, rule := range config.Rules {
+		if (config.SchemaVersion == 4) != (rule.Enabled != nil) {
+			return Revision{}, ErrInvalid
+		}
 		if config.SchemaVersion == 1 && rule.Match != nil || config.SchemaVersion >= 2 && !validMatch(rule.Match) {
 			return Revision{}, ErrInvalid
 		}

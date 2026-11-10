@@ -3,6 +3,7 @@
 package firewallnft
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,9 +15,10 @@ import (
 )
 
 const (
-	CompilerVersion = "andeiva.nft.admin.v2"
-	TableName       = "andeiva_admin"
-	MaxObservation  = 512 << 10
+	CompilerVersion          = "andeiva.nft.admin.v2"
+	RuleStateCompilerVersion = "andeiva.nft.admin.v4"
+	TableName                = "andeiva_admin"
+	MaxObservation           = 512 << 10
 	// This mark belongs exclusively to this isolated gateway namespace. It
 	// records prior admission, never authorization independent of current rules.
 	AdmittedMark uint32 = 0x414e4445
@@ -33,14 +35,27 @@ type Artifact struct {
 	Batch, Create []byte
 }
 type object = map[string]any
-type Engine = nftengine.Engine
+type Engine struct{ *nftengine.Engine }
 type Transport = nftengine.Transport
 
 func New(transport Transport) *Engine {
-	return nftengine.New("nft-admin-v2", transport, func(c configpoc.Config) (nftengine.Artifact, error) {
+	return &Engine{nftengine.NewVerified("nft-admin-v2", transport, func(c configpoc.Config) (nftengine.Artifact, error) {
 		a, err := Compile(c)
 		return nftengine.Artifact{Revision: a.Revision, Batch: a.Batch}, err
-	}, DecodeObservation)
+	}, DecodeObservation, func(data []byte, expected configpoc.Revision) error {
+		_, err := VerifyObservation(data, expected)
+		return err
+	})}
+}
+
+// Inspect verifies counters against the complete revision retained by the engine.
+// Rules omitted from the kernel cannot be reconstructed from an nft comment.
+func (e *Engine) Inspect(ctx context.Context) (Observation, error) {
+	r, data, err := e.Readback(ctx)
+	if err != nil {
+		return Observation{}, err
+	}
+	return VerifyObservation(data, r)
 }
 
 func DefaultConfig() configpoc.Config {
@@ -48,7 +63,7 @@ func DefaultConfig() configpoc.Config {
 }
 
 func Compile(config configpoc.Config) (Artifact, error) {
-	if config.SchemaVersion != 2 {
+	if config.SchemaVersion != 2 && config.SchemaVersion != 4 {
 		return Artifact{}, ErrPolicy
 	}
 	revision, err := configpoc.Canonical(config)
@@ -98,11 +113,18 @@ func ports(p configpoc.PortRange) any {
 }
 
 func policyObjects(revision configpoc.Revision) []object {
+	version := CompilerVersion
+	if revision.Config.SchemaVersion == 4 {
+		version = RuleStateCompilerVersion
+	}
 	objects := []object{
-		{"table": object{"family": "inet", "name": TableName, "comment": CompilerVersion + ":" + revision.Hash}},
+		{"table": object{"family": "inet", "name": TableName, "comment": version + ":" + revision.Hash}},
 		{"chain": object{"family": "inet", "table": TableName, "name": "forward", "type": "filter", "hook": "forward", "prio": 0, "policy": "drop"}},
 	}
 	for _, rule := range revision.Config.Rules {
+		if !rule.IsEnabled() {
+			continue
+		}
 		m := rule.Match
 		for _, reverse := range []bool{false, true} {
 			input, output, source, destination, sourcePorts, destinationPorts, direction := "src0", "dst0", m.Source, m.Destination, m.SourcePorts, m.DestinationPorts, "f"
@@ -131,7 +153,7 @@ func policyObjects(revision configpoc.Revision) []object {
 				}
 			}
 			expressions = append(expressions, object{"counter": object{"packets": 0, "bytes": 0}}, object{verdict: nil})
-			objects = append(objects, object{"rule": object{"family": "inet", "table": TableName, "chain": "forward", "expr": expressions, "comment": fmt.Sprintf("%s:%s:%s", CompilerVersion, rule.ID, direction)}})
+			objects = append(objects, object{"rule": object{"family": "inet", "table": TableName, "chain": "forward", "expr": expressions, "comment": fmt.Sprintf("%s:%s:%s", version, rule.ID, direction)}})
 		}
 	}
 	return objects

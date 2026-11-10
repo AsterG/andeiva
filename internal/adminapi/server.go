@@ -41,12 +41,15 @@ type State struct {
 	Effective Effective          `json:"effective"`
 }
 type Options struct {
-	Origin  string
-	Auth    *adminauth.Manager
-	Backend Backend
-	Observe func(context.Context) (Effective, error)
-	Static  http.Handler
-	Local   LocalBackend
+	// FirewallRuleState is asserted only by a runtime with schema-4 verified
+	// compilation, rollback and counter support. It is never client supplied.
+	FirewallRuleState bool
+	Origin            string
+	Auth              *adminauth.Manager
+	Backend           Backend
+	Observe           func(context.Context) (Effective, error)
+	Static            http.Handler
+	Local             LocalBackend
 	// LocalEndpointID comes from the receiving listener, never a request header.
 	LocalEndpointID     string
 	LocalActivationHash string
@@ -74,6 +77,9 @@ func New(options Options) (http.Handler, error) {
 		}
 		options.LocalInventory = inventory.Config.Interfaces
 	} else if options.LocalEndpointID != "" || options.LocalActivationHash != "" || options.LocalRecovery || len(options.LocalInventory) != 0 {
+		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
+	}
+	if options.FirewallRuleState && options.Backend == nil {
 		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
 	}
 	traffic, err := firewalltraffic.New()
@@ -166,7 +172,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if r.URL.Path == "/api/v1/capabilities" && r.Method == http.MethodGet {
-		h.write(w, 200, Capabilities{Firewall: h.options.Backend != nil, LocalServices: h.options.Local != nil, EndpointID: h.options.LocalEndpointID, RecoveryEndpoint: h.options.Local != nil && h.options.LocalRecovery, LocalInterfaces: h.options.LocalInventory})
+		versions := []int{}
+		if h.options.Backend != nil {
+			versions = append(versions, 2)
+			if h.options.FirewallRuleState {
+				versions = append(versions, 4)
+			}
+		}
+		h.write(w, 200, Capabilities{FirewallConfigSchemaVersions: versions, FirewallRuleEnabled: h.options.FirewallRuleState, Firewall: h.options.Backend != nil, LocalServices: h.options.Local != nil, EndpointID: h.options.LocalEndpointID, RecoveryEndpoint: h.options.Local != nil && h.options.LocalRecovery, LocalInterfaces: h.options.LocalInventory})
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/local-services") || r.URL.Path == "/api/v1/effective-policies" {
@@ -213,6 +226,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var req configpoc.Request
 		if err = decode(w, r, &req); err != nil {
 			h.fail(w, 400, "ANDEIVA_REQUEST_INVALID")
+			return
+		}
+		if req.Config != nil && req.Config.SchemaVersion == 4 && !h.options.FirewallRuleState {
+			h.fail(w, 400, "ANDEIVA_CONFIG_INVALID")
 			return
 		}
 		switch req.Operation {

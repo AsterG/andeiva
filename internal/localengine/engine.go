@@ -68,7 +68,7 @@ func (*Engine) Name() string { return "local-services" }
 
 func (e *Engine) compile(c configpoc.Config) (configpoc.Revision, localnft.Artifact, error) {
 	r, err := configpoc.Canonical(c)
-	if err != nil || r.Config.DefaultAction != "deny" || len(r.Config.Rules) != 0 {
+	if err != nil || r.Config.SchemaVersion == 4 || r.Config.DefaultAction != "deny" || len(r.Config.Rules) != 0 {
 		return configpoc.Revision{}, localnft.Artifact{}, ErrState
 	}
 	local := localpolicy.Config{SchemaVersion: 1, Interfaces: e.inventory, Services: []localpolicy.Service{}}

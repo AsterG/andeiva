@@ -134,7 +134,13 @@ func (s *Sampler) Read(ctx context.Context, before uint64, limit int, stream str
 func (s *Sampler) invalidate() { s.base = nil; s.revision = ""; s.epoch = ""; s.observed = time.Time{} }
 func (s *Sampler) record(observation Observation) error {
 	revision, err := configpoc.Canonical(observation.Revision.Config)
-	if err != nil || revision.Hash != observation.Revision.Hash || revision.Config.SchemaVersion != 2 || len(observation.CounterEpoch) == 0 || len(observation.CounterEpoch) > 128 || len(observation.Counters) != len(revision.Config.Rules) {
+	active := 0
+	for _, rule := range revision.Config.Rules {
+		if rule.IsEnabled() {
+			active++
+		}
+	}
+	if err != nil || revision.Hash != observation.Revision.Hash || (revision.Config.SchemaVersion != 2 && revision.Config.SchemaVersion != 4) || len(observation.CounterEpoch) == 0 || len(observation.CounterEpoch) > 128 || len(observation.Counters) != active {
 		return ErrUnavailable
 	}
 	counters := make(map[string]Counter, len(observation.Counters))
@@ -145,6 +151,9 @@ func (s *Sampler) record(observation Observation) error {
 		counters[counter.ID] = counter
 	}
 	for _, rule := range revision.Config.Rules {
+		if !rule.IsEnabled() {
+			continue
+		}
 		if _, ok := counters[rule.ID]; !ok {
 			return ErrUnavailable
 		}
@@ -166,6 +175,9 @@ func (s *Sampler) record(observation Observation) error {
 		return ErrUnavailable
 	}
 	for _, rule := range revision.Config.Rules {
+		if !rule.IsEnabled() {
+			continue
+		}
 		counter := counters[rule.ID]
 		record := Record{ObservedAt: now, Revision: revision.Hash, RuleID: rule.ID, Action: rule.Action, Kind: "baseline", PacketsTotal: strconv.FormatUint(counter.Packets, 10), BytesTotal: strconv.FormatUint(counter.Bytes, 10)}
 		if !baseline {

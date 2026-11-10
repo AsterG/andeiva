@@ -32,6 +32,7 @@ async function fixture(page: Page, role: Session['role'] = 'admin', authenticate
       return route.fulfill({ json: session });
     }
     if (!loggedIn) return route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_REQUIRED', request_id: 'fixture' } });
+    if (path.endsWith('/capabilities')) return route.fulfill({ json: { firewall_rule_enabled: true, firewall_config_schema_versions: [2, 4] } });
     if (path.endsWith('/auth/session')) return route.fulfill({ json: session });
     if (path.endsWith('/auth/logout')) { expect(req.headers()['x-csrf-token']).toBe(session.csrf); loggedIn = false; return route.fulfill({ json: { ok: true } }); }
     if (path.endsWith('/history')) {
@@ -57,7 +58,7 @@ async function fixture(page: Page, role: Session['role'] = 'admin', authenticate
       if (transaction.operation === 'save') snapshot.startup = structuredClone(snapshot.running);
       if (transaction.operation === 'rollback') { expect(transaction.target).toBe(initialHash); snapshot.running = structuredClone(history.revisions[0]!.revision); }
       snapshot.generation++;
-      status = { snapshot, effective: { revision: snapshot.running.hash, state: snapshot.pending ? 'pending_confirmation' : 'verified', rules: snapshot.running.config.rules.map((rule) => ({ id: rule.id, packets: 7, bytes: 256 })) } };
+      status = { snapshot, effective: { revision: snapshot.running.hash, state: snapshot.pending ? 'pending_confirmation' : 'verified', rules: snapshot.running.config.rules.filter((rule) => rule.enabled !== false).map((rule) => ({ id: rule.id, packets: 7, bytes: 256 })) } };
       return route.fulfill({ json: status });
     }
     return route.fulfill({ json: status });
@@ -96,8 +97,9 @@ test('firewall session, CRUD, ordering, confirmed commit, save and historical ro
   await login(page);
   await addRule(page);
   await addRule(page, 'allow-dns', 'udp');
-  await page.getByRole('button', { name: 'Move up: allow-dns', exact: true }).click();
-  await expect(page.getByRole('table').locator('tbody th')).toHaveText(['allow-dns', 'allow-web']);
+  const handle = page.getByRole('button', { name: 'Reorder: allow-dns', exact: true });
+  await handle.focus(); await handle.press('Space'); await handle.press('ArrowUp'); await handle.press('Enter');
+  await expect(page.getByRole('table').locator('tbody th .fw-rule-link')).toHaveText(['allow-dns', 'allow-web']);
   await page.getByRole('button', { name: 'Edit: allow-web', exact: true }).click();
   await page.getByLabel('Destination ports', { exact: true }).fill('8443');
   await page.getByRole('button', { name: 'Keep in local draft', exact: true }).click();
@@ -110,7 +112,7 @@ test('firewall session, CRUD, ordering, confirmed commit, save and historical ro
   await expect(page.getByText('Request completed', { exact: true })).toBeVisible();
   await proceed(page, 'Commit with confirmation');
   expect(mock.transactions.at(-1)?.confirm_for).toBe(60_000_000_000);
-  await expect(page.locator('.ds-badge').filter({ hasText: 'Awaiting confirmation' })).toBeVisible();
+  await expect(page.locator('.ds-badge').filter({ hasText: 'Awaiting confirmation' }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add rule', exact: true })).toBeDisabled();
   await proceed(page, 'Confirm running revision');
   await proceed(page, 'Save running to startup');
@@ -155,6 +157,7 @@ test('firewall removal stays local and session expiry removes sensitive views', 
   const mock = await fixture(page, 'admin', true);
   await page.goto('/firewall');
   await addRule(page);
+  await page.getByLabel('Actions: allow-web', { exact: true }).click();
   await page.getByRole('button', { name: 'Remove: allow-web', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Proceed', exact: true }).click();
   await expect(page.getByText('No rules. Default deny applies.', { exact: true })).toBeVisible();
@@ -205,12 +208,17 @@ test('firewall rejects malformed responses and mismatched effective revisions', 
 
 for (const theme of ['light', 'dark'] as const) {
   test(`firewall ${theme}: visual baseline login and rule editor`, async ({ page }) => {
-    await fixture(page);
+    const mock = await fixture(page);
     await page.goto('/firewall');
     await page.locator('#theme').selectOption(theme);
     await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
     await expect(page).toHaveScreenshot(`firewall-${theme}-login.png`, { fullPage: true });
+    const rules = ['lab-web', 'lab-dns', 'lab-maintenance'].map((id, index) => ({ id, enabled: index !== 2, action: index === 1 ? 'deny' as const : 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: index === 1 ? 'udp' as const : 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: index === 1 ? 53 : 443, to: index === 1 ? 53 : 443 } } }));
+    mock.state().snapshot.running.config = { schema_version: 4, default_action: 'deny', rules };
+    mock.state().snapshot.startup = { hash: 'b'.repeat(64), config: { schema_version: 4, default_action: 'deny', rules: [rules[0]!] } };
+    mock.state().effective.rules = rules.filter((rule) => rule.enabled).map((rule) => ({ id: rule.id, packets: 7, bytes: 256 }));
     await login(page);
+    await expect(page).toHaveScreenshot(`firewall-${theme}-rules.png`, { fullPage: true });
     await fillRule(page);
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
@@ -223,3 +231,142 @@ for (const theme of ['light', 'dark'] as const) {
     }
   });
 }
+
+
+test('rule reorder cancellation, filtering and explicit position preserve local-only edits', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  await addRule(page, 'first'); await addRule(page, 'second'); await addRule(page, 'third');
+  const table = page.getByRole('table', { name: 'Ordered rules', exact: true });
+  const handle = page.getByRole('button', { name: 'Reorder: first', exact: true });
+  await handle.focus(); await handle.press('Space'); await handle.press('End'); await handle.press('Escape');
+  await expect(table.locator('tbody th .fw-rule-link')).toHaveText(['first', 'second', 'third']);
+  await page.getByLabel('Search rules', { exact: true }).fill('first');
+  await expect(handle).toBeDisabled();
+  await expect(table.locator('tbody tr')).toHaveCount(1);
+  await page.getByLabel('Search rules', { exact: true }).clear();
+  await page.getByLabel('Actions: third', { exact: true }).click();
+  const menu = table.locator('details[open]');
+  await menu.getByLabel('Move to position', { exact: true }).fill('1');
+  await menu.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect(table.locator('tbody th .fw-rule-link')).toHaveText(['third', 'first', 'second']);
+  expect(mock.transactions).toEqual([]);
+});
+
+for (const input of ['mouse', 'touch'] as const) {
+  test('rule reorder using real ' + input + ' pointer input', async ({ page }) => {
+    const mock = await fixture(page, 'admin', true);
+    await page.goto('/firewall');
+    await addRule(page, 'first'); await addRule(page, 'second'); await addRule(page, 'third');
+    const handle = page.getByRole('button', { name: 'Reorder: third', exact: true });
+    await handle.scrollIntoViewIfNeeded();
+    const from = await handle.boundingBox();
+    const target = await page.getByRole('button', { name: 'Reorder: first', exact: true }).boundingBox();
+    if (!from || !target) throw new Error('Drag geometry unavailable');
+    const x = from.x + from.width / 2; const start = from.y + from.height / 2; const end = target.y + target.height / 2;
+    if (input === 'mouse') {
+      await page.mouse.move(x, start); await page.mouse.down(); await page.mouse.move(x, end, { steps: 8 }); await page.mouse.up();
+    } else {
+      const client = await page.context().newCDPSession(page);
+      await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: start }] });
+      await client.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: end }] });
+      await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await client.detach();
+    }
+    await expect(page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link')).toHaveText(['third', 'first', 'second']);
+    expect(mock.transactions).toEqual([]);
+  });
+}
+
+test('disabled rule lifecycle uses v4, effective counters absent, Startup order and state tracked', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  await fillRule(page, 'dormant');
+  await page.getByRole('checkbox', { name: 'Enabled', exact: true }).uncheck();
+  await page.getByRole('button', { name: 'Keep in local draft', exact: true }).click();
+  await addRule(page, 'active');
+  await page.getByRole('button', { name: 'Stage candidate', exact: true }).click();
+  await expect(page.getByText('Request completed', { exact: true })).toBeVisible();
+  expect(mock.transactions[0]?.config?.schema_version).toBe(4);
+  expect(mock.transactions[0]?.config?.rules.map((rule) => rule.enabled)).toEqual([false, true]);
+  await proceed(page, 'Commit now');
+  const table = page.getByRole('table', { name: 'Ordered rules', exact: true });
+  const dormant = table.locator('tbody tr').filter({ has: page.getByRole('button', { name: 'Edit: dormant', exact: true }) });
+  await expect(dormant).toContainText('Disabled in Running');
+  await expect(dormant).toContainText('Not applicable');
+  await expect(dormant).toContainText('Not saved');
+  await proceed(page, 'Save running to startup');
+  await expect(dormant).toContainText('Matches Startup');
+  await page.getByRole('checkbox', { name: 'Enabled: dormant', exact: true }).check();
+  await expect(dormant).toContainText('Not applied');
+  await expect(dormant).toContainText('Not saved');
+  expect(mock.state().snapshot.running.config.rules[0]?.enabled).toBe(false);
+  await page.getByRole('button', { name: 'Reorder: active', exact: true }).focus();
+  await page.keyboard.press('Space'); await page.keyboard.press('Home'); await page.keyboard.press('Enter');
+  await expect(table.locator('tbody tr').filter({ hasText: 'Not saved' })).toHaveCount(2);
+});
+
+test('legacy runtime never exposes disabling or sends enabled', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.route('**/api/v1/capabilities', (route) => route.fulfill({ json: { firewall_rule_enabled: false, firewall_config_schema_versions: [2] } }));
+  await page.goto('/firewall'); await fillRule(page, 'legacy');
+  await expect(page.getByRole('checkbox', { name: 'Enabled', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Keep in local draft', exact: true }).click();
+  await page.getByRole('button', { name: 'Stage candidate', exact: true }).click();
+  await expect(page.getByText('Request completed', { exact: true })).toBeVisible();
+  expect(mock.transactions[0]?.config?.schema_version).toBe(2);
+  expect(mock.transactions[0]?.config?.rules[0]).not.toHaveProperty('enabled');
+});
+
+
+test('rule handle autoscrolls a bounded policy and restores keyboard focus on cancellation', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  const rules = Array.from({ length: 20 }, (_, index) => ({ id: 'rule-' + String(index + 1).padStart(2, '0'), action: 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: 443, to: 443 } } }));
+  mock.state().snapshot.running.config.rules = rules;
+  mock.state().snapshot.startup.config.rules = structuredClone(rules);
+  await page.goto('/firewall');
+  const handle = page.getByRole('button', { name: 'Reorder: rule-01', exact: true });
+  const region = page.getByRole('region', { name: 'Ordered rules', exact: true });
+  await handle.focus(); await handle.press('Space'); await handle.press('End'); await handle.press('Escape');
+  await page.clock.runFor(100);
+  await expect(handle).toBeFocused(); await expect(handle).toBeInViewport();
+  await region.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+  await region.evaluate((element) => { element.scrollTop = 0; });
+  const from = await handle.boundingBox(); const bounds = await region.boundingBox();
+  if (!from || !bounds) throw new Error('Drag geometry unavailable');
+  const x = from.x + from.width / 2;
+  await page.mouse.move(x, from.y + from.height / 2); await page.mouse.down();
+  await page.mouse.move(x, bounds.y + bounds.height - 8, { steps: 5 });
+  await page.clock.runFor(500);
+  expect(await region.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await page.mouse.up(); await page.clock.runFor(100);
+  const ids = await page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link').allTextContents();
+  expect(ids.indexOf('rule-01')).toBeGreaterThan(0);
+  expect(new Set(ids).size).toBe(20);
+  expect(mock.transactions).toEqual([]);
+});
+
+
+test('late pointer release cannot reorder a refreshed snapshot', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  const rules = ['first', 'second', 'third'].map((id) => ({ id, action: 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: 443, to: 443 } } }));
+  mock.state().snapshot.running.config.rules = rules;
+  mock.state().snapshot.startup.config.rules = structuredClone(rules);
+  await page.goto('/firewall');
+  const handle = page.getByRole('button', { name: 'Reorder: first', exact: true });
+  await handle.scrollIntoViewIfNeeded();
+  const from = await handle.boundingBox(); const to = await page.getByRole('button', { name: 'Reorder: third', exact: true }).boundingBox();
+  if (!from || !to) throw new Error('Drag geometry unavailable');
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2); await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 5 });
+  await expect(handle).toHaveAttribute('aria-pressed', 'true');
+  mock.state().snapshot.generation++;
+  mock.state().snapshot.running.config.rules = [rules[0]!, rules[2]!, rules[1]!];
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).evaluate((button) => button.click());
+  await expect(page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link')).toHaveText(['first', 'third', 'second']);
+  await expect(handle).toHaveAttribute('aria-pressed', 'false');
+  await page.mouse.up();
+  await expect(page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link')).toHaveText(['first', 'third', 'second']);
+  await expect(page.getByRole('button', { name: 'Stage candidate', exact: true })).toBeDisabled();
+  expect(mock.transactions).toEqual([]);
+});

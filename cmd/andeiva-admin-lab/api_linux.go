@@ -146,7 +146,7 @@ func apiProcess(dir, run, namespace, epoch, boot, parent string) error {
 		}
 		files.ServeHTTP(w, r)
 	})
-	handler, err := adminapi.New(adminapi.Options{Origin: adminOrigin, Auth: auth, Backend: service, Static: static, Observe: func(ctx context.Context) (adminapi.Effective, error) {
+	handler, err := adminapi.New(adminapi.Options{FirewallRuleState: true, Origin: adminOrigin, Auth: auth, Backend: service, Static: static, Observe: func(ctx context.Context) (adminapi.Effective, error) {
 		r, err := client.Observe(ctx)
 		if err != nil {
 			return adminapi.Effective{}, err

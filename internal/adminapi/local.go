@@ -15,11 +15,13 @@ import (
 )
 
 type Capabilities struct {
-	Firewall         bool                    `json:"firewall"`
-	LocalServices    bool                    `json:"local_services"`
-	EndpointID       string                  `json:"endpoint_id"`
-	RecoveryEndpoint bool                    `json:"recovery_endpoint"`
-	LocalInterfaces  []localpolicy.Interface `json:"local_interfaces"`
+	FirewallConfigSchemaVersions []int                   `json:"firewall_config_schema_versions"`
+	FirewallRuleEnabled          bool                    `json:"firewall_rule_enabled"`
+	Firewall                     bool                    `json:"firewall"`
+	LocalServices                bool                    `json:"local_services"`
+	EndpointID                   string                  `json:"endpoint_id"`
+	RecoveryEndpoint             bool                    `json:"recovery_endpoint"`
+	LocalInterfaces              []localpolicy.Interface `json:"local_interfaces"`
 }
 
 type LocalBackend interface {
