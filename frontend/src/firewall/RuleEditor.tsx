@@ -3,13 +3,18 @@ import { Button, Field, Notice, Surface, TextInput } from '../design-system/comp
 import type { FirewallMessages } from './messages.js';
 import { editRule, emptyRule, validateRule } from './model.js';
 import type { Rule, RuleDraft, RuleErrors } from './model.js';
+import type { RuleTableMessages } from './ruleTableMessages.js';
 
-export function RuleEditor({ rules, index, copy, disabled, onSave, onCancel }: { rules: Rule[]; index: number | null; copy: FirewallMessages; disabled: boolean; onSave: (rule: Rule) => void; onCancel: () => void }) {
+export function RuleEditor({ rules, index, copy, labels, supportsEnabled, disabled, onSave, onCancel }: { rules: Rule[]; index: number | null; copy: FirewallMessages; labels: RuleTableMessages; supportsEnabled: boolean; disabled: boolean; onSave: (rule: Rule) => void; onCancel: () => void }) {
   const [draft, setDraft] = useState<RuleDraft>(() => index === null ? { ...emptyRule } : editRule(rules[index]!));
   const [errors, setErrors] = useState<RuleErrors>({});
   const form = useRef<HTMLFormElement>(null);
-  useEffect(() => { form.current?.querySelector<HTMLInputElement>('input')?.focus(); }, []);
-  return <Surface title={copy.editor} description={index === null ? copy.newRule : draft.id}>
+  useEffect(() => {
+    const opener = document.activeElement;
+    form.current?.querySelector<HTMLInputElement>('input:not([type="checkbox"])')?.focus();
+    return () => { requestAnimationFrame(() => { if (opener instanceof HTMLElement && opener.isConnected) opener.focus(); }); };
+  }, []);
+  return <Surface title={copy.editor} description={index === null ? copy.newRule : draft.id} className="fw-rule-editor">
     <form ref={form} noValidate onSubmit={(event) => {
       event.preventDefault();
       if (disabled) return;
@@ -20,6 +25,7 @@ export function RuleEditor({ rules, index, copy, disabled, onSave, onCancel }: {
     }}>
       {Object.keys(errors).length > 0 && <Notice title={copy.validationError} live>{copy.invalidError}</Notice>}
       <fieldset disabled={disabled} className="fw-fields">
+        {supportsEnabled && <div className="fw-enabled-field"><label><input type="checkbox" checked={draft.enabled ?? true} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /> {labels.enabled}</label><p className="ds-field-hint">{labels.toggleHint}</p></div>}
         {(['id', 'source', 'destination', 'source_ports', 'destination_ports'] as const).map((key) => {
           const hint = key === 'source' || key === 'destination' ? copy.cidrHint : key === 'source_ports' || key === 'destination_ports' ? copy.portsHint : undefined;
           const error = errors[key];

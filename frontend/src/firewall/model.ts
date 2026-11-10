@@ -1,5 +1,5 @@
 export type PortRange = { from: number; to: number };
-export type Rule = { id: string; action: 'allow' | 'deny'; match: { source: string; destination: string; protocol: 'tcp' | 'udp'; source_ports: PortRange; destination_ports: PortRange } };
+export type Rule = { id: string; enabled?: boolean; action: 'allow' | 'deny'; match: { source: string; destination: string; protocol: 'tcp' | 'udp'; source_ports: PortRange; destination_ports: PortRange } };
 export type Config = { schema_version: number; default_action: 'deny'; rules: Rule[] };
 export type Revision = { hash: string; config: Config };
 export type Snapshot = {
@@ -17,7 +17,7 @@ export type Transaction = { operation: Operation; key: string; expected_generati
 export type Audit = { sequence: number; at: string; actor: string; surface: string; operation: string; result: string; running_hash: string };
 export type History = { revisions: { sequence: number; revision: Revision }[]; audit: Audit[]; next_before: number };
 
-export type RuleDraft = { id: string; action: 'allow' | 'deny'; source: string; destination: string; protocol: 'tcp' | 'udp'; source_ports: string; destination_ports: string };
+export type RuleDraft = { id: string; enabled?: boolean; action: 'allow' | 'deny'; source: string; destination: string; protocol: 'tcp' | 'udp'; source_ports: string; destination_ports: string };
 export type RuleErrors = Partial<Record<keyof RuleDraft, 'idError' | 'duplicateError' | 'cidrError' | 'portsError'>>;
 export const emptyRule: RuleDraft = { id: '', action: 'deny', source: '', destination: '', protocol: 'tcp', source_ports: '1-65535', destination_ports: '' };
 
@@ -42,7 +42,7 @@ export function parsePorts(value: string): PortRange | null {
   return from >= 1 && to <= 65535 && from <= to ? { from, to } : null;
 }
 export function formatPorts(range: PortRange): string { return range.from === range.to ? String(range.from) : `${range.from}-${range.to}`; }
-export function editRule(rule: Rule): RuleDraft { return { id: rule.id, action: rule.action, source: rule.match.source, destination: rule.match.destination, protocol: rule.match.protocol, source_ports: formatPorts(rule.match.source_ports), destination_ports: formatPorts(rule.match.destination_ports) }; }
+export function editRule(rule: Rule): RuleDraft { return { id: rule.id, ...(rule.enabled !== undefined ? { enabled: rule.enabled } : {}), action: rule.action, source: rule.match.source, destination: rule.match.destination, protocol: rule.match.protocol, source_ports: formatPorts(rule.match.source_ports), destination_ports: formatPorts(rule.match.destination_ports) }; }
 export function validateRule(draft: RuleDraft, rules: Rule[], index: number | null): { errors: RuleErrors; rule?: Rule } {
   const errors: RuleErrors = {};
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(draft.id)) errors.id = 'idError';
@@ -56,7 +56,12 @@ export function validateRule(draft: RuleDraft, rules: Rule[], index: number | nu
   if (!sourcePorts) errors.source_ports = 'portsError';
   if (!destinationPorts) errors.destination_ports = 'portsError';
   if (Object.keys(errors).length || !source || !destination || !sourcePorts || !destinationPorts) return { errors };
-  return { errors, rule: { id: draft.id, action: draft.action, match: { source, destination, protocol: draft.protocol, source_ports: sourcePorts, destination_ports: destinationPorts } } };
+  return { errors, rule: { id: draft.id, ...(draft.enabled !== undefined ? { enabled: draft.enabled } : {}), action: draft.action, match: { source, destination, protocol: draft.protocol, source_ports: sourcePorts, destination_ports: destinationPorts } } };
+}
+
+export function configWithRules(config: Config, rules: Rule[]): Config {
+  if (config.schema_version === 4 || rules.some((rule) => rule.enabled !== undefined)) return { ...config, schema_version: 4, rules: rules.map((rule) => ({ ...rule, enabled: rule.enabled ?? true })) };
+  return { ...config, rules };
 }
 
 export function draftConfig(snapshot: Snapshot): Config { return structuredClone(snapshot.candidate?.revision.config ?? snapshot.running.config); }

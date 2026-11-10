@@ -11,16 +11,20 @@ function ports(value: unknown): boolean { return object(value) && integer(value.
 function revision(value: unknown): boolean {
   if (!object(value) || !hash(value.hash) || !object(value.config)) return false;
   const config = value.config;
-  if (config.schema_version !== 2 || config.default_action !== 'deny' || !Array.isArray(config.rules) || config.rules.length > 64) return false;
+  if (![2, 4].includes(Number(config.schema_version)) || typeof config.schema_version !== 'number' || config.default_action !== 'deny' || !Array.isArray(config.rules) || config.rules.length > 64) return false;
   const ids = new Set<string>();
   return config.rules.every((rule: unknown) => {
     if (!object(rule) || !text(rule.id, 64) || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(rule.id) || ids.has(rule.id) || !['allow', 'deny'].includes(String(rule.action)) || !object(rule.match)) return false;
+    if (config.schema_version === 4 ? typeof rule.enabled !== 'boolean' : rule.enabled !== undefined) return false;
     ids.add(rule.id);
     const match = rule.match;
     return text(match.source, 18) && canonicalIPv4(match.source) === match.source && text(match.destination, 18) && canonicalIPv4(match.destination) === match.destination && ['tcp', 'udp'].includes(String(match.protocol)) && ports(match.source_ports) && ports(match.destination_ports);
   });
 }
 function invalid(): never { throw new ApiError('ANDEIVA_RESPONSE_INVALID'); }
+export function ruleEnabledCapability(value: unknown): boolean {
+  return object(value) && value.firewall_rule_enabled === true && Array.isArray(value.firewall_config_schema_versions) && value.firewall_config_schema_versions.includes(4);
+}
 export function sessionResponse(value: unknown): Session {
   if (!object(value) || !text(value.username, 64) || !['admin', 'viewer'].includes(String(value.role)) || !text(value.csrf) || !date(value.expires_at)) invalid();
   return value as Session;

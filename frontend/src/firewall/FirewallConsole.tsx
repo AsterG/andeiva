@@ -1,26 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, DataTable, Dialog, Field, Notice, StatusBadge, Surface, TextInput } from '../design-system/components.js';
+import { Button, Dialog, Field, Notice, StatusBadge, Surface, TextInput } from '../design-system/components.js';
 import type { Locale } from '../messages.js';
 import { ApiError, request } from './api.js';
 import { HistoryPanel } from './HistoryPanel.js';
 import { TrafficPanel } from './TrafficPanel.js';
 import { errorMessage, firewallMessages } from './messages.js';
-import { draftConfig, formatPorts } from './model.js';
+import { configWithRules, draftConfig } from './model.js';
 import type { Config, FirewallState, History, Operation, Session, Transaction } from './model.js';
 import { RuleEditor } from './RuleEditor.js';
-import { firewallResponse, historyResponse, sessionResponse } from './responses.js';
+import { RuleTable } from './RuleTable.js';
+import { moveRule } from './rulePresentation.js';
+import { ruleTableMessages } from './ruleTableMessages.js';
+import { firewallResponse, historyResponse, ruleEnabledCapability, sessionResponse } from './responses.js';
 
 type Review = { operation: Operation; target: string; confirm_for?: number } | { operation: 'remove'; index: number; target: string } | { operation: 'discard'; target: string };
 type RuleView = 'draft' | 'candidate' | 'running' | 'startup';
 
 export function FirewallConsole({ locale }: { locale: Locale }) {
   const copy = firewallMessages[locale];
+  const tableCopy = ruleTableMessages[locale];
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [success, setSuccess] = useState(false);
+  const [supportsEnabled, setSupportsEnabled] = useState(false);
   const [state, setState] = useState<FirewallState | null>(null);
   const [fresh, setFresh] = useState(false);
   const [observed, setObserved] = useState('');
@@ -39,12 +44,18 @@ export function FirewallConsole({ locale }: { locale: Locale }) {
 
   function forgetSession() {
     authVersion.current++;
-    setSession(null); setState(null); setDraft(null); setHistory(null); setFresh(false); setDirty(false); setEditor(null); setReview(null); setSuccess(false);
+    setSession(null); setSupportsEnabled(false); setState(null); setDraft(null); setHistory(null); setFresh(false); setDirty(false); setEditor(null); setReview(null); setSuccess(false);
   }
   function fail(reason: unknown) {
     const failure = reason instanceof ApiError ? reason : new ApiError('ANDEIVA_RESPONSE_INVALID');
     setError(failure); setFresh(false); setSuccess(false);
     if (failure.status === 401) forgetSession();
+  }
+  async function readCapabilities() {
+    const version = authVersion.current;
+    let supported = false;
+    try { supported = ruleEnabledCapability(await request('capabilities')); } catch { /* Older runtimes remain read-compatible; optional operations stay disabled. */ }
+    if (mounted.current && version === authVersion.current) setSupportsEnabled(supported);
   }
   function accept(next: FirewallState, resetDraft: boolean) {
     next = firewallResponse(next);
@@ -58,7 +69,7 @@ export function FirewallConsole({ locale }: { locale: Locale }) {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError(null); setSuccess(false); setFresh(false);
     const version = authVersion.current;
-    try { const next = await request<FirewallState>('firewall'); if (version === authVersion.current) accept(next, resetDraft); }
+    try { await readCapabilities(); const next = await request<FirewallState>('firewall'); if (version === authVersion.current) accept(next, resetDraft); }
     catch (reason) { fail(reason); }
     finally { lock.current = false; setBusy(false); }
   }
@@ -71,7 +82,7 @@ export function FirewallConsole({ locale }: { locale: Locale }) {
         const identity = sessionResponse(await request('auth/session'));
         if (!active) return;
         setSession(identity); setView(identity.role === 'admin' ? 'draft' : 'running');
-        const next = await request<FirewallState>('firewall');
+        await readCapabilities(); const next = await request<FirewallState>('firewall');
         if (active && version === authVersion.current) accept(next, true);
       } catch (reason) { if (active && !(reason instanceof ApiError && reason.status === 401)) fail(reason); }
       finally { if (active) setLoading(false); }
@@ -108,7 +119,7 @@ export function FirewallConsole({ locale }: { locale: Locale }) {
       const identity = sessionResponse(await request('auth/login', { username, credential }));
       loginForm.current?.reset();
       setSession(identity); setView(identity.role === 'admin' ? 'draft' : 'running'); setHistoryDenied(false);
-      const next = await request<FirewallState>('firewall');
+      await readCapabilities(); const next = await request<FirewallState>('firewall');
       if (version === authVersion.current) accept(next, true);
     } catch (reason) { loginForm.current?.reset(); fail(reason); }
     finally { lock.current = false; if (mounted.current) setBusy(false); }
@@ -124,12 +135,12 @@ export function FirewallConsole({ locale }: { locale: Locale }) {
     if (!session || !state || !fresh || lock.current || session.role !== 'admin') return;
     lock.current = true; setBusy(true); setError(null); setSuccess(false); setReview(null);
     const transaction: Transaction = { operation, key: crypto.randomUUID(), expected_generation: state.snapshot.generation, ...options };
-    if (operation === 'stage' && draft) transaction.config = { ...draft, schema_version: 2 };
+    if (operation === 'stage' && draft) transaction.config = draft;
     setFresh(false);
     const version = authVersion.current;
     try {
       await request<FirewallState>('firewall/transactions', transaction, session.csrf);
-      const next = await request<FirewallState>('firewall');
+      await readCapabilities(); const next = await request<FirewallState>('firewall');
       if (version === authVersion.current) { accept(next, true); setHistory(null); setSuccess(true); }
     } catch (reason) { fail(reason); }
     finally { lock.current = false; setBusy(false); }
@@ -147,7 +158,7 @@ export function FirewallConsole({ locale }: { locale: Locale }) {
   const admin = session?.role === 'admin';
   const ownsCandidate = !snapshot?.candidate || snapshot.candidate.owner === session?.username;
   const healthy = fresh && !!state && !snapshot?.recovery_required && (state.effective.state === 'verified' || state.effective.state === 'pending_confirmation');
-  const writable = admin && healthy && !busy && !snapshot?.pending && ownsCandidate;
+  const writable = admin && healthy && !busy && !snapshot?.pending && ownsCandidate && (draft?.schema_version !== 4 || supportsEnabled);
   const staleDraft = dirty && baseGeneration !== snapshot?.generation;
   const canEdit = writable && !staleDraft && view === 'draft';
   const selectedRevision = snapshot && view !== 'draft' ? view === 'candidate' ? snapshot.candidate?.revision : snapshot[view] : undefined;
@@ -156,12 +167,10 @@ export function FirewallConsole({ locale }: { locale: Locale }) {
   const showCounters = healthy && selectedHash === state?.effective.revision;
   const secondsValid = /^\d+$/.test(confirmSeconds) && Number(confirmSeconds) >= 30 && Number(confirmSeconds) <= 120;
   const date = (value: string) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString(locale) : copy.unknown;
-  function move(index: number, delta: number) {
-    if (!canEdit || !draft) return;
-    const rules = [...draft.rules];
-    const moved = rules.splice(index, 1)[0];
-    if (moved) rules.splice(index + delta, 0, moved);
-    setDraft({ ...draft, rules }); setDirty(true); setEditor(null);
+  function move(from: number, to: number) {
+    if (!canEdit || !draft || editor) return;
+    const rules = moveRule(draft.rules, from, to);
+    if (rules !== draft.rules) { setDraft({ ...draft, rules }); setDirty(true); }
   }
 
   return <div className="fw-stack" aria-busy={loading || busy}>
@@ -175,22 +184,22 @@ export function FirewallConsole({ locale }: { locale: Locale }) {
       {(!healthy || !state) && <Notice title={copy.disconnected}>{copy.disconnectedBody}</Notice>}
       {success && <Notice title={copy.success} live>{copy.successBody}</Notice>}
       {state && snapshot && <>
-        <Surface title={copy.revisions} description={`${copy.generation}: ${snapshot.generation}`}>
-          <dl className="fw-revisions">{(['candidate', 'running', 'startup'] as const).map((key) => <div key={key}><dt>{copy[key]}</dt><dd><code className="fw-hash">{key === 'candidate' ? snapshot.candidate?.revision.hash ?? copy.none : snapshot[key].hash}</code>{key === 'candidate' && snapshot.candidate && <p className="fw-meta">{copy.owner}: {snapshot.candidate.owner}</p>}</dd></div>)}</dl>
-          <div className="fw-toolbar ds-actions"><strong>{copy.effective}</strong><StatusBadge tone={healthy ? state.effective.state === 'verified' ? 'success' : 'warning' : 'error'}>{fresh ? copy[state.effective.state] : copy.unknown}</StatusBadge></div>
-          <p className="fw-meta">{copy.observed}: <time dateTime={observed}>{date(observed)}</time></p><p className="fw-meta">{copy.effectiveRevision}: <code className="fw-hash">{fresh ? state.effective.revision || copy.unknown : copy.unknown}</code></p>
+        <Surface title={copy.rules} className="fw-policy-surface">
+
+          {view === 'draft' && <><div className="fw-draft-note"><StatusBadge tone={dirty ? 'warning' : 'info'}>{dirty ? copy.dirty : copy.clean}</StatusBadge><span className="fw-meta">{copy.draftHint}</span></div>{staleDraft && <Notice title={copy.dirty}>{copy.staleDraft}</Notice>}{!ownsCandidate && <Notice title={copy.owner}>{copy.candidateBusy}</Notice>}</>}
+          <div className={`fw-policy-workspace${editor ? ' fw-policy-workspace--editing' : ''}`}>
+            <RuleTable controls={<div className="fw-toolbar"><Field id="rule-view" label={copy.revisions}><select id="rule-view" className="ds-select" value={view} onChange={(event) => { setView(event.target.value as RuleView); setEditor(null); }}>{admin && <option value="draft">{copy.draft}</option>}<option value="candidate" disabled={!snapshot.candidate}>{copy.candidate}</option><option value="running">{copy.running}</option><option value="startup">{copy.startup}</option></select></Field>{admin && <Button disabled={!canEdit || !!editor || !draft || draft.rules.length >= 64} onClick={() => setEditor({ index: null })}>{copy.add}</Button>}</div>} rules={config?.rules ?? []} reference={view === 'draft' ? snapshot.candidate?.revision.config.rules ?? snapshot.running.config.rules : view === 'candidate' ? snapshot.running.config.rules : undefined} state={state} locale={locale} copy={copy} editable={!!admin && view === 'draft'} reorderable={!!canEdit} showCounters={showCounters} verified={healthy} editing={!!editor} supportsEnabled={supportsEnabled} onToggle={(index, enabled) => { if (canEdit && supportsEnabled && draft) { setDraft(configWithRules(draft, draft.rules.map((rule, position) => position === index ? { ...rule, enabled } : rule))); setDirty(true); } }} onMove={move} onEdit={(index) => setEditor({ index })} onRemove={(index) => setReview({ operation: 'remove', index, target: config!.rules[index]!.id })} />
+            {editor && draft && <RuleEditor key={editor.index ?? 'new'} rules={draft.rules} index={editor.index} copy={copy} labels={tableCopy} supportsEnabled={supportsEnabled} disabled={!canEdit} onCancel={() => setEditor(null)} onSave={(rule) => { setDraft(configWithRules(draft, editor.index === null ? [...draft.rules, rule] : draft.rules.map((previous, index) => index === editor.index ? rule : previous))); setDirty(true); setEditor(null); }} />}
+          </div>
+
+        </Surface>
+
+        <Surface title={tableCopy.configuration} className="fw-configuration">
+          <div className="fw-overview-status"><StatusBadge tone={snapshot.running.hash === snapshot.startup.hash ? 'success' : 'warning'}>{snapshot.running.hash === snapshot.startup.hash ? tableCopy.savedRevision : tableCopy.unsavedRevision}</StatusBadge><StatusBadge tone={healthy ? state.effective.state === 'verified' ? 'success' : 'warning' : 'error'}>{fresh ? copy[state.effective.state] : copy.unknown}</StatusBadge>{snapshot.candidate && snapshot.candidate.revision.hash !== snapshot.running.hash && <StatusBadge tone="info">{tableCopy.candidateChanged}</StatusBadge>}</div>
+          {admin && <div className="fw-transaction-controls"><div className="ds-actions"><Button disabled={!writable || staleDraft || !dirty || !!editor} onClick={() => void transact('stage')}>{copy.stage}</Button><Button variant="secondary" disabled={busy || !dirty || !fresh} onClick={() => setReview({ operation: 'discard', target: snapshot.candidate?.revision.hash ?? snapshot.running.hash })}>{copy.discard}</Button><Button variant="secondary" disabled={!writable || !snapshot.candidate || dirty || !!editor} onClick={() => void transact('validate')}>{copy.validate}</Button><Button variant="secondary" disabled={!writable || !snapshot.candidate || dirty || !!editor} onClick={() => setReview({ operation: 'commit', target: snapshot.candidate!.revision.hash })}>{copy.commit}</Button></div><div className="ds-actions"><Field id="confirm-seconds" label={copy.confirmSeconds}><TextInput id="confirm-seconds" type="number" min={30} max={120} step={1} value={confirmSeconds} onChange={(event) => setConfirmSeconds(event.target.value)} aria-invalid={!secondsValid} /></Field><Button disabled={!writable || !snapshot.candidate || dirty || !!editor || !secondsValid} onClick={() => setReview({ operation: 'commit', target: snapshot.candidate!.revision.hash, confirm_for: Number(confirmSeconds) * 1_000_000_000 })}>{copy.commitConfirmed}</Button><Button variant="secondary" disabled={!writable || dirty || !!editor || snapshot.running.hash === snapshot.startup.hash} onClick={() => setReview({ operation: 'save', target: snapshot.running.hash })}>{copy.save}</Button></div></div>}
+          <details className="fw-revision-details"><summary>{tableCopy.details}</summary><dl className="fw-revisions">{(['candidate', 'running', 'startup'] as const).map((key) => <div key={key}><dt>{copy[key]}</dt><dd><code className="fw-hash">{key === 'candidate' ? snapshot.candidate?.revision.hash ?? copy.none : snapshot[key].hash}</code>{key === 'candidate' && snapshot.candidate && <p className="fw-meta">{copy.owner}: {snapshot.candidate.owner}</p>}</dd></div>)}</dl><p className="fw-meta">{tableCopy.saveAll}</p><p className="fw-meta">{copy.observed}: <time dateTime={observed}>{date(observed)}</time></p><p className="fw-meta">{copy.effectiveRevision}: <code className="fw-hash">{fresh ? state.effective.revision || copy.unknown : copy.unknown}</code></p></details>
           {snapshot.pending && <><Notice title={copy.pendingTitle}>{copy.pendingBody}</Notice><p>{copy.deadline}: <time dateTime={snapshot.pending.deadline}>{date(snapshot.pending.deadline)}</time></p>{admin && <Button disabled={!healthy || busy || snapshot.pending.owner !== session.username} onClick={() => setReview({ operation: 'confirm', target: snapshot.running.hash })}>{copy.confirm}</Button>}</>}
         </Surface>
-        <Surface title={copy.rules} description={copy.rulesHint}>
-          <div className="fw-toolbar"><Field id="rule-view" label={copy.revisions}><select id="rule-view" className="ds-select" value={view} onChange={(event) => { setView(event.target.value as RuleView); setEditor(null); }}>{admin && <option value="draft">{copy.draft}</option>}<option value="candidate" disabled={!snapshot.candidate}>{copy.candidate}</option><option value="running">{copy.running}</option><option value="startup">{copy.startup}</option></select></Field>{admin && <Button disabled={!canEdit || !draft || draft.rules.length >= 64} onClick={() => setEditor({ index: null })}>{copy.add}</Button>}</div>
-          {view === 'draft' && <><p className="fw-meta">{copy.draftHint} {copy.maxRules}</p><StatusBadge tone={dirty ? 'warning' : 'info'}>{dirty ? copy.dirty : copy.clean}</StatusBadge>{staleDraft && <Notice title={copy.dirty}>{copy.staleDraft}</Notice>}{!ownsCandidate && <Notice title={copy.owner}>{copy.candidateBusy}</Notice>}</>}
-          <DataTable caption={copy.ruleList}><thead><tr>{(['priority', 'id', 'action', 'protocol', 'source', 'source_ports', 'destination', 'destination_ports', 'packets', 'bytes'] as const).map((key) => <th key={key} scope="col">{copy[key]}</th>)}{admin && view === 'draft' && <th scope="col">{copy.actions}</th>}</tr></thead><tbody>{(config?.rules ?? []).map((rule, index) => {
-            const counter = showCounters ? state.effective.rules.find((entry) => entry.id === rule.id) : undefined;
-            return <tr key={rule.id}><td>{index + 1}</td><th scope="row">{rule.id}</th><td><StatusBadge tone={rule.action === 'allow' ? 'info' : 'warning'}>{copy[rule.action]}</StatusBadge></td><td>{rule.match?.protocol.toUpperCase() ?? copy.unknown}</td><td>{rule.match?.source ?? copy.unknown}</td><td>{rule.match ? formatPorts(rule.match.source_ports) : copy.unknown}</td><td>{rule.match?.destination ?? copy.unknown}</td><td>{rule.match ? formatPorts(rule.match.destination_ports) : copy.unknown}</td><td>{counter?.packets ?? copy.unknown}</td><td>{counter?.bytes ?? copy.unknown}</td>{admin && view === 'draft' && <td><div className="fw-rule-actions"><Button variant="secondary" disabled={!canEdit || !rule.match} aria-label={`${copy.edit}: ${rule.id}`} onClick={() => setEditor({ index })}>{copy.edit}</Button><Button variant="secondary" disabled={!canEdit} aria-label={`${copy.up}: ${rule.id}`} onClick={() => move(index, -1)} {...(index === 0 ? { disabled: true } : {})}>{copy.up}</Button><Button variant="secondary" disabled={!canEdit || index === (config?.rules.length ?? 0) - 1} aria-label={`${copy.down}: ${rule.id}`} onClick={() => move(index, 1)}>{copy.down}</Button><Button variant="secondary" disabled={!canEdit} aria-label={`${copy.remove}: ${rule.id}`} onClick={() => setReview({ operation: 'remove', index, target: rule.id })}>{copy.remove}</Button></div></td>}</tr>;
-          })}{!config?.rules.length && <tr><td colSpan={admin && view === 'draft' ? 11 : 10}>{copy.noRules}</td></tr>}</tbody></DataTable>
-          {admin && <><p className="fw-meta">{copy.transactionHint}</p><div className="ds-actions"><Button disabled={!writable || staleDraft || !dirty || !!editor} onClick={() => void transact('stage')}>{copy.stage}</Button><Button variant="secondary" disabled={busy || !dirty || !fresh} onClick={() => setReview({ operation: 'discard', target: snapshot.candidate?.revision.hash ?? snapshot.running.hash })}>{copy.discard}</Button><Button variant="secondary" disabled={!writable || !snapshot.candidate || dirty || !!editor} onClick={() => void transact('validate')}>{copy.validate}</Button><Button variant="secondary" disabled={!writable || !snapshot.candidate || dirty || !!editor} onClick={() => setReview({ operation: 'commit', target: snapshot.candidate!.revision.hash })}>{copy.commit}</Button></div><div className="ds-actions"><Field id="confirm-seconds" label={copy.confirmSeconds}><TextInput id="confirm-seconds" type="number" min={30} max={120} step={1} value={confirmSeconds} onChange={(event) => setConfirmSeconds(event.target.value)} aria-invalid={!secondsValid} /></Field><Button disabled={!writable || !snapshot.candidate || dirty || !!editor || !secondsValid} onClick={() => setReview({ operation: 'commit', target: snapshot.candidate!.revision.hash, confirm_for: Number(confirmSeconds) * 1_000_000_000 })}>{copy.commitConfirmed}</Button><Button variant="secondary" disabled={!writable || dirty || !!editor || snapshot.running.hash === snapshot.startup.hash} onClick={() => setReview({ operation: 'save', target: snapshot.running.hash })}>{copy.save}</Button></div></>}
-        </Surface>
-        {editor && draft && <RuleEditor key={editor.index ?? 'new'} rules={draft.rules} index={editor.index} copy={copy} disabled={!canEdit} onCancel={() => setEditor(null)} onSave={(rule) => { setDraft({ ...draft, rules: editor.index === null ? [...draft.rules, rule] : draft.rules.map((previous, index) => index === editor.index ? rule : previous) }); setDirty(true); setEditor(null); }} />}
         {admin && !historyDenied && <HistoryPanel history={history} copy={copy} busy={busy} canRestore={writable && !dirty && !editor} load={(before) => void loadHistory(before)} restore={(target) => setReview({ operation: 'rollback', target })} />}
         {admin && healthy && <TrafficPanel locale={locale} busy={busy} onFailure={fail} />}
       </>}
