@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — unified administration console
+
+- Open the authenticated console at the management root address, with compact
+  navigation for Dashboard, Rules, Audit, Configuration and Traffic records.
+- Preserve the shared session and local editor across views; add contextual
+  transaction actions, configurable rule columns and readable revision details.
+- Keep Light as the default, optional Dark, EN/ES/PT and the unchanged logo.
+  Show unavailable telemetry explicitly rather than inventing dashboard values.
+- Include multilingual console guides in the experimental Debian package;
+  keep component examples at the explicit design-system preview address.
+
 ## Unreleased — rule activation and administration table
 
 - Retain explicitly disabled forwarding rules in the versioned transaction

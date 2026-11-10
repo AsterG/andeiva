@@ -6,6 +6,14 @@ recovery snapshot. See [runtime boundaries](../README.md) before installation.
 
 ## Install and provision
 
+The management root URL opens the authenticated console. Rules, Dashboard,
+Audit, Configuration and Traffic records share the existing session and
+transaction contracts. See the [console guide](../../../frontend/docs/console-en.md)
+for pending changes, confirmation, Startup persistence and keyboard controls.
+Interface bandwidth, country attribution and persistent object selection remain
+unavailable until their backend capabilities are implemented.
+
+
 Download the `firewall-alpha-preview-debian13-amd64` artifact from an approved
 Quality run in the private repository. Artifacts expire after three days. Compare
 the run commit with the reviewed PR and check `SHA256SUMS`; a checksum is not a

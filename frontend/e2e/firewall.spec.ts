@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import type { Config, FirewallState, History, Session, Transaction } from '../src/firewall/model.js';
+import { consoleMessages } from '../src/firewall/consoleMessages.js';
 
 // Explicit transport fixtures only. These tests do not prove authentication or packet enforcement.
 const now = new Date('2026-11-09T12:00:00Z');
@@ -63,7 +64,7 @@ async function fixture(page: Page, role: Session['role'] = 'admin', authenticate
     }
     return route.fulfill({ json: status });
   });
-  return { transactions, disconnect: () => { disconnected = true; }, conflict: () => { conflict = true; }, state: () => status };
+  return { transactions, history, disconnect: () => { disconnected = true; }, conflict: () => { conflict = true; }, state: () => status };
 }
 async function login(page: Page) {
   await page.goto('/firewall');
@@ -86,6 +87,7 @@ async function addRule(page: Page, id = 'allow-web', protocol = 'tcp') {
   await page.getByRole('button', { name: 'Keep in local draft', exact: true }).click();
 }
 async function proceed(page: Page, name: string) {
+  if (name === 'Commit now') await page.locator('.console-other-actions > summary').click();
   await page.getByRole('button', { name, exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Proceed', exact: true }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
@@ -117,13 +119,17 @@ test('firewall session, CRUD, ordering, confirmed commit, save and historical ro
   await proceed(page, 'Confirm running revision');
   await proceed(page, 'Save running to startup');
   expect(mock.state().snapshot.running.hash).toBe(mock.state().snapshot.startup.hash);
+  await page.evaluate(() => { window.location.hash = 'audit'; });
   await page.getByRole('button', { name: 'Load history', exact: true }).click();
   await page.getByLabel('Actor or revision', { exact: true }).fill('LAB-VIEWER');
   const audit = page.getByRole('table', { name: 'Transaction audit', exact: true });
   await expect(audit.locator('tbody tr')).toHaveCount(1);
   await expect(audit).toContainText('lab-viewer');
+  await page.locator('.console-history-revisions > summary').click();
+  await page.locator('.console-history-revisions tbody summary').click();
   await page.getByRole('button', { name: `Restore revision: ${initialHash}`, exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Proceed', exact: true }).click();
+  await page.evaluate(() => { window.location.hash = 'rules'; });
   await expect(page.getByText('No rules. Default deny applies.', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => ({ local: JSON.stringify(localStorage), session: JSON.stringify(sessionStorage) }))).toEqual({ local: '{}', session: '{}' });
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
@@ -160,6 +166,7 @@ test('firewall removal stays local and session expiry removes sensitive views', 
   await page.getByLabel('Actions: allow-web', { exact: true }).click();
   await page.getByRole('button', { name: 'Remove: allow-web', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Proceed', exact: true }).click();
+  await page.evaluate(() => { window.location.hash = 'rules'; });
   await expect(page.getByText('No rules. Default deny applies.', { exact: true })).toBeVisible();
   expect(mock.transactions).toEqual([]);
   await page.clock.fastForward(3_601_000);
@@ -224,9 +231,9 @@ for (const theme of ['light', 'dark'] as const) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`firewall-${theme}-editor.png`, { fullPage: true });
-    for (const [locale, title] of [['es', 'Administración del firewall'], ['pt', 'Administração do firewall'], ['en', 'Firewall administration']]) {
+    for (const [locale, title] of [['es', 'Reglas'], ['pt', 'Regras'], ['en', 'Rules']]) {
       await page.locator('#language').selectOption(locale!);
-      await expect(page.getByRole('heading', { name: title!, exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: title!, exact: true, level: 1 })).toBeVisible();
       expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
     }
   });
@@ -368,5 +375,126 @@ test('late pointer release cannot reorder a refreshed snapshot', async ({ page }
   await page.mouse.up();
   await expect(page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link')).toHaveText(['first', 'third', 'second']);
   await expect(page.getByRole('button', { name: 'Stage candidate', exact: true })).toBeDisabled();
+  expect(mock.transactions).toEqual([]);
+});
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`console V3 ${theme}: view navigation and visual baseline`, async ({ page }) => {
+    const mock = await fixture(page, 'admin', true);
+    const sample = ['web', 'dns', 'maintenance'].map((id, index) => ({ id, enabled: index !== 2, action: index === 1 ? 'deny' as const : 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: index === 1 ? 'udp' as const : 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: index === 1 ? 53 : 443, to: index === 1 ? 53 : 443 } } }));
+    mock.state().snapshot.running.config = { schema_version: 4, default_action: 'deny', rules: sample };
+    mock.state().snapshot.startup = { hash: 'b'.repeat(64), config: { schema_version: 4, default_action: 'deny', rules: [sample[0]!] } };
+    mock.state().effective.rules = sample.filter((rule) => rule.enabled).map((rule) => ({ id: rule.id, packets: 7, bytes: 256 }));
+    await page.goto('/firewall#dashboard');
+    await page.locator('#theme').selectOption(theme);
+    await expect(page.locator('.console-kpis')).toContainText('14');
+    await expect(page.locator('.console-geo')).toContainText('No geographic traffic observations');
+    for (const view of ['dashboard', 'configuration', 'audit'] as const) {
+      await page.evaluate((next) => { window.location.hash = next; }, view);
+      await expect(page.getByRole('heading', { name: consoleMessages.en[view], level: 1, exact: true })).toBeVisible();
+      if (view === 'audit') {
+        await page.getByRole('button', { name: 'Load history', exact: true }).click();
+        await page.getByRole('button', { name: 'Inspect event: 2', exact: true }).click();
+        await expect(page.locator('.console-audit-detail')).toContainText('lab-admin');
+      }
+      expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await expect(page).toHaveScreenshot(`console-${theme}-${view}.png`, { fullPage: true });
+      for (const locale of ['es', 'pt', 'en'] as const) {
+        await page.locator('#language').selectOption(locale);
+        await expect(page.getByRole('heading', { name: consoleMessages[locale][view], level: 1, exact: true })).toBeVisible();
+      }
+    }
+    expect(mock.transactions).toEqual([]);
+  });
+}
+
+test('console hash navigation preserves draft and does not stage until explicitly requested', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  await addRule(page, 'preserved-draft');
+  await page.evaluate(() => { window.location.hash = 'configuration'; });
+  await expect(page.getByRole('heading', { name: 'Configuration', level: 1, exact: true })).toBeVisible();
+  await page.evaluate(() => { window.location.hash = 'rules'; });
+  await expect(page.getByRole('table', { name: 'Ordered rules', exact: true })).toContainText('preserved-draft');
+  expect(mock.transactions).toEqual([]);
+  await page.getByRole('button', { name: 'Stage candidate', exact: true }).click();
+  expect(mock.transactions).toHaveLength(1);
+  expect(mock.transactions[0]?.config?.rules[0]?.id).toBe('preserved-draft');
+});
+
+test('console navigation expansion describes mobile visibility and supports Escape and resize', async ({ page }) => {
+  await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/firewall');
+  const toggle = page.locator('.console-menu-button');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.console-sidebar')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(toggle).toBeFocused();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await page.getByRole('link', { name: 'Dashboard', exact: true }).click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('root opens the authenticated console and internal anchors preserve views and editor input', async ({ page }) => {
+  const mock = await fixture(page);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.getByText('Development foundation', { exact: true })).toHaveCount(0);
+  await page.getByLabel('Username', { exact: true }).fill('lab-admin');
+  await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await fillRule(page, 'unsubmitted-editor');
+  await page.evaluate(() => { window.location.hash = 'dashboard'; });
+  await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
+  await page.locator('.skip-link').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
+  await page.evaluate(() => { window.location.hash = 'rules'; });
+  await expect(page.getByLabel('Rule ID', { exact: true })).toHaveValue('unsubmitted-editor');
+  await expect(page.getByLabel('Destination ports', { exact: true })).toHaveValue('443-445');
+  expect(mock.transactions).toEqual([]);
+});
+
+test('audit pagination retains visible selected filters when the loaded page no longer has matches', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall#audit');
+  await page.getByRole('button', { name: 'Load history', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Origin', exact: true }).selectOption('cli');
+  await expect(page.getByRole('table', { name: 'Transaction audit', exact: true })).toContainText('lab-viewer');
+  mock.history.audit.splice(1, 1);
+  await page.getByRole('button', { name: 'Newest page', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Origin', exact: true })).toHaveValue('cli');
+  await expect(page.getByRole('combobox', { name: 'Origin', exact: true }).locator('option:checked')).toHaveText('cli');
+  await page.getByRole('combobox', { name: 'Origin', exact: true }).selectOption('all');
+  await expect(page.getByRole('table', { name: 'Transaction audit', exact: true })).toContainText('lab-admin');
+});
+
+test('rule column choices affect presentation only and retain global persistence status', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  mock.state().snapshot.startup.hash = 'b'.repeat(64);
+  await page.goto('/firewall');
+  await addRule(page, 'column-rule');
+  const table = page.getByRole('table', { name: 'Ordered rules', exact: true });
+  await page.locator('.ds-column-chooser > summary').click();
+  const chooser = page.locator('.ds-column-chooser');
+  for (const label of ['Source IPv4 / CIDR', 'Destination IPv4 / CIDR', 'Service', 'Execution', 'At next boot', 'Observed counters']) {
+    await chooser.getByRole('checkbox', { name: `Columns: ${label}`, exact: true }).uncheck();
+    await expect(table.getByRole('columnheader', { name: label, exact: true })).toHaveCount(0);
+  }
+  await expect(table.getByRole('columnheader', { name: 'Rule ID', exact: true })).toBeVisible();
+  await expect(table.getByRole('columnheader', { name: 'Action', exact: true })).toBeVisible();
+  await expect(page.locator('.console-transaction-summary')).toContainText('Running revision has unsaved changes');
+  await chooser.getByRole('checkbox', { name: 'Columns: At next boot', exact: true }).check();
+  await expect(table.getByRole('columnheader', { name: 'At next boot', exact: true })).toBeVisible();
   expect(mock.transactions).toEqual([]);
 });

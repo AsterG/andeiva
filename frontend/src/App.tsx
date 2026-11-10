@@ -78,6 +78,7 @@ function ComponentLibrary({ copy }: { copy: Messages }) {
 export function App({ initialLocale = 'en' }: { initialLocale?: Locale }) {
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/local-services') return <LocalServicesPage initialLocale={initialLocale} />;
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/firewall') return <FirewallPage initialLocale={initialLocale} />;
+  if (typeof window !== 'undefined' && window.location.pathname === '/' && new URLSearchParams(window.location.search).get('view') !== 'design-system') return <FirewallPage initialLocale={initialLocale} />;
   return <DevelopmentApp initialLocale={initialLocale} />;
 }
 
