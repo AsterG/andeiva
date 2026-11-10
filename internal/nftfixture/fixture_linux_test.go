@@ -1,0 +1,109 @@
+package nftfixture
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"reflect"
+	"strings"
+	"syscall"
+	"testing"
+)
+
+func TestPrivilegePlanDropsAllUnneededCapabilities(t *testing.T) {
+	plain := strings.Join(privilegeArgs(1000, 1001, false), " ")
+	if strings.Contains(plain, "+net_admin") || !strings.Contains(plain, "--bounding-set=-all") || !strings.Contains(plain, "--no-new-privs") || !strings.Contains(plain, "--clear-groups") {
+		t.Fatal(plain)
+	}
+	netAdmin := strings.Join(privilegeArgs(1000, 1001, true), " ")
+	if strings.Count(netAdmin, "-all,+net_admin") != 3 || strings.Contains(netAdmin, "sys_admin") {
+		t.Fatal(netAdmin)
+	}
+}
+
+func TestNamespaceGuardRejectsHostAndUnownedRoles(t *testing.T) {
+	file, err := os.Open("/proc/self/ns/net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := info.Sys().(*syscall.Stat_t).Ino
+	f := &Fixture{host: id, namespaces: map[string]*namespace{"gateway": {handle: file, inode: id}}}
+	if _, err := f.checked("gateway"); err == nil {
+		t.Fatal("accepted host namespace")
+	}
+	if _, err := f.checked("../host"); err == nil {
+		t.Fatal("accepted unowned role")
+	}
+	f.host = id + 1
+	f.namespaces["gateway"].inode = id + 2
+	if _, err := f.checked("gateway"); err == nil {
+		t.Fatal("accepted changed inode")
+	}
+	f.namespaces["gateway"].inode = id
+	f.closed = true
+	if _, err := f.checked("gateway"); err == nil {
+		t.Fatal("accepted closed fixture")
+	}
+}
+
+func TestCommandPlanPinsNamespaceBeforeFixedExecutable(t *testing.T) {
+	file, err := os.Open("/proc/self/ns/net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := info.Sys().(*syscall.Stat_t).Ino
+	f := &Fixture{host: id + 1, uid: 1000, gid: 1000, namespaces: map[string]*namespace{"gateway": {handle: file, inode: id}}}
+	cmd, err := f.command(context.Background(), "gateway", nftPath, []string{"-j", "list", "table", "inet", "andeiva_poc"}, "", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Path != enterPath || !reflect.DeepEqual(cmd.Args[1:3], []string{"--net=/proc/self/fd/3", "--"}) || len(cmd.ExtraFiles) != 1 || cmd.ExtraFiles[0] != file {
+		t.Fatalf("unexpected command: %v", cmd.Args)
+	}
+	if cmd.SysProcAttr.Pdeathsig != syscall.SIGKILL {
+		t.Fatal("missing parent-death signal")
+	}
+}
+
+func TestCommandOutputIsBounded(t *testing.T) {
+	var output boundedBuffer
+	if _, err := output.Write(bytes.Repeat([]byte{'x'}, 1024*1024)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := output.Write([]byte("x")); err == nil {
+		t.Fatal("output exceeded bound")
+	}
+	if output.Len() != 1024*1024 {
+		t.Fatal("buffer grew beyond bound")
+	}
+}
+
+func TestHostQueriesAllowOnlyReadOperations(t *testing.T) {
+	queries := map[string][]string{
+		"rules":   {"/usr/sbin/nft", "-s", "-j", "list", "ruleset"},
+		"routes":  {"/usr/bin/ip", "-j", "route", "show", "table", "all"},
+		"routes6": {"/usr/bin/ip", "-6", "-j", "route", "show", "table", "all"},
+		"links":   {"/usr/bin/ip", "-j", "link", "show"},
+	}
+	for key, want := range queries {
+		cmd, err := hostReadCommand(context.Background(), key)
+		if err != nil || !reflect.DeepEqual(cmd.Args, want) {
+			t.Fatalf("unexpected host query %s: %v %v", key, cmd, err)
+		}
+	}
+	for _, key := range []string{"", "flush ruleset", "route add", "/usr/bin/ip", "links;reboot"} {
+		if cmd, err := hostReadCommand(context.Background(), key); err == nil || cmd != nil {
+			t.Fatalf("accepted host command %q", key)
+		}
+	}
+}
