@@ -17,6 +17,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/firewallnft"
 )
 
 const ipPath = "/usr/bin/ip"
@@ -258,7 +260,9 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 }
 
 func (f *Fixture) run(ctx context.Context, role, binary string, args []string, peer string, input string) ([]byte, error) {
-	if input != "" && !(role == "gateway" && binary == nftPath && slices.Equal(args, []string{"-f", "-"}) && input == "add table inet andeiva_sentinel\n") {
+	adminDeny, compileErr := firewallnft.Compile(firewallnft.DefaultConfig())
+	allowedDeny := compileErr == nil && role == "gateway" && binary == nftPath && slices.Equal(args, []string{"-j", "-f", "-"}) && input == string(adminDeny.Create)
+	if input != "" && !allowedDeny && !(role == "gateway" && binary == nftPath && slices.Equal(args, []string{"-f", "-"}) && input == "add table inet andeiva_sentinel\n") {
 		return nil, errors.New("ANDEIVA_NFT_FIXTURE_INPUT_DENIED")
 	}
 	deadline, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -311,7 +315,7 @@ func (f *Fixture) allowedCommand(role, binary string, args []string, peer string
 				return true
 			}
 		}
-		return role == "gateway" && binary == nftPath && peer == "" && slices.Equal(args, sentinelArgs())
+		return role == "gateway" && binary == nftPath && peer == "" && (slices.Equal(args, sentinelArgs()) || slices.Equal(args, []string{"-j", "-f", "-"}))
 	}
 	if !unprivileged || f.uid == 0 || f.gid == 0 || binary != f.self || peer != "" {
 		return false
