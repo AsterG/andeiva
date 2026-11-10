@@ -43,6 +43,40 @@ func HandleRole(args []string) (bool, int) {
 		}
 		return true, 0
 	}
+	if len(args) == 3 && (args[1] == "listen-gateway" || args[1] == "check-local") {
+		host, err := strconv.ParseUint(args[2], 10, 64)
+		if err != nil || host == 0 || strconv.FormatUint(host, 10) != args[2] {
+			return true, 2
+		}
+		if armParentDeath(host) != nil || checkLocalIsolation() != nil {
+			return true, 1
+		}
+		if args[1] == "listen-gateway" {
+			if err := listenAddresses(localEchoAddresses()); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return true, 1
+			}
+		}
+		return true, 0
+	}
+	if len(args) > 1 && args[1] == "probe-gateway" {
+		p, host, err := parseLocalProbe(args)
+		if err != nil {
+			return true, 2
+		}
+		if armParentDeath(host) != nil {
+			return true, 1
+		}
+		ok, err := probeGateway(p)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return true, 1
+		}
+		if !ok {
+			return true, 10
+		}
+		return true, 0
+	}
 	if len(args) == 3 && (args[1] == "listen" || args[1] == "listen-source") {
 		host, err := strconv.ParseUint(args[2], 10, 64)
 		if err != nil {
@@ -95,52 +129,60 @@ func listenAt(ip string) error {
 	if ip != SourceIP && ip != SinkIP {
 		return errors.New("ANDEIVA_NFT_PROBE_INVALID")
 	}
+	return listenAddresses([]listenAddress{{ip, "4"}})
+}
+
+type listenAddress struct{ ip, family string }
+
+func listenAddresses(addresses []listenAddress) error {
 	var closers []io.Closer
 	defer func() {
 		for _, c := range closers {
 			_ = c.Close()
 		}
 	}()
-	for port := 18080; port <= 18082; port++ {
-		address := net.JoinHostPort(ip, strconv.Itoa(port))
-		tcp, err := net.Listen("tcp4", address)
-		if err != nil {
-			return err
-		}
-		closers = append(closers, tcp)
-		go func() {
-			for {
-				conn, err := tcp.Accept()
-				if err != nil {
-					return
+	for _, item := range addresses {
+		for port := 18080; port <= 18082; port++ {
+			address := net.JoinHostPort(item.ip, strconv.Itoa(port))
+			tcp, err := net.Listen("tcp"+item.family, address)
+			if err != nil {
+				return err
+			}
+			closers = append(closers, tcp)
+			go func() {
+				for {
+					conn, err := tcp.Accept()
+					if err != nil {
+						return
+					}
+					// The bounded fixture has one sequential request per socket.
+					_ = conn.SetDeadline(time.Now().Add(time.Second))
+					var payload [64]byte
+					n, readErr := io.ReadFull(conn, payload[:])
+					if readErr == nil {
+						_, _ = conn.Write(payload[:n])
+					}
+					_ = conn.Close()
 				}
-				// The bounded fixture has one sequential request per socket.
-				_ = conn.SetDeadline(time.Now().Add(time.Second))
+			}()
+			udp, err := net.ListenPacket("udp"+item.family, address)
+			if err != nil {
+				return err
+			}
+			closers = append(closers, udp)
+			go func() {
 				var payload [64]byte
-				n, readErr := io.ReadFull(conn, payload[:])
-				if readErr == nil {
-					_, _ = conn.Write(payload[:n])
+				for {
+					n, peer, err := udp.ReadFrom(payload[:])
+					if err != nil {
+						return
+					}
+					if n == len(payload) {
+						_, _ = udp.WriteTo(payload[:n], peer)
+					}
 				}
-				_ = conn.Close()
-			}
-		}()
-		udp, err := net.ListenPacket("udp4", address)
-		if err != nil {
-			return err
+			}()
 		}
-		closers = append(closers, udp)
-		go func() {
-			var payload [64]byte
-			for {
-				n, peer, err := udp.ReadFrom(payload[:])
-				if err != nil {
-					return
-				}
-				if n == len(payload) {
-					_, _ = udp.WriteTo(payload[:n], peer)
-				}
-			}
-		}()
 	}
 	if _, err := fmt.Fprintln(os.Stdout, "ANDEIVA_NFT_LISTEN_READY"); err != nil {
 		return err
@@ -156,12 +198,17 @@ func probeAt(protocol string, port int, ip string) (bool, error) {
 	if !validProbe(protocol, port) || (ip != SourceIP && ip != SinkIP) {
 		return false, errors.New("ANDEIVA_NFT_PROBE_INVALID")
 	}
+	return exchangeProbe(protocol+"4", net.JoinHostPort(ip, strconv.Itoa(port)), nil)
+}
+
+func exchangeProbe(network, address string, local net.Addr) (bool, error) {
 	var random [32]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return false, err
 	}
 	payload := []byte(hex.EncodeToString(random[:]))
-	conn, err := net.DialTimeout(protocol+"4", net.JoinHostPort(ip, strconv.Itoa(port)), probeTimeout)
+	dialer := net.Dialer{Timeout: probeTimeout, LocalAddr: local}
+	conn, err := dialer.Dial(network, address)
 	if err != nil {
 		var networkError net.Error
 		if errors.As(err, &networkError) && networkError.Timeout() {
