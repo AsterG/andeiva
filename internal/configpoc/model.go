@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/localpolicy"
 )
 
 var (
@@ -77,9 +79,10 @@ type Match struct {
 	DestinationPorts PortRange `json:"destination_ports"`
 }
 type Config struct {
-	SchemaVersion int    `json:"schema_version"`
-	DefaultAction string `json:"default_action"`
-	Rules         []Rule `json:"rules"`
+	SchemaVersion int                 `json:"schema_version"`
+	DefaultAction string              `json:"default_action"`
+	Rules         []Rule              `json:"rules"`
+	LocalServices *localpolicy.Config `json:"local_services,omitempty"`
 }
 type Revision struct {
 	Hash   string `json:"hash"`
@@ -154,12 +157,26 @@ type Options struct {
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 
 func Canonical(config Config) (Revision, error) {
-	if (config.SchemaVersion != 1 && config.SchemaVersion != 2) || config.DefaultAction != "deny" || len(config.Rules) > 64 {
+	if (config.SchemaVersion != 1 && config.SchemaVersion != 2 && config.SchemaVersion != 3) || config.DefaultAction != "deny" || len(config.Rules) > 64 {
 		return Revision{}, ErrInvalid
+	}
+	if config.SchemaVersion != 3 {
+		if config.LocalServices != nil {
+			return Revision{}, ErrInvalid
+		}
+	} else {
+		if config.LocalServices == nil {
+			return Revision{}, ErrInvalid
+		}
+		local, err := localpolicy.Canonical(*config.LocalServices)
+		if err != nil {
+			return Revision{}, ErrInvalid
+		}
+		config.LocalServices = &local.Config
 	}
 	seen := make(map[string]bool)
 	for _, rule := range config.Rules {
-		if config.SchemaVersion == 1 && rule.Match != nil || config.SchemaVersion == 2 && !validMatch(rule.Match) {
+		if config.SchemaVersion == 1 && rule.Match != nil || config.SchemaVersion >= 2 && !validMatch(rule.Match) {
 			return Revision{}, ErrInvalid
 		}
 		if !identifier.MatchString(rule.ID) || seen[rule.ID] || (rule.Action != "allow" && rule.Action != "deny") {
@@ -174,6 +191,14 @@ func Canonical(config Config) (Revision, error) {
 	}
 	hash := sha256.Sum256(data)
 	return Revision{hex.EncodeToString(hash[:]), config}, nil
+}
+
+// Both inputs are canonical revisions. Absence in legacy schemas means no
+// managed local services, never a manifest inferred from the running host.
+func localServicesChanged(previous, target Config) bool {
+	a, _ := json.Marshal(previous.LocalServices)
+	b, _ := json.Marshal(target.LocalServices)
+	return string(a) != string(b)
 }
 func validMatch(m *Match) bool {
 	if m == nil || (m.Protocol != "tcp" && m.Protocol != "udp") {

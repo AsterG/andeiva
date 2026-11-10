@@ -302,6 +302,10 @@ func (s *Service) execute(ctx context.Context, p Principal, surface Surface, req
 			err = ErrInvalid
 			break
 		}
+		if request.Operation == OpCommit && request.ConfirmFor == 0 && localServicesChanged(s.state.Snapshot.Running.Config, candidate.Revision.Config) {
+			err = ErrInvalid
+			break
+		}
 		for _, engine := range s.engines {
 			if engine.Validate(clone(candidate.Revision.Config)) != nil {
 				err = ErrInvalid
@@ -368,18 +372,36 @@ func (s *Service) execute(ctx context.Context, p Principal, surface Surface, req
 		}
 		s.state.Snapshot.Startup = s.state.Snapshot.Running
 	case OpRollback:
-		if request.Config != nil || request.ConfirmFor != 0 || !validHash(request.Target) {
+		if request.Config != nil || !validHash(request.Target) {
 			err = ErrInvalid
 			break
 		}
 		target, found := s.historical(request.Target)
-		if !found {
+		if !found || !validRollbackWindow(s.state.Snapshot.Running.Config, target.Config, request.ConfirmFor) {
 			err = ErrInvalid
 			break
 		}
-		err = s.transitionGuarded(ctx, target, p.ID, surface, OpRollback, nil, false, key, fingerprint, guard, request.Key)
+		if (s.state.Snapshot.Running.Config.SchemaVersion == 3 || target.Config.SchemaVersion == 3) && s.state.Snapshot.Candidate != nil && s.state.Snapshot.Candidate.Owner != p.ID {
+			err = ErrConflict
+			break
+		}
+		var pending *Pending
+		if request.ConfirmFor > 0 {
+			s.deadline = time.Now().Add(request.ConfirmFor)
+			pending = &Pending{Owner: p.ID, Previous: s.state.Snapshot.Running, Deadline: s.deadline.UTC()}
+			if guard != nil {
+				pending.Lease = request.Key
+			}
+		}
+		err = s.transitionGuarded(ctx, target, p.ID, surface, OpRollback, pending, false, key, fingerprint, guard, request.Key)
 		if err != nil {
 			return Snapshot{}, err
+		}
+		if pending != nil && !time.Now().Before(s.deadline) {
+			if err = s.expire(); err != nil {
+				return Snapshot{}, err
+			}
+			return Snapshot{}, ErrExpired
 		}
 		s.armTimer()
 		return s.snapshot(), nil
@@ -426,6 +448,17 @@ func (s *Service) execute(ctx context.Context, p Principal, surface Surface, req
 	s.armTimer()
 	return s.snapshot(), nil
 }
+
+// Rollback across the local-service schema boundary is an administrative
+// transition, including removal of all managed services by selecting a legacy
+// revision. Legacy-only rollback retains its immediate, zero-window semantics.
+func validRollbackWindow(previous, target Config, ttl time.Duration) bool {
+	if previous.SchemaVersion == 3 || target.SchemaVersion == 3 {
+		return ttl >= 20*time.Millisecond && ttl <= 5*time.Minute
+	}
+	return ttl == 0
+}
+
 func (s *Service) consistent() bool {
 	for _, engine := range s.engines {
 		if engine.Current() != s.state.Snapshot.Running.Hash {

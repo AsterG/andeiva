@@ -96,6 +96,15 @@ credentials or unrelated machine data.
 
 ## What the result means
 
+Schema 3 adds canonical local-service declarations; schemas 1/2 retain their exact
+bytes and hashes and cannot carry these declarations. Migration requires staging
+and commit, never an automatic journal rewrite. Changes to local services and any
+historical rollback involving schema 3 require a confirmation window (30–120
+seconds through the managed boundary). Expiry or restart while pending restores
+the previous Running revision; Save is rejected until confirmation. Legacy-only
+rollback stays immediate. OS boot selects saved Startup. These are coordinator
+contracts, not evidence of running HTTPS/SSH listeners or kernel enforcement.
+
 File I/O, process lifecycle, locking and the common authorization service may be
 real; component application remains simulated. Record those categories separately.
 Measure CPU time, resident memory, disk growth and operation latency for the actual

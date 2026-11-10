@@ -102,6 +102,16 @@ credenciais nem dados alheios ao caso.
 
 ## Interpretação dos resultados
 
+O esquema 3 adiciona declarações canônicas de serviços locais; os esquemas 1/2
+preservam seus bytes e hashes exatos e não aceitam essas declarações. A migração
+exige stage e commit, nunca reescrita automática do journal. Alterações nos serviços
+locais e rollback histórico envolvendo o esquema 3 exigem prazo de confirmação
+(30–120 segundos pela fronteira gerenciada). A expiração ou o reinício do serviço
+durante uma operação pendente restaura o Running anterior; Save é rejeitado até a
+confirmação. O rollback entre revisões legadas continua imediato. A inicialização
+do SO carrega o Startup salvo. Esses contratos não demonstram listeners HTTPS/SSH
+nem aplicação de políticas no kernel.
+
 Escrita de arquivos, ciclo de processos, bloqueios e autorização comum podem ser
 reais; a aplicação nos componentes permanece simulada. Registre essas categorias
 separadamente. Meça CPU, memória residente, crescimento de disco e latência para a
