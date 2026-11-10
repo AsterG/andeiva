@@ -80,6 +80,17 @@ type fixture struct {
 	served  chan error
 }
 
+type readyListener struct {
+	net.Listener
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (l *readyListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.ready) })
+	return l.Listener.Accept()
+}
+
 func certificate(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
@@ -146,7 +157,8 @@ func newFixture(t *testing.T, role string, limits *Limits, configure func(*Serve
 	if wrap != nil {
 		listener = wrap(l)
 	}
-	go func() { f.served <- f.s.Serve(listener) }()
+	ready := &readyListener{Listener: listener, ready: make(chan struct{})}
+	go func() { f.served <- f.s.Serve(ready) }()
 	t.Cleanup(func() {
 		if err := f.s.Close(); err != nil {
 			t.Error(err)
@@ -160,6 +172,14 @@ func newFixture(t *testing.T, role string, limits *Limits, configure func(*Serve
 			t.Error("serve did not stop")
 		}
 	})
+	// Metadata-only tests may finish without a request. Establish that Serve
+	// owns the listener before cleanup can stop it; a goroutine launch is not
+	// evidence that the server has started.
+	select {
+	case <-ready.ready:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server did not reach accept")
+	}
 	return f
 }
 
