@@ -51,12 +51,14 @@ func startHealth(ctx context.Context, ids Identities, observer healthObserver, a
 	}
 	st, e := os.Lstat(HealthSocket)
 	if e != nil {
-		l.Close()
+		_ = l.Close()
 		return nil, ErrStorage
 	}
 	var once sync.Once
 	done := make(chan struct{})
-	stop := func() { once.Do(func() { l.Close(); <-done; removeSocket(HealthSocket, st) }) }
+	// The listener and accepted sockets are terminal after Close; replies are
+	// written synchronously, so a close error cannot hide an unwritten buffer.
+	stop := func() { once.Do(func() { _ = l.Close(); <-done; removeSocket(HealthSocket, st) }) }
 	go func() {
 		defer close(done)
 		for {
@@ -65,7 +67,7 @@ func startHealth(ctx context.Context, ids Identities, observer healthObserver, a
 				return
 			}
 			if peer(c, 0, 0) != nil && peer(c, ids.APIUID, ids.APIGID) != nil {
-				c.Close()
+				_ = c.Close()
 				continue
 			}
 			_ = c.SetDeadline(time.Now().Add(3 * time.Second))
@@ -78,7 +80,7 @@ func startHealth(ctx context.Context, ids Identities, observer healthObserver, a
 				cancel()
 				_ = json.NewEncoder(c).Encode(HealthResult{Available: ready})
 			}
-			c.Close()
+			_ = c.Close()
 		}
 	}()
 	return stop, nil

@@ -3,14 +3,16 @@
 package previewruntime
 
 import (
-	"bytes"
 	"net"
 	"net/netip"
 	"os"
 	"strconv"
 	"syscall"
-	"unsafe"
 )
+
+// SO_BINDTOIFINDEX is the Linux socket ABI for the device selected by
+// SO_BINDTODEVICE. The frozen syscall package omits it on amd64 and arm64.
+const soBindToIfindex = 62
 
 func validateListener(fd int, c Config) error {
 	addr, e := syscall.Getsockname(fd)
@@ -19,10 +21,12 @@ func validateListener(fd int, c Config) error {
 	if e != nil || !ok || pe != nil || netip.AddrFrom4(a.Addr) != expected.Addr() || a.Port != int(expected.Port()) {
 		return ErrIdentity
 	}
-	var value [16]byte
-	size := uint32(len(value))
-	_, _, errno := syscall.Syscall6(syscall.SYS_GETSOCKOPT, uintptr(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, uintptr(unsafe.Pointer(&value[0])), uintptr(unsafe.Pointer(&size)), 0)
-	if errno != 0 || size > uint32(len(value)) || string(bytes.TrimRight(value[:size], "\x00")) != c.Interface {
+	iface, e := net.InterfaceByName(c.Interface)
+	if e != nil {
+		return ErrIdentity
+	}
+	boundIndex, e := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, soBindToIfindex)
+	if e != nil || boundIndex <= 0 || boundIndex != iface.Index {
 		return ErrIdentity
 	}
 	kind, e := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_TYPE)
@@ -66,8 +70,11 @@ func inheritedListener(c Config) (net.Listener, error) {
 		return nil, ErrIdentity
 	}
 	l, e := net.FileListener(f)
-	f.Close()
-	if e != nil {
+	closeErr := f.Close()
+	if e != nil || closeErr != nil {
+		if l != nil {
+			_ = l.Close() // A failed descriptor handoff cannot leave a listener active.
+		}
 		return nil, ErrIdentity
 	}
 	_ = os.Unsetenv("LISTEN_PID")

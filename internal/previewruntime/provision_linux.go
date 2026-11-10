@@ -89,10 +89,10 @@ func Provision(c Config) error {
 	if safeParents(DataDir) != nil {
 		return ErrStorage
 	}
-	if os.Mkdir(DataDir, 0755) != nil {
+	if os.Mkdir(DataDir, 0755) != nil { // #nosec G301 -- Root-owned traversal boundary shared by separate service identities; secret children enforce 0700/0440/0600.
 		return ErrStorage
 	}
-	if os.Chmod(DataDir, 0755) != nil {
+	if os.Chmod(DataDir, 0755) != nil { // #nosec G302 -- Newly created root-owned parent must be traversable by API and helper; child files enforce access control.
 		return ErrStorage
 	}
 	root, e := os.OpenRoot(DataDir)

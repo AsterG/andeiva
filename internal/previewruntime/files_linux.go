@@ -181,12 +181,21 @@ func marshal(v any) []byte {
 	return append(b, '\n')
 }
 func syncDirectory(path string) error {
-	r, e := os.Open(path)
+	if safeParents(filepath.Join(path, ".sync")) != nil {
+		return ErrStorage
+	}
+	root, e := os.OpenRoot(path)
 	if e != nil {
 		return ErrStorage
 	}
-	defer r.Close()
-	if r.Sync() != nil {
+	defer root.Close()
+	r, e := root.Open(".")
+	if e != nil {
+		return ErrStorage
+	}
+	syncErr := r.Sync()
+	closeErr := r.Close()
+	if syncErr != nil || closeErr != nil {
 		return ErrStorage
 	}
 	return nil

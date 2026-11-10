@@ -106,12 +106,18 @@ func privilegeFields(status string, network bool) error {
 	return nil
 }
 
+// Widen both operands before comparison: negative IDs and values outside the
+// kernel's uint32 identity range must never wrap into an authorized identity.
+func matchesIdentity(actual int, expected uint32) bool {
+	return actual >= 0 && int64(actual) == int64(expected)
+}
+
 func checkPrivileges(ids Identities, helper bool) error {
 	uid, gid := ids.APIUID, ids.APIGID
 	if helper {
 		uid, gid = ids.HelperUID, ids.IPCGID
 	}
-	if uint32(os.Getuid()) != uid || uint32(os.Geteuid()) != uid || uint32(os.Getgid()) != gid || uint32(os.Getegid()) != gid {
+	if !matchesIdentity(os.Getuid(), uid) || !matchesIdentity(os.Geteuid(), uid) || !matchesIdentity(os.Getgid(), gid) || !matchesIdentity(os.Getegid(), gid) {
 		return ErrIdentity
 	}
 	groups, e := os.Getgroups()
@@ -120,9 +126,9 @@ func checkPrivileges(ids Identities, helper bool) error {
 	}
 	hasIPC := gid == ids.IPCGID
 	for _, g := range groups {
-		if uint32(g) == ids.IPCGID {
+		if matchesIdentity(g, ids.IPCGID) {
 			hasIPC = true
-		} else if helper || uint32(g) != ids.APIGID {
+		} else if helper || !matchesIdentity(g, ids.APIGID) {
 			return ErrIdentity
 		}
 	}
@@ -195,7 +201,7 @@ func Helper(ctx context.Context, c Config) error {
 	}
 	st, e := os.Lstat(HelperSocket)
 	if e != nil {
-		l.Close()
+		_ = l.Close()
 		return ErrStorage
 	}
 	defer removeSocket(HelperSocket, st)

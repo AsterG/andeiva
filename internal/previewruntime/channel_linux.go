@@ -75,8 +75,8 @@ func listenPrivate(path string, uid, gid uint32) (*net.UnixListener, error) {
 		return nil, ErrUnavailable
 	}
 	l.SetUnlinkOnClose(false)
-	if os.Chmod(path, 0660) != nil {
-		l.Close()
+	if os.Chmod(path, 0660) != nil { // #nosec G302 -- Private Unix socket shared only with the IPC group; parent ownership and SO_PEERCRED also enforce access.
+		_ = l.Close()
 		return nil, ErrStorage
 	}
 	return l, nil
@@ -115,7 +115,7 @@ func connectHelper(ctx context.Context, m Metadata, ids Identities) (*firewallip
 		return nil, ErrUnavailable
 	}
 	c := conn.(*net.UnixConn)
-	fail := func() (*firewallipc.Client, error) { c.Close(); return nil, ErrIdentity }
+	fail := func() (*firewallipc.Client, error) { _ = c.Close(); return nil, ErrIdentity }
 	if peer(c, ids.HelperUID, ids.IPCGID) != nil || socketInfo(HelperSocket, ids.HelperUID, ids.IPCGID) != nil {
 		return fail()
 	}
@@ -139,6 +139,8 @@ func connectHelper(ctx context.Context, m Metadata, ids Identities) (*firewallip
 
 // serveController retains Session and guardian across API disconnects. Only one
 // authenticated controller exists; a new epoch cannot inherit a recovery barrier.
+// Closing rejected/disconnected sockets is terminal. Close errors cannot make
+// those channels reusable and must not trigger retries on recycled descriptors.
 func serveController(ctx context.Context, l *net.UnixListener, m Metadata, ids Identities, s *Session) error {
 	var mu sync.Mutex
 	var active *net.UnixConn
@@ -149,10 +151,10 @@ func serveController(ctx context.Context, l *net.UnixListener, m Metadata, ids I
 	go func() {
 		select {
 		case <-ctx.Done():
-			l.Close()
+			_ = l.Close()
 			mu.Lock()
 			if active != nil {
-				active.Close()
+				_ = active.Close()
 			}
 			mu.Unlock()
 		case <-done:
@@ -162,7 +164,7 @@ func serveController(ctx context.Context, l *net.UnixListener, m Metadata, ids I
 	defer func() {
 		mu.Lock()
 		if active != nil {
-			active.Close()
+			_ = active.Close()
 		}
 		mu.Unlock()
 	}()
@@ -175,13 +177,13 @@ func serveController(ctx context.Context, l *net.UnixListener, m Metadata, ids I
 			return ErrUnavailable
 		}
 		if peer(c, ids.APIUID, ids.APIGID) != nil {
-			c.Close()
+			_ = c.Close()
 			continue
 		}
 		mu.Lock()
 		if active != nil || epoch == 0xffffffff {
 			mu.Unlock()
-			c.Close()
+			_ = c.Close()
 			continue
 		}
 		active = c
@@ -191,7 +193,7 @@ func serveController(ctx context.Context, l *net.UnixListener, m Metadata, ids I
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			defer func() { c.Close(); mu.Lock(); active = nil; mu.Unlock() }()
+			defer func() { _ = c.Close(); mu.Lock(); active = nil; mu.Unlock() }()
 			r := bufio.NewReaderSize(c, firewallipc.MaxFrame)
 			b, e := readFrame(c, r, true)
 			var h hello

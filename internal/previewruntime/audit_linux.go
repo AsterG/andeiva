@@ -37,6 +37,8 @@ func openAudit(path string, uid, gid uint32) (*auditLog, error) {
 	return openAuditBounded(path, uid, gid, AuditSegmentBytes, AuditSegments)
 }
 func openAuditBounded(path string, uid, gid uint32, maxBytes int64, maxSegments int) (*auditLog, error) {
+	// Failure paths discard the directory descriptor and preserve ErrStorage;
+	// descriptor-close errors cannot turn failed initialization into success.
 	if ownedDirectory(path, uid, gid, 0700) != nil {
 		return nil, ErrStorage
 	}
@@ -47,18 +49,18 @@ func openAuditBounded(path string, uid, gid uint32, maxBytes int64, maxSegments 
 	a := &auditLog{root: root, path: path, uid: uid, gid: gid, maxBytes: maxBytes, maxSegments: maxSegments}
 	entries, e := os.ReadDir(path)
 	if e != nil || len(entries) > maxSegments {
-		root.Close()
+		_ = root.Close()
 		return nil, ErrStorage
 	}
 	for i, entry := range entries {
 		expected := fmt.Sprintf("%06d.jsonl", i+1)
 		if entry.Name() != expected {
-			root.Close()
+			_ = root.Close()
 			return nil, ErrStorage
 		}
 		b, e := readOwned(filepath.Join(path, expected), uid, gid, 0600, maxBytes)
 		if e != nil || (len(b) > 0 && b[len(b)-1] != '\n') {
-			root.Close()
+			_ = root.Close()
 			return nil, ErrStorage
 		}
 		scan := bufio.NewScanner(bytes.NewReader(b))
@@ -66,12 +68,12 @@ func openAuditBounded(path string, uid, gid uint32, maxBytes int64, maxSegments 
 		for scan.Scan() {
 			var event adminauth.Event
 			if firewallipc.Decode(scan.Bytes(), &event) != nil || event.At.IsZero() {
-				root.Close()
+				_ = root.Close()
 				return nil, ErrStorage
 			}
 		}
 		if scan.Err() != nil {
-			root.Close()
+			_ = root.Close()
 			return nil, ErrStorage
 		}
 		a.segment = i + 1
@@ -80,7 +82,7 @@ func openAuditBounded(path string, uid, gid uint32, maxBytes int64, maxSegments 
 	if a.segment > 0 {
 		a.file, e = root.OpenFile(fmt.Sprintf("%06d.jsonl", a.segment), os.O_APPEND|os.O_WRONLY|syscall.O_NOFOLLOW, 0)
 		if e != nil {
-			root.Close()
+			_ = root.Close()
 			return nil, ErrStorage
 		}
 	}

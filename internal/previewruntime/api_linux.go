@@ -74,7 +74,7 @@ func API(ctx context.Context, c Config) error {
 			return err
 		}
 		if err = client.Recovered(ctx); err != nil {
-			core.Close()
+			err = errors.Join(err, core.Close())
 			core = nil
 			return err
 		}
@@ -82,14 +82,13 @@ func API(ctx context.Context, c Config) error {
 	})
 	if e != nil {
 		if core != nil {
-			core.Close()
+			e = errors.Join(e, core.Close())
 		}
 		return e
 	}
 	service, e := firewalladmin.New(core, firewallipc.Authority{Client: client})
 	if e != nil {
-		core.Close()
-		return e
+		return errors.Join(e, core.Close())
 	}
 	defer service.Close()
 	if safeParents(WebRoot+"/index.html") != nil {
@@ -140,7 +139,7 @@ func API(ctx context.Context, c Config) error {
 	go func() {
 		select {
 		case <-ctx.Done():
-			stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			_ = server.Shutdown(stop)
 		case <-done:

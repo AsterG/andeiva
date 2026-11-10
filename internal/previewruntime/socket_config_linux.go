@@ -48,10 +48,10 @@ func createSocketDirectory(path string, uid, gid uint32) error {
 	if safeParents(path) != nil {
 		return ErrStorage
 	}
-	if err := os.Mkdir(path, 0755); err == nil {
+	if err := os.Mkdir(path, 0755); err == nil { // #nosec G301 -- Public socket unit metadata; root-owned directory, never contains credentials.
 		// Only a directory created by this invocation may be normalized. Existing
 		// directories retain strict ownership and mode validation.
-		if os.Chmod(path, 0755) != nil {
+		if os.Chmod(path, 0755) != nil { // #nosec G302 -- Normalize only the newly created root-owned public unit directory; not a secret file.
 			return ErrStorage
 		}
 	} else if !os.IsExist(err) {
