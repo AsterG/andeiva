@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — Design System
+
+- Centralize complete Light/Dark themes, with Light as the default and explicit
+  browser-local preference restored before the application renders.
+- Add shared accessible UI primitives and a responsive component library with
+  English, Spanish and Portuguese copy; preserve the approved logo unchanged.
+- Add semantic color/contrast gates and pinned-browser visual, keyboard,
+  accessibility and responsive checks for both themes.
+
 ## Unreleased
 
 - Registered staging for the configuration experiment, independent of temporary
