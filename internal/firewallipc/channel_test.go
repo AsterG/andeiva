@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/AsterG/andeiva/internal/configpoc"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/configpoc"
 )
 
 func pair(t *testing.T, handle func(Message) Reply) *Client {

@@ -1,8 +1,7 @@
 # Administrative firewall laboratory — English
 
-Status: experimental implementation and reproducible procedure. Native integration,
-live failure probes and resource measurements remain pending until recorded for
-this exact revision. Do not treat these instructions as a production appliance guide.
+Status: experimental implementation with bounded Debian validation. See
+[results and limitations](../VALIDATION.md). This is not a production appliance guide.
 
 ## Preparation and versioned installation
 
@@ -266,7 +265,17 @@ rollback, confirmation expiry during API loss, API restart, saved Startup/full r
 viewer denial, stale generations, session expiry, helper emergency closure, host
 invariance and cleanup. Measure CPU, peak RSS, journal size and elapsed time from
 real evidence. The supervisor report supplies some of these values; it is not a
-capacity benchmark by itself. No native result or resource target is asserted here.
+capacity benchmark by itself. Measured results are recorded separately, not capacity targets.
+
+Recorded runs proved Web rule creation, matching CLI/API revisions, TCP/UDP allow
+and deny, authorization rejection, concurrency, save/rollback, API-loss expiry,
+helper-loss cleanup and Startup recovery. The final repeat took 57.447 seconds,
+used 0.041 seconds supervisor CPU and 0.609 seconds child CPU; largest child peak
+RSS was 19,096 KiB. These figures include pauses and are not aggregate RAM or throughput.
+After an ambiguous journal rename, preserve evidence and restart the complete lab
+explicitly from saved Startup; automatic recovery of unsaved changes is not promised.
+Power loss, whole-supervisor crash, long-lived connection revocation under load and
+production MFA remain unvalidated. Browser fixture tests are distinct from real traffic.
 
 No IDS/IPS, antivirus, WAF, TLS inspection, DNS filtering, NAT, VPN, AD SSO, MFA,
 HA or customer appliance installer is implemented by this flow. Unknown production

@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/AsterG/andeiva/internal/nftengine"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/nftengine"
 )
 
 const (

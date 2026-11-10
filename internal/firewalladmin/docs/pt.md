@@ -1,8 +1,7 @@
 # Laboratório administrativo de firewall — Português
 
-Estado: implementação experimental e procedimento reproduzível. A integração nativa,
-os testes reais de falhas e as medições de recursos continuam pendentes até existir
-evidência desta revisão exata. Este documento não é um guia de appliance de produção.
+Estado: implementação experimental com validação limitada em Debian. Consulte
+[resultados e limitações](../VALIDATION.md). Não é um guia de appliance de produção.
 
 ## Preparação e instalação por versão
 
@@ -271,7 +270,17 @@ Candidate/efetivo, rollback, prazo durante perda da API, reinício API, Startup/
 completo, negação viewer, gerações antigas, expiração de sessão, fechamento por falha
 do helper, invariância do host e limpeza. Meça CPU, RSS máximo, tamanho do journal
 e duração real. O relatório do supervisor fornece alguns valores; sozinho não é
-benchmark de capacidade. Nenhum resultado nativo ou meta de recursos é afirmado aqui.
+benchmark de capacidade. As medições são registradas separadamente, sem afirmar metas de capacidade.
+
+As execuções comprovaram criação pela Web, revisões iguais na CLI/API, TCP/UDP
+permitido e negado, rejeição de permissões, concorrência, save/rollback, expiração
+sem API, limpeza após queda do helper e recuperação de Startup. A repetição final
+durou 57,447 segundos, consumiu 0,041 segundos CPU do supervisor e 0,609 dos filhos;
+o maior pico RSS de um filho foi 19.096 KiB. Incluem pausas, não RAM agregada nem throughput.
+Após um rename ambíguo do journal, preserve evidências e reinicie explicitamente
+o laboratório completo pelo Startup salvo; não se promete recuperar alterações não salvas.
+Queda de energia, falha do supervisor inteiro, revogação de conexões duradouras sob
+carga e MFA de produção seguem sem validação. Testes com fixtures diferem do tráfego real.
 
 Este fluxo não implementa IDS/IPS, antivírus, WAF, inspeção TLS, filtro DNS, NAT,
 VPN, AD SSO, MFA, HA ou instalador de appliance. Suas permissões nunca autorizam
