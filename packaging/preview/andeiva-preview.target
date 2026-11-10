@@ -1,0 +1,8 @@
+[Unit]
+Description=ANDEIVA Firewall Alpha Preview
+ConditionPathExists=/var/lib/andeiva-preview/identities.json
+Requires=andeiva-preview-namespaces.service andeiva-preview-helper.service andeiva-preview-api.socket andeiva-preview-api.service
+After=andeiva-preview-namespaces.service andeiva-preview-helper.service andeiva-preview-api.socket andeiva-preview-api.service
+
+[Install]
+WantedBy=multi-user.target

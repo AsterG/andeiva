@@ -1,0 +1,51 @@
+[Unit]
+Description=ANDEIVA preview administration
+PartOf=andeiva-preview.target
+Requires=andeiva-preview-helper.service andeiva-preview-api.socket
+After=andeiva-preview-helper.service andeiva-preview-api.socket
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=andeiva-preview-api
+Group=andeiva-preview-api
+SupplementaryGroups=andeiva-preview-ipc
+RuntimeDirectory=andeiva-preview-api
+RuntimeDirectoryMode=0700
+ExecStart=/usr/lib/andeiva-preview/andeiva-preview api
+Restart=on-failure
+# Keep dependent units alive during bounded API recovery; the helper owns leases.
+RestartMode=direct
+RestartSec=3
+TimeoutStartSec=30
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+# Go uses rtnetlink to verify the inherited listener's interface and address.
+# Network administration capabilities remain empty.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+ReadWritePaths=/var/lib/andeiva-preview
+ReadOnlyPaths=/etc/andeiva-preview /usr/share/andeiva-preview/web /run/andeiva-preview
+InaccessiblePaths=-/var/lib/andeiva-preview/operator
+MemoryMax=192M
+TasksMax=64
+LimitNOFILE=1024
+StandardOutput=journal
+StandardError=journal

@@ -169,3 +169,40 @@ jobs:
           docker compose exec -T andeiva-api /andeiva --lang es status
       - if: always()
         run: docker compose down --remove-orphans
+
+  firewall-preview-package:
+    needs: source
+    if: github.event.repository.private == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.20.0
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: frontend
+      - name: Reproducible preview package without privileged execution
+        env:
+          PREVIEW_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          version="0.1.0~alpha${PREVIEW_BUILD_NUMBER}"
+          bash packaging/preview/build.sh "$version" dist/preview
+          bash packaging/preview/build.sh "$version" .tmp/preview-repro
+          cmp "dist/preview/andeiva-firewall-preview_${version}_amd64.deb" ".tmp/preview-repro/andeiva-firewall-preview_${version}_amd64.deb"
+          bash packaging/preview/tests/static-package.sh "dist/preview/andeiva-firewall-preview_${version}_amd64.deb"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: firewall-alpha-preview-debian13-amd64
+          path: |
+            dist/preview/*.deb
+            dist/preview/SHA256SUMS
+            dist/preview/build-info.txt
+          if-no-files-found: error
+          retention-days: 3

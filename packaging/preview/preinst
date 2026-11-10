@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+[ "$(dpkg --print-architecture)" = amd64 ] || { echo ANDEIVA_PREVIEW_ARCHITECTURE >&2; exit 1; }
+. /etc/os-release
+[ "$ID" = debian ] && [ "$VERSION_ID" = 13 ] || { echo ANDEIVA_PREVIEW_PLATFORM >&2; exit 1; }
+if [ "$1" = upgrade ] && [ -d /run/systemd/system ]; then
+  systemctl stop andeiva-preview.target
+  for unit in andeiva-preview-api.socket andeiva-preview-api.service andeiva-preview-helper.service andeiva-preview-namespaces.service; do
+    systemctl stop "$unit"
+    if systemctl is-active --quiet "$unit"; then echo ANDEIVA_PREVIEW_STOP_FAILED >&2; exit 1; fi
+  done
+fi

@@ -17,6 +17,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/firewallnft"
 )
 
 const ipPath = "/usr/bin/ip"
@@ -40,6 +42,7 @@ type Fixture struct {
 	self       string
 	uid, gid   uint32
 	host       uint64
+	hostHandle *os.File
 	namespaces map[string]*namespace
 	children   []child
 	baseline   map[string][]byte
@@ -50,6 +53,17 @@ type Fixture struct {
 // New requires the explicitly authorized Debian laboratory. It never installs
 // tools, creates named namespaces, moves host interfaces or changes host sysctls.
 func New(ctx context.Context, self string, uid, gid uint32) (_ *Fixture, err error) {
+	return newFixture(ctx, self, uid, gid, true)
+}
+
+// NewOwned retains the preview supervisor's host namespace as the trust anchor.
+// On setup failure it closes only its own resources; it does not inspect other
+// services' descriptors. The root service manager must start it in the host netns.
+func NewOwned(ctx context.Context, self string, uid, gid uint32) (*Fixture, error) {
+	return newFixture(ctx, self, uid, gid, false)
+}
+
+func newFixture(ctx context.Context, self string, uid, gid uint32, globalReferenceCheck bool) (_ *Fixture, err error) {
 	if os.Geteuid() != 0 || uid == 0 || gid == 0 || !filepath.IsAbs(self) {
 		return nil, errors.New("ANDEIVA_NFT_FIXTURE_PRIVILEGE")
 	}
@@ -69,14 +83,22 @@ func New(ctx context.Context, self string, uid, gid uint32) (_ *Fixture, err err
 	f := &Fixture{self: self, uid: uid, gid: gid, namespaces: map[string]*namespace{}}
 	defer func() {
 		if err != nil {
-			err = errors.Join(err, f.Close())
+			err = errors.Join(err, f.close(globalReferenceCheck))
 		}
 	}()
-	f.host, err = inode("/proc/self/ns/net")
+	f.hostHandle, err = os.Open("/proc/self/ns/net")
 	if err != nil {
 		return nil, err
 	}
-	f.baseline, err = hostSnapshot(ctx)
+	f.host, err = networkNamespaceInode(int(f.hostHandle.Fd()))
+	if err != nil {
+		return nil, err
+	}
+	if globalReferenceCheck {
+		f.baseline, err = hostSnapshot(ctx)
+	} else {
+		f.baseline, err = waitStableHost(ctx, hostSnapshot, time.Now, waitSnapshotInterval)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -215,6 +237,16 @@ func (f *Fixture) command(ctx context.Context, role, binary string, args []strin
 	cmd.Env = fixedEnvironment()
 	cmd.WaitDelay = 2 * time.Second
 	cmd.ExtraFiles = []*os.File{ns.handle}
+	if role == "gateway" && binary == f.self && slices.Equal(args, []string{"--nft-fixture", "forward", strconv.FormatUint(f.host, 10)}) {
+		if peer != "" || f.hostHandle == nil {
+			return nil, errors.New("ANDEIVA_NFT_FIXTURE_HOST_NAMESPACE")
+		}
+		host, err := networkNamespaceInode(int(f.hostHandle.Fd()))
+		if err != nil || host != f.host || host == ns.inode {
+			return nil, errors.New("ANDEIVA_NFT_FIXTURE_HOST_NAMESPACE")
+		}
+		cmd.ExtraFiles = append(cmd.ExtraFiles, f.hostHandle)
+	}
 	if peer != "" {
 		other, err := f.checked(peer)
 		if err != nil {
@@ -258,7 +290,9 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 }
 
 func (f *Fixture) run(ctx context.Context, role, binary string, args []string, peer string, input string) ([]byte, error) {
-	if input != "" && !(role == "gateway" && binary == nftPath && slices.Equal(args, []string{"-f", "-"}) && input == "add table inet andeiva_sentinel\n") {
+	adminDeny, compileErr := firewallnft.Compile(firewallnft.DefaultConfig())
+	allowedDeny := compileErr == nil && role == "gateway" && binary == nftPath && slices.Equal(args, []string{"-j", "-f", "-"}) && input == string(adminDeny.Create)
+	if input != "" && !allowedDeny && !(role == "gateway" && binary == nftPath && slices.Equal(args, []string{"-f", "-"}) && input == "add table inet andeiva_sentinel\n") {
 		return nil, errors.New("ANDEIVA_NFT_FIXTURE_INPUT_DENIED")
 	}
 	deadline, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -311,7 +345,7 @@ func (f *Fixture) allowedCommand(role, binary string, args []string, peer string
 				return true
 			}
 		}
-		return role == "gateway" && binary == nftPath && peer == "" && slices.Equal(args, sentinelArgs())
+		return role == "gateway" && binary == nftPath && peer == "" && (slices.Equal(args, sentinelArgs()) || slices.Equal(args, []string{"-j", "-f", "-"}))
 	}
 	if !unprivileged || f.uid == 0 || f.gid == 0 || binary != f.self || peer != "" {
 		return false
@@ -548,6 +582,17 @@ func (f *Fixture) CheckHost(ctx context.Context) error {
 // Close stops only subprocesses retained by this fixture, then drops its namespace
 // references. It never searches for processes by a name or removes a global netns.
 func (f *Fixture) Close() error {
+	return f.close(true)
+}
+
+// CloseOwned closes retained processes and descriptors and checks the host
+// baseline. Unlike Close, it makes no claim about references held by unrelated
+// processes. The preview's service manager stops API/helper units beforehand.
+func (f *Fixture) CloseOwned() error {
+	return f.close(false)
+}
+
+func (f *Fixture) close(globalReferenceCheck bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.closed {
@@ -591,8 +636,15 @@ func (f *Fixture) Close() error {
 			}
 		}
 	}
-	if err := f.verifyNoNamespaceReferences(); err != nil {
-		failures = append(failures, err)
+	if globalReferenceCheck {
+		if err := f.verifyNoNamespaceReferences(); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	if f.hostHandle != nil {
+		if err := f.hostHandle.Close(); err != nil {
+			failures = append(failures, err)
+		}
 	}
 	deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -1,0 +1,16 @@
+[Unit]
+Description=ANDEIVA preview LAN HTTPS listener
+ConditionPathExists=/var/lib/andeiva-preview/identities.json
+ConditionPathExists=/etc/systemd/system/andeiva-preview-api.socket.d/listen.conf
+PartOf=andeiva-preview.target
+After=network-online.target
+Wants=network-online.target
+
+[Socket]
+# Provisioning installs an exact LAN address/device override. No wildcard fallback.
+ListenStream=127.0.0.1:9443
+BindToDevice=lo
+Accept=no
+Service=andeiva-preview-api.service
+NoDelay=yes
+Backlog=32

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "listen_address": "192.0.2.1:9443",
+  "interface": "CHANGE_ME",
+  "allowed_cidr": "192.0.2.10/32",
+  "api_user": "andeiva-preview-api",
+  "helper_user": "andeiva-preview-helper",
+  "ipc_group": "andeiva-preview-ipc"
+}
