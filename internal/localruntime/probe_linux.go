@@ -363,7 +363,12 @@ func probeSSH(ctx context.Context, p probeLaunch, dialer *net.Dialer, network, t
 	if p.Request.Transaction != nil {
 		input = p.Request.Transaction
 	}
-	session.Stdin = bytes.NewReader(encode(input))
+	// Status has no request body and the server can finish without reading stdin.
+	// Sending an unused body races that close and can turn exit status zero into
+	// a client-side copy error. Typed commands that consume JSON retain their body.
+	if p.Request.Operation != "status" {
+		session.Stdin = bytes.NewReader(encode(input))
+	}
 	var output boundedOutput
 	session.Stdout = &output
 	session.Stderr = io.Discard

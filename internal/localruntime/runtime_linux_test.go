@@ -295,8 +295,10 @@ func TestSSHProbePinsHostAndUsesRealLogin(t *testing.T) {
 	}
 	p := probeLaunch{HostKey: public, Request: ProbeRequest{Username: "admin-a", Operation: "status", Session: token}}
 	d := &net.Dialer{Timeout: time.Second, LocalAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1")}}
-	if r := probeSSH(context.Background(), p, d, "tcp4", listener.Addr().String()); r.Status != 200 {
-		t.Fatal(r.Error)
+	r := probeSSH(context.Background(), p, d, "tcp4", listener.Addr().String())
+	var status localadmin.Status
+	if r.Status != 200 || r.Error != "" || json.Unmarshal(r.Data, &status) != nil || status.Snapshot.Generation != 7 {
+		t.Fatal("SSH status did not return the authenticated backend response", r.Error)
 	}
 	_, _, _, _, other, e := certificates(testConfig())
 	if e != nil {
