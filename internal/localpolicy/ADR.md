@@ -21,7 +21,12 @@ addresses avoid ambiguous wildcard socket overlap in this version.
 
 ## Contract
 
-Schema 1 contains an authoritative interface inventory and owned service
+Local-policy schema 1 is independent of `previewruntime.Config` schema 1 and
+`configpoc.Config` schemas 1/2; their documents are not interchangeable. The
+existing preview still has a single IPv4 management listener. This package does
+not change its deployment configuration.
+
+Local-policy schema 1 contains an authoritative interface inventory and owned service
 declarations. Each binding selects an interface, its inventory zone, one local
 address, explicit source prefixes and an explicit WAN opt-in. Interfaces can be
 LAN, WAN or other; one service can select several interfaces and both address
@@ -87,6 +92,12 @@ compatibility, storage limits, resource budgets and Web/CLI/API contracts before
 changing the shared schema. A generic opaque engine payload is an alternative,
 but would move validation and compatibility guarantees outside the canonical
 model; it is not selected without that review.
+
+Migration must preserve historical journal records and revision hashes. The
+bridge must authorize ownership, service kinds and zones, and audit both the
+configuration revision and compiler artifact digest. Node-local interface
+inventory must remain distinct from shared desired configuration in any future
+HA contract; no replication or HA behavior is implemented here.
 
 The future bridge must stage Candidate, validate both domains, journal intent,
 coordinate listener and policy changes with safe ordering, observe the kernel,

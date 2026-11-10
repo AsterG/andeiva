@@ -16,6 +16,14 @@ El detector de carreras requiere plataforma compatible y compilador C. No se
 necesitan contenedores ni operaciones de red privilegiadas. Fuzzing opcional:
 `go test ./internal/localpolicy -fuzz FuzzDecode -fuzztime 10s`.
 
+Límites: 256 KiB por documento, 32 interfaces, 64 servicios, 4.096 reglas
+derivadas y 4.096 tuplas de listeners declarados. Cada servicio permite hasta 16
+endpoints y 16 bindings; cada binding admite hasta 64 prefijos de origen. Son
+límites de validación, no capacidad del appliance demostrada. Las pruebas cubren
+el límite de expansión 4.096/4.097 y cada predicado de las reglas IPv4/IPv6 TCP/UDP.
+CI ejecuta pruebas puras, fuzzing acotado y compilación Windows/Linux/Darwin;
+no activa este paquete ni modifica políticas de red.
+
 `DefaultManagement` recibe una interfaz LAN de inventario confiable, dirección
 local exacta y prefijos de origen explícitos. Declara TCP 443 con autenticación
 obligatoria; no inicia HTTPS. `Bindings` permite seleccionar una o varias
@@ -43,6 +51,15 @@ observaciones aportadas, serialización y compilación concurrente. No prueban
 tráfico real, recuperación tras caída, Commit Confirmed, auditoría ni transacciones
 persistentes. El benchmark mide tiempo y asignaciones del compilador, no memoria
 del appliance ni rendimiento de paquetes.
+
+El 2026-11-10, en WSL/Linux amd64, Go 1.27.3, Intel i7-1370P y
+`GOMAXPROCS=2`, tres muestras de un segundo midieron 30,580–34,950 µs
+para un servicio/regla (aproximadamente 19,53 kB asignados por operación,
+190 asignaciones). `BenchmarkCompileCapacity`, con 64 servicios y 4.096 reglas,
+midió 70,991–89,839 ms y aproximadamente 73,14 MB asignados por operación.
+Las asignaciones acumuladas no son el pico de memoria residente. Antes de integrar
+el runtime se debe limitar la compilación concurrente y medir memoria en el
+appliance objetivo; estos resultados no establecen una tasa segura de solicitudes.
 
 No hay componentes instalados que detener o desinstalar. Actualizar o retirar el
 paquete requiere revisión normal del código. La integración depende de aprobar el

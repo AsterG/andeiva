@@ -12,5 +12,5 @@ prefixes. Multiple LAN/WAN/other bindings are representable; each WAN binding
 requires opt-in. This does not implement a runtime interface selector or activate
 any service. Forwarding policies remain separate.
 
-This package is not connected to the production API, CLI, Web, transaction journal
+This package is not connected to the existing preview API, CLI, Web, transaction journal
 or service supervisor. Do not apply its default-drop batch on the appliance host.

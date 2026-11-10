@@ -16,6 +16,14 @@ The race detector requires a supported platform and C toolchain. No containers o
 privileged network operations are necessary. Fuzzing is optional:
 `go test ./internal/localpolicy -fuzz FuzzDecode -fuzztime 10s`.
 
+Limits: 256 KiB per declaration document, 32 interfaces, 64 services, 4,096
+derived rules and 4,096 declared listener tuples. Each service permits up to 16
+endpoints and 16 bindings; each binding permits up to 64 source prefixes. These
+are validation bounds, not validated appliance capacity. Tests exercise the
+4,096/4,097 expansion boundary and every predicate of each IPv4/IPv6 TCP/UDP rule.
+CI runs these pure tests, bounded fuzzing and Windows/Linux/Darwin compilation;
+it does not activate this package or change any network policy.
+
 Use `DefaultManagement` with a trusted LAN inventory entry, exact local address
 and explicit source prefixes. It declares TCP 443 with required authentication.
 It does not start HTTPS. Modify the service's `Bindings` to select one or several
@@ -42,6 +50,15 @@ serialization and concurrent compilation. They do not demonstrate real traffic,
 process failure recovery, Commit Confirmed, audit or persistent transactions.
 Benchmark output measures compiler allocations and time only, not appliance RAM
 or packet-processing performance.
+
+On 2026-11-10, WSL/Linux amd64, Go 1.27.3, Intel i7-1370P and
+`GOMAXPROCS=2`, three one-second benchmark samples measured 30.580–34.950 µs
+for one service/rule (about 19.53 kB allocated per operation, 190 allocations).
+`BenchmarkCompileCapacity`, with 64 services and 4,096 rules, measured
+70.991–89.839 ms and about 73.14 MB allocated per operation. Allocation totals
+are not peak resident memory. Before runtime integration, bound concurrent
+compilation and measure memory on the target appliance; these results do not
+establish a safe administrative request rate.
 
 There is no installed component to stop or uninstall. Update or remove this
 package through the normal source review process. The next integration requires
