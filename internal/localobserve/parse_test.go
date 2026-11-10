@@ -180,3 +180,48 @@ func TestProcessIdentityParsers(t *testing.T) {
 		t.Fatal("identity format")
 	}
 }
+
+func TestStableListenersIgnoreUnrelatedSocketFDChurn(t *testing.T) {
+	first, second := baseCapture(), baseCapture()
+	first.fds = append(first.fds, socketFD{8, 888})
+	second.fds = append(second.fds, socketFD{9, 999})
+	got, err := verifyStable(first, second, expected(), 99)
+	if err != nil || len(got.Sockets) != 1 || len(got.Foreign) != 0 {
+		t.Fatalf("nonlistener churn invalidated stable owned listener: %+v %v", got, err)
+	}
+	// FD numbers are not ownership: a duplicate can retain the same inode.
+	second.fds = []socketFD{{10, 77}}
+	if _, err := verifyStable(first, second, expected(), 99); err != nil {
+		t.Fatal("same listener inode held under a different FD", err)
+	}
+}
+
+func TestStableCapturePreservesForeignListenersAndOwnershipFailures(t *testing.T) {
+	first, second := baseCapture(), baseCapture()
+	first.fds, second.fds = nil, nil
+	got, err := verifyStable(first, second, expected(), 99)
+	if err != nil || len(got.Sockets) != 0 || len(got.Foreign) != 1 {
+		t.Fatal("unowned listener must remain foreign", got, err)
+	}
+	for _, mutate := range []func(*capture){
+		func(c *capture) { c.sockets = nil },
+		func(c *capture) { c.sockets[0].Port++ },
+		func(c *capture) { c.sockets[0].UID++ },
+		func(c *capture) { c.fds = []socketFD{{6, 77}} },
+		func(c *capture) { c.identity.uid[0]++ },
+		func(c *capture) { c.identity.gid[3]++ },
+		func(c *capture) { c.identity.namespace++ },
+	} {
+		second := baseCapture()
+		second.fds = nil
+		mutate(&second)
+		if _, err := verifyStable(first, second, expected(), 99); err == nil {
+			t.Fatal("changed listener, ownership or identity accepted")
+		}
+	}
+	first, second = baseCapture(), baseCapture()
+	first.sockets[0].UID, second.sockets[0].UID = 0, 0
+	if _, err := verifyStable(first, second, expected(), 99); !errors.Is(err, ErrOwnership) {
+		t.Fatal("stable wrong-UID inode accepted", err)
+	}
+}

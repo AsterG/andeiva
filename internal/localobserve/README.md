@@ -35,12 +35,18 @@ a revision. No service ID or owner is fabricated: the trusted coordinator must
 project exact endpoints onto the expected canonical revision. Raw process and
 kernel evidence is internal supervisor information, not an ordinary-admin API.
 
-Two complete captures must match semantically. Each is bracketed by process
-identity checks. A missing FD during enumeration, PID/namespace/UID change,
-malformed or ambiguous table, duplicate inode/tuple (including IPv4-mapped IPv6
-aliases), resource limit or inconsistent capture fails closed. Dynamic queue
-counters and established TCP connections are parsed but are not listener state.
-Socket close and concurrent activity can produce transient rejection; callers
+Two captures must have identical process identity, listener tables and inode
+ownership. Each is bracketed by process identity checks. Descriptor numbers and
+sockets absent from the relevant tables do not define listener identity: accepted
+TCP connections may open and close without changing a listener. If an enumerated
+FD disappears before its link is read, only ENOENT is tolerated. It supplies no
+ownership evidence; any retained listener row without an owned inode remains
+foreign. Lost listener ownership between captures is rejected, as are changed
+listener tables, PID/namespace/UID changes, other FD read errors, malformed or
+ambiguous tables, duplicate inode/tuple (including IPv4-mapped IPv6 aliases), and
+resource limit violations. Dynamic queue counters and established TCP connections
+are parsed but are not listener state. Listener changes can still produce
+transient rejection; callers
 may retry within a bounded transaction deadline, but must not confirm on error.
 
 An inherited recovery socket in the host namespace is absent from the gateway

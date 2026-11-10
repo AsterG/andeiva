@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -193,4 +194,110 @@ func TestObserveAndCloseAreSerialized(t *testing.T) {
 		}
 	})
 	wg.Wait()
+}
+
+func TestRealAcceptedTCPChurnDoesNotChangeListenerObservation(t *testing.T) {
+	c := selfCollector(t)
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	first, err := c.readCapture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := net.DialTimeout("tcp4", l.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err := l.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := l.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accepted.Close()
+	second, err := c.readCapture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.fds) <= len(first.fds) {
+		t.Fatal("test did not create additional connected sockets")
+	}
+	got, err := verifyStable(first, second, c.expected, c.start)
+	if err != nil {
+		t.Fatal("accepted TCP connection invalidated listener capture", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	found := false
+	for _, socket := range got.Sockets {
+		found = found || socket.Protocol == "tcp" && socket.Address == "127.0.0.1" && int(socket.Port) == port
+	}
+	if !found {
+		t.Fatal("real listener missing from observation")
+	}
+	_ = client.Close()
+	_ = accepted.Close()
+	third, err := c.readCapture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyStable(second, third, c.expected, c.start); err != nil {
+		t.Fatal("connection closure invalidated listener capture", err)
+	}
+}
+
+func TestEnumeratedFDDisappearanceRemainsUnowned(t *testing.T) {
+	dir := t.TempDir()
+	for _, fd := range []string{"4", "8"} {
+		if err := os.Symlink("socket:[77]", filepath.Join(dir, fd)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, lost := range []string{"fd/8", "fd/4"} {
+		fds, err := readSocketFDs(entries, func(path string) (string, error) {
+			if path == lost {
+				return "", &os.PathError{Op: "readlink", Path: path, Err: os.ErrNotExist}
+			}
+			if path == "fd/4" {
+				return "socket:[77]", nil
+			}
+			return "socket:[888]", nil
+		})
+		if err != nil || len(fds) != 1 {
+			t.Fatal("transient descriptor disappearance", fds, err)
+		}
+		first, second := baseCapture(), baseCapture()
+		second.fds = fds
+		got, err := verifyStable(first, second, expected(), 99)
+		if lost == "fd/8" {
+			if err != nil || len(got.Sockets) != 1 {
+				t.Fatal("unrelated descriptor closure invalidated listener", got, err)
+			}
+		} else {
+			if !errors.Is(err, ErrUnstable) {
+				t.Fatal("lost listener descriptor not detected", err)
+			}
+			first.fds = fds
+			got, err = verifyStable(first, second, expected(), 99)
+			if err != nil || len(got.Foreign) != 1 || len(got.Sockets) != 0 {
+				t.Fatal("missing listener ownership was invented", got, err)
+			}
+		}
+	}
+	for _, readErr := range []error{os.ErrPermission, errors.New("readlink I/O failure")} {
+		if _, err := readSocketFDs(entries, func(string) (string, error) { return "", readErr }); !errors.Is(err, ErrUnstable) {
+			t.Fatal("non-ENOENT read failure ignored", err)
+		}
+	}
+	if _, err := readSocketFDs(entries, func(string) (string, error) { return "socket:[invalid]", nil }); !errors.Is(err, ErrMalformed) {
+		t.Fatal("malformed descriptor ignored", err)
+	}
 }

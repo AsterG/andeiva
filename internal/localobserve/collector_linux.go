@@ -218,13 +218,23 @@ func (c *Collector) readFDs() ([]socketFD, error) {
 	if (err != nil && !errors.Is(err, io.EOF)) || len(entries) > MaxFDs {
 		return nil, ErrMalformed
 	}
+	return readSocketFDs(entries, c.root.Readlink)
+}
+
+func readSocketFDs(entries []os.DirEntry, readlink func(string) (string, error)) ([]socketFD, error) {
 	result := []socketFD{}
 	for _, entry := range entries {
 		fd, err := strconv.Atoi(entry.Name())
 		if err != nil || fd < 0 || fd > 1<<20 || strconv.Itoa(fd) != entry.Name() || entry.Type()&os.ModeSymlink == 0 {
 			return nil, ErrMalformed
 		}
-		link, err := c.root.Readlink("fd/" + entry.Name())
+		link, err := readlink("fd/" + entry.Name())
+		if errors.Is(err, os.ErrNotExist) {
+			// A connection may close after enumeration. Missing descriptors never
+			// prove ownership: retained listener rows remain foreign unless another
+			// descriptor owns their inode, and both captures must agree.
+			continue
+		}
 		if err != nil {
 			return nil, ErrUnstable
 		}

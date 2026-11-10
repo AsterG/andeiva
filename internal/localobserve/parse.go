@@ -303,8 +303,22 @@ func sortCapture(c *capture) {
 }
 
 func verifyStable(first, second capture, expected Expected, start uint64) (Snapshot, error) {
-	if !reflect.DeepEqual(first, second) {
+	if first.identity != second.identity || !slices.Equal(first.sockets, second.sockets) {
 		return Snapshot{}, ErrUnstable
 	}
-	return correlate(second, expected, start)
+	before, err := correlate(first, expected, start)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	after, err := correlate(second, expected, start)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	// Accepted connections and inherited host sockets are not local listeners.
+	// Require the same listener inodes and ownership in both captures, without
+	// treating unrelated descriptor churn as a policy change.
+	if !reflect.DeepEqual(before, after) {
+		return Snapshot{}, ErrUnstable
+	}
+	return after, nil
 }
