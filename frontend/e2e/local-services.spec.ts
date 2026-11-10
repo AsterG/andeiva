@@ -97,6 +97,27 @@ test('missing capability is displayed honestly', async ({ page }) => {
   await expect(page.getByText('Local Services is not available on this endpoint.', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stage candidate', exact: true })).toHaveCount(0);
 });
+for (const failure of ['unavailable', 'revision', 'blocked', 'pending'] as const) test(`effective policy ${failure} response invalidates the observed state`, async ({ page }) => {
+  const mock = await fixture(page); await login(page);
+  await expect(page.getByText('Verified at last refresh')).toBeVisible();
+  await page.route('**/api/v1/effective-policies?*', (route) => route.fulfill({ json: {
+    ...mock.state.effective,
+    hash: failure === 'revision' ? '9'.repeat(64) : hash,
+    phase: failure === 'revision' ? 'idle' : failure,
+    recovery_required: failure === 'unavailable',
+  } }));
+  await page.getByRole('button', { name: 'Effective Policies', exact: true }).click();
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect(page.getByText('Verified at last refresh')).toHaveCount(0);
+  await expect(page.getByText('No generated rules match the filters.', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('No managed listeners are enabled.', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('table')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Local Services', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit service: HTTPS', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+  await expect(page.getByText('Verified at last refresh')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit service: HTTPS', exact: true })).toBeEnabled();
+});
 test('managed endpoint only issues a temporary proof for a pending activation', async ({ page }) => {
   const mock = await fixture(page, { managed: true }); await login(page);
   await page.getByRole('button', { name: 'Create endpoint proof', exact: true }).click();

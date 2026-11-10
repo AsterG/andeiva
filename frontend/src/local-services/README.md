@@ -16,6 +16,10 @@ Edits remain an unsaved browser draft until Stage. Validate checks the candidate
 Commit and historical rollback always request a 30–120 second confirmation
 window. Save explicitly persists Running to Startup. Unknown effective state,
 stale generations and another administrator's candidate prevent writes.
+Filtered effective policies must match the loaded Running revision and its
+confirmation phase. An unavailable, blocked or mismatched response invalidates
+the view and disables writes until a full status refresh succeeds; unknown
+state is never displayed as an empty verified ruleset.
 
 Changes use the fixed authenticated recovery endpoint. Immediately before an
 activation, confirmation or Save, the page obtains a short-lived recovery proof

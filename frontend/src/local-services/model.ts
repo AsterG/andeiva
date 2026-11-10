@@ -85,6 +85,9 @@ export function effectiveResponse(v: unknown): Effective {
   if (!v.listeners.every((l: unknown) => object(l) && ['owner', 'service', 'interface', 'local_address'].every((k) => text(l[k])) && l.protocol === 'tcp' && integer(l.port) && l.port >= 1024 && l.port <= 65535)) invalid();
   return v as Effective;
 }
+export function effectiveMatchesSnapshot(effective: Effective, snapshot: Snapshot): boolean {
+  return !effective.recovery_required && !snapshot.recovery_required && effective.hash === snapshot.running.hash && effective.phase === (snapshot.pending ? 'pending' : 'idle');
+}
 export function statusResponse(v: unknown): Status {
   if (!object(v) || !object(v.snapshot)) invalid();
   const s = v.snapshot;
