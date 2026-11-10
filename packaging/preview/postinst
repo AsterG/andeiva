@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+if [ "$1" != configure ]; then exit 0; fi
+identity_dir=/var/lib/andeiva-preview-package
+identity_file="$identity_dir/identities"
+if [ -e "$identity_dir" ] || [ -L "$identity_dir" ]; then
+  [ ! -L "$identity_dir" ] && [ -d "$identity_dir" ] && [ "$(stat -c '%u:%a' "$identity_dir")" = 0:700 ] || { echo ANDEIVA_PREVIEW_IDENTITY_STORE >&2; exit 1; }
+fi
+if [ -e "$identity_file" ] || [ -L "$identity_file" ]; then
+  [ ! -L "$identity_file" ] && [ -f "$identity_file" ] && [ "$(stat -c '%u:%a' "$identity_file")" = 0:600 ] || { echo ANDEIVA_PREVIEW_IDENTITY_STORE >&2; exit 1; }
+else
+  for name in andeiva-preview-api andeiva-preview-helper andeiva-preview-ipc; do
+    if getent group "$name" >/dev/null || getent passwd "$name" >/dev/null; then
+      echo ANDEIVA_PREVIEW_EXISTING_IDENTITY_REQUIRES_REVIEW >&2; exit 1
+    fi
+  done
+fi
+for group in andeiva-preview-api andeiva-preview-helper andeiva-preview-ipc; do
+  if ! getent group "$group" >/dev/null; then
+    addgroup --system "$group"
+  fi
+done
+for account in andeiva-preview-api andeiva-preview-helper; do
+  if getent passwd "$account" >/dev/null; then
+    entry=$(getent passwd "$account")
+    uid=$(printf '%s\n' "$entry" | cut -d: -f3)
+    account_home=$(printf '%s\n' "$entry" | cut -d: -f6)
+    account_shell=$(printf '%s\n' "$entry" | cut -d: -f7)
+    case "$uid:$account_home:$account_shell" in
+      0:*|*:*/bin/sh|*:*/bin/bash) echo ANDEIVA_PREVIEW_ACCOUNT_CONFLICT >&2; exit 1 ;;
+    esac
+    [ "$account_home" = /nonexistent ] && [ "$account_shell" = /usr/sbin/nologin ] || {
+      echo ANDEIVA_PREVIEW_ACCOUNT_CONFLICT >&2; exit 1;
+    }
+  else
+    adduser --system --no-create-home --home /nonexistent --shell /usr/sbin/nologin --ingroup "$account" "$account"
+  fi
+done
+install -d -o root -g root -m 0700 "$identity_dir"
+identity_tmp=$(mktemp "$identity_dir/.identities.XXXXXXXX")
+trap 'rm -f -- "$identity_tmp"' EXIT HUP INT TERM
+for name in andeiva-preview-api andeiva-preview-helper; do getent passwd "$name" | cut -d: -f1,3,4,6,7; done > "$identity_tmp"
+for name in andeiva-preview-api andeiva-preview-helper andeiva-preview-ipc; do getent group "$name" | cut -d: -f1,3; done >> "$identity_tmp"
+chmod 0600 "$identity_tmp"
+if [ -e "$identity_file" ]; then
+  cmp -s "$identity_file" "$identity_tmp" || { echo ANDEIVA_PREVIEW_IDENTITY_CHANGED >&2; exit 1; }
+else
+  mv -T -- "$identity_tmp" "$identity_file"
+fi
+if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
+echo 'ANDEIVA preview installed. Review configuration and provision before enabling the target.'
+exit 0

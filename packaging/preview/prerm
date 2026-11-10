@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+case "$1" in
+  remove|upgrade|deconfigure)
+    if [ -d /run/systemd/system ]; then
+      systemctl stop andeiva-preview.target
+      systemctl stop andeiva-preview-api.socket andeiva-preview-api.service andeiva-preview-helper.service andeiva-preview-namespaces.service
+      for unit in andeiva-preview-api.socket andeiva-preview-api.service andeiva-preview-helper.service andeiva-preview-namespaces.service; do
+        if systemctl is-active --quiet "$unit"; then echo ANDEIVA_PREVIEW_STOP_FAILED >&2; exit 1; fi
+      done
+    fi
+    ;;
+esac
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then systemctl disable andeiva-preview.target; fi
