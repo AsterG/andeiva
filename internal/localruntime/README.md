@@ -1,7 +1,8 @@
 # Isolated local-services runner
 
 Operator procedures: [English](docs/en.md), [Español](docs/es.md),
-[Português](docs/pt.md).
+[Português](docs/pt.md). [Native results and limits / Resultados y límites /
+Resultados e limites](VALIDATION.md).
 
 ## English
 
@@ -9,8 +10,9 @@ Experimental composition for the explicitly authorized Debian 13 AMD64 laborator
 It reuses one configuration coordinator/journal, the Local-In engine, independent
 rollback guardian, real HTTPS/SSH transports and retained-process socket collector.
 No installed preview service, host firewall, routes or host SSH/HTTPS are changed.
-Native integration and resource qualification remain pending; unit tests do not
-establish effective packet filtering or production readiness.
+Native Web/CLI/API cycles and isolated traffic/recovery were exercised in Debian;
+see the validation report for measured scope. Production resource qualification
+remains pending; these tests do not establish production readiness.
 
 The root supervisor creates exactly three owned namespaces. API and helper accounts
 must already exist with different nonzero primary UIDs/GIDs, nologin shells and no
@@ -78,8 +80,8 @@ is served only by the root supervisor and pins the directly owned API process.
 
 Managed HTTPS shares 32 connections/16 requests; SSH shares 32 connections/four
 handshakes. Recovery reserves 16 connections/eight requests across its two sockets.
-Protocol deadlines and bounded drains remain authoritative. Native cold-neighbor,
-permission, reset, failed confirmation and resource tests are still required.
+Protocol deadlines and bounded drains remain authoritative. The validation report
+separates native transport, administrative, reset and resource observations.
 
 ## Español
 
@@ -88,7 +90,8 @@ solo coordinador/journal y protocolos HTTPS/SSH reales en tres namespaces propia
 no modifica Alpha ni SSH/HTTPS, rutas o firewall del host. El supervisor es root y
 registra sus capacidades reales; API sin capacidades, helper sólo NET_ADMIN y
 cuentas nologin distintas sin grupos adicionales. No se afirma ausencia de
-SYS_PTRACE en el supervisor ni validación nativa completada.
+SYS_PTRACE en el supervisor. El informe vinculado distingue la validación nativa
+aislada de la cualificación pendiente para producción.
 
 Los comandos y campos anteriores son idénticos en todos los idiomas. Configuración
 y solicitudes privadas root 0600; resultados de probe nuevos root 0600, sin tokens
@@ -101,7 +104,7 @@ no ofrece continuidad. Mismo boot conserva/reconcilia Running y pending; nuevo b
 válido carga Startup. Marcador corrupto o ausente con journal bloquea recuperación.
 La recuperación fija usa LAN y loopback en 18443; su disponibilidad autenticada
 requiere API saludable. Auditoría protegida con presupuesto de 8 MiB sin borrado
-automático. Pruebas de tráfico, fallos y recursos nativos siguen pendientes.
+automático. Véase el informe para las pruebas nativas de tráfico, fallos y recursos.
 
 ## Português
 
@@ -110,7 +113,8 @@ Runner experimental para o laboratório Debian 13 AMD64 autorizado. Reutiliza um
 Alpha nem SSH/HTTPS, rotas ou firewall do host. O supervisor é root e registra suas
 capacidades reais; API sem capacidades, helper somente NET_ADMIN e contas nologin
 distintas sem grupos adicionais. Não há alegação de ausência de SYS_PTRACE no
-supervisor ou de validação nativa concluída.
+supervisor. O relatório vinculado distingue validação nativa isolada de
+qualificação pendente para produção.
 
 Os comandos e campos acima são iguais em todos os idiomas. Configuração e pedidos
 privados root 0600; resultados novos de probe root 0600, sem tokens nos logs. A
@@ -123,4 +127,4 @@ continuidade garantida. Mesmo boot preserva/reconcilia Running e pending; novo b
 válido carrega Startup. Marcador inválido ou ausente com journal bloqueia a
 recuperação. Recuperação fixa usa LAN e loopback em 18443; disponibilidade
 autenticada exige API saudável. Auditoria protegida com orçamento de 8 MiB sem
-remoção automática. Testes nativos de tráfego, falhas e recursos permanecem pendentes.
+remoção automática. Consulte o relatório dos testes nativos de tráfego, falhas e recursos.
