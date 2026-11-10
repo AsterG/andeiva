@@ -143,7 +143,10 @@ jobs:
       - name: Provision verified module cache before offline packaging
         run: |
           go mod download
+          go list -mod=readonly -m all > /dev/null
           go mod verify
+          GOPROXY=off GOSUMDB=off go list -mod=readonly -m all > /dev/null
+          git diff --exit-code -- go.mod go.sum
       - name: Build and inspect experimental Debian package
         run: |
           bash -n packaging/debian/tests/vm-lifecycle.sh
@@ -201,7 +204,10 @@ jobs:
       - name: Provision verified module cache before offline packaging
         run: |
           go mod download
+          go list -mod=readonly -m all > /dev/null
           go mod verify
+          GOPROXY=off GOSUMDB=off go list -mod=readonly -m all > /dev/null
+          git diff --exit-code -- go.mod go.sum
       - name: Reproducible preview package without privileged execution
         env:
           PREVIEW_BUILD_NUMBER: ${{ github.run_number }}

@@ -39,7 +39,21 @@ should verify that applicable legal texts are present and byte-identical to thes
 source copies. Include their paths in package checksums and source-content
 manifests where used. An offline build must have its reviewed dependencies already
 available; this attribution does not authorize network fetching on an appliance.
-This document does not claim those packaging changes have been implemented.
+Before disconnecting a build environment, prepare both the module contents and
+the dependency graph metadata. `go mod download` alone can leave graph metadata
+missing from a new cache. Run these commands from the repository root on the
+authorized build host, then run the package builders with that same module cache:
+
+```sh
+go mod download
+go list -mod=readonly -m all > /dev/null
+go mod verify
+GOPROXY=off GOSUMDB=off go list -mod=readonly -m all > /dev/null
+git diff --exit-code -- go.mod go.sum
+```
+
+The package builders keep network module lookup disabled. Do not run the
+preparation step on an installed appliance.
 
 ## Español
 
@@ -62,7 +76,12 @@ en las rutas de la tabla anterior: documentación de dependencias del paquete
 Debian, `/licenses/` de la imagen aplicable y artefacto de inventario. Compruebe
 presencia, igualdad de bytes y checksums. Las copias en el repositorio no prueban
 su inclusión en un paquete; los ajustes de empaquetado deben validarse por
-separado. No se autoriza descargar dependencias desde el appliance.
+separado. No se autoriza descargar dependencias desde el appliance. Antes de
+desconectar el entorno de compilación autorizado, ejecute el bloque anterior
+desde la raíz del repositorio y conserve la misma caché para los empaquetadores.
+La descarga de módulos por sí sola puede omitir metadatos del grafo. El bloque
+comprueba el inventario offline y que los manifiestos permanezcan sin cambios;
+los empaquetadores mantienen deshabilitada la consulta de módulos por red.
 
 ## Português
 
@@ -85,4 +104,8 @@ caminhos da tabela: documentação de dependências do pacote Debian, `/licenses
 da imagem aplicável e artefato de inventário. Verifique presença, igualdade de
 bytes e checksums. As cópias no repositório não comprovam sua inclusão em um pacote;
 as alterações de empacotamento exigem validação separada. Não se autoriza baixar
-dependências a partir do appliance.
+dependências a partir do appliance. Antes de desconectar o ambiente autorizado
+de compilação, execute o bloco acima na raiz do repositório e mantenha a mesma
+cache para os empacotadores. O download dos módulos pode omitir metadados do
+grafo. O bloco verifica o inventário offline e que os manifestos não mudaram;
+os empacotadores mantêm desativada a consulta de módulos pela rede.
