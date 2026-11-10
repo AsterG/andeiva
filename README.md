@@ -142,6 +142,12 @@ validate Debian/VMware compatibility, capacity or production security.
 
 ## Project documentation
 
+The [isolated nftables experiment](internal/nftpoc/README.md) connects the
+transactional configuration engine to a bounded real kernel policy in three
+laboratory namespaces. See its [validation and limitations](internal/nftpoc/VALIDATION.md)
+and EN/ES/PT procedures. It does not expose firewall management in the product UI,
+CLI or API and must not run as a privileged test on shared CI.
+
 | Guide | Contents |
 |---|---|
 | [Contributing](CONTRIBUTING.md) | Development commands, tests and contribution scope |

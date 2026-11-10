@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — nftables laboratory adapter
+
+- Add a typed immutable fixture catalog, strict JSON compilation/readback and
+  three isolated namespaces for real TCP/UDP allow/deny experiments.
+- Coordinate confirmed commits with an independent rollback lease; block
+  mutations after unprovable confirmation and reject invalid helper responses.
+- Add negative, concurrency and process-recovery tests, unprivileged CI checks,
+  and EN/ES/PT procedures with bounded Debian execution measurements.
+- Keep the adapter isolated from appliance traffic and production management.
+
 ## Unreleased — Design System
 
 - Centralize complete Light/Dark themes, with Light as the default and explicit
@@ -13,8 +23,8 @@
 
 - Registered staging for the configuration experiment, independent of temporary
   filename conventions, with bounded recovery and preservation of unknown files.
-- Cross-platform source-selection checks and an isolated nftables experiment
-  proposal; no real firewall adapter is implemented.
+- Cross-platform source-selection checks and the initial nftables experiment
+  proposal, followed by the bounded laboratory adapter described above.
 
 - Isolated transactional configuration experiment with simulated engines, shared
   authorization checks, local persistence, failure tests and resource observations.

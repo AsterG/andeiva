@@ -34,6 +34,8 @@ jobs:
       - run: go test -race ./cmd/... ./internal/...
       - name: Configuration experiment platform source selection
         run: bash scripts/check-config-platforms.sh
+      - name: Nftables POC unprivileged contracts and platform compilation
+        run: bash scripts/check-nft-poc.sh
       - run: bash scripts/smoke-api.sh
       - name: Transactional configuration simulator and resource observations
         run: |
@@ -115,6 +117,7 @@ jobs:
           go build -trimpath -buildvcs=false -o dist/andeiva ./cmd/andeiva
           go build -trimpath -buildvcs=false -o dist/andeiva-api ./cmd/andeiva-api
           go build -trimpath -buildvcs=false -o dist/andeiva-config-poc ./cmd/andeiva-config-poc
+          go build -trimpath -buildvcs=false -o dist/andeiva-nft-poc ./cmd/andeiva-nft-poc
 
   debian-package:
     needs: source
