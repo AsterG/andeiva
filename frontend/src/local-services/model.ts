@@ -86,7 +86,9 @@ export function effectiveResponse(v: unknown): Effective {
   return v as Effective;
 }
 export function effectiveMatchesSnapshot(effective: Effective, snapshot: Snapshot): boolean {
-  return !effective.recovery_required && !snapshot.recovery_required && effective.hash === snapshot.running.hash && effective.phase === (snapshot.pending ? 'pending' : 'idle');
+  // A completed timeout restores Running while the guardian retains "expired".
+  const phaseMatches = snapshot.pending ? effective.phase === 'pending' : effective.phase === 'idle' || effective.phase === 'expired';
+  return !effective.recovery_required && !snapshot.recovery_required && effective.hash === snapshot.running.hash && phaseMatches;
 }
 export function statusResponse(v: unknown): Status {
   if (!object(v) || !object(v.snapshot)) invalid();

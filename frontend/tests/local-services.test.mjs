@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LocalServicesPage } from '../.test-build/local-services/LocalServicesPage.js';
 import { localMessages } from '../.test-build/local-services/messages.js';
-import { bindingError, canonicalAddress, canonicalCIDR, capabilitiesResponse, draftConfig, newService, proofResponse, proofTokens, serviceError, statusResponse, usableBindingAddress } from '../.test-build/local-services/model.js';
+import { bindingError, canonicalAddress, canonicalCIDR, capabilitiesResponse, draftConfig, effectiveMatchesSnapshot, newService, proofResponse, proofTokens, serviceError, statusResponse, usableBindingAddress } from '../.test-build/local-services/model.js';
 
 const interfaces = [{ name: 'src0', zone: 'lan', addresses: ['198.18.1.1', 'fd42:616e:6465:1::1'] }, { name: 'dst0', zone: 'wan', addresses: ['198.18.2.1'] }];
 function config() { return { schema_version: 3, default_action: 'deny', rules: [], local_services: { schema_version: 1, interfaces: structuredClone(interfaces), services: [] } }; }
@@ -66,6 +66,15 @@ test('proof parsing rejects booleans, duplicates, oversized sets and invalid exp
   for (const value of ['true', `${token}\n${token}`, Array.from({ length: 9 }, (_, i) => String(i).repeat(64)).join('\n')]) assert.equal(proofTokens(value), null);
   assert.throws(() => proofResponse({ token: true, expires_at: '2026-11-10' }));
   assert.throws(() => proofResponse({ token, expires_at: 'never' }));
+});
+test('expired guardian is healthy only after the exact Running revision is restored', () => {
+  const s = state(); s.effective.phase = 'expired';
+  assert.equal(effectiveMatchesSnapshot(s.effective, s.snapshot), true);
+  assert.equal(effectiveMatchesSnapshot({ ...s.effective, hash: 'b'.repeat(64) }, s.snapshot), false);
+  assert.equal(effectiveMatchesSnapshot({ ...s.effective, recovery_required: true }, s.snapshot), false);
+  assert.equal(effectiveMatchesSnapshot(s.effective, { ...s.snapshot, recovery_required: true }), false);
+  assert.equal(effectiveMatchesSnapshot(s.effective, { ...s.snapshot, pending: { owner: 'admin', lease: 'lease', deadline: '2026-11-10T15:00:00Z', previous: s.snapshot.running } }), false);
+  assert.equal(effectiveMatchesSnapshot({ ...s.effective, phase: 'blocked' }, s.snapshot), false);
 });
 for (const locale of ['en', 'es', 'pt']) test(`Local Services preserves branding, Light default and complete ${locale} copy`, () => {
   const html = renderToStaticMarkup(createElement(LocalServicesPage, { initialLocale: locale }));

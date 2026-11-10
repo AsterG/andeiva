@@ -20,6 +20,9 @@ Filtered effective policies must match the loaded Running revision and its
 confirmation phase. An unavailable, blocked or mismatched response invalidates
 the view and disables writes until a full status refresh succeeds; unknown
 state is never displayed as an empty verified ruleset.
+A completed timeout is usable when the backend verifies the restored Running
+revision, clears the pending transaction and reports no recovery requirement,
+even while the guardian retains its `expired` phase.
 
 Changes use the fixed authenticated recovery endpoint. Immediately before an
 activation, confirmation or Save, the page obtains a short-lived recovery proof

@@ -126,6 +126,21 @@ test('managed endpoint only issues a temporary proof for a pending activation', 
   await page.clock.fastForward(21_000);
   await expect(page.getByLabel('Temporary endpoint proof', { exact: true })).toHaveCount(0);
 });
+test('verified timeout restoration permits a new draft and candidate', async ({ page }) => {
+  const mock = await fixture(page); mock.state.effective.phase = 'expired';
+  await login(page);
+  await expect(page.getByText('Verified at last refresh')).toBeVisible();
+  await page.getByRole('button', { name: 'Effective Policies', exact: true }).click();
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect(page.getByText('Verified at last refresh')).toBeVisible();
+  await expect(page.getByRole('table')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Local Services', exact: true }).click();
+  await editHTTPS(page);
+  await page.getByRole('button', { name: 'Keep service in draft', exact: true }).click();
+  await page.getByRole('button', { name: 'Stage candidate', exact: true }).click();
+  await expect.poll(() => mock.operations.map((r) => r.transaction.operation)).toEqual(['stage']);
+  await expect(page.getByRole('button', { name: 'Validate candidate', exact: true })).toBeEnabled();
+});
 test('late endpoint proof cannot restore sensitive state after session expiry', async ({ page }) => {
   await fixture(page, { managed: true }); await login(page);
   let release: (() => void) | undefined;
