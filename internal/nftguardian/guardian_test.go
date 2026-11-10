@@ -95,6 +95,15 @@ func TestConfirmAndClosePreserveSafeState(t *testing.T) {
 	if err := g.Confirm("lease", b.Hash); err != nil {
 		t.Fatal(err)
 	}
+	if err := g.Confirm("lease", b.Hash); err != nil {
+		t.Fatalf("exact confirmed retry failed: %v", err)
+	}
+	if g.Confirm("other", b.Hash) == nil || g.Confirm("lease", a.Hash) == nil {
+		t.Fatal("foreign confirmation replay accepted")
+	}
+	if state := g.Status(); state.Phase != "idle" || state.ID != "lease" || state.Target != b.Hash {
+		t.Fatal("lost confirmed receipt")
+	}
 	wg.Wait()
 	if err := g.Close(); err != nil {
 		t.Fatal(err)

@@ -100,6 +100,12 @@ func (g *Guardian) Apply(ctx context.Context, r configpoc.Revision) error {
 		if r.Hash != g.target.Hash {
 			return ErrLease
 		}
+		// A second activation could be a restarted coordinator replaying a
+		// durable confirm that never reached this authority. Keep its lease
+		// barrier intact; only a pending journal may restore the previous policy.
+		if g.state.Phase == "pending" {
+			return ErrLease
+		}
 		bounded, cancel := context.WithDeadline(ctx, g.deadline)
 		err := g.engine.Apply(bounded, r)
 		cancel()
@@ -110,6 +116,9 @@ func (g *Guardian) Apply(ctx context.Context, r configpoc.Revision) error {
 		g.state.Phase = "pending"
 		return nil
 	}
+	if r.Hash != g.state.Target {
+		g.state = State{Phase: "idle"}
+	}
 	return g.engine.Apply(ctx, r)
 }
 
@@ -117,6 +126,11 @@ func (g *Guardian) Confirm(id, hash string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.expire()
+	// Retain the exact confirmed lease for lost-ack reconciliation. An idle
+	// phase alone is not proof that this transaction was confirmed.
+	if !g.closed && g.state.Phase == "idle" && g.state.ID == id && id != "" && g.state.Target == hash && g.engine.Current() == hash {
+		return nil
+	}
 	if g.closed || g.state.Phase != "pending" || g.state.ID != id || g.target.Hash != hash || g.engine.Current() != hash {
 		return ErrLease
 	}
@@ -125,7 +139,7 @@ func (g *Guardian) Confirm(id, hash string) error {
 		return ErrLease
 	}
 	g.timer.Stop()
-	g.state = State{Phase: "idle"}
+	g.state.Phase = "idle"
 	return nil
 }
 

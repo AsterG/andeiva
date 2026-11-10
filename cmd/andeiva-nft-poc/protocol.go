@@ -12,6 +12,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/nftguardian"
+	"github.com/AsterG/andeiva/internal/nftpoc"
 )
 
 const maxMessage = 32768
@@ -47,7 +48,8 @@ func scanner(r io.Reader) *bufio.Scanner {
 	return s
 }
 func decode(data []byte, out any) error {
-	if len(data) > maxMessage {
+	trimmed := bytes.TrimSpace(data)
+	if len(data) > maxMessage || len(trimmed) == 0 || trimmed[0] != '{' {
 		return errProtocol
 	}
 	keys := json.NewDecoder(bytes.NewReader(data))
@@ -127,53 +129,81 @@ func (c *channel) callContext(parent context.Context, m message) (reply, error) 
 	if c.dead {
 		return reply{}, errProtocol
 	}
+	if c.seq == ^uint64(0) {
+		c.poison()
+		return reply{}, errProtocol
+	}
+	var digest string
+	if c.expectedNamespace != 0 {
+		switch m.Verb {
+		case "validate", "apply", "arm", "confirm":
+			artifact, err := nftpoc.Compile(m.Revision.Config)
+			if err != nil || artifact.Revision.Hash != m.Revision.Hash {
+				return reply{}, errProtocol
+			}
+			digest = artifact.Digest
+		}
+	}
 	c.seq++
 	m.Run = c.run
 	m.Sequence = c.seq
 	ctx, cancel := context.WithTimeout(parent, 6*time.Second)
 	defer cancel()
 	type outcome struct {
-		r   reply
-		err error
+		r     reply
+		err   error
+		valid bool
 	}
 	done := make(chan outcome, 1)
 	go func() {
 		var r reply
 		if err := json.NewEncoder(c.out).Encode(m); err != nil {
-			done <- outcome{r, err}
+			done <- outcome{r: r, err: err}
 			return
 		}
 		if !c.in.Scan() {
-			done <- outcome{r, errProtocol}
+			done <- outcome{r: r, err: errProtocol}
 			return
 		}
 		if err := decode(c.in.Bytes(), &r); err != nil {
-			done <- outcome{r, err}
+			done <- outcome{r: r, err: err}
 			return
 		}
 		if r.Run != m.Run || r.Sequence != m.Sequence {
-			done <- outcome{r, errProtocol}
+			done <- outcome{r: r, err: errProtocol}
 			return
 		}
 		if c.expectedNamespace != 0 && r.Namespace != c.expectedNamespace {
-			done <- outcome{r, errProtocol}
+			done <- outcome{r: r, err: errProtocol}
+			return
+		}
+		if digest != "" && r.Artifact != digest {
+			done <- outcome{r: r, err: errProtocol}
 			return
 		}
 		if r.Error != "" {
-			done <- outcome{r, errors.New(r.Error)}
+			done <- outcome{r: r, err: errors.New(r.Error), valid: true}
 			return
 		}
-		done <- outcome{r, nil}
+		done <- outcome{r: r, valid: true}
 	}()
 	select {
 	case o := <-done:
+		if !o.valid {
+			c.poison()
+		}
 		return o.r, o.err
 	case <-ctx.Done():
-		c.dead = true
-		_ = c.out.Close()
-		_ = c.input.Close()
+		c.poison()
 		return reply{}, ctx.Err()
 	}
+}
+
+// poison is called with mu held. Late frames must never become new replies.
+func (c *channel) poison() {
+	c.dead = true
+	_ = c.out.Close()
+	_ = c.input.Close()
 }
 
 type remoteEngine struct{ ch *channel }

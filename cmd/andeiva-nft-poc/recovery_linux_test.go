@@ -2,17 +2,124 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/nftguardian"
+	"github.com/AsterG/andeiva/internal/nftpoc"
 )
 
 type authorityEngine struct {
 	g *nftguardian.Guardian
 	e *configpoc.SimEngine
+}
+
+// The helper stays in the parent while a new, unprivileged coordinator process
+// opens the real journal through inherited pipes. No network calls are made.
+func TestUncertainConfirmCoordinatorProcessRestart(t *testing.T) {
+	if dir := os.Getenv("ANDEIVA_TEST_RESTART_DIR"); dir != "" {
+		writer, reader := os.NewFile(3, "request"), os.NewFile(4, "response")
+		defer writer.Close()
+		defer reader.Close()
+		ch := &channel{run: "restart", expectedNamespace: 42, out: writer, input: reader, in: scanner(reader)}
+		svc, err := configpoc.Open(dir, []configpoc.Engine{&remoteEngine{ch}}, configpoc.Options{})
+		if err == nil {
+			_ = svc.Close()
+			t.Fatal("uncertain durable confirm reopened")
+		}
+		return
+	}
+	for _, expired := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before-expiry", true: "after-expiry"}[expired], func(t *testing.T) {
+			c, h, pending, dir := pendingControl(t)
+			h.confirm = func(message) (reply, error) { return reply{}, errProtocol }
+			if _, err := c.execute(context.Background(), testActor, configpoc.API, configpoc.Request{Operation: configpoc.OpConfirm, Key: "confirm", ExpectedGeneration: pending.Generation, Target: pending.Running.Hash}); err == nil {
+				t.Fatal("confirm did not fail")
+			}
+			if err := c.svc.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if expired {
+				deadline := time.Now().Add(7 * time.Second)
+				for h.g.Status().Phase != "expired" && time.Now().Before(deadline) {
+					time.Sleep(10 * time.Millisecond)
+				}
+				if h.g.Status().Phase != "expired" {
+					t.Fatal("lease did not expire")
+				}
+			}
+			requestR, requestW, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer requestR.Close()
+			defer requestW.Close()
+			responseR, responseW, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer responseR.Close()
+			defer responseW.Close()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				s := scanner(requestR)
+				for s.Scan() {
+					var m message
+					if decode(s.Bytes(), &m) != nil {
+						return
+					}
+					r := reply{Run: m.Run, Sequence: m.Sequence, Namespace: 42}
+					if a, err := nftpoc.Compile(m.Revision.Config); err == nil {
+						r.Artifact = a.Digest
+					}
+					var err error
+					switch m.Verb {
+					case "apply":
+						err = h.g.Apply(context.Background(), m.Revision)
+					case "current":
+						r.Hash = h.e.Current()
+					case "validate":
+						err = nil
+					default:
+						err = errProtocol
+					}
+					if err != nil {
+						r.Error = err.Error()
+					}
+					r.State = h.g.Status()
+					if json.NewEncoder(responseW).Encode(r) != nil {
+						return
+					}
+				}
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestUncertainConfirmCoordinatorProcessRestart$")
+			cmd.Env = append(os.Environ(), "ANDEIVA_TEST_RESTART_DIR="+dir)
+			cmd.ExtraFiles = []*os.File{requestW, responseR}
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			_ = requestW.Close()
+			_ = responseR.Close()
+			if err := cmd.Wait(); err != nil {
+				t.Fatalf("restart process failed: %v", err)
+			}
+			<-done
+			if expired && h.e.Current() != pending.Startup.Hash {
+				t.Fatal("restart revived expired target")
+			}
+			if !expired && h.g.Status().Phase == "idle" {
+				t.Fatal("restart cleared authority barrier")
+			}
+		})
+	}
 }
 
 func (a authorityEngine) Name() string { return "authority" }
