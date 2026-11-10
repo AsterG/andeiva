@@ -71,8 +71,10 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 		fmt.Fprintln(stdout, text[0])
 		fmt.Fprintln(stdout, "andeiva [--lang en|es|pt] firewall <list|status|stage|validate|commit|confirm|save|rollback|history>")
 		fmt.Fprintln(stdout, "  --url https://HOST:PORT --ca-file FILE --credentials-file FILE")
-		fmt.Fprintln(stdout, "  --request-file FILE|- [--confirm-seconds 30..120] [--target REVISION]")
-		fmt.Fprintln(stdout, "  confirm [--target REVISION] | rollback --target REVISION")
+		fmt.Fprintln(stdout, "  stage --request-file FILE|-")
+		fmt.Fprintln(stdout, "  commit [--confirm-seconds 30..120]")
+		fmt.Fprintln(stdout, "  confirm [--target REVISION]")
+		fmt.Fprintln(stdout, "  rollback --target REVISION")
 		fmt.Fprintln(stdout, "  history [--before SEQUENCE] [--limit 1..100]")
 		fmt.Fprintln(stdout, text[2])
 		return 0
