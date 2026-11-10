@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"github.com/AsterG/andeiva/internal/nftengine"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 )
@@ -21,10 +21,10 @@ const (
 )
 
 var (
-	ErrPolicy      = errors.New("ANDEIVA_NFT_INVALID_POLICY")
-	ErrObservation = errors.New("ANDEIVA_NFT_INVALID_OBSERVATION")
-	ErrDrift       = errors.New("ANDEIVA_NFT_DRIFT")
-	ErrTransport   = errors.New("ANDEIVA_NFT_TRANSPORT_FAILURE")
+	ErrPolicy      = nftengine.ErrPolicy
+	ErrObservation = nftengine.ErrObservation
+	ErrDrift       = nftengine.ErrDrift
+	ErrTransport   = nftengine.ErrTransport
 )
 
 type selector struct {
@@ -97,6 +97,9 @@ type Artifact struct {
 type object = map[string]any
 
 func Compile(config configpoc.Config) (Artifact, error) {
+	if config.SchemaVersion != 1 {
+		return Artifact{}, ErrPolicy
+	}
 	revision, err := configpoc.Canonical(config)
 	if err != nil || len(config.Rules) > len(selectors) {
 		return Artifact{}, ErrPolicy

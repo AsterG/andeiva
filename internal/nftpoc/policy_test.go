@@ -76,6 +76,22 @@ func TestCompilerRejectsUnboundedPolicies(t *testing.T) {
 	}
 }
 
+func TestCatalogCannotIgnoreSchemaTwoMatch(t *testing.T) {
+	config := FixtureConfig(true, false, false, false)
+	config.SchemaVersion = 2
+	config.Rules[0].Match = &configpoc.Match{
+		Source: "203.0.113.0/24", Destination: "192.0.2.0/24", Protocol: "udp",
+		SourcePorts:      configpoc.PortRange{From: 1, To: 65535},
+		DestinationPorts: configpoc.PortRange{From: 53, To: 53},
+	}
+	if _, err := configpoc.Canonical(config); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compile(config); err == nil {
+		t.Fatal("version one catalog silently ignored version two match")
+	}
+}
+
 func TestObservationRejectsSemanticDrift(t *testing.T) {
 	valid := observation(t, FixtureConfig(true, true, false, false))
 	cases := map[string][]byte{
