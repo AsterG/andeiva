@@ -30,7 +30,7 @@ export function FirewallPage({ initialLocale = 'en' }: { initialLocale?: Locale 
     return () => { media.removeEventListener('change', resize); window.removeEventListener('keydown', escape); };
   }, [mobileOpen]);
   useEffect(() => {
-    const change = () => { if (consoleViews.some((item) => window.location.hash === `#${item}`)) setView(readConsoleView(window.location.hash)); setMobileOpen(false); };
+    const change = () => { if (!window.location.hash || consoleViews.some((item) => window.location.hash === `#${item}`)) setView(readConsoleView(window.location.hash)); setMobileOpen(false); };
     window.addEventListener('hashchange', change);
     return () => window.removeEventListener('hashchange', change);
   }, []);

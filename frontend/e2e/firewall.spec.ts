@@ -487,6 +487,13 @@ test('rule column choices affect presentation only and retain global persistence
   const table = page.getByRole('table', { name: 'Ordered rules', exact: true });
   await page.locator('.ds-column-chooser > summary').click();
   const chooser = page.locator('.ds-column-chooser');
+  const bounds = await chooser.locator(':scope > div').boundingBox();
+  const viewport = page.viewportSize();
+  expect(bounds).not.toBeNull(); expect(viewport).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport!.height);
   for (const label of ['Source IPv4 / CIDR', 'Destination IPv4 / CIDR', 'Service', 'Execution', 'At next boot', 'Observed counters']) {
     await chooser.getByRole('checkbox', { name: `Columns: ${label}`, exact: true }).uncheck();
     await expect(table.getByRole('columnheader', { name: label, exact: true })).toHaveCount(0);
@@ -496,5 +503,19 @@ test('rule column choices affect presentation only and retain global persistence
   await expect(page.locator('.console-transaction-summary')).toContainText('Running revision has unsaved changes');
   await chooser.getByRole('checkbox', { name: 'Columns: At next boot', exact: true }).check();
   await expect(table.getByRole('columnheader', { name: 'At next boot', exact: true })).toBeVisible();
+  expect(mock.transactions).toEqual([]);
+});
+
+test('console Back and Forward restore hashless Rules without losing a local draft', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  await addRule(page, 'history-preserved');
+  await page.evaluate(() => { window.location.hash = 'dashboard'; });
+  await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Rules', level: 1, exact: true })).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Ordered rules', exact: true })).toContainText('history-preserved');
+  await page.goForward();
+  await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
   expect(mock.transactions).toEqual([]);
 });
