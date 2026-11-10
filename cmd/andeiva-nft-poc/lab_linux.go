@@ -181,7 +181,10 @@ func laboratory() (result error) {
 	var restart uint64
 	start := func() error {
 		restart++
-		cmd := exec.CommandContext(ctx, "/proc/self/exe", "--coordinator", runID, state, strconv.FormatUint(restart<<32, 10), strconv.FormatUint(report.Namespaces["gateway"], 10))
+		cmd, e := coordinatorCommand(ctx, runID, state, restart, host, report.Namespaces["gateway"])
+		if e != nil {
+			return e
+		}
 		cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
 		cmd.ExtraFiles = []*os.File{toWrite, fromRead}
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 1000, Gid: 1000, Groups: []uint32{}}, Pdeathsig: syscall.SIGKILL}
@@ -229,6 +232,12 @@ func laboratory() (result error) {
 		return r.Snapshot, e
 	}
 	probe := func(a, b bool) error {
+		if e := f.CheckListeners(ctx); e != nil {
+			return e
+		}
+		if e := f.CheckSentinel(ctx); e != nil {
+			return e
+		}
 		for _, p := range []string{"tcp", "udp"} {
 			for i, allowed := range []bool{a, b, false} {
 				ok, e := f.Probe(ctx, p, 18080+i)
@@ -265,6 +274,26 @@ func laboratory() (result error) {
 		return err
 	}
 	report.Cases = append(report.Cases, "tcp_udp_positive_and_always_denied")
+	// Conflicting selectors prove kernel rule ordering, not just membership.
+	for _, allowFirst := range []bool{false, true} {
+		ordered := nftpoc.DefaultConfig()
+		for _, protocol := range []string{"tcp", "udp"} {
+			first, _ := nftpoc.RuleID(protocol + ".a")
+			second, _ := nftpoc.RuleID(protocol + ".a.second")
+			actions := []string{"deny", "allow"}
+			if allowFirst {
+				actions = []string{"allow", "deny"}
+			}
+			ordered.Rules = append(ordered.Rules, configpoc.Rule{ID: first, Action: actions[0]}, configpoc.Rule{ID: second, Action: actions[1]})
+		}
+		if err = commit(ordered, 0); err != nil {
+			return err
+		}
+		if err = probe(allowFirst, false); err != nil {
+			return err
+		}
+	}
+	report.Cases = append(report.Cases, "tcp_udp_first_match_order")
 	empty := nftpoc.DefaultConfig()
 	if err = commit(empty, 0); err != nil {
 		return err
@@ -395,6 +424,13 @@ func laboratory() (result error) {
 		return errors.New("ANDEIVA_NFT_AUDIT_MISSING")
 	}
 	report.Cases = append(report.Cases, "durable_audit")
+	if err = f.CheckSentinel(ctx); err != nil {
+		return err
+	}
+	if err = f.CheckListeners(ctx); err != nil {
+		return err
+	}
+	report.Cases = append(report.Cases, "sentinel_preserved", "listeners_remain_healthy")
 	if err = f.CheckHost(ctx); err != nil {
 		return err
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -101,6 +102,17 @@ func guardian(runID, hostID, parentID string) error {
 	if os.Geteuid() == 0 {
 		return errors.New("ANDEIVA_NFT_HELPER_REQUIRES_UNPRIVILEGED_UID")
 	}
+	credentials, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return err
+	}
+	fields, err := helperPrivileges(string(credentials))
+	if err != nil {
+		return err
+	}
+	if err = json.NewEncoder(os.Stderr).Encode(map[string]any{"event": "helper_privileges", "uid": os.Geteuid(), "namespace": current, "host_namespace": host, "fields": fields}); err != nil {
+		return err
+	}
 	t := nftTransport{}
 	a, err := nftpoc.Compile(nftpoc.DefaultConfig())
 	if err != nil {
@@ -162,6 +174,14 @@ func guardian(runID, hostID, parentID string) error {
 				_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"event": "failed_operation_readback", "observation": json.RawMessage(observation)})
 			}
 		}
+		if err == nil && m.Verb == "apply" {
+			observation, readErr := t.Observe(context.Background())
+			if readErr != nil {
+				r.Error = readErr.Error()
+			} else {
+				_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"event": "applied_ruleset", "sequence": m.Sequence, "observation": json.RawMessage(observation)})
+			}
+		}
 		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"event": "guardian_operation", "sequence": m.Sequence, "verb": m.Verb, "revision": m.Revision.Hash, "artifact": r.Artifact, "phase": r.State.Phase, "error": r.Error, "namespace": current})
 		if err = json.NewEncoder(os.Stdout).Encode(r); err != nil {
 			return err
@@ -171,4 +191,24 @@ func guardian(runID, hostID, parentID string) error {
 		return err
 	}
 	return io.EOF
+}
+
+func helperPrivileges(status string) (map[string]string, error) {
+	fields := map[string]string{}
+	for _, line := range strings.Split(status, "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok && (strings.HasPrefix(key, "Cap") || key == "NoNewPrivs") {
+			fields[key] = strings.TrimSpace(value)
+		}
+	}
+	for _, key := range []string{"CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"} {
+		value, err := strconv.ParseUint(fields[key], 16, 64)
+		if err != nil || value != 1<<12 {
+			return nil, errors.New("ANDEIVA_NFT_HELPER_CAPABILITIES")
+		}
+	}
+	if fields["NoNewPrivs"] != "1" {
+		return nil, errors.New("ANDEIVA_NFT_HELPER_NO_NEW_PRIVS")
+	}
+	return fields, nil
 }
