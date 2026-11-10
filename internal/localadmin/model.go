@@ -25,6 +25,9 @@ type Context struct {
 	Surface     configpoc.Surface
 	SessionHash string
 	EndpointID  string
+	// ActivationHash identifies the revision served by this actual listener
+	// instance. Recovery/control listeners leave it empty.
+	ActivationHash string
 }
 
 type Request struct {
@@ -95,6 +98,9 @@ func validHex(s string, size int) bool {
 }
 
 func validContext(c Context) bool {
+	if validBindingID(c.EndpointID) && !validHex(c.ActivationHash, 32) {
+		return false
+	}
 	return identifier.MatchString(c.Principal.ID) && c.Principal.ID != "system" &&
 		(c.Principal.Role == configpoc.RoleAdmin || c.Principal.Role == configpoc.RoleViewer) &&
 		(c.Surface == configpoc.Web || c.Surface == configpoc.CLI || c.Surface == configpoc.API) &&

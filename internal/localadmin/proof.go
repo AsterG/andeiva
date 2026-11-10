@@ -28,6 +28,36 @@ type proofBook struct {
 	entries map[[32]byte]attestation
 	now     func() time.Time
 	closed  bool
+	pending *pendingProof
+}
+
+type pendingProof struct {
+	request   ProofRequest
+	owner     string
+	deadline  time.Time
+	endpoints map[string]bool
+}
+
+// publish is called only after the coordinator has returned a verified pending
+// revision. Proof emission itself never calls back into the coordinator lock.
+func (b *proofBook) publish(snapshot configpoc.Snapshot, recovery string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var next *pendingProof
+	if snapshot.Pending != nil && !snapshot.RecoveryRequired {
+		next = &pendingProof{request: ProofRequest{Generation: snapshot.Generation, Target: snapshot.Running.Hash, Lease: snapshot.Pending.Lease}, owner: snapshot.Pending.Owner, deadline: snapshot.Pending.Deadline, endpoints: map[string]bool{}}
+		for _, listener := range expectedListeners(snapshot.Running.Config) {
+			next.endpoints[BindingEndpointID(listener)] = true
+		}
+	}
+	if next == nil || b.pending == nil || next.request != b.pending.request || next.owner != b.pending.owner {
+		for key, entry := range b.entries {
+			if entry.context.EndpointID != recovery {
+				delete(b.entries, key)
+			}
+		}
+	}
+	b.pending = next
 }
 
 // IssueProof must only be called after actual endpoint authentication. Its
@@ -47,6 +77,9 @@ func (s *Service) IssueProof(c Context, request ProofRequest) (Proof, error) {
 		return Proof{}, configpoc.ErrRecovery
 	}
 	now := b.now()
+	if c.EndpointID != s.options.RecoveryEndpointID && (b.pending == nil || b.pending.request != request || b.pending.owner != c.Principal.ID || !now.Before(b.pending.deadline) || !b.pending.endpoints[c.EndpointID] || c.ActivationHash != request.Target) {
+		return Proof{}, configpoc.ErrDenied
+	}
 	for key, entry := range b.entries {
 		if !entry.reserved && !now.Before(entry.expires) {
 			delete(b.entries, key)
@@ -65,6 +98,9 @@ func (s *Service) IssueProof(c Context, request ProofRequest) (Proof, error) {
 		ttl = EndpointProofTTL
 	}
 	expires := now.Add(ttl)
+	if c.EndpointID != s.options.RecoveryEndpointID && b.pending.deadline.Before(expires) {
+		expires = b.pending.deadline
+	}
 	b.entries[sha256.Sum256([]byte(token))] = attestation{runID: s.options.RunID, context: c, request: request, expires: expires}
 	return Proof{Token: token, ExpiresAt: expires.UTC()}, nil
 }
@@ -95,7 +131,8 @@ func (b *proofBook) reserve(c Context, request ProofRequest, needs []proofNeed) 
 		entry, ok := b.entries[key]
 		if !ok || seen[key] || entry.runID != b.runID || entry.reserved || !now.Before(entry.expires) || entry.request != request ||
 			entry.context.Principal.ID != c.Principal.ID || entry.context.EndpointID != need.endpoint ||
-			(need.sameSession && entry.context.SessionHash != c.SessionHash) {
+			(need.sameSession && entry.context.SessionHash != c.SessionHash) ||
+			(!need.sameSession && (entry.context.ActivationHash != request.Target || b.pending == nil || b.pending.request != request || !now.Before(b.pending.deadline))) {
 			return nil, configpoc.ErrDenied
 		}
 		seen[key] = true

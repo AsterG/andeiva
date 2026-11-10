@@ -12,6 +12,11 @@ not expose the coordinator directly. `Context` comes from authenticated server
 state, including the actual accepting endpoint, actor, session hash and surface.
 Never decode it from request JSON or use a caller-supplied endpoint header.
 
+An already cancelled request is rejected. An authenticated admitted operation
+retains its original deadline with a ten-second maximum, independently of later
+connection closure. Retiring its own listener cannot cancel that transaction.
+Lost responses require status/readback or exact durable replay, not a new key.
+
 The outer request contains `transaction` (unchanged `configpoc.Request`),
 `recovery_proof` and `endpoint_proofs`. Proofs are outside the durable request
 fingerprint: an acknowledged exact replay remains valid after proof consumption
@@ -60,7 +65,14 @@ endpoint proof lifetime never extends a lease. Admission reserves fresh proofs;
 Arm/Confirm consume them, and successful Save consumes its reservation. A reserved
 proof remains eligible during that one admitted operation's journal I/O. Invalid
 proofs do not latch recovery or call the helper. Proof issuance uses a separate
-mutex and never enters the coordinator, allowing authenticated probes during Apply.
+mutex and never enters the coordinator. Managed endpoint proofs are available
+only after the coordinator publishes the exact pending generation, target and
+lease. Their context includes `ActivationHash`, fixed in the actual HTTPS/SSH
+handler instance created for that revision. It must never be copied from request
+data or a mutable global current revision. A pre-change connection cannot attest
+a future source-policy change merely because the listening address is unchanged.
+Expiry is capped by the pending deadline; drift invalidates outstanding endpoint
+proofs. Recovery challenges remain available without entering the coordinator.
 
 Unknown Arm/Confirm outcomes or nonexact receipts block further writes until the
 trusted runtime performs explicit recovery and creates a new adapter. Confirm
@@ -85,6 +97,8 @@ viewer consulta estado efectivo. Las pruebas reales de recuperación duran 20 s 
 las de endpoints 60 s, sin ampliar el plazo confirmado. Confirman identidad,
 generación, revisión y lease; todos los bindings habilitados deben verificarse.
 Una prueba inválida no llama al helper. Un resultado incierto bloquea escrituras.
+Las pruebas de endpoints requieren la revisión pendiente publicada y la instancia
+autenticada que la sirve; una conexión anterior no puede confirmar un cambio futuro.
 Sin observación válida se conserva la configuración real y se declara estado
 efectivo no disponible, sin inventar reglas. La integración nativa queda pendiente.
 
@@ -96,6 +110,9 @@ forwarding. Administrador escreve e consulta histórico/auditoria; viewer consul
 estado efetivo. Provas reais de recuperação duram 20 s e de endpoints 60 s, sem
 estender o prazo confirmado. Vinculam identidade, geração, revisão e lease; todos
 os bindings habilitados exigem verificação. Prova inválida não chama o helper.
-Resultado incerto bloqueia escritas. Sem observação válida, a configuração real é
-preservada e o estado efetivo fica indisponível, sem regras inventadas. A integração
+Resultado incerto bloqueia escritas.
+Provas de endpoints exigem a revisão pendente publicada e a instância autenticada
+que a serve; uma conexão anterior não confirma uma alteração futura.
+Sem observação válida, a configuração real é preservada e o estado efetivo fica
+indisponível, sem regras inventadas. A integração
 nativa permanece pendente.

@@ -47,16 +47,31 @@ func (s *Service) Execute(ctx context.Context, c Context, request Request) (conf
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return configpoc.Snapshot{}, err
+	}
+	// Once an authenticated request is admitted, retiring its own listening
+	// connection must not cancel the transaction it requested. Preserve the
+	// caller's deadline and a hard local bound; lost replies use durable replay.
+	deadline := time.Now().Add(10 * time.Second)
+	if requested, ok := ctx.Deadline(); ok && requested.Before(deadline) {
+		deadline = requested
+	}
+	operationCtx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+	defer cancel()
 	if s.blocked && operation != configpoc.OpStatus {
 		return configpoc.Snapshot{}, configpoc.ErrRecovery
 	}
 	g := &activation{service: s, caller: c, request: request}
 	defer func() { s.proofs.finish(g.reserved, false) }()
-	out, err := s.core.ExecuteManaged(ctx, c.Principal, c.Surface, request.Transaction, g)
+	out, err := s.core.ExecuteManaged(operationCtx, c.Principal, c.Surface, request.Transaction, g)
 	if err == nil && operation == configpoc.OpSave {
 		s.proofs.finish(g.reserved, true)
 	}
 	out.RecoveryRequired = out.RecoveryRequired || s.blocked
+	if err == nil {
+		s.proofs.publish(out, s.options.RecoveryEndpointID)
+	}
 	if s.blocked {
 		return out, configpoc.ErrRecovery
 	}
@@ -94,6 +109,7 @@ func (s *Service) Status(ctx context.Context, c Context) (Status, error) {
 	effective, _ := s.observe(ctx, snap.Running)
 	effective.RecoveryRequired = effective.RecoveryRequired || snap.RecoveryRequired || s.blocked
 	snap.RecoveryRequired = effective.RecoveryRequired
+	s.proofs.publish(snap, s.options.RecoveryEndpointID)
 	return Status{Snapshot: snap, Effective: effective}, nil
 }
 
@@ -237,6 +253,7 @@ func (a *activation) Arm(ctx context.Context, id string, previous, target config
 	s.proofs.finish(a.reserved, true)
 	a.target = target
 	s.blocked = true
+	s.proofs.publish(configpoc.Snapshot{}, s.options.RecoveryEndpointID)
 	if err := s.options.Authority.Arm(ctx, id, previous, target, ttl); err != nil {
 		return configpoc.ErrRecovery
 	}
@@ -253,6 +270,7 @@ func (a *activation) Confirm(ctx context.Context, id, hash string) error {
 	s := a.service
 	s.proofs.finish(a.reserved, true)
 	s.blocked = true
+	s.proofs.publish(configpoc.Snapshot{}, s.options.RecoveryEndpointID)
 	if _, err := s.observe(ctx, a.target); err != nil {
 		return configpoc.ErrRecovery
 	}

@@ -208,6 +208,7 @@ func (f *fixture) confirm(snap configpoc.Snapshot) Request {
 	for _, l := range expectedListeners(snap.Running.Config) {
 		c := actor()
 		c.EndpointID = BindingEndpointID(l)
+		c.ActivationHash = snap.Running.Hash
 		c.SessionHash = strings.Repeat("b", 64)
 		r.EndpointProofs = append(r.EndpointProofs, f.proof(c, r, snap.Running.Hash, snap.Pending.Lease))
 	}
@@ -289,7 +290,7 @@ func TestProofDenialsPrecedeEveryEngineCallAndDoNotLatch(t *testing.T) {
 				c.EndpointID = BindingEndpointID(expectedListeners(snap.Candidate.Revision.Config)[0])
 			}
 			p, err := f.s.IssueProof(c, pr)
-			if err != nil {
+			if err != nil && name != "endpoint" {
 				t.Fatal(err)
 			}
 			r.RecoveryProof = p.Token
@@ -409,6 +410,15 @@ func TestReadbackUnavailableAndUncertainOutcomes(t *testing.T) {
 		t.Fatalf("unavailable status: %+v %v", status, err)
 	}
 	_, err = f.s.Execute(context.Background(), actor(), r)
+	if !errors.Is(err, configpoc.ErrDenied) || f.s.blocked {
+		t.Fatalf("invalidated proof was not rejected before activation: %v", err)
+	}
+	f.m.badObservation = false
+	r = f.confirm(f.snapshot())
+	// This failure occurs after fresh proofs were admitted, rather than after a
+	// status read already invalidated them. It must latch uncertain confirmation.
+	f.m.badObservation = true
+	_, err = f.s.Execute(context.Background(), actor(), r)
 	if !errors.Is(err, configpoc.ErrRecovery) || !f.s.blocked {
 		t.Fatalf("unknown confirmation not blocked: %v", err)
 	}
@@ -484,8 +494,11 @@ func TestProofIssuanceDuringApplyAndBoundedLifetimes(t *testing.T) {
 	}
 	c := actor()
 	c.EndpointID = BindingEndpointID(expectedListeners(snap.Candidate.Revision.Config)[0])
-	p, err = f.s.IssueProof(c, pr)
-	if err != nil || p.ExpiresAt.Sub(now) != EndpointProofTTL {
+	current := f.snapshot()
+	c.ActivationHash = current.Running.Hash
+	ep := ProofRequest{Generation: current.Generation, Target: current.Running.Hash, Lease: current.Pending.Lease}
+	p, err = f.s.IssueProof(c, ep)
+	if err != nil || p.ExpiresAt.Sub(now) > EndpointProofTTL || p.ExpiresAt.After(current.Pending.Deadline) {
 		t.Fatal("endpoint ttl")
 	}
 	for len(f.s.proofs.entries) < MaxProofs {
