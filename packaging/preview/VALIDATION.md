@@ -31,11 +31,11 @@ all appliance acceptance gates.
   after documented normalization of lifetimes, route expiry and counters.
   Remove/reinstall preserved protected file hashes, permissions and identities;
   explicit startup restored health.
-- The full Web transaction cycle and API/CLI parity were exercised on alpha7,
+- The full Web transaction cycle and API/CLI parity were exercised on alpha6,
   including authentication/authorization rejection (401/403) and real deny
   observations. Alpha8 separately passed Web inspection and a normal CLI commit;
   the approved logo remained identical. This does not claim a repeat of every
-  alpha7 transaction on alpha8.
+  alpha6 transaction on alpha8.
 
 The resource samples below cover only 2.027424695 seconds with client activity.
 They are neither sustained-load benchmarks nor whole-appliance totals. Target
@@ -86,11 +86,11 @@ todos los criterios de aceptación del appliance.
   expiración de rutas y contadores documentados. Remove/reinstall conservó hashes de
   archivos protegidos, permisos e identidades; el arranque explícito recuperó
   la disponibilidad.
-- En alpha7 se probó el ciclo Web completo de transacciones y la paridad API/CLI,
+- En alpha6 se probó el ciclo Web completo de transacciones y la paridad API/CLI,
   incluidos rechazos de autenticación/autorización (401/403) y observaciones
   reales de denegación. En alpha8 se verificaron por separado la interfaz Web y
   un commit normal por CLI; el logo aprobado permaneció idéntico. No se afirma
-  haber repetido en alpha8 todas las transacciones de alpha7.
+  haber repetido en alpha8 todas las transacciones de alpha6.
 
 Las muestras siguientes abarcan sólo 2,027424695 segundos con actividad de un
 cliente. No son benchmarks de carga sostenida ni totales de todo el appliance.
@@ -143,11 +143,11 @@ o cumprimento de todos os critérios de aceitação do appliance.
   de tempos de vida, expiração de rotas e contadores. Remove/reinstall
   preservou hashes dos arquivos protegidos, permissões e identidades; a
   inicialização explícita recuperou a disponibilidade.
-- O ciclo Web completo de transações e a paridade API/CLI foram testados no alpha7,
+- O ciclo Web completo de transações e a paridade API/CLI foram testados no alpha6,
   incluindo rejeições de autenticação/autorização (401/403) e observações reais de
   bloqueio. No alpha8, a interface Web e um commit normal pela CLI foram verificados
   separadamente; o logo aprovado permaneceu idêntico. Não se afirma que todas as
-  transações do alpha7 tenham sido repetidas no alpha8.
+  transações do alpha6 tenham sido repetidas no alpha8.
 
 As amostras abaixo abrangem apenas 2,027424695 segundos com atividade de um cliente.
 Não são benchmarks de carga sustentada nem totais de todo o appliance. O tempo
