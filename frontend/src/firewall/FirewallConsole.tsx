@@ -3,6 +3,7 @@ import { Button, DataTable, Dialog, Field, Notice, StatusBadge, Surface, TextInp
 import type { Locale } from '../messages.js';
 import { ApiError, request } from './api.js';
 import { HistoryPanel } from './HistoryPanel.js';
+import { TrafficPanel } from './TrafficPanel.js';
 import { errorMessage, firewallMessages } from './messages.js';
 import { draftConfig, formatPorts } from './model.js';
 import type { Config, FirewallState, History, Operation, Session, Transaction } from './model.js';
@@ -191,6 +192,7 @@ export function FirewallConsole({ locale }: { locale: Locale }) {
         </Surface>
         {editor && draft && <RuleEditor key={editor.index ?? 'new'} rules={draft.rules} index={editor.index} copy={copy} disabled={!canEdit} onCancel={() => setEditor(null)} onSave={(rule) => { setDraft({ ...draft, rules: editor.index === null ? [...draft.rules, rule] : draft.rules.map((previous, index) => index === editor.index ? rule : previous) }); setDirty(true); setEditor(null); }} />}
         {admin && !historyDenied && <HistoryPanel history={history} copy={copy} busy={busy} canRestore={writable && !dirty && !editor} load={(before) => void loadHistory(before)} restore={(target) => setReview({ operation: 'rollback', target })} />}
+        {admin && healthy && <TrafficPanel locale={locale} busy={busy} onFailure={fail} />}
       </>}
     </>}
     <Dialog open={!!review} title={copy.review} closeLabel={copy.cancel} onClose={() => setReview(null)}>{review && <><p>{review.operation === 'remove' ? copy.removeWarning : review.operation === 'discard' ? copy.discardWarning : review.operation === 'save' ? copy.saveWarning : copy.commitWarning}</p><dl className="fw-review"><dt>{copy.operation}</dt><dd>{review.operation === 'discard' ? copy.discard : review.operation === 'commit' && review.confirm_for ? copy.commitConfirmed : copy[review.operation]}</dd><dt>{copy.target}</dt><dd><code className="fw-hash">{review.target}</code></dd></dl><Button disabled={busy || !fresh} onClick={() => {
