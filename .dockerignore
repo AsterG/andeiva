@@ -1,5 +1,10 @@
 **
 !go.mod
+!go.sum
+!packaging/
+!packaging/licenses/
+!packaging/licenses/golang-x-LICENSE.txt
+!packaging/licenses/golang-x-PATENTS.txt
 !cmd/
 !cmd/**
 !internal/

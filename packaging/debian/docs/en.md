@@ -18,6 +18,17 @@ Bash, Git, Go 1.27.3, `dpkg-deb`, `sha256sum` and standard build utilities alrea
 available. No Docker runtime is needed. Missing prerequisites are a blocker; do not
 make the development VM download dependencies automatically.
 
+Provision the reviewed Go module cache on the build workstation before going
+offline, including module-graph metadata. Set `GOMODCACHE` to that existing cache;
+if omitted, the builder uses the path reported by `go env GOMODCACHE`. It verifies
+the cache with `go mod verify` and builds with `GOPROXY=off`, `GOSUMDB=off` and
+read-only module manifests. It never downloads modules. Missing or altered cached
+dependencies fail the build, even if module-graph metadata describes packages
+that are not linked into the scaffold. Do not replace the cache with an empty one.
+The package includes the sanitized module graph, `go.mod`, `go.sum`, complete Go
+module license/patent texts and their SHA-256 inventory under
+`/usr/share/doc/andeiva-experimental/dependencies/`.
+
 The VM must already have systemd as its running system manager, the package
 dependencies `systemd (>= 257)` and `init-system-helpers (>= 1.69~)`, Bash, `dpkg`,
 `sha256sum`, `ps` and `ss`. The health probe needs neither curl nor Python.
@@ -39,7 +50,9 @@ From the trusted source root, as a non-root user:
 set -euo pipefail
 umask 077
 test "$(id -u)" -ne 0
-export GOENV=off GOTOOLCHAIN=local GOPROXY=off GOTELEMETRY=off
+export GOENV=off GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOTELEMETRY=off
+export GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}"
+test -d "$GOMODCACHE"
 test "$(go env GOVERSION)" = go1.27.3
 out_dir=$(mktemp -d "${TMPDIR:-/tmp}/andeiva-debian-package.XXXXXX")
 bash packaging/debian/build.sh '0.0.0~exp1' "$out_dir"

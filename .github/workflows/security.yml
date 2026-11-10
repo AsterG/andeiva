@@ -47,7 +47,9 @@ jobs:
           npm --prefix frontend sbom --sbom-format=cyclonedx > dist/frontend.cdx.json
           node scripts/check-licenses.mjs > dist/frontend-licenses.json
           go list -m -json all > dist/go-modules.json
-          cp LICENSE NOTICE dist/
+          go mod verify
+          cp LICENSE NOTICE go.mod go.sum packaging/licenses/golang-x-LICENSE.txt packaging/licenses/golang-x-PATENTS.txt dist/
+          (cd dist && sha256sum LICENSE NOTICE go.mod go.sum golang-x-LICENSE.txt golang-x-PATENTS.txt go-modules.json > SHA256SUMS)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dependency-inventory
@@ -57,5 +59,10 @@ jobs:
             dist/go-modules.json
             dist/LICENSE
             dist/NOTICE
+            dist/go.mod
+            dist/go.sum
+            dist/golang-x-LICENSE.txt
+            dist/golang-x-PATENTS.txt
+            dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 7

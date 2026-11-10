@@ -19,6 +19,16 @@ Bash, Git, Go 1.27.3, `dpkg-deb`, `sha256sum` e utilitários de compilação já
 Não é necessário Docker no runtime. Um requisito ausente impede a execução; não
 faça a VM baixar dependências automaticamente.
 
+Provisione previamente o cache dos módulos Go revisados na estação de compilação,
+incluindo os metadados do grafo. `GOMODCACHE` deve apontar para esse cache existente;
+se omitido, usa-se `go env GOMODCACHE`. O construtor executa `go mod verify`, usa
+`GOPROXY=off`, `GOSUMDB=off` e manifestos somente para leitura; nunca baixa módulos.
+Dependências ausentes ou alteradas impedem o build, inclusive quando faltam
+metadados de módulos não vinculados ao scaffold. Não substitua o cache por um vazio.
+O pacote inclui o grafo sem caminhos locais, `go.mod`, `go.sum`, os textos completos
+de licença/concessão de patentes e seus SHA-256 em
+`/usr/share/doc/andeiva-experimental/dependencies/`.
+
 A VM já deve ter systemd como gerenciador do sistema em execução, as dependências
 `systemd (>= 257)` e `init-system-helpers (>= 1.69~)`, Bash, `dpkg`, `sha256sum`,
 `ps` e `ss`. A sonda de saúde não precisa de curl nem Python.
@@ -41,7 +51,9 @@ Na raiz do código confiável, com um usuário diferente de root:
 set -euo pipefail
 umask 077
 test "$(id -u)" -ne 0
-export GOENV=off GOTOOLCHAIN=local GOPROXY=off GOTELEMETRY=off
+export GOENV=off GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOTELEMETRY=off
+export GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}"
+test -d "$GOMODCACHE"
 test "$(go env GOVERSION)" = go1.27.3
 out_dir=$(mktemp -d "${TMPDIR:-/tmp}/andeiva-debian-package.XXXXXX")
 bash packaging/debian/build.sh '0.0.0~exp1' "$out_dir"

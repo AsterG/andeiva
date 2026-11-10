@@ -22,14 +22,19 @@ for file in "$name" SHA256SUMS build-info.txt; do
 done
 epoch=${3:-${SOURCE_DATE_EPOCH:-$(git -C "$repo" log -1 --format=%ct)}}
 [[ "$epoch" =~ ^[0-9]{1,10}$ ]] || fail ANDEIVA_SOURCE_DATE_EPOCH
-export SOURCE_DATE_EPOCH=$epoch GOENV=off GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOWORK=off GOTELEMETRY=off
+export SOURCE_DATE_EPOCH=$epoch GOENV=off GOTOOLCHAIN=local GOWORK=off GOTELEMETRY=off
+module_cache=${GOMODCACHE:-$(go env GOMODCACHE)}
+module_cache=$(realpath -e -- "$module_cache") || fail ANDEIVA_MODULE_CACHE_REQUIRED
+[[ -d "$module_cache" ]] || fail ANDEIVA_MODULE_CACHE_REQUIRED
+export GOMODCACHE="$module_cache" GOPROXY=off GOSUMDB=off GOPRIVATE= GONOPROXY= GONOSUMDB=
 export CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1
 stage=$(mktemp -d "$out/.andeiva-preview-build.XXXXXXXX")
 cleanup() { case "$stage" in "$out"/.andeiva-preview-build.*) rm -rf -- "$stage" ;; *) fail ANDEIVA_CLEANUP_REFUSED ;; esac; }
 trap cleanup EXIT
 cd -- "$repo"
 [[ $(go env GOVERSION) = "go$(awk '$1 == "go" {print $2}' go.mod)" ]] || fail ANDEIVA_TOOLCHAIN_MISMATCH
-[[ $(go list -m all) = github.com/AsterG/andeiva ]] || fail ANDEIVA_BUILD_DEPENDENCIES
+go mod verify
+go list -mod=readonly -m -f '{"path":"{{.Path}}","version":"{{.Version}}","main":{{.Main}}}' all > "$stage/go-inventory.jsonl"
 [[ $(node --version) = v24.20.0 ]] || fail ANDEIVA_NODE_TOOLCHAIN_MISMATCH
 [[ -d frontend/node_modules ]] || fail ANDEIVA_FRONTEND_DEPENDENCIES_REQUIRED
 (cd frontend && npm run build)
@@ -37,8 +42,8 @@ root="$stage/package"
 install -d "$root/DEBIAN" "$root/usr/bin" "$root/usr/lib/andeiva-preview" \
   "$root/usr/lib/systemd/system" "$root/etc/andeiva-preview" "$root/usr/share/andeiva-preview/web" \
   "$root/usr/share/doc/andeiva-firewall-preview"
-go build -trimpath -buildvcs=false -o "$root/usr/lib/andeiva-preview/andeiva-preview" ./cmd/andeiva-preview
-go build -trimpath -buildvcs=false -o "$root/usr/bin/andeiva" ./cmd/andeiva
+go build -mod=readonly -trimpath -buildvcs=false -o "$root/usr/lib/andeiva-preview/andeiva-preview" ./cmd/andeiva-preview
+go build -mod=readonly -trimpath -buildvcs=false -o "$root/usr/bin/andeiva" ./cmd/andeiva
 cp -a frontend/dist/. "$root/usr/share/andeiva-preview/web/"
 find "$root/usr/share/andeiva-preview/web" -type d -exec chmod 0755 {} +
 find "$root/usr/share/andeiva-preview/web" -type f -exec chmod 0644 {} +
@@ -63,7 +68,9 @@ node scripts/check-licenses.mjs > "$doc/dependencies/npm-inventory.json"
 for dependency in react react-dom scheduler; do
   install -m 0644 "frontend/node_modules/$dependency/LICENSE" "$doc/dependencies/LICENSE.$dependency"
 done
-go list -m -json all > "$doc/dependencies/go-inventory.json"
+install -m 0644 go.mod go.sum packaging/licenses/golang-x-LICENSE.txt packaging/licenses/golang-x-PATENTS.txt "$doc/dependencies/"
+install -m 0644 "$stage/go-inventory.jsonl" "$doc/dependencies/"
+(cd "$doc/dependencies" && sha256sum go.mod go.sum golang-x-LICENSE.txt golang-x-PATENTS.txt go-inventory.jsonl > SHA256SUMS)
 printf 'version=%s\nsource_revision=%s\nsource_date_epoch=%s\ngo=%s\nnode=%s\n' \
   "$version" "$(git rev-parse HEAD)" "$epoch" "$(go env GOVERSION)" "$(node --version)" > "$out/build-info.txt"
 install -m 0644 "$out/build-info.txt" "$doc/build-info.txt"
