@@ -46,7 +46,15 @@ func Open(dir string, engines []Engine, options Options) (*Service, error) {
 	}
 	s := &Service{store: store, engines: append([]Engine{}, engines...), hook: options.Hook}
 	if len(store.records) == 0 {
-		initial, _ := Canonical(Config{SchemaVersion: 1, DefaultAction: "deny"})
+		initialConfig := Config{SchemaVersion: 1, DefaultAction: "deny"}
+		if options.Initial != nil {
+			initialConfig = *options.Initial
+		}
+		initial, initialErr := Canonical(initialConfig)
+		if initialErr != nil {
+			_ = store.lock.Close()
+			return nil, initialErr
+		}
 		s.state = durableState{Snapshot: Snapshot{Generation: 1, Running: initial, Startup: initial, LastGood: initial, Revoked: []string{}}, Receipts: map[string]receipt{}}
 		if err = s.persist("system", API, "initialize", "ok", true); err != nil {
 			_ = store.lock.Close()
