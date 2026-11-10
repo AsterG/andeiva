@@ -41,6 +41,7 @@ import (
 
 type event struct {
 	Event      string `json:"event"`
+	Reason     string `json:"reason,omitempty"`
 	Phase      string `json:"phase,omitempty"`
 	Hash       string `json:"hash,omitempty"`
 	Generation uint64 `json:"generation,omitempty"`
@@ -400,6 +401,9 @@ func apiProcess(parent context.Context, host uint64, supervisor int, out io.Writ
 		<-workerDone
 	}()
 	logEvents := &events{out: out}
+	fail := func(reason string) error {
+		return errors.Join(ErrUnavailable, logEvents.emit(event{Event: "failure", Reason: reason}))
+	}
 	if logEvents.emit(event{Event: "worker-ready"}) != nil {
 		return ErrUnavailable
 	}
@@ -443,15 +447,11 @@ func apiProcess(parent context.Context, host uint64, supervisor int, out io.Writ
 		bounded := newRecoveryListener(l, allowed, budget)
 		go func() { httpDone <- s.ServeTLS(bounded, "", "") }()
 	}
-	observed, e := client.Observe(ctx)
-	if e != nil || observed.Hash == "" {
+	initialStatus, e := service.ObserveRuntime(ctx)
+	if e != nil {
 		return ErrUnavailable
 	}
-	snapshot, e := core.Execute(ctx, configpoc.Principal{ID: "runtime", Role: configpoc.RoleAdmin}, configpoc.API, configpoc.Request{Operation: configpoc.OpStatus})
-	if e != nil || snapshot.RecoveryRequired {
-		return ErrUnavailable
-	}
-	if logEvents.emit(event{Event: "ready", Hash: observed.Hash, Generation: snapshot.Generation}) != nil {
+	if logEvents.emit(event{Event: "ready", Hash: initialStatus.Effective.Hash, Generation: initialStatus.Snapshot.Generation}) != nil {
 		return ErrUnavailable
 	}
 	ticker := time.NewTicker(2 * time.Second)
@@ -461,23 +461,19 @@ func apiProcess(parent context.Context, host uint64, supervisor int, out io.Writ
 		case <-ctx.Done():
 			return nil
 		case <-httpDone:
-			return ErrUnavailable
+			return fail("recovery_server_exit")
 		case err := <-workerDone:
 			workerDone <- err
-			return ErrUnavailable
+			return fail("listener_worker_exit")
 		case <-ticker.C:
 			if !audit.healthy() {
-				return ErrUnavailable
+				return fail("audit_unavailable")
 			}
-			v, e := client.Observe(ctx)
+			state, e := service.ObserveRuntime(ctx)
 			if e != nil {
-				return ErrUnavailable
+				return fail("coordinator_unavailable")
 			}
-			state, e := core.Execute(ctx, configpoc.Principal{ID: "runtime", Role: configpoc.RoleAdmin}, configpoc.API, configpoc.Request{Operation: configpoc.OpStatus})
-			if e != nil || state.RecoveryRequired {
-				return ErrUnavailable
-			}
-			if logEvents.emit(event{Event: "observed", Hash: v.Hash, Generation: state.Generation}) != nil {
+			if logEvents.emit(event{Event: "observed", Hash: state.Effective.Hash, Generation: state.Snapshot.Generation}) != nil {
 				return ErrUnavailable
 			}
 		}

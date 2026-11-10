@@ -88,6 +88,8 @@ type instance struct {
 	cancel      context.CancelFunc
 	streams     []io.Closer
 	workerDone  chan error
+	failureMu   sync.Mutex
+	failure     resetCause
 }
 
 func (i *instance) close() error {
@@ -237,10 +239,13 @@ func supervise(parent context.Context, dir string, out io.Writer) (result error)
 			case <-ctx.Done():
 				return nil
 			case <-s.reset:
+				i.noteFailure("supervisor", "operator_reset")
 				restart = true
 			case <-i.api.done:
+				i.noteFailure("api", "process_exit")
 				restart = true
 			case <-i.helper.done:
+				i.noteFailure("helper", "process_exit")
 				restart = true
 			case e := <-events:
 				if e.instance != l.Binding.Instance {
@@ -248,6 +253,8 @@ func supervise(parent context.Context, dir string, out io.Writer) (result error)
 				}
 				s.mu.Lock()
 				switch e.event.Event {
+				case "failure":
+					restart = true
 				case "ready":
 					s.state.Ready = true
 					s.state.CurrentHash = e.event.Hash
@@ -265,6 +272,10 @@ func supervise(parent context.Context, dir string, out io.Writer) (result error)
 				s.mu.Unlock()
 			}
 		}
+		cause := i.resetCause()
+		if logger.write(map[string]any{"event": "reset_requested", "generation": generation, "run": l.Binding.Run, "instance": l.Binding.Instance, "role": cause.Role, "reason": cause.Reason, "detected_at": cause.At}) != nil {
+			return ErrUnavailable
+		}
 		s.mu.Lock()
 		s.state.Ready = false
 		s.active = nil
@@ -276,7 +287,7 @@ func supervise(parent context.Context, dir string, out io.Writer) (result error)
 		for len(events) > 0 {
 			<-events
 		}
-		if logger.write(map[string]any{"event": "reset", "generation": generation, "cleanup": true}) != nil {
+		if logger.write(map[string]any{"event": "reset", "generation": generation, "cleanup": true, "role": cause.Role, "reason": cause.Reason}) != nil {
 			return ErrUnavailable
 		}
 	}
@@ -288,9 +299,10 @@ type eventsLog struct {
 	out io.Writer
 }
 
-func (l *eventsLog) write(v any) error {
+func (l *eventsLog) write(v map[string]any) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	v["at"] = time.Now().UTC()
 	return json.NewEncoder(l.out).Encode(v)
 }
 
@@ -379,7 +391,7 @@ func startInstance(parent context.Context, dir string, c Config, ids identities,
 		}
 	}
 	ready := make(chan struct{})
-	go readEvents(ctx, "api", id, apiRead, events, ready, cancel)
+	go readEvents(ctx, "api", id, apiRead, events, ready, cancel, i.noteFailure)
 	select {
 	case <-ready:
 	case <-i.api.done:
@@ -421,19 +433,26 @@ func startInstance(parent context.Context, dir string, c Config, ids identities,
 			return i, l, ErrUnavailable
 		}
 	}
-	go readEvents(ctx, "helper", id, helperRead, events, nil, cancel)
+	go readEvents(ctx, "helper", id, helperRead, events, nil, cancel, i.noteFailure)
 	return i, l, nil
 }
 
-func readEvents(ctx context.Context, role, instance string, r io.Reader, out chan<- childEvent, ready chan struct{}, cancel context.CancelFunc) {
+func readEvents(ctx context.Context, role, instance string, r io.Reader, out chan<- childEvent, ready chan struct{}, cancel context.CancelFunc, note func(string, string)) {
 	scan := bufio.NewScanner(r)
 	scan.Buffer(make([]byte, 1024), 4096)
 	signaled := false
 	for scan.Scan() {
 		var e event
-		if firewallipc.Decode(scan.Bytes(), &e) != nil {
+		if firewallipc.Decode(scan.Bytes(), &e) != nil || (e.Event == "failure" && !validResetCause(role, e.Reason)) {
+			note(role, "invalid_event")
 			cancel()
 			return
+		}
+		if e.Event == "failure" {
+			note(role, e.Reason)
+		}
+		if role == "helper" && e.Event == "helper" && e.Phase == "blocked" {
+			note(role, "guardian_blocked")
 		}
 		if e.Event == "worker-ready" && ready != nil && !signaled {
 			close(ready)
@@ -444,6 +463,13 @@ func readEvents(ctx context.Context, role, instance string, r io.Reader, out cha
 		case out <- childEvent{role, instance, e}:
 		case <-ctx.Done():
 			return
+		}
+	}
+	if ctx.Err() == nil {
+		if scan.Err() != nil {
+			note(role, "event_stream_error")
+		} else {
+			note(role, "event_stream_closed")
 		}
 	}
 	cancel()

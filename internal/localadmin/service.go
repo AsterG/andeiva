@@ -102,11 +102,48 @@ func (s *Service) Status(ctx context.Context, c Context) (Status, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snap, err := s.core.Execute(ctx, c.Principal, c.Surface, configpoc.Request{Operation: configpoc.OpStatus})
+	if err := ctx.Err(); err != nil {
+		return Status{}, err
+	}
+	// A disconnected reader must not cancel an admitted command on the shared
+	// helper stream. The readback remains bounded and returns no cached success.
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	_, err := s.core.Execute(readCtx, c.Principal, c.Surface, configpoc.Request{Operation: configpoc.OpStatus})
 	if err != nil {
 		return Status{}, err
 	}
-	effective, _ := s.observe(ctx, snap.Running)
+	return s.statusSnapshot(readCtx)
+}
+
+// ObserveRuntime is only for the trusted in-process readiness monitor. It has no
+// authenticated transport route and cannot change configuration or issue proofs.
+// The same service and coordinator locks serialize it with admitted operations.
+func (s *Service) ObserveRuntime(ctx context.Context) (Status, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Status{}, err
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	status, err := s.statusSnapshot(readCtx)
+	if err == nil && (status.Snapshot.RecoveryRequired || status.Effective.RecoveryRequired) {
+		err = configpoc.ErrRecovery
+	}
+	return status, err
+}
+
+// Caller holds s.mu; core additionally pins its snapshot through readback.
+func (s *Service) statusSnapshot(ctx context.Context) (Status, error) {
+	var effective Effective
+	snap, err := s.core.ObserveRuntime(ctx, func(snapshot configpoc.Snapshot) error {
+		effective, _ = s.observe(ctx, snapshot.Running)
+		return nil
+	})
+	if err != nil {
+		return Status{}, err
+	}
 	effective.RecoveryRequired = effective.RecoveryRequired || snap.RecoveryRequired || s.blocked
 	snap.RecoveryRequired = effective.RecoveryRequired
 	s.proofs.publish(snap, s.options.RecoveryEndpointID)

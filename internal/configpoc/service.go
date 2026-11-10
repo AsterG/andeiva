@@ -182,6 +182,33 @@ func (s *Service) Execute(ctx context.Context, p Principal, surface Surface, req
 	return s.execute(ctx, p, surface, request, nil)
 }
 
+// ObserveRuntime is a trusted, in-process readback barrier, not a transport
+// operation. The callback receives an independent snapshot while the coordinator
+// lock prevents a transaction or expiry timer from changing that revision. Due
+// expiry is reconciled before the readback, as it is for authenticated status. The
+// callback must only observe external state and must not reenter this service.
+func (s *Service) ObserveRuntime(ctx context.Context, observe func(Snapshot) error) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.halted {
+		return Snapshot{}, ErrRecovery
+	}
+	if observe == nil {
+		return Snapshot{}, ErrInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
+	if s.state.Snapshot.Pending != nil && !s.state.Snapshot.RecoveryRequired && !time.Now().Before(s.deadline) {
+		if err := s.expire(); err != nil {
+			return Snapshot{}, err
+		}
+	}
+	out := s.snapshot()
+	out.RecoveryRequired = out.RecoveryRequired || !s.consistent()
+	return out, observe(clone(out))
+}
+
 // ExecuteManaged preserves request identity while requiring independent activation authority.
 func (s *Service) ExecuteManaged(ctx context.Context, p Principal, surface Surface, request Request, guard ActivationGuard) (Snapshot, error) {
 	if guard == nil {

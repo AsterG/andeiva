@@ -315,7 +315,8 @@ func TestBackendGateAndLateEvents(t *testing.T) {
 	out := make(chan childEvent, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	readEvents(ctx, "api", "old-instance", bytes.NewBufferString(`{"event":"ready"}`+"\n"), out, nil, cancel)
+	i := &instance{}
+	readEvents(ctx, "api", "old-instance", bytes.NewBufferString(`{"event":"ready"}`+"\n"), out, nil, cancel, i.noteFailure)
 	if e := <-out; e.instance != "old-instance" {
 		t.Fatal("event lost launch identity")
 	}
