@@ -106,6 +106,15 @@ type ActivationGuard interface {
 	Arm(context.Context, string, Revision, Revision, time.Duration) error
 	Confirm(context.Context, string, string) error
 }
+
+// AdmissionGuard is an optional trusted policy check for managed requests.
+// It runs after durable replay and request authorization, before engine queries
+// or activation intent. Snapshot and historical rollback target are independent
+// copies; the target is nil for other operations. Implementations must not
+// reenter the coordinator. A refusal cannot initiate compensation.
+type AdmissionGuard interface {
+	Check(Request, Snapshot, *Revision) error
+}
 type Intent struct {
 	Previous Revision `json:"previous"`
 	Target   Revision `json:"target"`

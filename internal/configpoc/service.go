@@ -261,6 +261,16 @@ func (s *Service) execute(ctx context.Context, p Principal, surface Surface, req
 		if err := s.managedRequest(p, request); err != nil {
 			return s.reject(p, surface, request.Operation, err)
 		}
+		if admission, ok := guard.(AdmissionGuard); ok {
+			var target *Revision
+			if request.Operation == OpRollback {
+				known, _ := s.historical(request.Target)
+				target = &known
+			}
+			if err := admission.Check(clone(request), s.snapshot(), target); err != nil {
+				return s.reject(p, surface, request.Operation, err)
+			}
+		}
 	}
 	if request.Operation != OpRecover && !s.consistent() {
 		s.state.Snapshot.RecoveryRequired = true
