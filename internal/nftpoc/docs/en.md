@@ -1,8 +1,7 @@
 # Debian laboratory procedure
 
-Work in progress: the privileged procedure below has not been validated in Debian.
-Do not execute it until the confirmation-failure safeguard and security review
-listed in the experiment README are complete.
+Validated scope and measurements are recorded in [the validation report](../VALIDATION.md).
+Use this procedure only for the isolated experiment; it does not install an appliance firewall.
 
 Run only on the authorized Debian 13 AMD64 development VM with a recoverable
 snapshot and VMware console access. Do not run the privileged experiment on the
@@ -14,7 +13,8 @@ No Windows, VPN, host routing, host forwarding or host firewall changes are need
 Use the repository's Go version, currently 1.27.3. From its root:
 
 ```bash
-go test -race -count=1 ./internal/configpoc ./internal/nftpoc
+bash scripts/check-nft-poc.sh
+go test -race -count=1 ./internal/configpoc
 go vet ./cmd/... ./internal/...
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
   -o andeiva-nft-poc ./cmd/andeiva-nft-poc
@@ -33,6 +33,8 @@ The VM must already provide `/usr/bin/ip`, `/usr/sbin/nft`, `/usr/bin/nsenter` a
 packages or enable services. The binary and privileged executable paths must be
 root-owned and protected against group/other writes. An unprivileged UID/GID is
 used for the coordinator and traffic probes; no new privileged service is installed.
+The current fixture requires the trusted laboratory account UID/GID 1000.
+If sudo is unavailable, perform installation from an authorized local root console.
 
 Inspect an existing installation before replacing it. For a fresh laboratory copy:
 
@@ -87,3 +89,16 @@ across catalog/compiler versions without an explicitly tested migration.
 
 This is an IPv4 fixture test, not a production firewall. The existing Web page,
 official CLI and liveness API do not gain management endpoints from this experiment.
+
+## Observed results and limits
+
+Two fresh Debian runs passed 15 scenarios each: 96 TCP/UDP checks plus 112
+continuous denied probes. Host state matched before/after and all three test
+namespaces were removed. Runtime was 59.4–59.8 seconds; maximum single-child RSS
+was 13,076–13,420 KiB and journal size 189,813–189,816 bytes. This is not total
+appliance memory or a throughput benchmark. Real kernel rollback was tested
+after a simulated component failure; coordinator SIGKILL and expiry were real.
+Lost helper-confirm acknowledgment remains simulated; full helper/supervisor
+death, power loss and production authenticated Web/CLI/API are not validated.
+An uncertain confirmation blocks subsequent mutations until a safe outcome can
+be established; do not force recovery by deleting the journal or unknown rules.

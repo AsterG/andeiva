@@ -1,8 +1,7 @@
 # Procedimiento para el laboratorio Debian
 
-Trabajo en curso: el procedimiento privilegiado todavía no ha sido validado en
-Debian. No ejecutarlo hasta completar la protección ante confirmación incierta
-y la revisión de seguridad indicadas en el README del experimento.
+El alcance probado y las mediciones figuran en el [informe de validación](../VALIDATION.md).
+Este procedimiento ejecuta un experimento aislado; no instala el firewall del producto.
 
 Ejecutar únicamente en la VM autorizada de desarrollo Debian 13 AMD64, con snapshot
 recuperable y acceso a la consola VMware. No ejecutar la prueba privilegiada en
@@ -14,7 +13,8 @@ requiere cambios de Windows, VPN, rutas, forwarding o firewall del host.
 Usar la versión de Go del repositorio, actualmente 1.27.3. Desde su raíz:
 
 ```bash
-go test -race -count=1 ./internal/configpoc ./internal/nftpoc
+bash scripts/check-nft-poc.sh
+go test -race -count=1 ./internal/configpoc
 go vet ./cmd/... ./internal/...
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
   -o andeiva-nft-poc ./cmd/andeiva-nft-poc
@@ -33,6 +33,8 @@ no instala paquetes ni habilita servicios. El binario y las rutas de herramienta
 privilegiadas deben pertenecer a root y no admitir escritura de grupo u otros.
 El coordinador y las sondas usan un UID/GID sin privilegios; no se instala un
 servicio privilegiado permanente.
+El fixture requiere la cuenta de laboratorio de confianza con UID/GID 1000.
+Si sudo no está disponible, instalar desde una consola root local autorizada.
 
 Inspeccionar una instalación existente antes de reemplazarla. Para una copia nueva:
 
@@ -89,3 +91,17 @@ journals entre versiones de catálogo/compilador sin una migración probada.
 
 Esta prueba IPv4 no es un firewall de producción. La Web, CLI oficial y API de
 liveness existentes no incorporan endpoints de administración por esta POC.
+
+## Resultados observados y límites
+
+Dos ejecuciones limpias en Debian aprobaron 15 escenarios cada una: 96 pruebas
+TCP/UDP y 112 sondas denegadas continuas. El estado del host coincidió antes y
+después; se eliminaron los tres namespaces de prueba. Duración: 59,4–59,8 segundos;
+RSS máximo de un hijo: 13.076–13.420 KiB; journal: 189.813–189.816 bytes. No es
+la memoria total del appliance ni un benchmark de capacidad. El rollback real
+del kernel se probó tras un fallo simulado de otro componente; SIGKILL del
+coordinador y vencimiento fueron reales. La pérdida de confirmación del helper
+se prueba con simulación; no se validaron su muerte, la del supervisor, cortes
+de energía ni transportes Web/CLI/API autenticados de producción. Una confirmación
+incierta bloquea nuevas modificaciones. No borrar el journal ni reglas ajenas
+para forzar recuperación.

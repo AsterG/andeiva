@@ -1,8 +1,7 @@
 # Procedimento para o laboratório Debian
 
-Trabalho em andamento: o procedimento privilegiado ainda não foi validado no
-Debian. Não executá-lo até concluir a proteção contra confirmação incerta e a
-revisão de segurança indicadas no README do experimento.
+O escopo testado e as medições constam no [relatório de validação](../VALIDATION.md).
+Este procedimento executa um experimento isolado; não instala o firewall do produto.
 
 Executar somente na VM autorizada de desenvolvimento Debian 13 AMD64, com snapshot
 recuperável e acesso ao console VMware. Não executar o experimento privilegiado no
@@ -14,7 +13,8 @@ são necessárias alterações no Windows, VPN, rotas, encaminhamento ou firewal
 Usar a versão de Go do repositório, atualmente 1.27.3. A partir da raiz:
 
 ```bash
-go test -race -count=1 ./internal/configpoc ./internal/nftpoc
+bash scripts/check-nft-poc.sh
+go test -race -count=1 ./internal/configpoc
 go vet ./cmd/... ./internal/...
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
   -o andeiva-nft-poc ./cmd/andeiva-nft-poc
@@ -31,8 +31,9 @@ A VM deve fornecer `/usr/bin/ip`, `/usr/sbin/nft`, `/usr/bin/nsenter` e
 `/usr/bin/setpriv`. Ferramentas ausentes bloqueiam o experimento: o executável não
 instala pacotes nem habilita serviços. O binário e os caminhos das ferramentas
 privilegiadas devem pertencer a root, sem permissão de escrita para grupo ou outros.
-O coordenador e as sondas usam UID/GID sem privilégios; nenhum serviço privilegiado
-permanente é instalado.
+O coordenador e as sondas usam a conta confiável de laboratório UID/GID 1000,
+sem privilégios. Nenhum serviço permanente é instalado. Se sudo não estiver
+disponível, instalar por um console root local autorizado.
 
 Inspecionar uma instalação existente antes de substituí-la. Para uma cópia nova:
 
@@ -89,3 +90,16 @@ catálogo/compilador sem uma migração testada.
 
 Este teste IPv4 não é um firewall de produção. A Web, a CLI oficial e a API de
 liveness existentes não recebem endpoints de administração por este experimento.
+
+## Resultados observados e limites
+
+Duas execuções limpas no Debian passaram em 15 cenários cada: 96 testes TCP/UDP
+e 112 sondas negadas contínuas. O estado do host coincidiu antes e depois; os
+três namespaces de teste foram removidos. Duração: 59,4–59,8 segundos; RSS máximo
+de um filho: 13.076–13.420 KiB; journal: 189.813–189.816 bytes. Não é a memória
+total do appliance nem um benchmark de capacidade. O rollback real do kernel
+foi testado após falha simulada de outro componente; SIGKILL do coordenador e
+expiração foram reais. A perda de confirmação do helper permanece simulada;
+não foram validados sua morte, a do supervisor, falta de energia ou transportes
+Web/CLI/API autenticados de produção. Confirmação incerta bloqueia novas alterações.
+Não apagar o journal nem regras desconhecidas para forçar recuperação.

@@ -1,11 +1,8 @@
 # Isolated nftables transaction experiment
 
-Status: work in progress. Native Debian execution has not been validated. Do not
-run the privileged procedure until the confirmation-failure handling and security
-review are complete. A lost helper acknowledgment after durable confirmation must
-block subsequent mutations; that coordinator safeguard remains pending. One
-subprocess static-analysis finding also awaits review. Passing simulated tests
-does not close these items or establish kernel behavior.
+Status: bounded laboratory validation completed on Debian 13 AMD64. This is an
+experimental adapter, not a production firewall. See [validation](VALIDATION.md)
+for tested scenarios, resource observations and remaining failure boundaries.
 
 This laboratory adapter connects the existing configuration transaction service to
 one bounded nftables policy. It is not the appliance firewall or a production
@@ -13,8 +10,8 @@ management interface. Privileged execution is restricted to the authorized Debia
 13 laboratory; ordinary unit tests and shared CI runners use an in-memory transport.
 
 Procedures: [English](docs/en.md), [Español](docs/es.md), [Português](docs/pt.md).
-The eventual validation report must identify the tested revision and actual
-results. Instructions alone are not evidence that a test passed.
+The validation report identifies the tested source and actual results. Preserve
+private execution evidence separately; instructions alone do not prove success.
 
 ## Typed policy and kernel observation
 
@@ -45,7 +42,10 @@ flushes the host ruleset or adopts a pre-existing unregistered table.
 Readback verifies the table, chain, hook, priority, policy, rule order, selectors,
 interfaces and verdicts. Comments identify candidate catalog rules but cannot
 prove their semantics. Only known kernel handles and bounded version metainfo are
-excluded from comparison. Unknown objects or expressions, duplicate JSON keys,
+excluded from comparison. Equivalent nftables 1.1.3 representations (numeric
+transport protocol and omission of redundant protocol selectors) are accepted
+only with the complete expected IP/interface/port/verdict structure.
+Unknown objects or expressions, duplicate JSON keys,
 extra fields, malformed data and oversized output are rejected.
 
 ## Transaction and privilege boundaries
@@ -70,6 +70,21 @@ and a matching helper acknowledgment are both required before the runner reports
 confirmation. Expiry or a lost acknowledgment requires reconciliation. Loss of
 the helper or complete supervisor is a separate failure boundary, not a proven
 power-loss or appliance-reboot guarantee.
+
+An uncertain confirmation blocks every subsequent mutation, including Save and
+recovery requests. The block is lifted within that operation only if the helper
+proves the exact confirmed lease and target and the effective revision matches.
+An unverifiable or malformed channel stays unusable. Restart reconciles the
+durable journal before releasing the helper's rollback barrier. The journal's
+confirm receipt records its own persistence boundary; the coordinator trace
+separately reports helper acceptance or required recovery.
+
+The supervisor self-exec has one narrowly reviewed G204 exception: executable
+and role are fixed, arguments are checked identifiers and an owned private state
+directory, and credentials are dropped before execution. No global scanner rule
+is disabled. The helper verifies UID, namespace, `NoNewPrivs` and exactly
+`CAP_NET_ADMIN` before invoking nftables. UID 1000 shares the trusted laboratory
+operator's trust domain; this is not a production authorization boundary.
 
 ## Validation scope
 
