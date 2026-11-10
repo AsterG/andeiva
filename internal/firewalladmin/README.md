@@ -41,6 +41,12 @@ per-rule packet/byte totals, not raw platform diagnostics. Counters include both
 directions and reset on atomic replacement; they are not per-flow logs. The
 privileged helper's internal JSON is not an administrative API response.
 
+The [rule traffic observation log](TRAFFIC.md) records bounded, on-request
+baselines and counter deltas. Administrators read the same records through Web,
+CLI and API. Retention is limited to the API process lifetime; evictions and stream
+changes are explicit. These observations do not reconstruct connections or cover
+packets dropped by the default policy without matching an explicit rule.
+
 Rollback uses a journaled canonical revision and verified atomic table replacement.
 A normal API restart resumes Running with `Boot:false`; a complete laboratory
 start selects Startup with `Boot:true`. Pending or ambiguous transitions undergo

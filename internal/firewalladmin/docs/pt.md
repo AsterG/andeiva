@@ -286,3 +286,15 @@ Este fluxo não implementa IDS/IPS, antivírus, WAF, inspeção TLS, filtro DNS,
 VPN, AD SSO, MFA, HA ou instalador de appliance. Suas permissões nunca autorizam
 tráfego de produção desconhecido a contornar identidade ou inspeção obrigatórias.
 O POC anterior de catálogo fixo nftables mantém um caminho schema 1 separado.
+
+## Registro de observações de tráfego por regra
+
+Após definir `fw`, use `fw traffic` para amostrar contadores reais do kernel.
+`fw traffic --before <NEXT_BEFORE> --stream <STREAM> --limit 50` consulta registros
+anteriores sem amostragem; use somente os cursores retornados. O painel Web e
+`GET /api/v1/firewall/traffic` consultam os mesmos registros com permissão de administrador.
+Uma linha de base não possui delta. Os horários delimitam observações, não a chegada
+individual de pacotes. Somente regras explícitas são cobertas; descartes pela política
+padrão não são incluídos. O histórico mantém até 512 registros em memória e desaparece
+ao reiniciar a API. O novo stream rejeita cursores anteriores e informa registros
+removidos pelo limite. Não são registros de conexões. Veja [o contrato](../TRAFFIC.md).

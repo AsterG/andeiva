@@ -281,3 +281,14 @@ No IDS/IPS, antivirus, WAF, TLS inspection, DNS filtering, NAT, VPN, AD SSO, MFA
 HA or customer appliance installer is implemented by this flow. Unknown production
 traffic may never use this laboratory's permissions to bypass required identity or
 inspection. The prior fixed-catalog nftables POC remains a separate schema 1 path.
+
+## Rule traffic observation log
+
+After defining `fw` above, use `fw traffic` to sample real kernel rule counters.
+`fw traffic --before <NEXT_BEFORE> --stream <STREAM> --limit 50` reads older records
+without sampling; use returned cursor values only. Web's traffic panel and
+`GET /api/v1/firewall/traffic` use the same records and administrator permissions.
+A baseline has no delta. Times delimit observations, not packet arrivals. Only
+explicit rules are covered; default-policy drops are not included. The bounded
+512-record history is in memory and disappears on API restart; a new stream
+rejects old cursors. Evictions are reported. See [the contract](../TRAFFIC.md).

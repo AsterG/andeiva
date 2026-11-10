@@ -3,15 +3,17 @@
 ![ANDEIVA Security Gateway](frontend/public/andeiva-logo.png)
 
 ANDEIVA is an ASTERG project in early development. This repository contains the
-initial Go backend and CLI, a React/TypeScript development page, and validation
-workflows. It does not yet implement a firewall, authentication, traffic inspection,
-VPN, production configuration management, an appliance installer or an appliance
-update mechanism. Isolated native packaging and configuration experiments are
-described below.
+Go backend and CLI, a React/TypeScript interface, and validation workflows. An
+isolated Debian laboratory provides authenticated Web/CLI/API rule administration
+and real nftables enforcement in disposable namespaces. It is not a production
+firewall, appliance installer or update mechanism. Traffic inspection and VPN are
+not implemented. Native packaging and configuration experiments are described below.
 
 The intended appliance base is Debian 13. Container targets below are development
 checks, not appliance images. Web, CLI and API functional parity is a requirement
-for future management features; those features are not present in this scaffold.
+for management features. The administrative laboratory and the original liveness
+scaffold are separate entry points; see the laboratory's validation report for
+tested behavior and limitations.
 
 ## Source layout
 
