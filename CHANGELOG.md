@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — isolated local service policy compiler
+
+- Separate appliance-local input declarations from forwarding with typed service
+  ownership, explicit sources, LAN defaults and per-binding WAN opt-in.
+- Add deterministic IPv4/IPv6 TCP/UDP compilation, impact previews, dependency
+  validation and comparison of supplied rule/listener observations.
+- Document limits and future transaction integration in EN/ES/PT; test capacity,
+  permission scope, concurrency and malformed input without activating services.
+- Keep runtime selectors, shared-schema migration, kernel enforcement and
+  administrative recovery outside this compiler-only change.
+
 ## Unreleased — persistent Firewall Alpha Preview
 
 - Package the existing administrative workflow for Debian 13 AMD64 with separate
@@ -8,8 +19,9 @@
   retain isolated enforcement and verified configuration recovery.
 - Add explicit provisioning, protected persistent state, readiness checks,
   reproducible package controls and EN/ES/PT procedures.
-- Keep native installation and failure acceptance pending until measured in the
-  authorized laboratory; no host firewall or production readiness is claimed.
+- Record native laboratory acceptance and its limits in
+  [the validation report](packaging/preview/VALIDATION.md); no host firewall or
+  production readiness is claimed.
 
 ## Unreleased — rule traffic observations
 
