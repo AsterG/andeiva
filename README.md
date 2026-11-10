@@ -91,6 +91,19 @@ Build, verification and lifecycle instructions:
 [English](packaging/debian/docs/en.md), [Español](packaging/debian/docs/es.md),
 [Português](packaging/debian/docs/pt.md). Docker is not required in the Debian guest.
 
+## Persistent Firewall Alpha Preview
+
+An experimental Debian 13 AMD64 package brings the existing administrative
+workflow into separate systemd API, helper and namespace services. Management
+uses an explicit LAN address/device and source prefix; enforcement remains in
+three isolated laboratory namespaces. Installation does not activate host rules.
+
+See the [runtime contract and validation status](packaging/preview/README.md) and
+the [English](packaging/preview/docs/en.md),
+[Español](packaging/preview/docs/es.md) and
+[Português](packaging/preview/docs/pt.md) procedures. Native acceptance is pending;
+the package is not a production firewall or a signed appliance updater.
+
 ## Transactional configuration experiment
 
 The isolated configuration POC exercises Candidate, Running and Startup revisions,

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — persistent Firewall Alpha Preview
+
+- Package the existing administrative workflow for Debian 13 AMD64 with separate
+  API, namespace lifecycle and narrowly authorized helper services.
+- Bind HTTPS to an explicit address and interface with a client source ACL;
+  retain isolated enforcement and verified configuration recovery.
+- Add explicit provisioning, protected persistent state, readiness checks,
+  reproducible package controls and EN/ES/PT procedures.
+- Keep native installation and failure acceptance pending until measured in the
+  authorized laboratory; no host firewall or production readiness is claimed.
+
 ## Unreleased — rule traffic observations
 
 - Add administrator-only, on-request rule counter records shared by Web, CLI and

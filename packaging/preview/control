@@ -1,0 +1,11 @@
+Package: andeiva-firewall-preview
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: ASTERG
+Depends: libc6, systemd (>= 257), adduser, iproute2, nftables, util-linux
+Conflicts: andeiva-experimental
+Description: ANDEIVA experimental firewall administration preview
+ Persistent Web, CLI and API administration for isolated Debian laboratory
+ namespaces. This package does not enable a production or host firewall.
