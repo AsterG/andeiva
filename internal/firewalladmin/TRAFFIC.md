@@ -50,4 +50,5 @@ and permissions. Browser fixtures validate presentation and are not traffic
 evidence. Native acceptance must correlate real TCP/UDP probes with explicit
 Allow/Deny rules and read the same retained records through Web, CLI and API.
 Restart acceptance must demonstrate a new stream and baseline while validating
-configuration recovery separately. See the milestone report for execution status.
+configuration recovery separately. See the [milestone report](MILESTONE.md) for
+execution status.

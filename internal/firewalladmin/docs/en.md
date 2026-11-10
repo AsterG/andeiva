@@ -292,3 +292,18 @@ A baseline has no delta. Times delimit observations, not packet arrivals. Only
 explicit rules are covered; default-policy drops are not included. The bounded
 512-record history is in memory and disappears on API restart; a new stream
 rejects old cursors. Evictions are reported. See [the contract](../TRAFFIC.md).
+## Administrative workflow milestone
+
+The [milestone report](../MILESTONE.md) records two native Debian runs: all
+transaction operations through Web, CLI and API, 26 TCP/UDP probes, 68 journal
+records, permission denials, concurrent administrators and recovery. Rule traffic
+records matched across interfaces. The final API/helper RSS samples were
+17,376/18,096 KiB; these are observations, not a capacity benchmark.
+
+To repeat the acceptance sequence, create TCP and UDP rules in Web, compare them
+with CLI/API, stage/validate/commit, probe both protocols, sample traffic and
+compare stream/sequence records. Repeat with explicit Deny, confirmed commit,
+confirmation, save and historical rollback. Test a viewer, concurrent edits,
+API interruption through expiry and complete lab restart from saved Startup.
+Capture host state before/after and use `stop` for verified cleanup. Do not infer
+power-loss, VM-reboot or production authentication guarantees from these tests.

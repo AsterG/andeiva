@@ -298,3 +298,19 @@ individual de pacotes. Somente regras explícitas são cobertas; descartes pela 
 padrão não são incluídos. O histórico mantém até 512 registros em memória e desaparece
 ao reiniciar a API. O novo stream rejeita cursores anteriores e informa registros
 removidos pelo limite. Não são registros de conexões. Veja [o contrato](../TRAFFIC.md).
+## Marco do fluxo administrativo
+
+O [relatório do marco](../MILESTONE.md) registra duas execuções nativas no Debian:
+todas as operações transacionais por Web, CLI e API, 26 sondagens TCP/UDP,
+68 registros do journal, rejeições de permissões, administradores concorrentes e
+recuperação. Os registros de tráfego coincidiram entre as interfaces. As amostras
+finais de RSS foram 17.376/18.096 KiB para API/helper; não são um benchmark de capacidade.
+
+Para reproduzir a aceitação, crie regras TCP e UDP pela Web, compare-as com CLI/API
+e execute Stage, Validate e Commit. Teste ambos os protocolos, amostre o tráfego e
+compare os registros por stream/sequence. Repita com Deny explícito, Commit
+Confirmed, Confirm, Save e Rollback histórico. Teste um usuário viewer, alterações
+concorrentes, interrupção da API até o vencimento e reinício completo do laboratório
+a partir de Startup salvo. Capture o estado do host antes/depois e use `stop` para
+verificar a limpeza. Esses testes não garantem resistência a falhas de energia,
+reinícios da VM ou autenticação de produção.

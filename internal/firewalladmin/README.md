@@ -9,6 +9,8 @@ Operator guides: [English](docs/en.md), [Español](docs/es.md),
 [Português](docs/pt.md). They describe the current commands and the same acceptance
 procedure. [Validation results and limitations](VALIDATION.md) distinguish real
 Debian traffic, browser fixtures, failure injection and resource observations.
+The [administrative milestone report](MILESTONE.md) records the complete
+Web/CLI/API workflow and rule traffic observations tested on Debian.
 
 | Component | Responsibility |
 |---|---|
