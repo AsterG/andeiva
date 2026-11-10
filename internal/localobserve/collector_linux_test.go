@@ -203,10 +203,30 @@ func TestRealAcceptedTCPChurnDoesNotChangeListenerObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	first, err := c.readCapture()
-	if err != nil {
-		t.Fatal(err)
+	port := l.Addr().(*net.TCPAddr).Port
+	readListenerCapture := func() capture {
+		t.Helper()
+		captured, err := c.readCapture()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Other test binaries share this network namespace and may change its
+		// foreign listeners. Scope this test's table to its own exact listener,
+		// retaining every real FD and identity check. Production observations
+		// still compare the complete table, including foreign listener changes.
+		listeners := []Socket{}
+		for _, socket := range captured.sockets {
+			if socket.Protocol == "tcp" && socket.Family == "ipv4" && socket.Address == "127.0.0.1" && int(socket.Port) == port {
+				listeners = append(listeners, socket)
+			}
+		}
+		if len(listeners) != 1 {
+			t.Fatalf("expected one test listener, got %d", len(listeners))
+		}
+		captured.sockets = listeners
+		return captured
 	}
+	first := readListenerCapture()
 	client, err := net.DialTimeout("tcp4", l.Addr().String(), time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -220,10 +240,7 @@ func TestRealAcceptedTCPChurnDoesNotChangeListenerObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer accepted.Close()
-	second, err := c.readCapture()
-	if err != nil {
-		t.Fatal(err)
-	}
+	second := readListenerCapture()
 	if len(second.fds) <= len(first.fds) {
 		t.Fatal("test did not create additional connected sockets")
 	}
@@ -231,7 +248,6 @@ func TestRealAcceptedTCPChurnDoesNotChangeListenerObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal("accepted TCP connection invalidated listener capture", err)
 	}
-	port := l.Addr().(*net.TCPAddr).Port
 	found := false
 	for _, socket := range got.Sockets {
 		found = found || socket.Protocol == "tcp" && socket.Address == "127.0.0.1" && int(socket.Port) == port
@@ -241,10 +257,7 @@ func TestRealAcceptedTCPChurnDoesNotChangeListenerObservation(t *testing.T) {
 	}
 	_ = client.Close()
 	_ = accepted.Close()
-	third, err := c.readCapture()
-	if err != nil {
-		t.Fatal(err)
-	}
+	third := readListenerCapture()
 	if _, err := verifyStable(second, third, c.expected, c.start); err != nil {
 		t.Fatal("connection closure invalidated listener capture", err)
 	}
