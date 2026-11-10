@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -139,41 +140,50 @@ func TestStatesReplayAndPersistence(t *testing.T) {
 func TestConfirmedTimeoutAndRestart(t *testing.T) {
 	for _, mode := range []string{"timer", "restart", "confirm"} {
 		t.Run(mode, func(t *testing.T) {
-			s, engines, dir := fixture(t, Options{})
-			previous := status(t, s).Running.Hash
-			c := sample("temporary")
-			invoke(t, s, OpStage, &c, 0)
-			pending := invoke(t, s, OpCommit, nil, 150*time.Millisecond)
-			_, err := s.Execute(context.Background(), admin, API, Request{Operation: OpSave, Key: "save-pending", ExpectedGeneration: pending.Generation})
-			if !errors.Is(err, ErrPending) {
-				t.Fatal("save allowed pending")
-			}
-			switch mode {
-			case "timer":
-				time.Sleep(250 * time.Millisecond)
-				if status(t, s).Running.Hash != previous {
-					t.Fatal("timeout did not revert")
+			synctest.Test(t, func(t *testing.T) {
+				s, engines, dir := fixture(t, Options{})
+				previous := status(t, s).Running.Hash
+				c := sample("temporary")
+				invoke(t, s, OpStage, &c, 0)
+				pending := invoke(t, s, OpCommit, nil, 150*time.Millisecond)
+				_, err := s.Execute(context.Background(), admin, API, Request{Operation: OpSave, Key: "save-pending", ExpectedGeneration: pending.Generation})
+				if !errors.Is(err, ErrPending) {
+					t.Fatal("save allowed pending")
 				}
-			case "restart":
-				_ = s.Close()
-				s, err = Open(dir, []Engine{engines[0], engines[1]}, Options{})
-				if err != nil {
-					t.Fatal(err)
+				switch mode {
+				case "timer":
+					time.Sleep(time.Until(pending.Pending.Deadline) - time.Millisecond)
+					synctest.Wait()
+					if current := status(t, s); current.Pending == nil || current.Running.Hash != pending.Running.Hash {
+						t.Fatal("confirmation expired before deadline")
+					}
+					time.Sleep(time.Millisecond)
+					synctest.Wait()
+					if current := status(t, s); current.Pending != nil || current.Running.Hash != previous {
+						t.Fatal("timeout did not revert")
+					}
+				case "restart":
+					_ = s.Close()
+					s, err = Open(dir, []Engine{engines[0], engines[1]}, Options{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer s.Close()
+					if status(t, s).Running.Hash != previous {
+						t.Fatal("restart did not revert")
+					}
+				case "confirm":
+					result, err := s.Execute(context.Background(), admin, API, Request{Operation: OpConfirm, Key: "confirm", ExpectedGeneration: pending.Generation, Target: pending.Running.Hash})
+					if err != nil || result.Pending != nil {
+						t.Fatalf("confirm %v", err)
+					}
+					time.Sleep(200 * time.Millisecond)
+					synctest.Wait()
+					if status(t, s).Running.Hash != pending.Running.Hash {
+						t.Fatal("confirmed rolled back")
+					}
 				}
-				defer s.Close()
-				if status(t, s).Running.Hash != previous {
-					t.Fatal("restart did not revert")
-				}
-			case "confirm":
-				result, err := s.Execute(context.Background(), admin, API, Request{Operation: OpConfirm, Key: "confirm", ExpectedGeneration: pending.Generation, Target: pending.Running.Hash})
-				if err != nil || result.Pending != nil {
-					t.Fatalf("confirm %v", err)
-				}
-				time.Sleep(200 * time.Millisecond)
-				if status(t, s).Running.Hash != pending.Running.Hash {
-					t.Fatal("confirmed rolled back")
-				}
-			}
+			})
 		})
 	}
 }
