@@ -24,7 +24,7 @@
 .fw-app .page-description { margin-top: var(--space-1); }
 .fw-app .content { padding-block: var(--space-5); }
 .fw-app .fw-stack { gap: var(--space-4); }
-.fw-state .fw-meta, .fw-state .fw-toolbar { margin-block: 0; }
+.fw-app .fw-state .fw-meta, .fw-app .fw-state .fw-toolbar { margin-block: 0; }
 .fw-policy-surface, .fw-configuration { padding: var(--space-4); }
 .fw-policy-surface .ds-section-heading, .fw-configuration .ds-section-heading { margin-bottom: var(--space-3); }
 .fw-draft-note { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
