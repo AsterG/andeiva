@@ -21,8 +21,10 @@ func decode(data []byte, out any) error {
 
 func secureDirectory(path string, create bool) error {
 	if create {
-		if err := os.Mkdir(path, 0755); err == nil {
-			if err = os.Chmod(path, 0755); err != nil {
+		// Runtime metadata and namespace traversal are shared with both service UIDs;
+		// only root can write this directory, and control sockets remain root-only.
+		if err := os.Mkdir(path, 0755); err == nil { // #nosec G301 -- shared traversal, ownership and exact mode checked below.
+			if err = os.Chmod(path, 0755); err != nil { // #nosec G302 -- directory traversal, not a secret file.
 				return err
 			}
 		} else if !errors.Is(err, os.ErrExist) {
@@ -129,11 +131,11 @@ func writeMetadata(m Metadata) error {
 		return e
 	}
 	path := RuntimeDir + "/runtime.pending"
-	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if e != nil {
 		return e
 	}
-	e = f.Chmod(0644)
+	e = f.Chmod(0644) // #nosec G302 -- non-secret namespace IDs read by separate service UIDs; root-only writes.
 	if e == nil {
 		_, e = f.Write(append(data, '\n'))
 	}
@@ -170,7 +172,7 @@ func unpinGateway(m Metadata) error {
 	if syscall.Statfs(NamespacePath, &stat) != nil {
 		return ErrRuntime
 	}
-	if uint64(stat.Type) == 0x6e736673 { // NSFS_MAGIC; never detach a different mount.
+	if stat.Type == 0x6e736673 { // NSFS_MAGIC; never detach a different mount.
 		if i.Sys().(*syscall.Stat_t).Ino != m.GatewayNamespace {
 			return ErrRuntime
 		}
