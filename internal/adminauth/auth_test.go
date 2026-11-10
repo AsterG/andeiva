@@ -102,3 +102,31 @@ func TestLogoutAndAbsoluteExpiry(t *testing.T) {
 		t.Fatal("logout ignored")
 	}
 }
+
+func TestDenialAuditBoundsAndFailureLatch(t *testing.T) {
+	m, secret, events := fixture(t)
+	clock := time.Now()
+	m.now = func() time.Time { return clock }
+	for i := 0; i < 4; i++ {
+		if err := m.RecordDenied("alice", "csrf"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.RecordDenied("alice", "write"); !errors.Is(err, ErrLimited) {
+		t.Fatal("unbounded denial audit")
+	}
+	if len(*events) != 4 {
+		t.Fatal("unexpected denial count")
+	}
+	clock = clock.Add(time.Second)
+	if err := m.RecordDenied("alice", "write"); err != nil {
+		t.Fatal(err)
+	}
+	m.audit = func(Event) error { return errors.New("private storage path") }
+	if err := m.RecordDenied("alice", "write"); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("audit failure ignored")
+	}
+	if _, _, err := m.Login("alice", secret); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("audit failure did not latch closed")
+	}
+}

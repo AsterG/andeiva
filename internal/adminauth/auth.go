@@ -44,14 +44,16 @@ type account struct {
 	digest [32]byte
 }
 type Manager struct {
-	mu       sync.Mutex
-	accounts map[string]account
-	sessions map[[32]byte]session
-	audit    func(Event) error
-	now      func() time.Time
-	window   time.Time
-	attempts int
-	failed   bool
+	mu           sync.Mutex
+	accounts     map[string]account
+	sessions     map[[32]byte]session
+	audit        func(Event) error
+	now          func() time.Time
+	window       time.Time
+	attempts     int
+	failed       bool
+	denialWindow time.Time
+	denials      int
 }
 
 var username = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
@@ -190,4 +192,27 @@ func (m *Manager) Revoke(name string) error {
 
 func CheckCSRF(identity Identity, value string) bool {
 	return len(value) == 64 && subtle.ConstantTimeCompare([]byte(identity.CSRF), []byte(value)) == 1
+}
+
+// RecordDenied bounds unauthenticated audit pressure. Exhaustion rejects work;
+// persistent audit failure latches all authentication closed.
+func (m *Manager) RecordDenied(actor, action string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failed {
+		return ErrUnavailable
+	}
+	if action != "write" && action != "csrf" && action != "origin" {
+		return ErrDenied
+	}
+	now := m.now()
+	if now.Sub(m.denialWindow) >= time.Second {
+		m.denialWindow = now
+		m.denials = 0
+	}
+	if m.denials >= 4 {
+		return ErrLimited
+	}
+	m.denials++
+	return m.record(actor, action, "denied")
 }

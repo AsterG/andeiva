@@ -2,7 +2,10 @@
 package adminapi
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -51,26 +54,32 @@ type handler struct {
 
 func New(options Options) (http.Handler, error) {
 	origin, err := url.Parse(options.Origin)
-	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.Path != "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || options.Auth == nil || options.Backend == nil || options.Observe == nil {
+	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.Path != "" || origin.User != nil || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" || options.Auth == nil || options.Backend == nil || options.Observe == nil {
 		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
 	}
 	return &handler{options, origin.Host}, nil
 }
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var requestID [16]byte
+	if _, err := rand.Read(requestID[:]); err != nil {
+		h.fail(w, 503, "ANDEIVA_AUTH_UNAVAILABLE")
+		return
+	}
+	w.Header().Set("X-Request-ID", hex.EncodeToString(requestID[:]))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-	if r.TLS == nil || r.Host != h.host {
-		h.fail(w, http.StatusForbidden, "ANDEIVA_ORIGIN_DENIED")
+	if r.TLS == nil || r.Host != h.host || len(r.Header.Values("Origin")) > 1 || len(r.Header.Values("X-CSRF-Token")) > 1 || len(r.Header.Values("X-ANDEIVA-Client")) > 1 || len(r.Header.Values("Content-Type")) > 1 {
+		h.deny(w, r, "unknown", "origin", http.StatusForbidden, "ANDEIVA_ORIGIN_DENIED")
 		return
 	}
 	if origin := r.Header.Get("Origin"); origin != "" && origin != h.options.Origin {
-		h.fail(w, http.StatusForbidden, "ANDEIVA_ORIGIN_DENIED")
+		h.deny(w, r, "unknown", "origin", http.StatusForbidden, "ANDEIVA_ORIGIN_DENIED")
 		return
 	}
 	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
-		h.fail(w, http.StatusForbidden, "ANDEIVA_ORIGIN_DENIED")
+		h.deny(w, r, "unknown", "origin", http.StatusForbidden, "ANDEIVA_ORIGIN_DENIED")
 		return
 	}
 	if r.URL.RawPath != "" || strings.Contains(r.URL.Path, "//") {
@@ -86,18 +95,26 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if r.URL.Path != "/api/v1/firewall/history" && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
+		h.fail(w, 400, "ANDEIVA_REQUEST_INVALID")
+		return
+	}
 	if r.URL.Path == "/api/v1/auth/login" {
 		h.login(w, r)
 		return
 	}
 	token, bearer, err := requestToken(r)
 	if err != nil {
-		h.fail(w, 401, "ANDEIVA_AUTH_DENIED")
+		h.deny(w, r, "unknown", "write", 401, "ANDEIVA_AUTH_DENIED")
 		return
 	}
 	id, err := h.options.Auth.Authenticate(token)
 	if err != nil {
-		h.authError(w, err)
+		if r.Method == http.MethodPost && errors.Is(err, adminauth.ErrDenied) {
+			h.deny(w, r, "unknown", "write", 401, "ANDEIVA_AUTH_DENIED")
+		} else {
+			h.authError(w, err)
+		}
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -106,7 +123,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Header.Get("Content-Type") != "application/json" || (!bearer && (!adminauth.CheckCSRF(id, r.Header.Get("X-CSRF-Token")) || r.Header.Get("Origin") != h.options.Origin)) {
-			h.fail(w, 403, "ANDEIVA_CSRF_DENIED")
+			h.deny(w, r, id.Username, "csrf", 403, "ANDEIVA_CSRF_DENIED")
 			return
 		}
 	}
@@ -129,6 +146,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/api/v1/auth/session" && r.Method == http.MethodGet:
 		h.write(w, 200, id)
 	case r.URL.Path == "/api/v1/auth/logout" && r.Method == http.MethodPost:
+		var empty struct{}
+		if err := decode(w, r, &empty); err != nil {
+			h.fail(w, 400, "ANDEIVA_REQUEST_INVALID")
+			return
+		}
 		if err = h.options.Auth.Logout(token); err != nil {
 			h.authError(w, err)
 			return
@@ -144,7 +166,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.write(w, 200, h.state(ctx, s))
 	case r.URL.Path == "/api/v1/firewall/transactions" && r.Method == http.MethodPost && r.URL.RawQuery == "":
 		if id.Role != "admin" {
-			h.fail(w, 403, "ANDEIVA_CONFIG_DENIED")
+			h.deny(w, r, id.Username, "write", 403, "ANDEIVA_CONFIG_DENIED")
 			return
 		}
 		var req configpoc.Request
@@ -166,7 +188,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.write(w, 200, h.state(ctx, s))
 	case r.URL.Path == "/api/v1/firewall/history" && r.Method == http.MethodGet:
 		if id.Role != "admin" {
-			h.fail(w, 403, "ANDEIVA_CONFIG_DENIED")
+			h.deny(w, r, id.Username, "write", 403, "ANDEIVA_CONFIG_DENIED")
 			return
 		}
 		before, limit, err := pagination(r.URL)
@@ -194,6 +216,18 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if len(revisions) == limit {
 			next = revisions[len(revisions)-1].Sequence
 		}
+		if len(page) == limit && page[len(page)-1].Sequence > next {
+			next = page[len(page)-1].Sequence
+		}
+		// One cursor must advance both streams without skipping the denser one.
+		if next != 0 {
+			for len(revisions) > 0 && revisions[len(revisions)-1].Sequence < next {
+				revisions = revisions[:len(revisions)-1]
+			}
+			for len(page) > 0 && page[len(page)-1].Sequence < next {
+				page = page[:len(page)-1]
+			}
+		}
 		h.write(w, 200, struct {
 			Revisions []configpoc.RevisionEntry `json:"revisions"`
 			Audit     []configpoc.Audit         `json:"audit"`
@@ -204,6 +238,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (h *handler) state(ctx context.Context, s configpoc.Snapshot) State {
+	if s.Pending != nil {
+		pending := *s.Pending
+		pending.Lease = ""
+		s.Pending = &pending
+	}
 	e, err := h.options.Observe(ctx)
 	if err != nil {
 		e = Effective{State: "unavailable", Rules: []RuleCounter{}}
@@ -283,7 +322,14 @@ func requestToken(r *http.Request) (string, bool, error) {
 func decode(w http.ResponseWriter, r *http.Request, out any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 65536)
 	defer r.Body.Close()
-	d := json.NewDecoder(r.Body)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	if err := validateJSON(data); err != nil {
+		return err
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
 		return err
@@ -325,7 +371,7 @@ func (h *handler) write(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func (h *handler) fail(w http.ResponseWriter, status int, code string) {
-	h.write(w, status, map[string]string{"code": code, "request_id": ""})
+	h.write(w, status, map[string]string{"code": code, "request_id": w.Header().Get("X-Request-ID")})
 }
 func (h *handler) authError(w http.ResponseWriter, err error) {
 	switch {
@@ -344,8 +390,14 @@ func (h *handler) configError(w http.ResponseWriter, err error) {
 		h.fail(w, 403, configpoc.ErrDenied.Error())
 	case errors.Is(err, configpoc.ErrInvalid):
 		h.fail(w, 400, configpoc.ErrInvalid.Error())
-	case errors.Is(err, configpoc.ErrConflict), errors.Is(err, configpoc.ErrReplay), errors.Is(err, configpoc.ErrPending), errors.Is(err, configpoc.ErrExpired):
-		h.fail(w, 409, err.Error())
+	case errors.Is(err, configpoc.ErrConflict):
+		h.fail(w, 409, configpoc.ErrConflict.Error())
+	case errors.Is(err, configpoc.ErrReplay):
+		h.fail(w, 409, configpoc.ErrReplay.Error())
+	case errors.Is(err, configpoc.ErrPending):
+		h.fail(w, 409, configpoc.ErrPending.Error())
+	case errors.Is(err, configpoc.ErrExpired):
+		h.fail(w, 409, configpoc.ErrExpired.Error())
 	default:
 		h.fail(w, 503, "ANDEIVA_CONFIG_RECOVERY_REQUIRED")
 	}

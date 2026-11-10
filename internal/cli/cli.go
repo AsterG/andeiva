@@ -35,8 +35,14 @@ var translations = map[string]messages{
 }
 
 // Run writes a localized result and returns a process exit status.
-// It performs no network, filesystem or privileged operation.
+// Firewall commands use authenticated HTTPS; scaffold commands remain local.
 func Run(args []string, stdout, stderr io.Writer) int {
+	return RunInput(args, nil, stdout, stderr)
+}
+
+// RunInput accepts explicit stdin for bounded firewall request documents.
+func RunInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	locale := "en"
 	text := translations["en"]
 	if len(args) > 0 && args[0] == "--lang" {
 		if len(args) < 2 {
@@ -49,7 +55,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "ANDEIVA_UNSUPPORTED_LOCALE:", translations["en"].invalidLocale)
 			return 2
 		}
+		locale = args[1]
 		args = args[2:]
+	}
+	if len(args) > 0 && (args[0] == "firewall" || args[0] == "f" || args[0] == "fi" || args[0] == "fir" || args[0] == "fire" || args[0] == "firew" || args[0] == "firewa" || args[0] == "firewal") {
+		return runFirewall(args[1:], locale, stdin, stdout, stderr)
 	}
 	if len(args) == 0 || len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		fmt.Fprint(stdout, text.help)
