@@ -115,3 +115,31 @@ Process interruption, file synchronization and restart tests do not establish
 resistance to a physical power cut. This experiment does not select SQLite or
 PostgreSQL, implement HA, sign history, encrypt secrets, provide production
 authentication or validate real nftables/proxy coordination. Keep those gates open.
+
+## Capacity reservation: AND01 remains partial
+
+Before a confirmed commit or confirmed historical rollback applies a revision,
+the coordinator budgets six journal records: two for activation, up to two for
+resolution, and two for one recovery/reopen. Ordinary writes, revocations and
+rejected-request audits cannot consume the four records retained while pending.
+The owning authorized actor can confirm using the reserved capacity. Receipt
+admission also retains confirmation and one required-recovery receipt; healthy
+repeated recovery cannot bypass the quota. Byte budgeting uses the existing
+1 MiB per-record maximum, covering state and receipt growth without raising limits.
+
+The journal still has lifetime bounds: 64 MiB, the configured record count
+(2,048 by default), and 1,024 receipts. Writes may stop earlier to protect the
+reserve. An audit write that lacks capacity returns a storage error. Authenticated
+status/history and exact retries remain readable at quota in a healthy open
+service. Already exhausted journals are not repaired; a healthy resume with fewer
+than two records available fails before adding an intent or applying a revision.
+Repeated reopen operations and physical storage failures remain bounded risks.
+Compaction, retention, receipt lifecycle and key management need a separate
+reviewed ADR. No records are deleted and no durable format is changed here.
+
+Run `go test -race ./internal/configpoc -run TestCapacity` and
+`go test ./internal/configpoc -run '^$' -bench BenchmarkCapacityAdmission -benchmem`
+on Linux. The latter measures only in-memory admission cost, not appliance RAM or
+packet throughput. The byte-boundary test injects quota accounting and writes real
+variable-size records; it does not simulate a physically full disk. Debian
+resource benchmarking and physical-failure validation remain pending.

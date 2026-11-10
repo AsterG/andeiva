@@ -11,6 +11,15 @@
 - Include multilingual console guides in the experimental Debian package;
   keep component examples at the explicit design-system preview address.
 
+## Unreleased — confirmed transaction capacity
+
+- Reserve journal and receipt capacity before a confirmed transaction changes
+  an engine, preserving confirmation, timeout rollback and one recovery cycle.
+- Prevent ordinary writes and rejected-request audits from consuming that
+  pending reservation. Preserve existing quotas, journal formats and replay.
+- Keep lifetime retention and recovery of already exhausted stores as separate
+  limitations; this change does not compact or delete protected history.
+
 ## Unreleased — rule activation and administration table
 
 - Retain explicitly disabled forwarding rules in the versioned transaction
