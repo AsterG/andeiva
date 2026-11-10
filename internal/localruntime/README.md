@@ -1,5 +1,8 @@
 # Isolated local-services runner
 
+Operator procedures: [English](docs/en.md), [Español](docs/es.md),
+[Português](docs/pt.md).
+
 ## English
 
 Experimental composition for the explicitly authorized Debian 13 AMD64 laboratory.
