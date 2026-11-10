@@ -89,7 +89,8 @@ the preview. Both options interrupt management. Reports are private, root-readab
 under `/var/tmp`; they do not prove transaction parity or infer expected traffic
 from a successful probe. Verify those separately against the intended revision.
 
-API-only restart retains the helper deadline. Losing the helper closes the entire
+Automatic API recovery retains the helper deadline. Explicit service stops can
+propagate to the target. Losing the helper closes the entire
 preview. Stop the target, wait for all four service/socket units to be inactive,
 then start it; do not assume `restart target` is an atomic replacement. A restart
 in the same OS boot restores Running; a VM reboot selects saved Startup.

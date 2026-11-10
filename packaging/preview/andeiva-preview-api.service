@@ -16,6 +16,8 @@ RuntimeDirectory=andeiva-preview-api
 RuntimeDirectoryMode=0700
 ExecStart=/usr/lib/andeiva-preview/andeiva-preview api
 Restart=on-failure
+# Keep dependent units alive during bounded API recovery; the helper owns leases.
+RestartMode=direct
 RestartSec=3
 TimeoutStartSec=30
 TimeoutStopSec=15

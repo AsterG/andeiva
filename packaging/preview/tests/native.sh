@@ -179,9 +179,17 @@ fi
 if [[ "$lifecycle" == true ]]; then
   stage=stop-cleanup
   timeout 90 systemctl stop andeiva-preview.target
-  for unit in "${all_units[@]}"; do
-    [[ $(systemctl show --value --property=ActiveState "$unit") == inactive ]]
+  # ExecStopPost may enqueue dependent stop jobs after the target job returns.
+  stopped=false
+  for ((attempt=0; attempt<90; attempt++)); do
+    stopped=true
+    for unit in "${all_units[@]}"; do
+      [[ $(systemctl show --value --property=ActiveState "$unit") == inactive ]] || stopped=false
+    done
+    [[ "$stopped" == true ]] && break
+    sleep 1
   done
+  [[ "$stopped" == true ]]
   for path in /run/andeiva-preview/runtime.json /run/andeiva-preview/runtime.pending \
     /run/andeiva-preview/netns/gateway /run/andeiva-preview/control.sock \
     /run/andeiva-preview-helper/helper.sock /run/andeiva-preview-api/health.sock; do

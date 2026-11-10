@@ -31,7 +31,9 @@ Only peers in the configured LAN prefix are admitted, using their actual socket
 address. Forwarding headers cannot grant access. TLS uses the provisioned LAN SAN
 and an explicit local CA; installation does not change trust on client machines.
 
-An API restart retains the helper and its independent confirmation deadline.
+Automatic API recovery retains the helper and its independent confirmation deadline.
+Recovery attempts are rate-limited; an explicit service stop may propagate to the
+target and is not equivalent to automatic recovery.
 Stopping or losing the helper stops the complete preview, including its socket
 and namespaces. A reviewed restart then reconciles durable state; uncertainty
 never becomes a confirmed revision. A restart in the same OS boot recovers
