@@ -18,6 +18,8 @@ import (
 	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewalltraffic"
+	"github.com/AsterG/andeiva/internal/localadmin"
+	"github.com/AsterG/andeiva/internal/localpolicy"
 )
 
 const cookieName = "__Host-andeiva-session"
@@ -44,6 +46,12 @@ type Options struct {
 	Backend Backend
 	Observe func(context.Context) (Effective, error)
 	Static  http.Handler
+	Local   LocalBackend
+	// LocalEndpointID comes from the receiving listener, never a request header.
+	LocalEndpointID     string
+	LocalActivationHash string
+	LocalRecovery       bool
+	LocalInventory      []localpolicy.Interface
 }
 type handler struct {
 	options Options
@@ -53,7 +61,19 @@ type handler struct {
 
 func New(options Options) (http.Handler, error) {
 	origin, err := url.Parse(options.Origin)
-	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.Path != "" || origin.User != nil || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" || options.Auth == nil || options.Backend == nil || options.Observe == nil {
+	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.Path != "" || origin.User != nil || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" || options.Auth == nil || (options.Backend == nil && options.Local == nil) || (options.Backend != nil && options.Observe == nil) || (options.Local != nil && options.LocalEndpointID == "") {
+		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
+	}
+	if options.Local != nil {
+		if !validLocalEndpoint(options.LocalEndpointID, options.LocalActivationHash, options.LocalRecovery) {
+			return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
+		}
+		inventory, err := localpolicy.Canonical(localpolicy.Config{SchemaVersion: 1, Interfaces: options.LocalInventory})
+		if err != nil || len(inventory.Config.Interfaces) == 0 || len(inventory.Config.Interfaces) > 2 {
+			return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
+		}
+		options.LocalInventory = inventory.Config.Interfaces
+	} else if options.LocalEndpointID != "" || options.LocalActivationHash != "" || options.LocalRecovery || len(options.LocalInventory) != 0 {
 		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
 	}
 	traffic, err := firewalltraffic.New()
@@ -98,7 +118,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if r.URL.Path != "/api/v1/firewall/history" && r.URL.Path != "/api/v1/firewall/traffic" && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
+	if r.URL.Path != "/api/v1/firewall/history" && r.URL.Path != "/api/v1/firewall/traffic" && r.URL.Path != "/api/v1/local-services/history" && r.URL.Path != "/api/v1/effective-policies" && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
 		h.fail(w, 400, "ANDEIVA_REQUEST_INVALID")
 		return
 	}
@@ -145,6 +165,18 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Surface is diagnostic metadata only. Every transport uses the same identity and permissions.
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	if r.URL.Path == "/api/v1/capabilities" && r.Method == http.MethodGet {
+		h.write(w, 200, Capabilities{Firewall: h.options.Backend != nil, LocalServices: h.options.Local != nil, EndpointID: h.options.LocalEndpointID, RecoveryEndpoint: h.options.Local != nil && h.options.LocalRecovery, LocalInterfaces: h.options.LocalInventory})
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/local-services") || r.URL.Path == "/api/v1/effective-policies" {
+		h.local(w, r, ctx, localadmin.Context{Principal: p, Surface: surface, SessionHash: sessionHash(token), EndpointID: h.options.LocalEndpointID, ActivationHash: h.options.LocalActivationHash})
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/firewall") && h.options.Backend == nil {
+		h.fail(w, 404, "ANDEIVA_NOT_FOUND")
+		return
+	}
 	switch {
 	case r.URL.Path == "/api/v1/firewall/traffic" && r.Method == http.MethodGet:
 		if id.Role != "admin" {

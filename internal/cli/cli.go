@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 type messages struct {
@@ -61,8 +62,15 @@ func RunInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 && (args[0] == "firewall" || args[0] == "f" || args[0] == "fi" || args[0] == "fir" || args[0] == "fire" || args[0] == "firew" || args[0] == "firewa" || args[0] == "firewal") {
 		return runFirewall(args[1:], locale, stdin, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] != "" && strings.HasPrefix("local-services", args[0]) {
+		return runLocalServices(args[1:], locale, stdin, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] != "" && strings.HasPrefix("effective-policies", args[0]) {
+		return runLocalServices(append([]string{"effective"}, args[1:]...), locale, stdin, stdout, stderr)
+	}
 	if len(args) == 0 || len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		fmt.Fprint(stdout, text.help)
+		fmt.Fprintln(stdout, "\nandeiva firewall help\nandeiva local-services help\nandeiva firewall completion")
 		return 0
 	}
 	if len(args) == 1 && args[0] == "status" {

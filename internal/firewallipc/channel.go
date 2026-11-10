@@ -16,9 +16,11 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewalladmin"
+	"github.com/AsterG/andeiva/internal/localpolicy"
 )
 
 const MaxFrame = 65536
+const LocalReplyMaxFrame = 256 << 10
 
 var ErrChannel = errors.New("ANDEIVA_ADMIN_HELPER_UNAVAILABLE")
 
@@ -47,6 +49,7 @@ type Reply struct {
 	Counters     []Counter                `json:"counters,omitempty"`
 	CounterEpoch string                   `json:"counter_epoch,omitempty"`
 	Error        string                   `json:"error,omitempty"`
+	Local        *localpolicy.Observation `json:"local,omitempty"`
 }
 type Compiler func(configpoc.Config) (string, error)
 type Client struct {
@@ -59,6 +62,18 @@ type Client struct {
 	compile             Compiler
 	dead                bool
 	counterGeneration   uint64
+	local               bool
+}
+
+// NewLocal uses the same authenticated inherited channel and lease protocol,
+// but expects Local-In observations instead of forwarding counters.
+func NewLocal(in io.ReadCloser, out io.WriteCloser, run string, sequence, namespace uint64, compile Compiler) (*Client, error) {
+	c, err := New(in, out, run, sequence, namespace, compile)
+	if err == nil {
+		c.local = true
+		c.scanner.Buffer(make([]byte, 4096), LocalReplyMaxFrame)
+	}
+	return c, err
 }
 
 func New(in io.ReadCloser, out io.WriteCloser, run string, sequence, namespace uint64, compile Compiler) (*Client, error) {
@@ -114,7 +129,11 @@ func (c *Client) Call(parent context.Context, m Message) (Reply, error) {
 			return
 		}
 		var r Reply
-		if Decode(c.scanner.Bytes(), &r) != nil || r.Run != m.Run || r.Sequence != m.Sequence || r.Namespace != c.namespace || (digest != "" && r.Artifact != digest) {
+		replyLimit := MaxFrame
+		if c.local {
+			replyLimit = LocalReplyMaxFrame
+		}
+		if decodeBounded(c.scanner.Bytes(), &r, replyLimit) != nil || r.Run != m.Run || r.Sequence != m.Sequence || r.Namespace != c.namespace || (digest != "" && r.Artifact != digest) {
 			done <- result{err: ErrChannel}
 			return
 		}
@@ -122,8 +141,20 @@ func (c *Client) Call(parent context.Context, m Message) (Reply, error) {
 			done <- result{r: r, err: ErrChannel, valid: true}
 			return
 		}
+		if (!c.local && r.Local != nil) || (c.local && (len(r.Counters) != 0 || r.CounterEpoch != "")) {
+			done <- result{err: ErrChannel}
+			return
+		}
 		generation := minimumGeneration
-		if m.Verb == "observe" {
+		if c.local && m.Verb == "observe" {
+			if !validLocalObservation(r) {
+				done <- result{err: ErrChannel}
+				return
+			}
+		} else if c.local && r.Local != nil {
+			done <- result{err: ErrChannel}
+			return
+		} else if m.Verb == "observe" {
 			var valid bool
 			generation, valid = counterEpochGeneration(r.CounterEpoch, c.run)
 			if !valid || generation < minimumGeneration {
@@ -155,7 +186,12 @@ func counterEpochGeneration(value, run string) (uint64, bool) {
 	generation, err := strconv.ParseUint(suffix, 10, 64)
 	return generation, err == nil && strconv.FormatUint(generation, 10) == suffix
 }
-func (c *Client) Name() string                           { return "firewall" }
+func (c *Client) Name() string {
+	if c.local {
+		return "local-services"
+	}
+	return "firewall"
+}
 func (c *Client) Validate(config configpoc.Config) error { _, err := c.compile(config); return err }
 func (c *Client) Apply(ctx context.Context, r configpoc.Revision) error {
 	s, err := c.State(ctx)
@@ -217,7 +253,10 @@ func (a Authority) State(ctx context.Context) (firewalladmin.LeaseState, error) 
 }
 
 func Decode(data []byte, out any) error {
-	if len(data) > MaxFrame {
+	return decodeBounded(data, out, MaxFrame)
+}
+func decodeBounded(data []byte, out any, limit int) error {
+	if len(data) > limit {
 		return ErrChannel
 	}
 	keys := json.NewDecoder(bytes.NewReader(data))

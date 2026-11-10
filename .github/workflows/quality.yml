@@ -140,6 +140,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Provision verified module cache before offline packaging
+        run: |
+          go mod download
+          go mod verify
       - name: Build and inspect experimental Debian package
         run: |
           bash -n packaging/debian/tests/vm-lifecycle.sh
@@ -194,6 +198,10 @@ jobs:
           node-version: 24.20.0
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: frontend
+      - name: Provision verified module cache before offline packaging
+        run: |
+          go mod download
+          go mod verify
       - name: Reproducible preview package without privileged execution
         env:
           PREVIEW_BUILD_NUMBER: ${{ github.run_number }}
