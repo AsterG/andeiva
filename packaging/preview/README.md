@@ -34,6 +34,10 @@ and an explicit local CA; installation does not change trust on client machines.
 Automatic API recovery retains the helper and its independent confirmation deadline.
 Recovery attempts are rate-limited; an explicit service stop may propagate to the
 target and is not equivalent to automatic recovery.
+If the API exhausts its restart budget, administration can remain unavailable
+while the helper preserves the last verified policy and its confirmation guardian.
+An active target alone is not a health check. Recovery requires an explicit full
+stop, cleanup verification and restart; it does not automatically confirm changes.
 Stopping or losing the helper stops the complete preview, including its socket
 and namespaces. A reviewed restart then reconciles durable state; uncertainty
 never becomes a confirmed revision. A restart in the same OS boot recovers
@@ -72,8 +76,7 @@ signed appliance updates, A/B rollback or power-loss guarantees.
 
 ## Validation status
 
-Implementation and native acceptance are in progress. Installing a package or
-passing unprivileged CI alone does not establish native runtime or LAN isolation.
-Required evidence includes real LAN access, WAN rejection, actual policy traffic,
-API/helper failure handling, reboot behavior, update/remove, host invariance and
-resource measurements. No production readiness or release is claimed.
+See the [native validation report](VALIDATION.md) for observed package versions,
+scenarios and limitations. Installing a package or passing unprivileged CI alone
+does not establish native runtime or LAN isolation. No production readiness or
+release is claimed.

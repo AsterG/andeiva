@@ -97,6 +97,15 @@ e depois inicie; não presuma que `restart target` seja atômico. Reinício de s
 no mesmo boot restaura Running; reiniciar a VM seleciona Startup salvo. Journal
 incerto bloqueia a publicação de revisões.
 
+Ao esgotar o limite de reinicializações da API, API/socket podem ficar em falha
+enquanto target, helper e namespaces mantêm a última política verificada.
+Administração e observações de tráfego da API ficam indisponíveis; `target active`
+não significa prontidão. Pare o target e verifique a limpeza dos recursos próprios.
+Se API/socket continuarem em falha, execute
+`systemctl reset-failed andeiva-preview-api.service andeiva-preview-api.socket`
+antes de iniciar explicitamente o target. Não apague nem redefina marcadores de
+recuperação dos namespaces para contornar outra falha de limpeza.
+
 Uma falha abrupta do daemon de namespaces pode deixar metadata ou um pin.
 Preserve as evidências: a recuperação automática é bloqueada. Uma reinicialização
 autorizada da VM remove recursos voláteis. Não apague journal, marcadores ou pins

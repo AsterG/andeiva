@@ -103,6 +103,14 @@ then start it; do not assume `restart target` is an atomic replacement. A restar
 in the same OS boot restores Running; a VM reboot selects saved Startup.
 Uncertain journal state blocks rather than publishing an unverified revision.
 
+Exhausting the API restart budget can leave API/socket failed while the target,
+helper and namespaces remain active with the last verified policy. Management
+and API traffic observations are unavailable; `target active` is not readiness.
+Stop the target and verify owned cleanup. If the API/socket remain in failed
+state, run `systemctl reset-failed andeiva-preview-api.service andeiva-preview-api.socket`
+before starting the target explicitly. Do not reset or erase namespace recovery
+markers to bypass a separate cleanup failure.
+
 A killed namespace daemon may leave a pinned namespace or runtime metadata.
 Preserve evidence: the preview deliberately refuses automatic reclamation.
 An authorized VM reboot clears volatile runtime resources; do not delete the

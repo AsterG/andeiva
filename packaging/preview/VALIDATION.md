@@ -13,19 +13,22 @@
 
 ## English
 
-The scenarios below passed in the isolated laboratory. Final independent review
-of the collected evidence remains pending. This report does not establish
-production readiness or completion of all appliance acceptance gates.
+The scenarios below passed in the isolated laboratory. Separate code and evidence
+consistency reviews completed without new blocking findings. Protected removal
+manifests remain in the laboratory; their local comparisons are not an independent
+attestation. This report does not establish production readiness or completion of
+all appliance acceptance gates.
 
 - Two Linux package builds were byte-identical; both passed package static checks.
   Full regression race tests and vet passed. GoSec reported zero findings across
   72 files. Quality run `42819442046` and Security run `42819442057` passed for the
   source revision above.
-- Alpha8 completed two full VM boots, restoring saved Startup rather than unsaved
-  Running. Real TCP/UDP probes verified allow on port 18080 and deny on port 18081;
-  reverse-direction traffic was also checked before reboot.
+- Alpha8 completed two full VM boots. The second explicitly replaced unsaved
+  Running with saved Startup. Real TCP/UDP probes allowed port 18081 and denied
+  18080 before that reboot; afterward they allowed 18080 and denied 18081.
 - The native harness passed API process termination/recovery and full service
-  stop, owned-resource cleanup and start, with host network snapshots unchanged.
+  stop, owned-resource cleanup and start, with host network snapshots unchanged
+  after documented normalization of lifetimes, route expiry and counters.
   Remove/reinstall preserved protected file hashes, permissions and identities;
   explicit startup restored health.
 - The full Web transaction cycle and API/CLI parity were exercised on alpha7,
@@ -62,22 +65,25 @@ production operation are not validated. See the [runtime contract](README.md),
 
 ## Español
 
-Los escenarios siguientes pasaron en el laboratorio aislado. La revisión
-independiente final de la evidencia recopilada sigue pendiente. Este informe no
-acredita preparación para producción ni el cumplimiento de todos los criterios
-de aceptación del appliance.
+Los escenarios siguientes pasaron en el laboratorio aislado. Las revisiones
+separadas de código y coherencia de evidencia terminaron sin nuevos bloqueos.
+Los manifiestos protegidos de desinstalación permanecen en el laboratorio;
+sus comparaciones locales no constituyen una certificación independiente.
+Este informe no acredita preparación para producción ni el cumplimiento de
+todos los criterios de aceptación del appliance.
 
 - Dos builds Linux del paquete resultaron idénticos byte a byte y pasaron los
   controles estáticos. Pasaron la regresión completa con detección de carreras
   y vet. GoSec informó cero hallazgos en 72 archivos. Quality `42819442046` y
   Security `42819442057` pasaron para la revisión de código indicada arriba.
-- Alpha8 completó dos arranques completos de la VM y restauró Startup guardado,
-  en lugar de Running sin guardar. Sondas TCP/UDP reales verificaron permiso en
-  el puerto 18080 y denegación en 18081; también se comprobó tráfico en sentido
-  inverso antes del reinicio.
+- Alpha8 completó dos arranques completos de la VM. El segundo reemplazó
+  explícitamente Running sin guardar por Startup guardado. Las sondas TCP/UDP
+  reales permitieron 18081 y denegaron 18080 antes del reinicio; después
+  permitieron 18080 y denegaron 18081.
 - El harness nativo pasó la terminación y recuperación del proceso API y la
   parada completa, limpieza de recursos propios y arranque de servicios, sin
-  cambios en las capturas de red del host. Remove/reinstall conservó hashes de
+  cambios en las capturas de red del host tras normalizar los tiempos de vida,
+  expiración de rutas y contadores documentados. Remove/reinstall conservó hashes de
   archivos protegidos, permisos e identidades; el arranque explícito recuperó
   la disponibilidad.
 - En alpha7 se probó el ciclo Web completo de transacciones y la paridad API/CLI,
@@ -117,21 +123,24 @@ energía ni uso en producción. Consulte el [contrato de runtime](README.md), la
 
 ## Português
 
-Os cenários abaixo passaram no laboratório isolado. A revisão independente final
-das evidências coletadas continua pendente. Este relatório não comprova prontidão
-para produção nem o cumprimento de todos os critérios de aceitação do appliance.
+Os cenários abaixo passaram no laboratório isolado. Revisões separadas de código
+e coerência das evidências terminaram sem novos bloqueios. Os manifestos protegidos
+de remoção permanecem no laboratório; suas comparações locais não constituem
+atestado independente. Este relatório não comprova prontidão para produção nem
+o cumprimento de todos os critérios de aceitação do appliance.
 
 - Duas builds Linux do pacote foram idênticas byte a byte e passaram nas
   verificações estáticas. A regressão completa com detecção de corridas e vet
   passou. GoSec registrou zero ocorrências em 72 arquivos. Quality `42819442046`
   e Security `42819442057` passaram para a revisão de código indicada acima.
-- Alpha8 completou duas inicializações completas da VM, restaurando Startup salvo
-  em vez de Running não salvo. Sondas TCP/UDP reais verificaram permissão na porta
-  18080 e bloqueio na porta 18081; o tráfego no sentido inverso também foi
-  verificado antes da reinicialização.
+- Alpha8 completou duas inicializações completas da VM. A segunda substituiu
+  explicitamente Running não salvo por Startup salvo. As sondas TCP/UDP reais
+  permitiram 18081 e bloquearam 18080 antes da reinicialização; depois
+  permitiram 18080 e bloquearam 18081.
 - O harness nativo passou nos testes de término e recuperação do processo API e
   de parada completa, limpeza dos recursos próprios e inicialização dos serviços,
-  sem alterações nos registros do estado de rede do host. Remove/reinstall
+  sem alterações nos registros de rede do host após a normalização documentada
+  de tempos de vida, expiração de rotas e contadores. Remove/reinstall
   preservou hashes dos arquivos protegidos, permissões e identidades; a
   inicialização explícita recuperou a disponibilidade.
 - O ciclo Web completo de transações e a paridade API/CLI foram testados no alpha7,
