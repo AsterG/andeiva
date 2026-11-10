@@ -16,10 +16,7 @@ func provisionSocket(c Config) error {
 	if c.Validate() != nil || safeParents(socketDropinDir) != nil {
 		return ErrConfiguration
 	}
-	if e := os.Mkdir(socketDropinDir, 0755); e != nil && !os.IsExist(e) {
-		return ErrStorage
-	}
-	if ownedDirectory(socketDropinDir, 0, 0, 0755) != nil {
+	if createSocketDirectory(socketDropinDir, 0, 0) != nil {
 		return ErrStorage
 	}
 	expected := socketConfiguration(c)
@@ -45,4 +42,20 @@ func provisionSocket(c Config) error {
 		return ErrStorage
 	}
 	return syncDirectory(socketDropinDir)
+}
+
+func createSocketDirectory(path string, uid, gid uint32) error {
+	if safeParents(path) != nil {
+		return ErrStorage
+	}
+	if err := os.Mkdir(path, 0755); err == nil {
+		// Only a directory created by this invocation may be normalized. Existing
+		// directories retain strict ownership and mode validation.
+		if os.Chmod(path, 0755) != nil {
+			return ErrStorage
+		}
+	} else if !os.IsExist(err) {
+		return ErrStorage
+	}
+	return ownedDirectory(path, uid, gid, 0755)
 }

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/firewalladmin"
 	"github.com/AsterG/andeiva/internal/firewallipc"
 )
 
@@ -22,7 +24,27 @@ type HealthResult struct {
 	Available bool `json:"available"`
 }
 
-func startHealth(ctx context.Context, ids Identities, client *firewallipc.Client) (func(), error) {
+type healthObserver interface {
+	Observed(context.Context, configpoc.Principal) (firewalladmin.Observation, error)
+}
+
+func available(ctx context.Context, observer healthObserver, audit *auditLog) bool {
+	if !audit.Ready() {
+		return false
+	}
+	observation, err := observer.Observed(ctx, configpoc.Principal{ID: "preview-health", Role: configpoc.RoleViewer})
+	if err != nil || ctx.Err() != nil || observation.RecoveryRequired || observation.Hash == "" {
+		return false
+	}
+	switch observation.Phase {
+	case "idle", "armed", "pending", "expired":
+		return audit.Ready()
+	default:
+		return false
+	}
+}
+
+func startHealth(ctx context.Context, ids Identities, observer healthObserver, audit *auditLog) (func(), error) {
 	l, e := listenPrivate(HealthSocket, ids.APIUID, ids.APIGID)
 	if e != nil {
 		return nil, e
@@ -52,10 +74,9 @@ func startHealth(ctx context.Context, ids Identities, client *firewallipc.Client
 			var request healthRequest
 			if e == nil && firewallipc.Decode(b, &request) == nil && request == (healthRequest{Version: 1, Operation: "health"}) {
 				call, cancel := context.WithTimeout(ctx, 2*time.Second)
-				state, e := client.State(call)
+				ready := available(call, observer, audit)
 				cancel()
-				available := e == nil && state.Phase != "blocked" && state.Phase != "bootstrap"
-				_ = json.NewEncoder(c).Encode(HealthResult{Available: available})
+				_ = json.NewEncoder(c).Encode(HealthResult{Available: ready})
 			}
 			c.Close()
 		}

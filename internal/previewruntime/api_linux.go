@@ -129,7 +129,7 @@ func API(ctx context.Context, c Config) error {
 	if e != nil {
 		return e
 	}
-	health, e := startHealth(ctx, ids, client)
+	health, e := startHealth(ctx, ids, service, audit)
 	if e != nil {
 		return e
 	}

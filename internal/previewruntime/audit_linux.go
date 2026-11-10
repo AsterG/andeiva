@@ -18,6 +18,7 @@ import (
 
 const AuditSegmentBytes int64 = 1 << 20
 const AuditSegments = 16
+const auditRecordBytes = 4095
 
 type auditLog struct {
 	mu          sync.Mutex
@@ -92,7 +93,8 @@ func (a *auditLog) Append(event adminauth.Event) error {
 		return ErrStorage
 	}
 	b, e := json.Marshal(event)
-	if e != nil || len(b) > 4094 {
+	if e != nil || len(b) >= auditRecordBytes {
+		a.failed = true
 		return ErrStorage
 	}
 	b = append(b, '\n')
@@ -123,6 +125,14 @@ func (a *auditLog) Append(event adminauth.Event) error {
 		return ErrStorage
 	}
 	return nil
+}
+
+// Ready reserves room for one maximum-sized event in the final segment. This
+// detects exhausted storage after restart without writing a synthetic event.
+func (a *auditLog) Ready() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return !a.failed && (a.segment < a.maxSegments || a.maxBytes-a.size >= min(a.maxBytes, auditRecordBytes))
 }
 func (a *auditLog) Close() error {
 	a.mu.Lock()
