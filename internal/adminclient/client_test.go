@@ -82,6 +82,44 @@ func TestSessionLifecycleAndTransactions(t *testing.T) {
 		t.Fatal("session not cleared")
 	}
 }
+
+func TestTrafficCursorAndDecimalCounters(t *testing.T) {
+	stream := strings.Repeat("c", 32)
+	calls := 0
+	c, _ := trustedClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/api/v1/firewall/traffic" || r.URL.Query().Get("limit") != "10" {
+			t.Error("traffic route lost")
+		}
+		if calls == 1 && (r.URL.Query().Has("before") || r.URL.Query().Has("stream")) {
+			t.Error("first page has cursor")
+		}
+		if calls == 2 && (r.URL.Query().Get("before") != "42" || r.URL.Query().Get("stream") != stream) {
+			t.Error("cursor not bound")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"stream":"` + stream + `","records":[{"packets_total":"18446744073709551615","bytes_total":"18446744073709551615"}],"next_before":0,"evicted":0,"capacity":512,"sampling":"on_request","retention":"api_process","truncated":false}`))
+	}))
+	page, err := c.Traffic(context.Background(), 0, 10, "")
+	if err != nil || page.Records[0].PacketsTotal != "18446744073709551615" {
+		t.Fatal(page, err)
+	}
+	if _, err = c.Traffic(context.Background(), 42, 10, stream); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range []struct {
+		before uint64
+		limit  int
+		stream string
+	}{{1, 10, ""}, {0, 10, stream}, {1, 10, "bad"}, {0, 101, ""}} {
+		if _, err = c.Traffic(context.Background(), args.before, args.limit, args.stream); !errors.Is(err, ErrConfiguration) {
+			t.Fatal("invalid cursor accepted")
+		}
+	}
+	if calls != 2 {
+		t.Fatal("invalid query reached transport")
+	}
+}
 func TestTLSAndRedirectRejection(t *testing.T) {
 	c, s := trustedClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://example.invalid", http.StatusFound)
