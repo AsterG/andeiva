@@ -108,7 +108,11 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:t
 ```
 
 `frontend/Dockerfile.visual` fija por digest Playwright 1.65.0 sobre Linux Noble y
-Node 24.20.0. CI utiliza esta misma construcción. La imagen ejecuta
+Node 24.20.0. Node y sus npm/npx 11.19.0 comparten un directorio aislado; el build
+comprueba los destinos de los ejecutables e imprime las tres versiones. La búsqueda
+normaliza mayúsculas sin depender del locale del navegador, con pruebas de un
+navegador turco e interfaz EN/ES/PT; no elimina acentos.
+CI utiliza esta misma construcción. La imagen ejecuta
 `npm run test:e2e`; la configuración inicia el servidor local de pruebas, sin
 backend, puertos publicados ni acceso al laboratorio de red. La construcción
 necesita descargar sus imágenes y dependencias si no están en caché; la ejecución

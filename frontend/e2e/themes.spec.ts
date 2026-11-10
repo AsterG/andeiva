@@ -6,6 +6,44 @@ import type { Locator, Page } from '@playwright/test';
 const preferenceKey = 'andeiva.preview.theme';
 const approvedLogo = '1f79f5ec7f33327c9285c702b63fc5c5a618a28395b2161d594001fdb0199f81';
 
+test.describe('Turkish browser locale', () => {
+  test.use({ locale: 'tr-TR' });
+
+  for (const theme of ['light', 'dark'] as const) {
+    test(`${theme}: search casing follows the supported interface languages`, async ({ page }) => {
+      await page.goto('/');
+      expect(await page.evaluate(() => ({
+        language: navigator.language,
+        locale: new Intl.NumberFormat().resolvedOptions().locale,
+        defaultLower: 'I'.toLocaleLowerCase(),
+        invariantLower: 'I'.toLowerCase(),
+      }))).toEqual({ language: 'tr-TR', locale: 'tr-TR', defaultLower: 'ı', invariantLower: 'i' });
+      await page.locator('#theme').selectOption(theme);
+      await page.getByTestId('nav-components').click();
+      const examples = [
+        { locale: 'en', interfaceQuery: 'interface', interfaceName: 'Interface preferences', validationName: 'Form validation', rowsWithI: ['Interface preferences', 'Documentation draft', 'Form validation', 'Component guidance'] },
+        { locale: 'es', interfaceQuery: 'interfaz', interfaceName: 'Preferencias de la interfaz', validationName: 'Validación del formulario', rowsWithI: ['Preferencias de la interfaz', 'Borrador de documentación', 'Validación del formulario'] },
+        { locale: 'pt', interfaceQuery: 'interface', interfaceName: 'Preferências da interface', validationName: 'Validação do formulário', rowsWithI: ['Preferências da interface', 'Validação do formulário', 'Guia de componentes'] },
+      ];
+      for (const example of examples) {
+        await page.locator('#language').selectOption(example.locale);
+        await expect(page.locator('html')).toHaveAttribute('lang', example.locale);
+        for (const [query, expected] of [
+          [example.interfaceQuery, [example.interfaceName]],
+          [example.interfaceQuery.toUpperCase(), [example.interfaceName]],
+          ['valid', [example.validationName]],
+          ['VALID', [example.validationName]],
+          ['i', example.rowsWithI],
+          ['I', example.rowsWithI],
+        ] as [string, string[]][]) {
+          await page.getByTestId('filter-search').fill(query);
+          await expect(page.getByRole('table').locator('tbody th[scope="row"]')).toHaveText(expected);
+        }
+      }
+    });
+  }
+});
+
 async function expectNoPageOverflow(page: Page) {
   const size = await page.evaluate(() => ({
     content: document.documentElement.scrollWidth,

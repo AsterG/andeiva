@@ -28,7 +28,8 @@ function ComponentLibrary({ copy }: { copy: Messages }) {
     { id: 'validation', name: copy.rowThree, category: copy.catThree, tone: 'error' },
     { id: 'reference', name: copy.rowFour, category: copy.catFour, tone: 'info' },
   ];
-  const visible = rows.filter((row) => row.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()) && (tone === 'all' || row.tone === tone));
+  const normalizedQuery = query.toLowerCase();
+  const visible = rows.filter((row) => row.name.toLowerCase().includes(normalizedQuery) && (tone === 'all' || row.tone === tone));
   return <div className="component-grid">
     <Surface title={copy.forms} description={copy.formDescription}>
       <form className="preview-form" onSubmit={(event) => {
