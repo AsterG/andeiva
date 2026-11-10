@@ -33,9 +33,13 @@ if find "$stage/root" -perm /6000 -type f | read -r _; then echo ANDEIVA_PREVIEW
 (cd "$stage/root" && md5sum -c "$stage/control/md5sums" >/dev/null)
 units="$stage/root/usr/lib/systemd/system"
 grep -q '^User=andeiva-preview-api$' "$units/andeiva-preview-api.service"
+grep -q '^User=andeiva-preview-helper$' "$units/andeiva-preview-helper.service"
 grep -q '^CapabilityBoundingSet=$' "$units/andeiva-preview-api.service"
 grep -q '^CapabilityBoundingSet=CAP_NET_ADMIN$' "$units/andeiva-preview-helper.service"
 grep -q '^NetworkNamespacePath=/run/andeiva-preview/netns/gateway$' "$units/andeiva-preview-helper.service"
+! grep -q '^User=' "$units/andeiva-preview-namespaces.service"
+grep -q '^CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_CHOWN CAP_DAC_OVERRIDE CAP_KILL$' "$units/andeiva-preview-namespaces.service"
+grep -q '^NoNewPrivileges=yes$' "$units/andeiva-preview-namespaces.service"
 grep -q '^BindToDevice=lo$' "$units/andeiva-preview-api.socket"
 ! grep -q '^WantedBy=sockets.target$' "$units/andeiva-preview-api.socket"
 ! grep -E '^(ExecStart|ExecStop).*\b(nft|iptables)\b' "$units"/*

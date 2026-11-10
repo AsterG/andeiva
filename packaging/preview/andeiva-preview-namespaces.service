@@ -9,7 +9,8 @@ StartLimitBurst=3
 [Service]
 Type=notify
 NotifyAccess=main
-User=root
+# Use the system manager's root identity with the bounded capabilities below.
+# This setup process must retain SETUID to drop its traffic children to their UID.
 Group=root
 RuntimeDirectory=andeiva-preview
 RuntimeDirectoryMode=0755
