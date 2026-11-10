@@ -19,6 +19,8 @@ const (
 
 var ErrRuntime = errors.New("ANDEIVA_PREVIEW_NETWORK_UNAVAILABLE")
 
+var ErrRecovery = errors.New("ANDEIVA_PREVIEW_NETWORK_RECOVERY_REQUIRED")
+
 type Metadata struct {
 	SchemaVersion    int    `json:"schema_version"`
 	RunID            string `json:"run_id"`
@@ -94,5 +96,5 @@ type fixture interface {
 	CheckPreviewListeners(context.Context) error
 	Probe(context.Context, string, int) (bool, error)
 	ProbeReverse(context.Context, string, int) (bool, error)
-	Close() error
+	CloseOwned() error
 }

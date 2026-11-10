@@ -2,10 +2,42 @@ package previewnet
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestCrashArtifactsArePreservedAndBlockRestart(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"runtime.json", "runtime.pending", "gateway", "control.sock"} {
+		path := filepath.Join(dir, name)
+		data := []byte("preserved incomplete or untrusted artifact")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if !errors.Is(requireAbsent(filepath.Join(dir, "absent"), path), ErrRecovery) {
+			t.Fatal("stale artifact did not block startup")
+		}
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != string(data) {
+			t.Fatal("stale evidence changed")
+		}
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(filepath.Join(dir, "missing-target"), link); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(requireAbsent(link), ErrRecovery) {
+		t.Fatal("dangling symlink accepted")
+	}
+	if err := requireAbsent(filepath.Join(dir, "missing")); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(requireAbsent(filepath.Join(dir, "runtime.json", "not-a-directory")), ErrRecovery) {
+		t.Fatal("path inspection error accepted as absence")
+	}
+}
 
 func TestMetadataDecodeRejectsUnknownFieldsAndTrailingDocuments(t *testing.T) {
 	data, e := json.Marshal(validMetadata())

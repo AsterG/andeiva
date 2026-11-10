@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"syscall"
 )
@@ -159,45 +158,6 @@ func writeMetadata(m Metadata) error {
 	return d.Sync()
 }
 
-func namespaceReferenced(wanted map[uint64]bool) error {
-	entries, e := os.ReadDir("/proc")
-	if e != nil {
-		return e
-	}
-	for _, entry := range entries {
-		if _, e := strconv.ParseUint(entry.Name(), 10, 32); e != nil {
-			continue
-		}
-		base := "/proc/" + entry.Name()
-		if id, e := namespaceInode(base + "/ns/net"); e == nil && wanted[id] {
-			return ErrRuntime
-		}
-		fds, e := os.ReadDir(base + "/fd")
-		if errors.Is(e, os.ErrNotExist) {
-			continue
-		}
-		if e != nil {
-			return e
-		}
-		for _, fd := range fds {
-			link, e := os.Readlink(base + "/fd/" + fd.Name())
-			if errors.Is(e, os.ErrNotExist) {
-				continue
-			}
-			if e != nil {
-				return e
-			}
-			if strings.HasPrefix(link, "net:[") && strings.HasSuffix(link, "]") {
-				id, e := strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(link, "net:["), "]"), 10, 64)
-				if e == nil && wanted[id] {
-					return ErrRuntime
-				}
-			}
-		}
-	}
-	return nil
-}
-
 func unpinGateway(m Metadata) error {
 	i, e := os.Lstat(NamespacePath)
 	if errors.Is(e, os.ErrNotExist) {
@@ -239,38 +199,18 @@ func removeOwnedSocket(path string) error {
 	return os.Remove(path)
 }
 
-// A surviving pin is reclaimed only when its root-owned metadata agrees with
-// the exact namespace and no process or descriptor still references that run.
+// A crash may leave a namespace referenced by a thread or a mounted-path FD.
+// This preview never infers absence from a partial process scan. Preserve every
+// stale artifact and require an authorized VM reboot to clear volatile runtime.
 func recoverRuntime() error {
-	m, e := readMetadataPath(MetadataPath)
-	if errors.Is(e, os.ErrNotExist) {
-		if _, e = os.Lstat(NamespacePath); !errors.Is(e, os.ErrNotExist) {
-			return ErrRuntime
+	return requireAbsent(MetadataPath, NamespacePath, RuntimeDir+"/runtime.pending", ControlPath)
+}
+
+func requireAbsent(paths ...string) error {
+	for _, path := range paths {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			return ErrRecovery
 		}
-		if _, e = os.Lstat(RuntimeDir + "/runtime.pending"); !errors.Is(e, os.ErrNotExist) {
-			return ErrRuntime
-		}
-		if _, e = os.Lstat(ControlPath); !errors.Is(e, os.ErrNotExist) {
-			return ErrRuntime
-		}
-		return nil
 	}
-	if e != nil {
-		return ErrRuntime
-	}
-	boot, e := kernelBootID()
-	host, he := namespaceInode("/proc/self/ns/net")
-	if e != nil || he != nil || m.BootID != boot || m.HostNamespace != host {
-		return ErrRuntime
-	}
-	if e = namespaceReferenced(map[uint64]bool{m.SourceNamespace: true, m.GatewayNamespace: true, m.SinkNamespace: true}); e != nil {
-		return e
-	}
-	if e = unpinGateway(m); e != nil {
-		return e
-	}
-	if e = removeOwnedSocket(ControlPath); e != nil {
-		return e
-	}
-	return os.Remove(MetadataPath)
+	return nil
 }

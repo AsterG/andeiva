@@ -552,6 +552,17 @@ func (f *Fixture) CheckHost(ctx context.Context) error {
 // Close stops only subprocesses retained by this fixture, then drops its namespace
 // references. It never searches for processes by a name or removes a global netns.
 func (f *Fixture) Close() error {
+	return f.close(true)
+}
+
+// CloseOwned closes retained processes and descriptors and checks the host
+// baseline. Unlike Close, it makes no claim about references held by unrelated
+// processes. The preview's service manager stops API/helper units beforehand.
+func (f *Fixture) CloseOwned() error {
+	return f.close(false)
+}
+
+func (f *Fixture) close(globalReferenceCheck bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.closed {
@@ -595,8 +606,10 @@ func (f *Fixture) Close() error {
 			}
 		}
 	}
-	if err := f.verifyNoNamespaceReferences(); err != nil {
-		failures = append(failures, err)
+	if globalReferenceCheck {
+		if err := f.verifyNoNamespaceReferences(); err != nil {
+			failures = append(failures, err)
+		}
 	}
 	deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

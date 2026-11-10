@@ -68,7 +68,7 @@ func Run(ctx context.Context, o Options) (result error) {
 	published := false
 	defer func() {
 		cleanup := unpinGateway(m)
-		cleanup = errors.Join(cleanup, f.Close())
+		cleanup = errors.Join(cleanup, f.CloseOwned())
 		if published {
 			current, e := readMetadataPath(MetadataPath)
 			if e == nil && current == m {
@@ -81,7 +81,7 @@ func Run(ctx context.Context, o Options) (result error) {
 			}
 		}
 		result = errors.Join(result, cleanup)
-		_ = emit("stopped", m, map[string]bool{"cleanup": cleanup == nil, "healthy": result == nil})
+		_ = emit("stopped", m, map[string]bool{"cleanup": cleanup == nil, "healthy": result == nil, "owned_resources_only": true})
 	}()
 	if e = f.StartReverseListener(childCtx); e != nil {
 		return e
