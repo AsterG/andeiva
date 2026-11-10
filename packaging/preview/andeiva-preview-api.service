@@ -36,7 +36,9 @@ RestrictSUIDSGID=yes
 RestrictRealtime=yes
 RestrictNamespaces=yes
 LockPersonality=yes
-RestrictAddressFamilies=AF_UNIX AF_INET
+# Go uses rtnetlink to verify the inherited listener's interface and address.
+# Network administration capabilities remain empty.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
 ReadWritePaths=/var/lib/andeiva-preview
 ReadOnlyPaths=/etc/andeiva-preview /usr/share/andeiva-preview/web /run/andeiva-preview
 InaccessiblePaths=-/var/lib/andeiva-preview/operator
