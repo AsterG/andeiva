@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — rule traffic observations
+
+- Add administrator-only, on-request rule counter records shared by Web, CLI and
+  API, with explicit baselines, replacement epochs and exact 64-bit totals.
+- Bound the volatile history to 512 records; report eviction, reject stale-stream
+  cursors and keep connection/payload logging outside this experiment.
+- Add EN/ES/PT presentation, permission and pagination tests, and Light/Dark
+  visual coverage without changing the approved logo or network policy scope.
+
 ## Unreleased — authenticated firewall administration laboratory
 
 - Add a shared schema for ordered IPv4 TCP/UDP rules and strict kernel readback.
