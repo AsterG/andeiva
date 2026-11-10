@@ -286,3 +286,31 @@ Este flujo no implementa IDS/IPS, antivirus, WAF, inspección TLS, filtro DNS, N
 VPN, AD SSO, MFA, HA ni instalador de appliance. Sus permisos nunca habilitan tráfico
 productivo desconocido para eludir identidad o inspección obligatorias. El POC previo
 de catálogo fijo nftables conserva una ruta schema 1 independiente.
+
+## Registro de observaciones de tráfico por regla
+
+Después de definir `fw`, use `fw traffic` para muestrear contadores reales del kernel.
+`fw traffic --before <NEXT_BEFORE> --stream <STREAM> --limit 50` consulta registros
+anteriores sin muestrear; utilice únicamente los cursores devueltos. El panel Web y
+`GET /api/v1/firewall/traffic` consultan los mismos registros con permisos de administrador.
+Una base inicial no tiene delta. Las horas delimitan observaciones, no la llegada de
+paquetes. Solo se cubren reglas explícitas; no los descartes de la política predeterminada.
+El historial conserva hasta 512 registros en memoria y desaparece al reiniciar la API.
+El nuevo stream rechaza cursores anteriores y se informa de los registros desplazados.
+No son registros de conexiones. Véase [el contrato](../TRAFFIC.md).
+## Hito del flujo administrativo
+
+El [informe del hito](../MILESTONE.md) registra dos ejecuciones nativas en Debian:
+todas las operaciones transaccionales desde Web, CLI y API, 26 sondas TCP/UDP,
+68 registros del journal, rechazos de permisos, administradores concurrentes y
+recuperación. Los registros de tráfico coincidieron entre interfaces. Las muestras
+finales de RSS fueron 17.376/18.096 KiB para API/helper; no son un benchmark de capacidad.
+
+Para reproducir la aceptación, cree reglas TCP y UDP desde Web, compárelas con
+CLI/API y ejecute Stage, Validate y Commit. Pruebe ambos protocolos, muestree el
+tráfico y compare los registros por stream/sequence. Repita con Deny explícito,
+Commit Confirmed, Confirm, Save y Rollback histórico. Pruebe un usuario viewer,
+ediciones concurrentes, interrupción de API hasta el vencimiento y reinicio completo
+del laboratorio desde Startup guardado. Capture el host antes/después y utilice
+`stop` para verificar la limpieza. Estas pruebas no garantizan resistencia ante
+cortes de energía, reinicios de VM ni autenticación productiva.

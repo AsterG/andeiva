@@ -151,7 +151,7 @@ func apiProcess(dir, run, namespace, epoch, boot, parent string) error {
 		if err != nil {
 			return adminapi.Effective{}, err
 		}
-		out := adminapi.Effective{Revision: r.Hash, Rules: []adminapi.RuleCounter{}}
+		out := adminapi.Effective{Revision: r.Hash, CounterEpoch: r.CounterEpoch, Rules: []adminapi.RuleCounter{}}
 		for _, counter := range r.Counters {
 			out.Rules = append(out.Rules, adminapi.RuleCounter{ID: counter.ID, Packets: counter.Packets, Bytes: counter.Bytes})
 		}

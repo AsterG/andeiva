@@ -18,7 +18,7 @@ import (
 	"github.com/AsterG/andeiva/internal/configpoc"
 )
 
-var firewallCommands = []string{"list", "status", "stage", "validate", "commit", "confirm", "save", "rollback", "history", "help", "completion"}
+var firewallCommands = []string{"list", "status", "stage", "validate", "commit", "confirm", "save", "rollback", "history", "traffic", "help", "completion"}
 var firewallText = map[string][3]string{
 	"en": {"Authenticated firewall laboratory management. HTTPS and an explicit CA are required.", "Request failed. Check the connection, credentials, permissions and current revision.", "Stage requires a request JSON file (or - for stdin). Other mutations accept a request file or use the current generation. Credentials: Linux regular file, owner only, mode 0600. JSON output uses stable field names."},
 	"es": {"Administración autenticada del firewall de laboratorio. Requiere HTTPS y una CA explícita.", "La solicitud falló. Revise conexión, credenciales, permisos y revisión actual.", "Stage requiere un archivo JSON de solicitud (o - para entrada estándar). Las otras mutaciones aceptan un archivo o usan la generación actual. Credenciales: archivo regular Linux, propietario actual, modo 0600. La salida JSON usa campos estables."},
@@ -69,19 +69,20 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 	}
 	if command == "help" && len(args) == 1 {
 		fmt.Fprintln(stdout, text[0])
-		fmt.Fprintln(stdout, "andeiva [--lang en|es|pt] firewall <list|status|stage|validate|commit|confirm|save|rollback|history>")
+		fmt.Fprintln(stdout, "andeiva [--lang en|es|pt] firewall <list|status|stage|validate|commit|confirm|save|rollback|history|traffic>")
 		fmt.Fprintln(stdout, "  --url https://HOST:PORT --ca-file FILE --credentials-file FILE")
 		fmt.Fprintln(stdout, "  stage --request-file FILE|-")
 		fmt.Fprintln(stdout, "  commit [--confirm-seconds 30..120]")
 		fmt.Fprintln(stdout, "  confirm [--target REVISION]")
 		fmt.Fprintln(stdout, "  rollback --target REVISION")
 		fmt.Fprintln(stdout, "  history [--before SEQUENCE] [--limit 1..100]")
+		fmt.Fprintln(stdout, "  traffic [--limit 1..100] [--before SEQUENCE --stream STREAM]")
 		fmt.Fprintln(stdout, text[2])
 		return 0
 	}
 	// Fixed, sourceable Bash completion does not evaluate external text.
 	if command == "completion" && len(args) == 1 {
-		fmt.Fprintln(stdout, `_andeiva_complete() { COMPREPLY=(); if [[ ${COMP_WORDS[1]} == firewall ]]; then COMPREPLY=( $(compgen -W 'list status stage validate commit confirm save rollback history help' -- "${COMP_WORDS[COMP_CWORD]}") ); else COMPREPLY=( $(compgen -W 'help status firewall' -- "${COMP_WORDS[COMP_CWORD]}") ); fi; }; complete -F _andeiva_complete andeiva`)
+		fmt.Fprintln(stdout, `_andeiva_complete() { COMPREPLY=(); if [[ ${COMP_WORDS[1]} == firewall ]]; then COMPREPLY=( $(compgen -W 'list status stage validate commit confirm save rollback history traffic help' -- "${COMP_WORDS[COMP_CWORD]}") ); else COMPREPLY=( $(compgen -W 'help status firewall' -- "${COMP_WORDS[COMP_CWORD]}") ); fi; }; complete -F _andeiva_complete andeiva`)
 		return 0
 	}
 	options := map[string]string{}
@@ -91,7 +92,7 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 		}
 		key := args[i]
 		switch key {
-		case "--url", "--ca-file", "--credentials-file", "--request-file", "--confirm-seconds", "--target", "--before", "--limit":
+		case "--url", "--ca-file", "--credentials-file", "--request-file", "--confirm-seconds", "--target", "--before", "--limit", "--stream":
 		default:
 			return fail(nil)
 		}
@@ -103,11 +104,14 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 	if command == "help" || command == "completion" || options["--url"] == "" || options["--ca-file"] == "" || options["--credentials-file"] == "" {
 		return fail(nil)
 	}
-	readOnly := command == "list" || command == "status" || command == "history"
+	readOnly := command == "list" || command == "status" || command == "history" || command == "traffic"
 	if readOnly && (options["--request-file"] != "" || options["--target"] != "" || options["--confirm-seconds"] != "") {
 		return fail(nil)
 	}
-	if command != "history" && (options["--before"] != "" || options["--limit"] != "") {
+	if command != "history" && command != "traffic" && (options["--before"] != "" || options["--limit"] != "") {
+		return fail(nil)
+	}
+	if command != "traffic" && options["--stream"] != "" {
 		return fail(nil)
 	}
 	if command != "commit" && options["--confirm-seconds"] != "" || (command != "rollback" && command != "confirm") && options["--target"] != "" {
@@ -127,6 +131,9 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 		if err != nil {
 			return fail(nil)
 		}
+	}
+	if command == "traffic" && (before > 0 && options["--stream"] == "" || before == 0 && options["--stream"] != "") {
+		return fail(nil)
 	}
 	var request configpoc.Request
 	if path := options["--request-file"]; path != "" {
@@ -197,7 +204,9 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 	}
 	credentials = adminclient.Credentials{}
 	var result any
-	if command == "history" {
+	if command == "traffic" {
+		result, err = client.Traffic(ctx, before, limit, options["--stream"])
+	} else if command == "history" {
 		result, err = client.History(ctx, before, limit)
 	} else if readOnly {
 		result, err = client.State(ctx)

@@ -27,12 +27,13 @@ func helperFixture(t *testing.T) (*helperSession, configpoc.Revision, configpoc.
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := configpoc.NewSimEngine("helper-test")
+	simulated := configpoc.NewSimEngine("helper-test")
+	engine := &counterEngine{run: strings.Repeat("a", 32), engine: simulated, read: func(context.Context) (string, []firewallipc.Counter, error) {
+		return simulated.Current(), []firewallipc.Counter{{ID: "web", Packets: 7, Bytes: 512}}, nil
+	}}
 	guardian := nftguardian.NewRestricted(engine)
 	t.Cleanup(func() { _ = guardian.Close() })
-	return &helperSession{run: strings.Repeat("a", 32), namespace: 42, engine: engine, guardian: guardian, observe: func(context.Context) (string, []firewallipc.Counter, error) {
-		return engine.Current(), []firewallipc.Counter{{ID: "web", Packets: 7, Bytes: 512}}, nil
-	}}, initial, target
+	return &helperSession{run: strings.Repeat("a", 32), namespace: 42, engine: engine, guardian: guardian, observe: engine.Observe}, initial, target
 }
 func sendHelper(t *testing.T, s *helperSession, epoch uint64, m firewallipc.Message) firewallipc.Reply {
 	t.Helper()
@@ -175,8 +176,8 @@ func TestHelperStreamBoundsAndErrors(t *testing.T) {
 	if json.Unmarshal(out.Bytes(), &reply) != nil || reply.Namespace != 42 || reply.State.Phase != "bootstrap" {
 		t.Fatal("invalid state reply")
 	}
-	s.observe = func(context.Context) (string, []firewallipc.Counter, error) {
-		return "private", nil, errors.New("private engine path")
+	s.observe = func(context.Context) (string, []firewallipc.Counter, string, error) {
+		return "private", nil, "", errors.New("private engine path")
 	}
 	r := sendHelper(t, s, 1, firewallipc.Message{Verb: "observe"})
 	if r.Error != errHelper.Error() || r.Hash != "" {

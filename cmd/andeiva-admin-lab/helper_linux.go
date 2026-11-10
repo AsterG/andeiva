@@ -154,7 +154,7 @@ type helperEngine interface {
 	Apply(context.Context, configpoc.Revision) error
 	Current() string
 }
-type helperObserver func(context.Context) (string, []firewallipc.Counter, error)
+type helperObserver func(context.Context) (string, []firewallipc.Counter, string, error)
 type helperSession struct {
 	run                    string
 	namespace, last, epoch uint64
@@ -272,7 +272,7 @@ func (s *helperSession) handle(ctx context.Context, m firewallipc.Message) (fire
 			s.recovering = false
 		}
 	case "observe":
-		reply.Hash, reply.Counters, err = s.observe(ctx)
+		reply.Hash, reply.Counters, reply.CounterEpoch, err = s.observe(ctx)
 		if err == nil && (reply.Hash == "" || s.engine.Current() != reply.Hash) {
 			err = errHelper
 		}
@@ -284,6 +284,7 @@ func (s *helperSession) handle(ctx context.Context, m firewallipc.Message) (fire
 		reply.Error = errHelper.Error()
 		reply.Hash = ""
 		reply.Counters = nil
+		reply.CounterEpoch = ""
 	}
 	return reply, nil
 }
@@ -343,10 +344,7 @@ func helperProcess(run, hostValue, parent string) error {
 	if transport.Check(context.Background(), initial.Create) != nil || transport.Apply(context.Background(), initial.Create) != nil {
 		return errHelper
 	}
-	engine := firewallnft.New(transport)
-	guardian := nftguardian.NewRestricted(engine)
-	defer guardian.Close()
-	session := helperSession{run: run, namespace: current, engine: engine, guardian: guardian, observe: func(ctx context.Context) (string, []firewallipc.Counter, error) {
+	engine := &counterEngine{run: run, engine: firewallnft.New(transport), read: func(ctx context.Context) (string, []firewallipc.Counter, error) {
 		data, err := transport.Observe(ctx)
 		if err != nil {
 			return "", nil, errHelper
@@ -361,5 +359,8 @@ func helperProcess(run, hostValue, parent string) error {
 		}
 		return observation.Revision.Hash, counters, nil
 	}}
+	guardian := nftguardian.NewRestricted(engine)
+	defer guardian.Close()
+	session := helperSession{run: run, namespace: current, engine: engine, guardian: guardian, observe: engine.Observe}
 	return session.serve(os.Stdin, os.Stdout)
 }

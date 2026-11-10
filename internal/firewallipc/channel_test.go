@@ -38,7 +38,7 @@ func pair(t *testing.T, handle func(Message) Reply) *Client {
 	return c
 }
 func bound(m Message) Reply {
-	return Reply{Run: m.Run, Sequence: m.Sequence, Namespace: 42, Artifact: "digest", Hash: "verified"}
+	return Reply{Run: m.Run, Sequence: m.Sequence, Namespace: 42, Artifact: "digest", Hash: "verified", CounterEpoch: m.Run + ".1"}
 }
 
 func TestChannelBindsEveryReplyAndPoisonsInvalidChannel(t *testing.T) {
@@ -131,5 +131,35 @@ func TestDecodeRejectsAmbiguousOrUnboundedJSON(t *testing.T) {
 	var m Message
 	if Decode([]byte(`{"run":"a","sequence":1,"verb":"state","revision":{"hash":"","config":{"schema_version":2,"rules":[],"default_action":"deny"}},"previous":{"hash":"","config":{"schema_version":2,"rules":[],"default_action":"deny"}}}`), &m) != nil {
 		t.Fatal("valid message rejected")
+	}
+}
+
+func TestObservationRequiresBoundCounterEpoch(t *testing.T) {
+	for _, epoch := range []string{"", strings.Repeat("b", 32) + ".1", strings.Repeat("a", 32) + ".01", strings.Repeat("a", 32) + ".-1", strings.Repeat("a", 32) + ".18446744073709551616"} {
+		c := pair(t, func(m Message) Reply { r := bound(m); r.CounterEpoch = epoch; return r })
+		if _, err := c.Observe(context.Background()); err != ErrChannel {
+			t.Fatal("unbound counter epoch accepted", epoch)
+		}
+		if _, err := c.State(context.Background()); err != ErrChannel {
+			t.Fatal("invalid epoch did not poison channel")
+		}
+	}
+}
+
+func TestCounterEpochCannotRegress(t *testing.T) {
+	first := true
+	c := pair(t, func(m Message) Reply {
+		r := bound(m)
+		if first {
+			r.CounterEpoch = m.Run + ".2"
+			first = false
+		}
+		return r
+	})
+	if _, err := c.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Observe(context.Background()); err != ErrChannel {
+		t.Fatal("counter generation regressed")
 	}
 }

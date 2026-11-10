@@ -24,13 +24,14 @@ type fakeBackend struct {
 	surface   configpoc.Surface
 	revisions []configpoc.RevisionEntry
 	audit     []configpoc.Audit
+	snapshot  configpoc.Snapshot
 }
 
 func (b *fakeBackend) Execute(_ context.Context, p configpoc.Principal, s configpoc.Surface, _ configpoc.Request) (configpoc.Snapshot, error) {
 	b.calls++
 	b.principal = p
 	b.surface = s
-	return configpoc.Snapshot{}, b.err
+	return b.snapshot, b.err
 }
 func (b *fakeBackend) History(configpoc.Principal, uint64, int) ([]configpoc.RevisionEntry, error) {
 	b.calls++

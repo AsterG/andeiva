@@ -9,6 +9,8 @@ Operator guides: [English](docs/en.md), [Español](docs/es.md),
 [Português](docs/pt.md). They describe the current commands and the same acceptance
 procedure. [Validation results and limitations](VALIDATION.md) distinguish real
 Debian traffic, browser fixtures, failure injection and resource observations.
+The [administrative milestone report](MILESTONE.md) records the complete
+Web/CLI/API workflow and rule traffic observations tested on Debian.
 
 | Component | Responsibility |
 |---|---|
@@ -40,6 +42,12 @@ The public effective state contains revision identity, verification state and
 per-rule packet/byte totals, not raw platform diagnostics. Counters include both
 directions and reset on atomic replacement; they are not per-flow logs. The
 privileged helper's internal JSON is not an administrative API response.
+
+The [rule traffic observation log](TRAFFIC.md) records bounded, on-request
+baselines and counter deltas. Administrators read the same records through Web,
+CLI and API. Retention is limited to the API process lifetime; evictions and stream
+changes are explicit. These observations do not reconstruct connections or cover
+packets dropped by the default policy without matching an explicit rule.
 
 Rollback uses a journaled canonical revision and verified atomic table replacement.
 A normal API restart resumes Running with `Boot:false`; a complete laboratory

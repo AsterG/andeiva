@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,14 +38,15 @@ type Counter struct {
 	Bytes   uint64 `json:"bytes"`
 }
 type Reply struct {
-	Run       string                   `json:"run"`
-	Sequence  uint64                   `json:"sequence"`
-	Namespace uint64                   `json:"namespace"`
-	Artifact  string                   `json:"artifact,omitempty"`
-	Hash      string                   `json:"hash,omitempty"`
-	State     firewalladmin.LeaseState `json:"state"`
-	Counters  []Counter                `json:"counters,omitempty"`
-	Error     string                   `json:"error,omitempty"`
+	Run          string                   `json:"run"`
+	Sequence     uint64                   `json:"sequence"`
+	Namespace    uint64                   `json:"namespace"`
+	Artifact     string                   `json:"artifact,omitempty"`
+	Hash         string                   `json:"hash,omitempty"`
+	State        firewalladmin.LeaseState `json:"state"`
+	Counters     []Counter                `json:"counters,omitempty"`
+	CounterEpoch string                   `json:"counter_epoch,omitempty"`
+	Error        string                   `json:"error,omitempty"`
 }
 type Compiler func(configpoc.Config) (string, error)
 type Client struct {
@@ -56,6 +58,7 @@ type Client struct {
 	sequence, namespace uint64
 	compile             Compiler
 	dead                bool
+	counterGeneration   uint64
 }
 
 func New(in io.ReadCloser, out io.WriteCloser, run string, sequence, namespace uint64, compile Compiler) (*Client, error) {
@@ -94,10 +97,12 @@ func (c *Client) Call(parent context.Context, m Message) (Reply, error) {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	type result struct {
-		r     Reply
-		err   error
-		valid bool
+		r                 Reply
+		err               error
+		valid             bool
+		counterGeneration uint64
 	}
+	minimumGeneration := c.counterGeneration
 	done := make(chan result, 1)
 	go func() {
 		if err := json.NewEncoder(c.out).Encode(m); err != nil {
@@ -117,18 +122,38 @@ func (c *Client) Call(parent context.Context, m Message) (Reply, error) {
 			done <- result{r: r, err: ErrChannel, valid: true}
 			return
 		}
-		done <- result{r: r, valid: true}
+		generation := minimumGeneration
+		if m.Verb == "observe" {
+			var valid bool
+			generation, valid = counterEpochGeneration(r.CounterEpoch, c.run)
+			if !valid || generation < minimumGeneration {
+				done <- result{err: ErrChannel}
+				return
+			}
+		}
+		done <- result{r: r, valid: true, counterGeneration: generation}
 	}()
 	select {
 	case r := <-done:
 		if !r.valid {
 			c.closeLocked()
+		} else if r.err == nil {
+			c.counterGeneration = r.counterGeneration
 		}
 		return r.r, r.err
 	case <-ctx.Done():
 		c.closeLocked()
 		return Reply{}, ErrChannel
 	}
+}
+
+func counterEpochGeneration(value, run string) (uint64, bool) {
+	suffix, ok := strings.CutPrefix(value, run+".")
+	if !ok {
+		return 0, false
+	}
+	generation, err := strconv.ParseUint(suffix, 10, 64)
+	return generation, err == nil && strconv.FormatUint(generation, 10) == suffix
 }
 func (c *Client) Name() string                           { return "firewall" }
 func (c *Client) Validate(config configpoc.Config) error { _, err := c.compile(config); return err }

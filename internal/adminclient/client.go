@@ -18,6 +18,7 @@ import (
 	"github.com/AsterG/andeiva/internal/adminapi"
 	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/firewalltraffic"
 )
 
 var (
@@ -144,6 +145,21 @@ func (c *Client) History(ctx context.Context, before uint64, limit int) (History
 	var history History
 	err := c.call(ctx, http.MethodGet, "/api/v1/firewall/history?"+query.Encode(), nil, &history)
 	return history, err
+}
+
+func (c *Client) Traffic(ctx context.Context, before uint64, limit int, stream string) (firewalltraffic.Page, error) {
+	if limit < 1 || limit > 100 || before == 0 && stream != "" || before > 0 && !safeID(stream) {
+		return firewalltraffic.Page{}, ErrConfiguration
+	}
+	query := url.Values{}
+	query.Set("limit", jsonNumber(uint64(limit)))
+	if before > 0 {
+		query.Set("before", jsonNumber(before))
+		query.Set("stream", stream)
+	}
+	var page firewalltraffic.Page
+	err := c.call(ctx, http.MethodGet, "/api/v1/firewall/traffic?"+query.Encode(), nil, &page)
+	return page, err
 }
 func jsonNumber(n uint64) string { b, _ := json.Marshal(n); return string(b) }
 func (c *Client) call(ctx context.Context, method, path string, body, out any) error {

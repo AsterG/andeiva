@@ -43,17 +43,24 @@ func writeOwned(path string, data []byte, mode os.FileMode, uid, gid int) error 
 	if err != nil {
 		return err
 	}
-	if err = f.Chown(uid, gid); err == nil {
+	err = writeOwnedContents(f, data, mode, uid, gid)
+	return errors.Join(err, f.Close())
+}
+
+// Ownership and final permissions apply to the exclusively created descriptor.
+// OpenFile's creation mode alone is filtered by the caller's umask.
+func writeOwnedContents(f *os.File, data []byte, mode os.FileMode, uid, gid int) error {
+	err := f.Chown(uid, gid)
+	if err == nil {
+		err = f.Chmod(mode)
+	}
+	if err == nil {
 		_, err = f.Write(data)
 	}
 	if err == nil {
 		err = f.Sync()
 	}
-	err = errors.Join(err, f.Close())
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 func provision() (string, error) {
 	if os.Geteuid() != 0 {

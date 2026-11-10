@@ -17,6 +17,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/firewalltraffic"
 )
 
 const cookieName = "__Host-andeiva-session"
@@ -26,15 +27,12 @@ type Backend interface {
 	History(configpoc.Principal, uint64, int) ([]configpoc.RevisionEntry, error)
 	Audit(configpoc.Principal) ([]configpoc.Audit, error)
 }
-type RuleCounter struct {
-	ID      string `json:"id"`
-	Packets uint64 `json:"packets"`
-	Bytes   uint64 `json:"bytes"`
-}
+type RuleCounter = firewalltraffic.Counter
 type Effective struct {
-	Revision string        `json:"revision"`
-	State    string        `json:"state"`
-	Rules    []RuleCounter `json:"rules"`
+	Revision     string        `json:"revision"`
+	State        string        `json:"state"`
+	Rules        []RuleCounter `json:"rules"`
+	CounterEpoch string        `json:"counter_epoch,omitempty"`
 }
 type State struct {
 	Snapshot  configpoc.Snapshot `json:"snapshot"`
@@ -50,6 +48,7 @@ type Options struct {
 type handler struct {
 	options Options
 	host    string
+	traffic *firewalltraffic.Sampler
 }
 
 func New(options Options) (http.Handler, error) {
@@ -57,7 +56,11 @@ func New(options Options) (http.Handler, error) {
 	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.Path != "" || origin.User != nil || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" || options.Auth == nil || options.Backend == nil || options.Observe == nil {
 		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
 	}
-	return &handler{options, origin.Host}, nil
+	traffic, err := firewalltraffic.New()
+	if err != nil {
+		return nil, err
+	}
+	return &handler{options: options, host: origin.Host, traffic: traffic}, nil
 }
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var requestID [16]byte
@@ -95,7 +98,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if r.URL.Path != "/api/v1/firewall/history" && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
+	if r.URL.Path != "/api/v1/firewall/history" && r.URL.Path != "/api/v1/firewall/traffic" && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
 		h.fail(w, 400, "ANDEIVA_REQUEST_INVALID")
 		return
 	}
@@ -143,6 +146,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	switch {
+	case r.URL.Path == "/api/v1/firewall/traffic" && r.Method == http.MethodGet:
+		if id.Role != "admin" {
+			h.deny(w, r, id.Username, "write", 403, "ANDEIVA_CONFIG_DENIED")
+			return
+		}
+		h.trafficPage(w, r, ctx, p, surface)
 	case r.URL.Path == "/api/v1/auth/session" && r.Method == http.MethodGet:
 		h.write(w, 200, id)
 	case r.URL.Path == "/api/v1/auth/logout" && r.Method == http.MethodPost:
