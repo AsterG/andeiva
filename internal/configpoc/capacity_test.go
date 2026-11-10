@@ -318,30 +318,96 @@ func TestCapacityExhaustedLegacyOpenPreservesFiles(t *testing.T) {
 func TestCapacityHistoricalRollbackUsesSameReservation(t *testing.T) {
 	for _, free := range []int{5, 6} {
 		t.Run(fmt.Sprint(free), func(t *testing.T) {
-			s, engines, _ := fixture(t, Options{MaxRecords: 24})
-			first := commitLocal(t, s, localSample(t, 18443))
-			current := commitLocal(t, s, localSample(t, 18444))
-			fillCapacityRecords(t, s, free)
-			guard := &testGuard{}
-			counted := &countedCapacityEngine{Engine: engines[0]}
-			s.engines[0] = counted
-			r := Request{Operation: OpRollback, Key: "historical-reserve", Target: first.Running.Hash, ExpectedGeneration: current.Generation, ConfirmFor: 30 * time.Second}
-			pending, err := s.ExecuteManaged(context.Background(), admin, CLI, r, guard)
-			if free == 5 {
-				if !errors.Is(err, ErrStorage) || counted.applies.Load() != 0 || guard.arms != 0 || status(t, s).Running.Hash != current.Running.Hash {
-					t.Fatal("unsafe historical rollback was admitted")
+			synctest.Test(t, func(t *testing.T) {
+				s, engines, _ := fixture(t, Options{MaxRecords: 24})
+				first := commitLocal(t, s, localSample(t, 18443))
+				current := commitLocal(t, s, localSample(t, 18444))
+				fillCapacityRecords(t, s, free)
+				guard := &testGuard{}
+				counted := &countedCapacityEngine{Engine: engines[0]}
+				s.engines[0] = counted
+				r := Request{Operation: OpRollback, Key: "historical-reserve", Target: first.Running.Hash, ExpectedGeneration: current.Generation, ConfirmFor: 30 * time.Second}
+				pending, err := s.ExecuteManaged(context.Background(), admin, CLI, r, guard)
+				if free == 5 {
+					if !errors.Is(err, ErrStorage) || counted.applies.Load() != 0 || guard.arms != 0 || status(t, s).Running.Hash != current.Running.Hash {
+						t.Fatal("unsafe historical rollback was admitted")
+					}
+					return
 				}
-				return
-			}
-			if err != nil || pending.Pending == nil || pending.Running.Hash != first.Running.Hash {
-				t.Fatalf("historical rollback failed: %v", err)
-			}
-			r = Request{Operation: OpConfirm, Key: "historical-confirm", Target: pending.Running.Hash, ExpectedGeneration: pending.Generation}
-			if confirmed, err := s.ExecuteManaged(context.Background(), admin, CLI, r, guard); err != nil || confirmed.Pending != nil {
-				t.Fatalf("historical confirmation failed: %v", err)
-			}
+				if err != nil || pending.Pending == nil || pending.Running.Hash != first.Running.Hash {
+					t.Fatalf("historical rollback failed: %v", err)
+				}
+				r = Request{Operation: OpConfirm, Key: "historical-confirm", Target: pending.Running.Hash, ExpectedGeneration: pending.Generation}
+				if confirmed, err := s.ExecuteManaged(context.Background(), admin, CLI, r, guard); err != nil || confirmed.Pending != nil {
+					t.Fatalf("historical confirmation failed: %v", err)
+				}
+			})
 		})
 	}
+}
+
+func TestCapacityRevokedPendingOwnerStillExpires(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, engines, dir := fixture(t, Options{MaxRecords: 20})
+		initial := status(t, s)
+		c := firewallSample()
+		staged := invoke(t, s, OpStage, &c, 0)
+		fillCapacityReceipts(t, s, 1020)
+		fillCapacityRecords(t, s, 7)
+		guard := &testGuard{}
+		ctx := context.Background()
+		checkBudget := func(free, receipts int) {
+			t.Helper()
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.store.limit-len(s.store.records) != free || len(s.state.Receipts) != receipts {
+				t.Fatal("transaction did not preserve the expected budget")
+			}
+		}
+		pending, err := s.ExecuteManaged(ctx, admin, API, Request{Operation: OpCommit, Key: "revoke-pending", ExpectedGeneration: staged.Generation, ConfirmFor: 30 * time.Second}, guard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := Principal{ID: "bob", Role: RoleAdmin}
+		revoked, err := s.Execute(ctx, other, CLI, Request{Operation: OpRevoke, Key: "revoke-owner", ExpectedGeneration: pending.Generation, Target: admin.ID})
+		if err != nil || revoked.Pending == nil || revoked.Pending.Owner != admin.ID || revoked.Generation != pending.Generation+1 || !reflect.DeepEqual(revoked.Revoked, []string{admin.ID}) {
+			t.Fatalf("owner revocation before reserve floor failed: %v", err)
+		}
+		checkBudget(pendingRecords, 1022)
+		for range 8 {
+			if _, err := s.ExecuteManaged(ctx, admin, API, Request{Operation: OpConfirm, Key: "revoked-confirm", ExpectedGeneration: revoked.Generation, Target: revoked.Running.Hash}, guard); err == nil {
+				t.Fatal("revoked owner confirmed")
+			}
+		}
+		if guard.confirms != 0 {
+			t.Fatal("denied confirmation consumed authority")
+		}
+		checkBudget(pendingRecords, 1022)
+		time.Sleep(30 * time.Second)
+		synctest.Wait()
+		after, err := s.Execute(ctx, other, API, Request{Operation: OpStatus})
+		if err != nil || after.Pending != nil || after.RecoveryRequired || after.Running.Hash != initial.Running.Hash {
+			t.Fatalf("revoked owner's transaction did not expire safely: %v", err)
+		}
+		checkBudget(recoveryRecords, 1022)
+		for _, engine := range engines {
+			if engine.Current() != initial.Running.Hash {
+				t.Fatal("expiry did not restore an engine")
+			}
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		reopened, err := Open(dir, []Engine{engines[0], engines[1]}, Options{MaxRecords: 20})
+		if err != nil {
+			t.Fatalf("reserved recovery after owner revocation failed: %v", err)
+		}
+		defer reopened.Close()
+		out, err := reopened.Execute(ctx, other, API, Request{Operation: OpStatus})
+		if err != nil || out.Pending != nil || out.Running.Hash != initial.Running.Hash || !reflect.DeepEqual(out.Revoked, []string{admin.ID}) {
+			t.Fatalf("reopen lost rollback or revocation: %v", err)
+		}
+	})
 }
 
 func BenchmarkCapacityAdmission(b *testing.B) {
