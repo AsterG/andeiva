@@ -130,6 +130,7 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 		var reader io.Reader = stdin
 		var file *os.File
 		if path != "-" {
+			// #nosec G304 -- Explicit local CLI request-file path, never HTTP input; regular files only, with a 64 KiB read bound.
 			file, err = os.Open(path)
 			if err != nil {
 				return fail(nil)
@@ -204,6 +205,9 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 				err = stateErr
 			} else {
 				request.ExpectedGeneration = state.Snapshot.Generation
+				if command == "confirm" {
+					request.Target = state.Snapshot.Running.Hash
+				}
 			}
 		}
 		if err == nil && request.Key == "" {

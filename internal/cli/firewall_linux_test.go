@@ -29,6 +29,7 @@ func TestOfficialCLIHTTPSLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
+	runningHash := strings.Repeat("c", 64)
 	var received configpoc.Request
 	s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -60,11 +61,12 @@ func TestOfficialCLIHTTPSLifecycle(t *testing.T) {
 			}
 			if r.URL.Path == "/api/v1/firewall/transactions" {
 				calls++
+				received = configpoc.Request{}
 				if json.NewDecoder(r.Body).Decode(&received) != nil {
 					t.Error("invalid transaction")
 				}
 			}
-			_, _ = w.Write([]byte(`{"snapshot":{"generation":7},"effective":{"state":"verified","rules":[]}}`))
+			_, _ = fmt.Fprintf(w, `{"snapshot":{"generation":7,"running":{"hash":%q}},"effective":{"state":"verified","rules":[]}}`, runningHash)
 		}
 	}))
 	defer s.Close()
@@ -90,5 +92,17 @@ func TestOfficialCLIHTTPSLifecycle(t *testing.T) {
 	}
 	if strings.Contains(out.String(), secret) || strings.Contains(errOut.String(), secret) {
 		t.Fatal("credential exposed")
+	}
+	out.Reset()
+	errOut.Reset()
+	args = []string{"firewall", "conf", "--url", s.URL, "--ca-file", ca, "--credentials-file", credential}
+	if code := RunInput(args, nil, &out, &errOut); code != 0 {
+		t.Fatal(code, errOut.String())
+	}
+	if calls != 2 || received.Operation != "confirm" || received.Target != runningHash || received.ExpectedGeneration != 7 {
+		t.Fatal("confirmation did not bind the observed revision", received)
+	}
+	if len(events) != 4 || events[3].Action != "logout" {
+		t.Fatal("confirmation session leaked")
 	}
 }

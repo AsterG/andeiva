@@ -492,11 +492,8 @@ func (s *Service) transitionGuarded(ctx context.Context, target Revision, actor 
 		ttl := 120 * time.Second
 		if pending != nil {
 			ttl = time.Until(s.deadline)
-			// The coordinator deadline is earlier; rounding the authority lease
-			// upward cannot extend the controller's confirmation window.
-			if ttl < 30*time.Second {
-				ttl = 30 * time.Second
-			}
+			// Preserve the remaining lifetime after durable intent. Extending it
+			// would also extend effective access if this process then stopped.
 		}
 		if err := guard.Arm(ctx, lease, previous, target, ttl); err != nil {
 			return s.compensate(previous, actor, surface, operation)

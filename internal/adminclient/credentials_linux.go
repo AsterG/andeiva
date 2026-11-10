@@ -15,12 +15,13 @@ func openCredentials(path string) (*os.File, error) {
 	file := os.NewFile(uintptr(fd), path)
 	stat, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, ErrCredentials
 	}
 	owner, ok := stat.Sys().(*syscall.Stat_t)
-	if !ok || !stat.Mode().IsRegular() || stat.Mode().Perm() != 0600 || owner.Uid != uint32(os.Geteuid()) || owner.Nlink != 1 {
-		file.Close()
+	euid := os.Geteuid()
+	if !ok || euid < 0 || !stat.Mode().IsRegular() || stat.Mode().Perm() != 0600 || int64(owner.Uid) != int64(euid) || owner.Nlink != 1 {
+		_ = file.Close()
 		return nil, ErrCredentials
 	}
 	return file, nil

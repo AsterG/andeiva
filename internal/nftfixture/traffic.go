@@ -43,7 +43,7 @@ func HandleRole(args []string) (bool, int) {
 		}
 		return true, 0
 	}
-	if len(args) == 3 && args[1] == "listen" {
+	if len(args) == 3 && (args[1] == "listen" || args[1] == "listen-source") {
 		host, err := strconv.ParseUint(args[2], 10, 64)
 		if err != nil {
 			return true, 2
@@ -51,13 +51,17 @@ func HandleRole(args []string) (bool, int) {
 		if err := armParentDeath(host); err != nil {
 			return true, 1
 		}
-		if err := listen(); err != nil {
+		address := SinkIP
+		if args[1] == "listen-source" {
+			address = SourceIP
+		}
+		if err := listenAt(address); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return true, 1
 		}
 		return true, 0
 	}
-	if len(args) == 5 && args[1] == "probe" {
+	if len(args) == 5 && (args[1] == "probe" || args[1] == "probe-source") {
 		port, err := strconv.Atoi(args[3])
 		if err != nil || !validProbe(args[2], port) {
 			return true, 2
@@ -69,7 +73,11 @@ func HandleRole(args []string) (bool, int) {
 		if err := armParentDeath(host); err != nil {
 			return true, 1
 		}
-		ok, err := probe(args[2], port)
+		address := SinkIP
+		if args[1] == "probe-source" {
+			address = SourceIP
+		}
+		ok, err := probeAt(args[2], port, address)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return true, 1
@@ -82,7 +90,11 @@ func HandleRole(args []string) (bool, int) {
 	return true, 2
 }
 
-func listen() error {
+func listen() error { return listenAt(SinkIP) }
+func listenAt(ip string) error {
+	if ip != SourceIP && ip != SinkIP {
+		return errors.New("ANDEIVA_NFT_PROBE_INVALID")
+	}
 	var closers []io.Closer
 	defer func() {
 		for _, c := range closers {
@@ -90,7 +102,7 @@ func listen() error {
 		}
 	}()
 	for port := 18080; port <= 18082; port++ {
-		address := net.JoinHostPort(SinkIP, strconv.Itoa(port))
+		address := net.JoinHostPort(ip, strconv.Itoa(port))
 		tcp, err := net.Listen("tcp4", address)
 		if err != nil {
 			return err
@@ -138,7 +150,10 @@ func listen() error {
 }
 
 func probe(protocol string, port int) (bool, error) {
-	if !validProbe(protocol, port) {
+	return probeAt(protocol, port, SinkIP)
+}
+func probeAt(protocol string, port int, ip string) (bool, error) {
+	if !validProbe(protocol, port) || (ip != SourceIP && ip != SinkIP) {
 		return false, errors.New("ANDEIVA_NFT_PROBE_INVALID")
 	}
 	var random [32]byte
@@ -146,7 +161,7 @@ func probe(protocol string, port int) (bool, error) {
 		return false, err
 	}
 	payload := []byte(hex.EncodeToString(random[:]))
-	conn, err := net.DialTimeout(protocol+"4", net.JoinHostPort(SinkIP, strconv.Itoa(port)), probeTimeout)
+	conn, err := net.DialTimeout(protocol+"4", net.JoinHostPort(ip, strconv.Itoa(port)), probeTimeout)
 	if err != nil {
 		var networkError net.Error
 		if errors.As(err, &networkError) && networkError.Timeout() {

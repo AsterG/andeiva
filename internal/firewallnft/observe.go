@@ -285,7 +285,7 @@ func parsePorts(value any) (configpoc.PortRange, error) {
 	}
 	a, aok := unsigned(rangeValues[0])
 	b, bok := unsigned(rangeValues[1])
-	if !aok || !bok || a == 0 || a > b || b > 65535 {
+	if !aok || !bok || a == 0 || a > 65535 || a > b || b > 65535 {
 		return configpoc.PortRange{}, ErrObservation
 	}
 	return configpoc.PortRange{From: uint16(a), To: uint16(b)}, nil

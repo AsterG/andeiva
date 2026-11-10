@@ -326,7 +326,10 @@ func (f *Fixture) allowedCommand(role, binary string, args []string, peer string
 	if role == "sink" && slices.Equal(args, []string{"--nft-fixture", "listen", strconv.FormatUint(f.host, 10)}) {
 		return true
 	}
-	if (role == "source" || role == "sink") && len(args) == 5 && args[0] == "--nft-fixture" && args[1] == "probe" && args[4] == strconv.FormatUint(f.host, 10) {
+	if role == "source" && slices.Equal(args, []string{"--nft-fixture", "listen-source", strconv.FormatUint(f.host, 10)}) {
+		return true
+	}
+	if (role == "source" || role == "sink") && len(args) == 5 && args[0] == "--nft-fixture" && (args[1] == "probe" || args[1] == "probe-source") && args[4] == strconv.FormatUint(f.host, 10) {
 		port, err := strconv.Atoi(args[3])
 		return err == nil && strconv.Itoa(port) == args[3] && validProbe(args[2], port)
 	}
@@ -362,7 +365,15 @@ func (f *Fixture) CheckSentinel(ctx context.Context) error {
 }
 
 func (f *Fixture) startListener(ctx context.Context) error {
-	cmd, err := f.command(ctx, "sink", f.self, []string{"--nft-fixture", "listen", strconv.FormatUint(f.host, 10)}, "", true, false)
+	return f.startListenerRole(ctx, "sink", "listen")
+}
+func (f *Fixture) StartReverseListener(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.startListenerRole(ctx, "source", "listen-source")
+}
+func (f *Fixture) startListenerRole(ctx context.Context, role, verb string) error {
+	cmd, err := f.command(ctx, role, f.self, []string{"--nft-fixture", verb, strconv.FormatUint(f.host, 10)}, "", true, false)
 	if err != nil {
 		return err
 	}
@@ -421,6 +432,9 @@ func (f *Fixture) StartGateway(ctx context.Context, args []string, stdin io.Read
 }
 
 func (f *Fixture) probe(ctx context.Context, role, protocol string, port int) (bool, error) {
+	return f.probeVerb(ctx, role, "probe", protocol, port)
+}
+func (f *Fixture) probeVerb(ctx context.Context, role, verb, protocol string, port int) (bool, error) {
 	if !validProbe(protocol, port) {
 		return false, errors.New("ANDEIVA_NFT_PROBE_INVALID")
 	}
@@ -428,7 +442,7 @@ func (f *Fixture) probe(ctx context.Context, role, protocol string, port int) (b
 	defer cancel()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	cmd, err := f.command(deadline, role, f.self, []string{"--nft-fixture", "probe", protocol, strconv.Itoa(port), strconv.FormatUint(f.host, 10)}, "", true, false)
+	cmd, err := f.command(deadline, role, f.self, []string{"--nft-fixture", verb, protocol, strconv.Itoa(port), strconv.FormatUint(f.host, 10)}, "", true, false)
 	if err != nil {
 		return false, err
 	}
@@ -450,6 +464,12 @@ func (f *Fixture) Probe(ctx context.Context, protocol string, port int) (bool, e
 }
 func (f *Fixture) ProbeLocal(ctx context.Context, protocol string, port int) (bool, error) {
 	return f.probe(ctx, "sink", protocol, port)
+}
+func (f *Fixture) ProbeReverse(ctx context.Context, protocol string, port int) (bool, error) {
+	return f.probeVerb(ctx, "sink", "probe-source", protocol, port)
+}
+func (f *Fixture) ProbeReverseLocal(ctx context.Context, protocol string, port int) (bool, error) {
+	return f.probeVerb(ctx, "source", "probe-source", protocol, port)
 }
 func (f *Fixture) NamespaceIDs() map[string]uint64 {
 	f.mu.Lock()

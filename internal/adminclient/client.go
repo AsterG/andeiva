@@ -81,6 +81,7 @@ func ReadCredentials(path string) (Credentials, error) {
 	return result, nil
 }
 func ReadCA(path string) ([]byte, error) {
+	// #nosec G304 -- Explicit local CLI operator path, never HTTP input; regular files only, with a 1 MiB read bound.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, ErrConfiguration
