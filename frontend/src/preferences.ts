@@ -20,3 +20,8 @@ export function saveTheme(theme: Theme, storage?: Pick<Storage, 'setItem'>): voi
     // The selection still applies to this page when browser storage is unavailable.
   }
 }
+
+export function applyTheme(theme: Theme): void {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+}

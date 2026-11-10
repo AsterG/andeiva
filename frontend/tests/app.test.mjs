@@ -31,8 +31,14 @@ test('first render is English and light without browser preferences', () => {
 for (const locale of ['en', 'es', 'pt']) {
   test(`renders complete ${locale} text with an explicit development limitation`, () => {
     const html = renderToStaticMarkup(createElement(App, { initialLocale: locale }));
-    for (const value of Object.values(messages[locale])) {
-      assert.ok(html.includes(value), `missing text: ${value}`);
+    // Views render their own copy; every locale must still provide the complete contract.
+    assert.deepEqual(Object.keys(messages[locale]).sort(), Object.keys(messages.en).sort());
+    for (const [key, value] of Object.entries(messages[locale])) {
+      assert.equal(typeof value, 'string', `invalid translation: ${key}`);
+      assert.ok(value.trim(), `empty translation: ${key}`);
+    }
+    for (const key of ['phase', 'limitation', 'language', 'theme']) {
+      assert.ok(html.includes(messages[locale][key]), `missing overview copy: ${key}`);
     }
     assert.match(html, new RegExp(`lang="${locale}"`));
     assert.equal(Object.keys(messages[locale]).length, Object.keys(messages.en).length);

@@ -27,6 +27,8 @@
 **/dist/
 **/.test-dist/
 **/.test-build/
+**/test-results/
+**/playwright-report/
 *.tsbuildinfo
 *.deb
 *.ddeb

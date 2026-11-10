@@ -57,6 +57,26 @@ setting. No remote fonts, analytics or appliance connection are required.
 The approved logo is bundled locally and displayed without cropping or recoloring
 in either theme.
 
+The development interface includes a component library for forms, filters, tables,
+status indicators and dialogs. These are local UI examples, not appliance controls.
+All views use the [shared Design System](frontend/DESIGN_SYSTEM.md), with complete
+Light/Dark semantic tokens and an explicit light branding surface for the original
+logo. New modules must use these components and pass the theme, contrast, keyboard,
+responsive and visual comparison gates. See the [frontend audit](frontend/DESIGN_AUDIT.md)
+and contributor guides in [Español](frontend/docs/design-system-es.md) and
+[Português](frontend/docs/design-system-pt.md).
+
+Visual regression checks use the same pinned browser container locally and in CI:
+
+```bash
+docker build -f frontend/Dockerfile.visual -t andeiva-design-check .
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --shm-size=512m andeiva-design-check
+```
+
+The tests cover both themes at desktop, tablet and mobile sizes. Automated
+accessibility checks and keyboard assertions are not a complete screen-reader
+assessment or a WCAG certification. Baseline updates require explicit visual review.
+
 ## Experimental native Debian package
 
 The native packaging experiment installs the Go API and `andeiva` CLI on Debian 13

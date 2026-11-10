@@ -55,6 +55,41 @@ jobs:
           retention-days: 7
       - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
+  design-system:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the pinned browser test environment
+        run: docker build -f frontend/Dockerfile.visual -t andeiva-design-check .
+      - name: Check both themes, accessibility, responsive layout and visual baselines
+        run: docker run --name andeiva-design-check --network none --cap-drop ALL --security-opt no-new-privileges:true --shm-size=512m andeiva-design-check
+      - name: Collect browser observations
+        if: always()
+        run: |
+          mkdir -p frontend/test-results frontend/playwright-report
+          if docker container inspect andeiva-design-check >/dev/null 2>&1; then
+            if ! docker cp andeiva-design-check:/work/frontend/test-results/. frontend/test-results/; then
+              echo "::warning::Browser test results could not be collected"
+            fi
+            if ! docker cp andeiva-design-check:/work/frontend/playwright-report/. frontend/playwright-report/; then
+              echo "::warning::Browser HTML report could not be collected"
+            fi
+            docker rm -f andeiva-design-check
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: design-system-browser-observations
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          if-no-files-found: warn
+          retention-days: 7
+
   linux-build:
     needs: source
     runs-on: ubuntu-24.04
