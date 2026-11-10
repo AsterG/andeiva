@@ -1,6 +1,11 @@
 FROM golang:1.27.3-trixie@sha256:af1bfc2614ebb1dbd31af514b78740fd678850e76498762b425ecee4c5c6ea80 AS go-source
 WORKDIR /src
-COPY go.mod ./
+ENV GOTOOLCHAIN=local GOWORK=off GOTELEMETRY=off
+COPY go.mod go.sum ./
+# Network access is confined to development dependency preparation. Later Go
+# build/test stages reuse this verified cache with module downloads disabled.
+RUN go mod download && go mod verify
+ENV GOPROXY=off GOSUMDB=off GOPRIVATE= GONOPROXY= GONOSUMDB= GOFLAGS=-mod=readonly
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY scripts/check-go-format.sh scripts/check-go-format.sh
@@ -30,6 +35,7 @@ FROM scratch AS api
 COPY --from=build-go /out/andeiva /andeiva
 COPY --from=build-go /out/andeiva-api /andeiva-api
 COPY LICENSE NOTICE /licenses/
+COPY packaging/licenses/golang-x-LICENSE.txt packaging/licenses/golang-x-PATENTS.txt /licenses/
 COPY --from=build-go /usr/local/go/LICENSE /licenses/GO-LICENSE
 USER 65532:65532
 ENV ANDEIVA_LISTEN_ADDR=0.0.0.0:4000

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — isolated local service administration
+
+- Manage HTTPS and restricted SSH declarations through authenticated Web, CLI
+  and API operations sharing Candidate, Running, Startup, audit and recovery.
+- Reconcile generated Local-In rules with nftables and independently observed
+  listeners; require bounded recovery and endpoint proofs before confirmation.
+- Add an explicit Debian laboratory runner with separate process identities,
+  a fixed recovery endpoint and three owned network namespaces.
+- Keep host SSH, host firewall, forwarding and installed Alpha services outside
+  this experiment. Native acceptance remains subject to the validation report.
+
 ## Unreleased — isolated local service policy compiler
 
 - Separate appliance-local input declarations from forwarding with typed service

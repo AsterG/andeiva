@@ -48,26 +48,32 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Build from local source and the installed toolchain only; never fetch dependencies.
-export GOENV=off GOTOOLCHAIN=local GOPROXY=off GOWORK=off GOTELEMETRY=off
+# Keep the explicitly provisioned module cache; an empty private cache cannot
+# resolve the reviewed module graph. Build commands must never fetch dependencies.
+export GOENV=off GOTOOLCHAIN=local GOWORK=off GOTELEMETRY=off
+module_cache=${GOMODCACHE:-$(go env GOMODCACHE)}
+module_cache=$(realpath -e -- "$module_cache") || fail ANDEIVA_MODULE_CACHE_REQUIRED
+[[ -d "$module_cache" ]] || fail ANDEIVA_MODULE_CACHE_REQUIRED
+export GOPROXY=off GOSUMDB=off GOPRIVATE= GONOPROXY= GONOSUMDB=
 export CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1
 export GOCACHE="$stage/cache/go-build"
-export GOMODCACHE="$stage/cache/go-mod"
+export GOMODCACHE="$module_cache"
 export GOPATH="$stage/cache/go-path"
 export XDG_CONFIG_HOME="$stage/cache/config"
-mkdir -p "$GOCACHE" "$GOMODCACHE" "$GOPATH" "$XDG_CONFIG_HOME"
+mkdir -p "$GOCACHE" "$GOPATH" "$XDG_CONFIG_HOME"
 cd -- "$repo"
 go_version=$(go env GOVERSION)
 required_version=$(awk '$1 == "go" { print $2 }' go.mod)
 [[ "$go_version" = "go$required_version" ]] || fail ANDEIVA_BUILD_TOOLCHAIN_MISMATCH
-[[ "$(go list -m all)" = github.com/AsterG/andeiva ]] || fail ANDEIVA_EXTERNAL_DEPENDENCIES_NOT_SUPPORTED
+go mod verify
+go list -mod=readonly -m -f '{"path":"{{.Path}}","version":"{{.Version}}","main":{{.Main}}}' all > "$stage/go-inventory.jsonl"
 go_root=$(go env GOROOT)
 [[ -r "$go_root/LICENSE" ]] || fail ANDEIVA_GO_LICENSE_MISSING
 
 templates=(build.sh control conffiles preinst postinst prerm postrm andeiva-api.service andeiva-api.env wait-ready copyright)
 source_hash=$(
   {
-    printf '%s\0' go.mod LICENSE NOTICE
+    printf '%s\0' go.mod go.sum LICENSE NOTICE packaging/licenses/golang-x-LICENSE.txt packaging/licenses/golang-x-PATENTS.txt
     find cmd internal -type f -name '*.go' -print0
     for file in "${templates[@]}"; do printf 'packaging/debian/%s\0' "$file"; done
   } | sort -z | xargs -0 sha256sum -- | sha256sum | cut -d ' ' -f 1
@@ -78,8 +84,8 @@ doc_dir="$package_root/usr/share/doc/andeiva-experimental"
 install -d -m 0755 "$package_root/DEBIAN" "$package_root/usr/bin" \
   "$package_root/usr/lib/andeiva" "$package_root/usr/lib/systemd/system" \
   "$package_root/etc/andeiva" "$doc_dir"
-go build -trimpath -buildvcs=false -o "$package_root/usr/bin/andeiva" ./cmd/andeiva
-go build -trimpath -buildvcs=false -o "$package_root/usr/lib/andeiva/andeiva-api" ./cmd/andeiva-api
+go build -mod=readonly -trimpath -buildvcs=false -o "$package_root/usr/bin/andeiva" ./cmd/andeiva
+go build -mod=readonly -trimpath -buildvcs=false -o "$package_root/usr/lib/andeiva/andeiva-api" ./cmd/andeiva-api
 chmod 0755 "$package_root/usr/bin/andeiva" "$package_root/usr/lib/andeiva/andeiva-api"
 install -m 0755 "$template_dir/wait-ready" "$package_root/usr/lib/andeiva/wait-ready"
 install -m 0644 "$template_dir/andeiva-api.service" "$package_root/usr/lib/systemd/system/andeiva-api.service"
@@ -88,6 +94,10 @@ install -m 0644 LICENSE "$doc_dir/LICENSE"
 install -m 0644 NOTICE "$doc_dir/NOTICE"
 install -m 0644 "$go_root/LICENSE" "$doc_dir/LICENSE.Go"
 install -m 0644 "$template_dir/copyright" "$doc_dir/copyright"
+install -d -m 0755 "$doc_dir/dependencies"
+install -m 0644 go.mod go.sum packaging/licenses/golang-x-LICENSE.txt packaging/licenses/golang-x-PATENTS.txt "$doc_dir/dependencies/"
+install -m 0644 "$stage/go-inventory.jsonl" "$doc_dir/dependencies/"
+(cd "$doc_dir/dependencies" && sha256sum go.mod go.sum golang-x-LICENSE.txt golang-x-PATENTS.txt go-inventory.jsonl > SHA256SUMS)
 cat > "$stage/build-info.txt" <<EOF
 package=andeiva-experimental
 version=$version

@@ -1,9 +1,10 @@
 # Transactional configuration experiment
 
-This package explores configuration transactions using simulated components. It is
-not connected to the appliance API, frontend, official CLI or traffic engines.
-It does not change nftables, routes, interfaces or proxy settings. The prototype
-file store is an experiment, not a selection of the production database.
+This package implements the coordinator reused by the experimental administration
+runtime. Its standalone tests use simulated components; runtime adapters supply
+the real engines. The coordinator itself issues no nftables, route, interface or
+proxy commands. The prototype file store is an experiment, not a selection of
+the production database.
 
 Developer guides: [English](docs/en.md), [Español](docs/es.md),
 [Português](docs/pt.md).
@@ -13,7 +14,7 @@ Developer guides: [English](docs/en.md), [Español](docs/es.md),
 | State | Meaning |
 | --- | --- |
 | Candidate | A proposed configuration, owned by its editor and based on the current transaction generation |
-| Running | The revision acknowledged and observed on every simulated component |
+| Running | The revision acknowledged and observed on every configured component |
 | Startup | The revision explicitly saved for the next boot |
 | Last good | A previously accepted revision available for compensation or recovery |
 | Pending | A provisional commit awaiting confirmation, with a rollback target and bounded deadline |
@@ -27,15 +28,31 @@ serialization and its SHA-256 digest identify configuration content. Transaction
 generation is a separate concurrency token; an unchanged content hash does not
 permit replaying a stale write.
 
-Node identity is deliberately absent from this schema; node-local configuration
+Node identity is deliberately absent from schemas 1/2; node-local configuration
 mutation is not implemented. Equal shared hashes do not prove
 that two nodes have applied the same state, have compatible engines or can fail
 over safely. No replication, fencing, quorum or HA runtime is implemented.
 
+Schema 3 adds `local_services`, a canonical `localpolicy.Config`, while retaining
+the existing forwarding fields and schema-2 match validation. Schemas 1/2 reject
+that field and retain their exact serialized bytes, revision hashes and request
+fingerprints. Opening an existing journal never migrates it; migration is an
+explicit staged transaction. Legacy revisions contain no managed local services.
+The local inventory remains part of this bounded experiment, not an HA model.
+
+Changing local declarations requires a confirmation window, including migration
+from a legacy revision. Historical rollback involving schema 3 also requires a
+window, even when its local declarations are unchanged. Legacy-only rollback
+remains immediate. Managed windows are 30–120 seconds; the unguarded experiment
+permits 20 milliseconds–5 minutes for fault tests. Pending rollback retains the
+previous Running revision as its expiry/restart target and cannot be saved before
+confirmation. These core contracts do not implement listeners or kernel policy.
+
 ## Mutation boundary
 
 Every operation enters the same service with a trusted principal, a transport
-label and a typed request. The principal is supplied by the local test harness;
+label and a typed request. The principal is supplied by a trusted runtime adapter
+or local test harness;
 the transport label is audit context, never proof of identity or authorization.
 Web, CLI and API labels exercise equivalent service contracts and permissions.
 They do not provide working browser management, an HTTP authentication protocol,

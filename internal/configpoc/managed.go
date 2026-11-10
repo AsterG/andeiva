@@ -7,7 +7,7 @@ func (s *Service) managedRequest(p Principal, r Request) error {
 	if r.Operation != OpStage && r.Config != nil {
 		return ErrInvalid
 	}
-	if r.Operation != OpCommit && r.ConfirmFor != 0 {
+	if r.Operation != OpCommit && r.Operation != OpRollback && r.ConfirmFor != 0 {
 		return ErrInvalid
 	}
 	if r.Operation != OpConfirm && r.Operation != OpRollback && r.Target != "" {
@@ -32,6 +32,9 @@ func (s *Service) managedRequest(p Principal, r Request) error {
 		if snap.Candidate.Base != snap.Running.Hash {
 			return ErrConflict
 		}
+		if r.Operation == OpCommit && r.ConfirmFor == 0 && localServicesChanged(snap.Running.Config, snap.Candidate.Revision.Config) {
+			return ErrInvalid
+		}
 	case OpConfirm:
 		if snap.Pending == nil {
 			return ErrInvalid
@@ -46,7 +49,8 @@ func (s *Service) managedRequest(p Principal, r Request) error {
 		if !validHash(r.Target) {
 			return ErrInvalid
 		}
-		if _, ok := s.historical(r.Target); !ok {
+		target, ok := s.historical(r.Target)
+		if !ok || !validRollbackWindow(snap.Running.Config, target.Config, r.ConfirmFor) {
 			return ErrInvalid
 		}
 		if snap.Candidate != nil && snap.Candidate.Owner != p.ID {

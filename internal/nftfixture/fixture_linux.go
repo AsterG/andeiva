@@ -48,22 +48,29 @@ type Fixture struct {
 	baseline   map[string][]byte
 	sentinel   []byte
 	closed     bool
+	localOnly  bool
 }
 
 // New requires the explicitly authorized Debian laboratory. It never installs
 // tools, creates named namespaces, moves host interfaces or changes host sysctls.
 func New(ctx context.Context, self string, uid, gid uint32) (_ *Fixture, err error) {
-	return newFixture(ctx, self, uid, gid, true)
+	return newFixture(ctx, self, uid, gid, true, false)
 }
 
 // NewOwned retains the preview supervisor's host namespace as the trust anchor.
 // On setup failure it closes only its own resources; it does not inspect other
 // services' descriptors. The root service manager must start it in the host netns.
 func NewOwned(ctx context.Context, self string, uid, gid uint32) (*Fixture, error) {
-	return newFixture(ctx, self, uid, gid, false)
+	return newFixture(ctx, self, uid, gid, false, false)
 }
 
-func newFixture(ctx context.Context, self string, uid, gid uint32, globalReferenceCheck bool) (_ *Fixture, err error) {
+// NewLocalOwned creates only directly connected local-service test networks.
+// It neither enables forwarding nor installs transit routes or echo listeners.
+func NewLocalOwned(ctx context.Context, self string, uid, gid uint32) (*Fixture, error) {
+	return newFixture(ctx, self, uid, gid, false, true)
+}
+
+func newFixture(ctx context.Context, self string, uid, gid uint32, globalReferenceCheck, localOnly bool) (_ *Fixture, err error) {
 	if os.Geteuid() != 0 || uid == 0 || gid == 0 || !filepath.IsAbs(self) {
 		return nil, errors.New("ANDEIVA_NFT_FIXTURE_PRIVILEGE")
 	}
@@ -80,7 +87,7 @@ func newFixture(ctx context.Context, self string, uid, gid uint32, globalReferen
 			return nil, fmt.Errorf("ANDEIVA_NFT_FIXTURE_EXECUTABLE: %s", path)
 		}
 	}
-	f := &Fixture{self: self, uid: uid, gid: gid, namespaces: map[string]*namespace{}}
+	f := &Fixture{self: self, uid: uid, gid: gid, namespaces: map[string]*namespace{}, localOnly: localOnly}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, f.close(globalReferenceCheck))
@@ -142,11 +149,17 @@ func newFixture(ctx context.Context, self string, uid, gid uint32, globalReferen
 	if err != nil {
 		return nil, err
 	}
-	if err := f.startListener(ctx); err != nil {
-		return nil, err
-	}
-	if err := f.CheckListeners(ctx); err != nil {
-		return nil, err
+	if f.localOnly {
+		if err := f.checkLocalMode(ctx); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := f.startListener(ctx); err != nil {
+			return nil, err
+		}
+		if err := f.CheckListeners(ctx); err != nil {
+			return nil, err
+		}
 	}
 	if err := f.CheckHost(ctx); err != nil {
 		return nil, err
@@ -220,7 +233,14 @@ func (f *Fixture) checked(role string) (*namespace, error) {
 }
 
 func (f *Fixture) command(ctx context.Context, role, binary string, args []string, peer string, unprivileged, netAdmin bool) (*exec.Cmd, error) {
+	return f.commandWithIdentity(ctx, role, binary, args, peer, unprivileged, netAdmin, f.uid, f.gid)
+}
+
+func (f *Fixture) commandWithIdentity(ctx context.Context, role, binary string, args []string, peer string, unprivileged, netAdmin bool, uid, gid uint32) (*exec.Cmd, error) {
 	if !f.allowedCommand(role, binary, args, peer, unprivileged, netAdmin) {
+		return nil, errors.New("ANDEIVA_NFT_FIXTURE_COMMAND_DENIED")
+	}
+	if (uid != f.uid || gid != f.gid) && (!f.localOnly || !unprivileged || !netAdmin || !validLocalIdentity(uid, gid) || uid == f.uid || gid == f.gid) {
 		return nil, errors.New("ANDEIVA_NFT_FIXTURE_COMMAND_DENIED")
 	}
 	ns, err := f.checked(role)
@@ -229,7 +249,7 @@ func (f *Fixture) command(ctx context.Context, role, binary string, args []strin
 	}
 	argv := []string{"--net=/proc/self/fd/3", "--"}
 	if unprivileged {
-		argv = append(argv, privilegeArgs(f.uid, f.gid, netAdmin)...)
+		argv = append(argv, privilegeArgs(uid, gid, netAdmin)...)
 	}
 	argv = append(argv, binary)
 	argv = append(argv, args...)
@@ -311,6 +331,9 @@ type setupCommand struct {
 }
 
 func (f *Fixture) setupCommands() []setupCommand {
+	if f.localOnly {
+		return f.localSetupCommands()
+	}
 	var commands []setupCommand
 	for _, role := range []string{"source", "gateway", "sink"} {
 		commands = append(commands, setupCommand{role, ipPath, []string{"link", "set", "lo", "up"}, "", ""})
@@ -340,12 +363,19 @@ func (f *Fixture) setup(ctx context.Context) error {
 
 func (f *Fixture) allowedCommand(role, binary string, args []string, peer string, unprivileged, netAdmin bool) bool {
 	if !unprivileged && !netAdmin {
+		if f.localOnly && binary == ipPath && peer == "" {
+			for _, plan := range localNeighborCommands() {
+				if role == plan.role && slices.Equal(args, plan.args) {
+					return true
+				}
+			}
+		}
 		for _, plan := range f.setupCommands() {
 			if role == plan.role && binary == plan.binary && peer == plan.peer && slices.Equal(args, plan.args) {
 				return true
 			}
 		}
-		return role == "gateway" && binary == nftPath && peer == "" && (slices.Equal(args, sentinelArgs()) || slices.Equal(args, []string{"-j", "-f", "-"}))
+		return role == "gateway" && binary == nftPath && peer == "" && (slices.Equal(args, sentinelArgs()) || (!f.localOnly && slices.Equal(args, []string{"-j", "-f", "-"})))
 	}
 	if !unprivileged || f.uid == 0 || f.gid == 0 || binary != f.self || peer != "" {
 		return false
@@ -356,6 +386,9 @@ func (f *Fixture) allowedCommand(role, binary string, args []string, peer string
 		}
 		id, err := hex.DecodeString(args[1])
 		return err == nil && len(id) == 16 && hex.EncodeToString(id) == args[1]
+	}
+	if f.localOnly {
+		return f.allowedLocalCommand(role, args)
 	}
 	if role == "sink" && slices.Equal(args, []string{"--nft-fixture", "listen", strconv.FormatUint(f.host, 10)}) {
 		return true

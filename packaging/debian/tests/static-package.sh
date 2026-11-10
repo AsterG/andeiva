@@ -47,6 +47,8 @@ data_files = {
     'etc/andeiva/andeiva-api.env': 0o644,
     **{f'usr/share/doc/andeiva-experimental/{name}': 0o644
        for name in ('copyright', 'LICENSE', 'NOTICE', 'LICENSE.Go', 'build-info.txt')},
+    **{f'usr/share/doc/andeiva-experimental/dependencies/{name}': 0o644
+       for name in ('go.mod', 'go.sum', 'go-inventory.jsonl', 'golang-x-LICENSE.txt', 'golang-x-PATENTS.txt', 'SHA256SUMS')},
 }
 control_files = {'control': 0o644, 'conffiles': 0o644, 'md5sums': 0o644,
                  'preinst': 0o755, 'postinst': 0o755, 'prerm': 0o755, 'postrm': 0o755}
@@ -105,6 +107,24 @@ assert [line for line in env.splitlines() if line.strip() and not line.startswit
 assert b'Apache License' in payload['data', 'usr/share/doc/andeiva-experimental/LICENSE']
 assert b'Copyright 2009 The Go Authors.' in payload['data', 'usr/share/doc/andeiva-experimental/LICENSE.Go']
 assert b'ANDEIVA' in payload['data', 'usr/share/doc/andeiva-experimental/NOTICE']
+dependency_root = 'usr/share/doc/andeiva-experimental/dependencies/'
+dependency_checksums = {}
+for line in payload['data', dependency_root + 'SHA256SUMS'].decode().splitlines():
+    match = re.fullmatch(r'([0-9a-f]{64})  ([a-zA-Z0-9_.-]+)', line)
+    assert match, 'Invalid dependency checksum entry'
+    digest, name = match.groups()
+    assert name not in dependency_checksums, 'Duplicate dependency checksum'
+    assert hashlib.sha256(payload['data', dependency_root + name]).hexdigest() == digest, name
+    dependency_checksums[name] = digest
+assert set(dependency_checksums) == {'go.mod', 'go.sum', 'go-inventory.jsonl', 'golang-x-LICENSE.txt', 'golang-x-PATENTS.txt'}
+assert dependency_checksums['golang-x-LICENSE.txt'] == '911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad'
+assert dependency_checksums['golang-x-PATENTS.txt'] == '96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc'
+modules = [json.loads(line) for line in payload['data', dependency_root + 'go-inventory.jsonl'].splitlines()]
+assert modules and all(set(module) == {'path', 'version', 'main'} for module in modules)
+assert sum(module['main'] is True for module in modules) == 1
+assert {'golang.org/x/crypto', 'golang.org/x/sys'}.issubset({module['path'] for module in modules})
+assert b'golang.org/x/crypto v0.58.0 h1:' in payload['data', dependency_root + 'go.sum']
+assert b'golang.org/x/sys v0.49.0 h1:' in payload['data', dependency_root + 'go.sum']
 for name in ('usr/bin/andeiva', 'usr/lib/andeiva/andeiva-api'):
     binary = payload['data', name]
     assert binary[:4] == b'\x7fELF' and binary[4:6] == b'\x02\x01', f'Not ELF64 little endian: {name}'

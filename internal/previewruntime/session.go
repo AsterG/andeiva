@@ -10,6 +10,7 @@ import (
 	"github.com/AsterG/andeiva/internal/firewalladmin"
 	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/firewallnft"
+	"github.com/AsterG/andeiva/internal/localpolicy"
 	"github.com/AsterG/andeiva/internal/nftguardian"
 )
 
@@ -29,6 +30,8 @@ type Session struct {
 	engine                 Engine
 	guardian               *nftguardian.Guardian
 	observe                Observer
+	compile                firewallipc.Compiler
+	localObserve           func(context.Context) (string, localpolicy.Observation, error)
 }
 
 func validHex(value string, length int) bool {
@@ -36,18 +39,21 @@ func validHex(value string, length int) bool {
 	return err == nil && len(decoded) == length && hex.EncodeToString(decoded) == value
 }
 func zeroRevision(r configpoc.Revision) bool {
-	return r.Hash == "" && r.Config.SchemaVersion == 0 && r.Config.DefaultAction == "" && len(r.Config.Rules) == 0
+	return r.Hash == "" && r.Config.SchemaVersion == 0 && r.Config.DefaultAction == "" && len(r.Config.Rules) == 0 && r.Config.LocalServices == nil
 }
 func validRevision(r configpoc.Revision) bool {
 	a, err := firewallnft.Compile(r.Config)
 	return err == nil && a.Revision.Hash == r.Hash
 }
 func ValidMessage(m firewallipc.Message) bool {
+	return validMessage(m, validRevision)
+}
+func validMessage(m firewallipc.Message, revisionOK func(configpoc.Revision) bool) bool {
 	switch m.Verb {
 	case "bootstrap", "apply":
-		return validRevision(m.Revision) && zeroRevision(m.Previous) && m.Hash == "" && m.Lease == "" && m.TTL == 0
+		return revisionOK(m.Revision) && zeroRevision(m.Previous) && m.Hash == "" && m.Lease == "" && m.TTL == 0
 	case "arm":
-		return validRevision(m.Revision) && validRevision(m.Previous) && helperLease.MatchString(m.Lease) && m.Hash == "" && m.TTL >= 500*time.Millisecond && m.TTL <= 120*time.Second
+		return revisionOK(m.Revision) && revisionOK(m.Previous) && helperLease.MatchString(m.Lease) && m.Hash == "" && m.TTL >= 500*time.Millisecond && m.TTL <= 120*time.Second
 	case "confirm":
 		return zeroRevision(m.Revision) && zeroRevision(m.Previous) && helperLease.MatchString(m.Lease) && validHex(m.Hash, 32) && m.TTL == 0
 	case "state", "observe", "recovered":
@@ -62,7 +68,7 @@ func ValidMessage(m firewallipc.Message) bool {
 func (s *Session) handle(ctx context.Context, m firewallipc.Message) (firewallipc.Reply, error) {
 	epoch := m.Sequence >> 32
 	ordinal := m.Sequence & 0xffffffff
-	if m.Run != s.run || epoch == 0 || ordinal == 0 || m.Sequence <= s.last || !ValidMessage(m) {
+	if m.Run != s.run || epoch == 0 || ordinal == 0 || m.Sequence <= s.last || !validMessage(m, s.validRevision) {
 		return firewallipc.Reply{}, errHelper
 	}
 	if epoch != s.epoch {
@@ -78,8 +84,7 @@ func (s *Session) handle(ctx context.Context, m firewallipc.Message) (firewallip
 	s.last = m.Sequence
 	reply := firewallipc.Reply{Run: s.run, Sequence: m.Sequence, Namespace: s.namespace}
 	if m.Verb == "bootstrap" || m.Verb == "apply" || m.Verb == "arm" {
-		artifact, _ := firewallnft.Compile(m.Revision.Config)
-		reply.Artifact = artifact.Digest
+		reply.Artifact, _ = s.digest(m.Revision.Config)
 	}
 	var err error
 	switch m.Verb {
@@ -138,7 +143,15 @@ func (s *Session) handle(ctx context.Context, m firewallipc.Message) (firewallip
 			s.recovering = false
 		}
 	case "observe":
-		reply.Hash, reply.Counters, reply.CounterEpoch, err = s.observe(ctx)
+		if s.localObserve != nil {
+			var observed localpolicy.Observation
+			reply.Hash, observed, err = s.localObserve(ctx)
+			if err == nil {
+				reply.Local = &observed
+			}
+		} else {
+			reply.Hash, reply.Counters, reply.CounterEpoch, err = s.observe(ctx)
+		}
 		if err == nil && (reply.Hash == "" || s.engine.Current() != reply.Hash) {
 			err = errHelper
 		}
@@ -151,8 +164,34 @@ func (s *Session) handle(ctx context.Context, m firewallipc.Message) (firewallip
 		reply.Hash = ""
 		reply.Counters = nil
 		reply.CounterEpoch = ""
+		reply.Local = nil
 	}
 	return reply, nil
+}
+
+func (s *Session) digest(c configpoc.Config) (string, error) {
+	if s.compile != nil {
+		return s.compile(c)
+	}
+	a, err := firewallnft.Compile(c)
+	return a.Digest, err
+}
+func (s *Session) validRevision(r configpoc.Revision) bool {
+	canonical, err := configpoc.Canonical(r.Config)
+	if err != nil || canonical.Hash != r.Hash {
+		return false
+	}
+	_, err = s.digest(r.Config)
+	return err == nil
+}
+
+// NewLocalSession pins the Local-In compiler and actual observation collector
+// once at startup; requests cannot select another domain or compiler.
+func NewLocalSession(run string, namespace uint64, engine Engine, guardian *nftguardian.Guardian, compile firewallipc.Compiler, observe func(context.Context) (string, localpolicy.Observation, error)) (*Session, error) {
+	if !ValidRun(run) || namespace == 0 || engine == nil || guardian == nil || compile == nil || observe == nil {
+		return nil, errHelper
+	}
+	return &Session{run: run, namespace: namespace, engine: engine, guardian: guardian, compile: compile, localObserve: observe}, nil
 }
 
 func NewSession(run string, namespace uint64, engine Engine, guardian *nftguardian.Guardian, observe Observer) *Session {

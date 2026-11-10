@@ -82,7 +82,7 @@ func runFirewall(args []string, locale string, stdin io.Reader, stdout, stderr i
 	}
 	// Fixed, sourceable Bash completion does not evaluate external text.
 	if command == "completion" && len(args) == 1 {
-		fmt.Fprintln(stdout, `_andeiva_complete() { COMPREPLY=(); if [[ ${COMP_WORDS[1]} == firewall ]]; then COMPREPLY=( $(compgen -W 'list status stage validate commit confirm save rollback history traffic help' -- "${COMP_WORDS[COMP_CWORD]}") ); else COMPREPLY=( $(compgen -W 'help status firewall' -- "${COMP_WORDS[COMP_CWORD]}") ); fi; }; complete -F _andeiva_complete andeiva`)
+		fmt.Fprintln(stdout, `_andeiva_complete() { COMPREPLY=(); case ${COMP_WORDS[1]} in firewall) COMPREPLY=( $(compgen -W 'list status stage validate commit confirm save rollback history traffic help' -- "${COMP_WORDS[COMP_CWORD]}") );; local-services) COMPREPLY=( $(compgen -W 'list status stage validate commit confirm save rollback history proof effective help' -- "${COMP_WORDS[COMP_CWORD]}") );; effective-policies) COMPREPLY=( $(compgen -W '--service --interface --protocol --port --source --url --ca-file --credentials-file' -- "${COMP_WORDS[COMP_CWORD]}") );; *) COMPREPLY=( $(compgen -W 'help status firewall local-services effective-policies' -- "${COMP_WORDS[COMP_CWORD]}") );; esac; }; complete -F _andeiva_complete andeiva`)
 		return 0
 	}
 	options := map[string]string{}

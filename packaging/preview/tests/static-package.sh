@@ -15,6 +15,17 @@ for script in preinst postinst prerm postrm; do sh -n "$stage/control/$script"; 
 [[ -s "$stage/root/usr/share/andeiva-preview/web/index.html" ]]
 [[ -s "$stage/root/usr/share/doc/andeiva-firewall-preview/dependencies/npm-inventory.json" ]]
 [[ -s "$stage/root/usr/share/doc/andeiva-firewall-preview/dependencies/LICENSE.react" ]]
+dependencies="$stage/root/usr/share/doc/andeiva-firewall-preview/dependencies"
+for file in go.mod go.sum go-inventory.jsonl golang-x-LICENSE.txt golang-x-PATENTS.txt SHA256SUMS; do
+  [[ -s "$dependencies/$file" ]]
+done
+(cd "$dependencies" && sha256sum --check --strict SHA256SUMS >/dev/null)
+[[ $(sha256sum "$dependencies/golang-x-LICENSE.txt" | cut -d ' ' -f 1) = 911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad ]]
+[[ $(sha256sum "$dependencies/golang-x-PATENTS.txt" | cut -d ' ' -f 1) = 96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc ]]
+grep -q '"path":"golang.org/x/crypto","version":"v0.58.0"' "$dependencies/go-inventory.jsonl"
+grep -q '"path":"golang.org/x/sys","version":"v0.49.0"' "$dependencies/go-inventory.jsonl"
+grep -q '^golang.org/x/crypto v0.58.0 h1:' "$dependencies/go.sum"
+grep -q '^golang.org/x/sys v0.49.0 h1:' "$dependencies/go.sum"
 bash -n "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/native.sh"
 bash "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/native.sh" --help >/dev/null
 if bash "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/native.sh" >/dev/null 2>&1; then
