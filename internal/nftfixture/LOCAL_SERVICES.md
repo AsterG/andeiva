@@ -92,6 +92,11 @@ UID/GID/capability envelope, no-new-privileges, empty supplementary groups and
 root-owned descriptors. Unix peer credentials identify the supervisor that
 created the socketpair; the higher-level channel still pins the actual peer role,
 run, instance and generation. No guard substitutes for channel authorization.
+The probe guard also receives the fixed `source` or `sink` argument from its
+launch role. Forwarding checks require both global IPv4/IPv6 settings and the
+matching peer interface (`srcpeer` or `dstpeer`) to be disabled. API/helper guards
+instead check `src0` and `dst0`. Missing or unreadable sysctls fail validation;
+client namespaces are never checked against gateway-only interface paths.
 
 The probe runner must bound and strictly decode its bootstrap, restrict all
 destinations and operations to the fixed fixture and verify real HTTPS/SSH peer
@@ -113,7 +118,10 @@ después del lanzamiento. Cada hijo ejecuta su guard antes de abrir archivos o
 leer bootstrap; se rechazan slots ausentes, tipos incorrectos, alias y privilegios
 excesivos. Las pruebas sin privilegios no demuestran aislamiento ni recuperación
 en Debian. Los probes reales deben validar certificados o claves SSH y limitarse
-a los destinos de la fixture.
+a los destinos de la fixture. El guard recibe el rol fijo source/sink y comprueba
+forwarding global IPv4/IPv6 y la interfaz srcpeer/dstpeer correspondiente; no busca
+las interfaces del gateway en un namespace cliente. Cualquier sysctl ausente,
+ilegible o habilitado impide el arranque.
 
 ### Português
 
@@ -129,4 +137,7 @@ após iniciar os processos. Cada filho executa seu guard antes de abrir arquivos
 ou ler bootstrap; slots ausentes, tipos incorretos, aliases e privilégios excessivos
 são rejeitados. Testes sem privilégios não comprovam isolamento ou recuperação
 no Debian. Probes reais devem validar certificados ou chaves SSH e limitar-se aos
-destinos da fixture.
+destinos da fixture. O guard recebe o papel fixo source/sink e verifica forwarding
+global IPv4/IPv6 e a interface srcpeer/dstpeer correspondente; não procura interfaces
+do gateway num namespace cliente. Qualquer sysctl ausente, ilegível ou habilitado
+impede a inicialização.

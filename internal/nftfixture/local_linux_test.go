@@ -2,6 +2,7 @@ package nftfixture
 
 import (
 	"context"
+	"errors"
 	"os"
 	"slices"
 	"strconv"
@@ -9,6 +10,65 @@ import (
 	"syscall"
 	"testing"
 )
+
+func TestLocalIsolationChecksOnlyTheSelectedRolesInterfaces(t *testing.T) {
+	global := []string{"/proc/sys/net/ipv4/ip_forward", "/proc/sys/net/ipv6/conf/all/forwarding"}
+	cases := map[string][]string{
+		"gateway": {"/proc/sys/net/ipv4/conf/src0/forwarding", "/proc/sys/net/ipv4/conf/dst0/forwarding", "/proc/sys/net/ipv6/conf/src0/forwarding", "/proc/sys/net/ipv6/conf/dst0/forwarding"},
+		"source":  {"/proc/sys/net/ipv4/conf/srcpeer/forwarding", "/proc/sys/net/ipv6/conf/srcpeer/forwarding"},
+		"sink":    {"/proc/sys/net/ipv4/conf/dstpeer/forwarding", "/proc/sys/net/ipv6/conf/dstpeer/forwarding"},
+	}
+	for role, interfaces := range cases {
+		t.Run(role, func(t *testing.T) {
+			want := append(slices.Clone(global), interfaces...)
+			var paths []string
+			read := func(path string) ([]byte, error) {
+				paths = append(paths, path)
+				if !slices.Contains(want, path) {
+					return nil, os.ErrNotExist
+				}
+				return []byte("0\n"), nil
+			}
+			if err := checkLocalRoleIsolation(role, read); err != nil || !slices.Equal(paths, want) {
+				t.Fatalf("role %s paths=%v want=%v err=%v", role, paths, want, err)
+			}
+			for _, path := range want {
+				for _, value := range []string{"1\n", "", "00\n", "unknown"} {
+					read := func(current string) ([]byte, error) {
+						if current == path {
+							return []byte(value), nil
+						}
+						return []byte("0\n"), nil
+					}
+					if err := checkLocalRoleIsolation(role, read); err == nil {
+						t.Fatalf("unchecked forwarding state %s=%q", path, value)
+					}
+				}
+				read := func(current string) ([]byte, error) {
+					if current == path {
+						return nil, errors.New("unreadable sysctl")
+					}
+					return []byte("0\n"), nil
+				}
+				if err := checkLocalRoleIsolation(role, read); err == nil {
+					t.Fatalf("ignored unreadable sysctl %s", path)
+				}
+			}
+		})
+	}
+	for _, role := range []string{"", "host", "../source", "source/../../ens33"} {
+		called := false
+		if err := checkLocalRoleIsolation(role, func(string) ([]byte, error) { called = true; return []byte("0"), nil }); err == nil || called {
+			t.Fatal("arbitrary interface read", role)
+		}
+		if GuardLocalProbe(1, 2, 1001, 1001, role) == nil {
+			t.Fatal("unbound probe role accepted")
+		}
+	}
+	if checkLocalRoleIsolation("source", nil) == nil {
+		t.Fatal("missing sysctl reader")
+	}
+}
 
 func TestLocalSetupNeverEnablesTransit(t *testing.T) {
 	f := &Fixture{self: "/fixture", host: 42, uid: 1001, gid: 1001, localOnly: true}

@@ -283,7 +283,7 @@ func rootLocalParent(data []byte) bool {
 	return found
 }
 
-func guardLocalHandoff(host uint64, supervisor int, uid, gid uint32, kinds []localDescriptorKind, netAdmin bool) error {
+func guardLocalHandoff(host uint64, supervisor int, uid, gid uint32, kinds []localDescriptorKind, netAdmin bool, role string) error {
 	if !validLocalIdentity(uid, gid) || host == 0 || supervisor <= 1 || os.Getppid() != supervisor || int64(os.Getuid()) != int64(uid) || int64(os.Geteuid()) != int64(uid) || int64(os.Getgid()) != int64(gid) || int64(os.Getegid()) != int64(gid) {
 		return errLocalHandoff
 	}
@@ -358,17 +358,20 @@ func guardLocalHandoff(host uint64, supervisor int, uid, gid uint32, kinds []loc
 	if err := armParentDeath(host); err != nil || os.Getppid() != supervisor {
 		return errLocalHandoff
 	}
-	return checkLocalIsolation()
+	return checkLocalRoleIsolation(role, os.ReadFile)
 }
 
 func GuardLocalAPI(host uint64, supervisor int, uid, gid uint32) error {
-	return guardLocalHandoff(host, supervisor, uid, gid, apiDescriptorKinds, false)
+	return guardLocalHandoff(host, supervisor, uid, gid, apiDescriptorKinds, false, "gateway")
 }
 
 func GuardLocalHelper(host uint64, supervisor int, uid, gid uint32) error {
-	return guardLocalHandoff(host, supervisor, uid, gid, helperDescriptorKinds, true)
+	return guardLocalHandoff(host, supervisor, uid, gid, helperDescriptorKinds, true, "gateway")
 }
 
-func GuardLocalProbe(host uint64, supervisor int, uid, gid uint32) error {
-	return guardLocalHandoff(host, supervisor, uid, gid, probeDescriptorKinds, false)
+func GuardLocalProbe(host uint64, supervisor int, uid, gid uint32, side string) error {
+	if side != "source" && side != "sink" {
+		return errLocalHandoff
+	}
+	return guardLocalHandoff(host, supervisor, uid, gid, probeDescriptorKinds, false, side)
 }

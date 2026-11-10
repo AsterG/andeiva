@@ -97,32 +97,33 @@ func (f *Fixture) ClearLocalNeighbors(ctx context.Context) error {
 }
 
 func checkLocalIsolation() error {
-	for index := range 6 {
-		data, err := localForwardingFlag(index)
+	return checkLocalRoleIsolation("gateway", os.ReadFile)
+}
+
+func checkLocalRoleIsolation(role string, read func(string) ([]byte, error)) error {
+	paths := []string{"/proc/sys/net/ipv4/ip_forward", "/proc/sys/net/ipv6/conf/all/forwarding"}
+	switch role {
+	case "gateway":
+		paths = append(paths,
+			"/proc/sys/net/ipv4/conf/src0/forwarding", "/proc/sys/net/ipv4/conf/dst0/forwarding",
+			"/proc/sys/net/ipv6/conf/src0/forwarding", "/proc/sys/net/ipv6/conf/dst0/forwarding")
+	case "source":
+		paths = append(paths, "/proc/sys/net/ipv4/conf/srcpeer/forwarding", "/proc/sys/net/ipv6/conf/srcpeer/forwarding")
+	case "sink":
+		paths = append(paths, "/proc/sys/net/ipv4/conf/dstpeer/forwarding", "/proc/sys/net/ipv6/conf/dstpeer/forwarding")
+	default:
+		return errors.New("ANDEIVA_NFT_LOCAL_FORWARDING_QUERY")
+	}
+	if read == nil {
+		return errors.New("ANDEIVA_NFT_LOCAL_FORWARDING_QUERY")
+	}
+	for _, path := range paths {
+		data, err := read(path)
 		if err != nil || strings.TrimSpace(string(data)) != "0" {
 			return errors.New("ANDEIVA_NFT_LOCAL_FORWARDING_ENABLED")
 		}
 	}
 	return nil
-}
-
-func localForwardingFlag(index int) ([]byte, error) {
-	switch index {
-	case 0:
-		return os.ReadFile("/proc/sys/net/ipv4/ip_forward")
-	case 1:
-		return os.ReadFile("/proc/sys/net/ipv6/conf/all/forwarding")
-	case 2:
-		return os.ReadFile("/proc/sys/net/ipv4/conf/src0/forwarding")
-	case 3:
-		return os.ReadFile("/proc/sys/net/ipv4/conf/dst0/forwarding")
-	case 4:
-		return os.ReadFile("/proc/sys/net/ipv6/conf/src0/forwarding")
-	case 5:
-		return os.ReadFile("/proc/sys/net/ipv6/conf/dst0/forwarding")
-	default:
-		return nil, errors.New("ANDEIVA_NFT_LOCAL_FORWARDING_QUERY")
-	}
 }
 
 // GuardLocalServices checks the fixed unprivileged runtime child before it may

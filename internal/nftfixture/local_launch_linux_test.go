@@ -238,7 +238,9 @@ func TestLocalParentRequiresAllRootIdentities(t *testing.T) {
 
 func TestLocalGuardRejectsMissingAndSubstitutedInheritedDescriptors(t *testing.T) {
 	if os.Getenv("ANDEIVA_TEST_LOCAL_GUARD") == "1" {
-		for _, guard := range []func(uint64, int, uint32, uint32) error{GuardLocalAPI, GuardLocalHelper, GuardLocalProbe} {
+		for _, guard := range []func(uint64, int, uint32, uint32) error{GuardLocalAPI, GuardLocalHelper, func(host uint64, supervisor int, uid, gid uint32) error {
+			return GuardLocalProbe(host, supervisor, uid, gid, "source")
+		}} {
 			if guard(1, os.Getppid(), uint32(os.Getuid()), uint32(os.Getgid())) == nil {
 				os.Exit(3)
 			}
