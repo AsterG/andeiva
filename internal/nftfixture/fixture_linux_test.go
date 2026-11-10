@@ -86,7 +86,7 @@ func TestCommandPlanPinsNamespaceBeforeFixedExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := info.Sys().(*syscall.Stat_t).Ino
-	f := &Fixture{self: "/fixture", host: id + 1, uid: 1000, gid: 1000, namespaces: map[string]*namespace{"gateway": {handle: file, inode: id}}}
+	f := &Fixture{self: "/fixture", host: id + 1, hostHandle: file, uid: 1000, gid: 1000, namespaces: map[string]*namespace{"gateway": {handle: file, inode: id}}}
 	cmd, err := f.command(context.Background(), "gateway", f.self, []string{"--guardian", strings.Repeat("a", 32), strconv.FormatUint(f.host, 10), strconv.Itoa(os.Getpid())}, "", true, true)
 	if err != nil {
 		t.Fatal(err)

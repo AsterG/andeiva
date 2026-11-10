@@ -60,7 +60,7 @@ func Run(ctx context.Context, o Options) (result error) {
 	}
 	childCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	f, e := nftfixture.New(childCtx, o.Executable, o.UID, o.GID)
+	f, e := nftfixture.NewOwned(childCtx, o.Executable, o.UID, o.GID)
 	if e != nil {
 		return e
 	}

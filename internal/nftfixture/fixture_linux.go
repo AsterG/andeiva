@@ -42,6 +42,7 @@ type Fixture struct {
 	self       string
 	uid, gid   uint32
 	host       uint64
+	hostHandle *os.File
 	namespaces map[string]*namespace
 	children   []child
 	baseline   map[string][]byte
@@ -52,6 +53,17 @@ type Fixture struct {
 // New requires the explicitly authorized Debian laboratory. It never installs
 // tools, creates named namespaces, moves host interfaces or changes host sysctls.
 func New(ctx context.Context, self string, uid, gid uint32) (_ *Fixture, err error) {
+	return newFixture(ctx, self, uid, gid, true)
+}
+
+// NewOwned retains the preview supervisor's host namespace as the trust anchor.
+// On setup failure it closes only its own resources; it does not inspect other
+// services' descriptors. The root service manager must start it in the host netns.
+func NewOwned(ctx context.Context, self string, uid, gid uint32) (*Fixture, error) {
+	return newFixture(ctx, self, uid, gid, false)
+}
+
+func newFixture(ctx context.Context, self string, uid, gid uint32, globalReferenceCheck bool) (_ *Fixture, err error) {
 	if os.Geteuid() != 0 || uid == 0 || gid == 0 || !filepath.IsAbs(self) {
 		return nil, errors.New("ANDEIVA_NFT_FIXTURE_PRIVILEGE")
 	}
@@ -71,10 +83,14 @@ func New(ctx context.Context, self string, uid, gid uint32) (_ *Fixture, err err
 	f := &Fixture{self: self, uid: uid, gid: gid, namespaces: map[string]*namespace{}}
 	defer func() {
 		if err != nil {
-			err = errors.Join(err, f.Close())
+			err = errors.Join(err, f.close(globalReferenceCheck))
 		}
 	}()
-	f.host, err = inode("/proc/self/ns/net")
+	f.hostHandle, err = os.Open("/proc/self/ns/net")
+	if err != nil {
+		return nil, err
+	}
+	f.host, err = networkNamespaceInode(int(f.hostHandle.Fd()))
 	if err != nil {
 		return nil, err
 	}
@@ -217,6 +233,16 @@ func (f *Fixture) command(ctx context.Context, role, binary string, args []strin
 	cmd.Env = fixedEnvironment()
 	cmd.WaitDelay = 2 * time.Second
 	cmd.ExtraFiles = []*os.File{ns.handle}
+	if role == "gateway" && binary == f.self && slices.Equal(args, []string{"--nft-fixture", "forward", strconv.FormatUint(f.host, 10)}) {
+		if peer != "" || f.hostHandle == nil {
+			return nil, errors.New("ANDEIVA_NFT_FIXTURE_HOST_NAMESPACE")
+		}
+		host, err := networkNamespaceInode(int(f.hostHandle.Fd()))
+		if err != nil || host != f.host || host == ns.inode {
+			return nil, errors.New("ANDEIVA_NFT_FIXTURE_HOST_NAMESPACE")
+		}
+		cmd.ExtraFiles = append(cmd.ExtraFiles, f.hostHandle)
+	}
 	if peer != "" {
 		other, err := f.checked(peer)
 		if err != nil {
@@ -608,6 +634,11 @@ func (f *Fixture) close(globalReferenceCheck bool) error {
 	}
 	if globalReferenceCheck {
 		if err := f.verifyNoNamespaceReferences(); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	if f.hostHandle != nil {
+		if err := f.hostHandle.Close(); err != nil {
 			failures = append(failures, err)
 		}
 	}
