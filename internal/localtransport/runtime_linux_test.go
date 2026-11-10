@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"sync"
@@ -70,5 +71,63 @@ func TestOutputBufferStaysBoundedUnderConcurrentWrites(t *testing.T) {
 	copy[0] = 'y'
 	if b.Bytes()[0] != 'x' {
 		t.Fatal("output alias")
+	}
+}
+
+func TestNamespacePinMustExistBeforeOpeningProc(t *testing.T) {
+	if mode := os.Getenv("ANDEIVA_TEST_NAMESPACE_PIN"); mode != "" {
+		// Get the expected identity independently, then leave FD3 in the selected
+		// state. Opening /proc inside verifyNamespace must never repair a hole.
+		self, err := os.Open("/proc/self/ns/net")
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, err := namespaceInode(int(self.Fd()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = self.Close()
+		if mode == "closed" {
+			_ = syscall.Close(3)
+		}
+		err = verifyNamespace(current, current+1)
+		if mode == "valid" {
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else if err != ErrIdentity {
+			t.Fatal("unretained pin accepted", mode, err)
+		}
+		if mode == "closed" {
+			if _, err := namespaceInode(3); err == nil {
+				t.Fatal("verification recreated FD3")
+			}
+		}
+		return
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"closed", "ordinary", "valid"} {
+		t.Run(mode, func(t *testing.T) {
+			cmd := exec.Command(self, "-test.run=^TestNamespacePinMustExistBeforeOpeningProc$")
+			cmd.Env = []string{"ANDEIVA_TEST_NAMESPACE_PIN=" + mode}
+			if mode != "closed" {
+				path := "/dev/null"
+				if mode == "valid" {
+					path = "/proc/self/ns/net"
+				}
+				pin, err := os.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer pin.Close()
+				cmd.ExtraFiles = []*os.File{pin}
+			}
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("subprocess %s: %v: %s", mode, err, output)
+			}
+		})
 	}
 }

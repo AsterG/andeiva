@@ -41,18 +41,8 @@ func verifyIdentity(want identity) error {
 	if os.Getuid() <= 0 || os.Getgid() <= 0 || os.Getuid() != want.uid || os.Getgid() != want.gid {
 		return ErrIdentity
 	}
-	self, err := os.Open("/proc/self/ns/net")
-	if err != nil {
-		return ErrIdentity
-	}
-	defer self.Close()
-	current, err := namespaceInode(int(self.Fd()))
-	if err != nil || current != want.namespace || current == want.host {
-		return ErrIdentity
-	}
-	pinned, err := namespaceInode(3)
-	if err != nil || pinned != current {
-		return ErrIdentity
+	if err := verifyNamespace(want.namespace, want.host); err != nil {
+		return err
 	}
 	status, err := os.Open("/proc/self/status")
 	if err != nil {
@@ -61,6 +51,39 @@ func verifyIdentity(want identity) error {
 	defer status.Close()
 	data, err := io.ReadAll(io.LimitReader(status, 64<<10+1))
 	if err != nil || len(data) > 64<<10 || privileges(data, want.uid, want.gid) != nil {
+		return ErrIdentity
+	}
+	return nil
+}
+
+func verifyNamespace(expected, host uint64) error {
+	// Check the inherited descriptor before opening any file: otherwise an
+	// open could reuse a missing FD3 and falsely turn the current namespace into
+	// the supervisor's retained namespace pin.
+	pinned, err := namespaceInode(3)
+	if err != nil || expected == 0 || host == 0 || pinned != expected || pinned == host {
+		return ErrIdentity
+	}
+	retained, err := syscall.Dup(3)
+	if err != nil {
+		return ErrIdentity
+	}
+	syscall.CloseOnExec(retained)
+	defer syscall.Close(retained)
+	pinned, err = namespaceInode(retained)
+	if err != nil || pinned != expected {
+		return ErrIdentity
+	}
+	self, err := os.Open("/proc/self/ns/net")
+	if err != nil {
+		return ErrIdentity
+	}
+	defer self.Close()
+	current, err := namespaceInode(int(self.Fd()))
+	if err != nil || current != expected || current == host {
+		return ErrIdentity
+	}
+	if pinned != current {
 		return ErrIdentity
 	}
 	return nil
