@@ -173,7 +173,7 @@ func validState(s durableState) bool {
 		}
 	}
 	if p := s.Snapshot.Pending; p != nil {
-		if !identifier.MatchString(p.Owner) || p.Owner == "system" || p.Deadline.IsZero() {
+		if !identifier.MatchString(p.Owner) || p.Owner == "system" || p.Deadline.IsZero() || (p.Lease != "" && !identifier.MatchString(p.Lease)) {
 			return false
 		}
 	}

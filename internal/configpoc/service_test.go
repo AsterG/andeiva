@@ -64,7 +64,7 @@ func TestCanonicalAndIsolation(t *testing.T) {
 	if a.Hash == b.Hash {
 		t.Fatal("rule order lost")
 	}
-	for _, bad := range []Config{{SchemaVersion: 2, DefaultAction: "deny"}, {SchemaVersion: 1, DefaultAction: "allow"}, {SchemaVersion: 1, DefaultAction: "deny", Rules: []Rule{{ID: "one", Action: "allow"}, {ID: "one", Action: "deny"}}}, {SchemaVersion: 1, DefaultAction: "deny", Rules: []Rule{{ID: "../x", Action: "allow"}}}} {
+	for _, bad := range []Config{{SchemaVersion: 3, DefaultAction: "deny"}, {SchemaVersion: 1, DefaultAction: "allow"}, {SchemaVersion: 1, DefaultAction: "deny", Rules: []Rule{{ID: "one", Action: "allow"}, {ID: "one", Action: "deny"}}}, {SchemaVersion: 1, DefaultAction: "deny", Rules: []Rule{{ID: "../x", Action: "allow"}}}} {
 		if _, err := Canonical(bad); !errors.Is(err, ErrInvalid) {
 			t.Fatal("accepted invalid config")
 		}

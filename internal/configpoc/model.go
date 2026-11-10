@@ -91,9 +91,17 @@ type Candidate struct {
 	Revision Revision `json:"revision"`
 }
 type Pending struct {
+	Lease    string    `json:"lease,omitempty"`
 	Owner    string    `json:"owner"`
 	Previous Revision  `json:"previous"`
 	Deadline time.Time `json:"deadline"`
+}
+
+// ActivationGuard is a trusted local authority, never supplied by an API request.
+// Calls occur under the coordinator lock after authorization and validation.
+type ActivationGuard interface {
+	Arm(context.Context, string, Revision, Revision, time.Duration) error
+	Confirm(context.Context, string, string) error
 }
 type Intent struct {
 	Previous Revision `json:"previous"`
