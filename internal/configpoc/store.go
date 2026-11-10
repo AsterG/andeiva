@@ -151,7 +151,7 @@ func (s *fileStore) load() (result error) {
 	return nil
 }
 func validState(s durableState) bool {
-	if s.Snapshot.Generation == 0 || s.Snapshot.ReplayedGeneration != 0 || s.Receipts == nil || len(s.Receipts) > 1024 || len(s.Snapshot.Revoked) > 128 {
+	if s.Snapshot.Generation == 0 || s.Snapshot.ReplayedGeneration != 0 || s.Receipts == nil || len(s.Receipts) > maxReceipts || len(s.Snapshot.Revoked) > 128 {
 		return false
 	}
 	for key, receipt := range s.Receipts {

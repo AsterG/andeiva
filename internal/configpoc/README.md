@@ -190,3 +190,30 @@ The complete configuration release gate additionally requires real components,
 traffic observation during failures, database selection and durability testing,
 production authentication, backup/restore and a defined resource envelope. A
 green simulated-engine suite alone does not close that gate.
+
+## Bounded transaction capacity (AND01: partial)
+
+Confirmed commit and confirmed historical rollback require capacity for their two
+records, resolution (up to two records), and one subsequent recovery/reopen (two
+records) before activation. Pending transactions retain four records against
+ordinary writes and rejected-request audit floods. Confirmation uses its own
+admission threshold; unauthorized, stale or malformed requests cannot spend the
+reserve. One receipt is retained for required recovery, and pending admission
+also retains a confirmation receipt. Healthy repeated recovery cannot bypass
+these limits. Byte admission budgets the existing 1 MiB maximum per record,
+including future receipt and state growth; no journal format or hash changes.
+
+The 64 MiB journal, configured record limit (default 2,048), and 1,024 durable
+receipts remain lifetime bounds. Ordinary writes may therefore stop earlier.
+Audit that cannot be persisted returns a storage error; it does not consume the
+reserve or report successful auditing. At quota, authenticated status/history and
+exact replay remain available in an otherwise healthy open service. Existing
+exhausted journals are not repaired: reopening requires room for both intent and
+outcome and leaves the files unchanged if that capacity is absent on a healthy
+resume. Repeated restarts or physical I/O failures can still block operation.
+
+AND01 is **partially addressed**, not a complete storage-lifecycle solution.
+Compaction, retention, receipt lifetime and key-management policy require a
+separate reviewed ADR; this change neither deletes records nor increases quotas.
+The tests use simulated engines and bounded quota accounting, not a full-disk or
+Debian appliance benchmark. Native resource and physical-failure gates remain open.

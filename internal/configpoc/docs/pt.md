@@ -122,3 +122,33 @@ Interromper processos, sincronizar arquivos e reiniciar não demonstra resistên
 a uma queda física de energia. Este experimento não seleciona SQLite ou PostgreSQL,
 implementa HA, assina históricos, cifra segredos, fornece autenticação de produção
 nem valida coordenação real de nftables/proxy. Esses gates permanecem abertos.
+
+## Reserva de capacidade: AND01 permanece parcial
+
+Antes de aplicar um commit confirmado ou rollback histórico confirmado, o
+coordenador exige espaço para seis registros: dois de ativação, até dois de
+resolução e dois para uma recuperação/reabertura. Escritas comuns, revogações e
+auditorias de solicitações rejeitadas não podem consumir os quatro registros
+reservados enquanto houver confirmação pendente. O proprietário autorizado pode
+confirmar usando essa reserva. Também são reservados recibos para a confirmação e
+uma recuperação necessária; repetir Recover em estado saudável não contorna a
+cota. O cálculo de bytes usa o máximo existente de 1 MiB por registro, cobrindo o
+crescimento do estado e dos recibos sem aumentar limites.
+
+O journal mantém limites de vida útil: 64 MiB, a quantidade configurada de
+registros (2.048 por padrão) e 1.024 recibos. As escritas podem parar antes para
+proteger a reserva. Uma auditoria sem capacidade retorna erro de armazenamento.
+Estado, histórico e repetições exatas autenticadas continuam disponíveis na cota
+se o serviço aberto estiver saudável. Journals já esgotados não são reparados:
+uma retomada saudável com menos de dois registros disponíveis falha antes de
+adicionar uma intenção ou aplicar uma revisão. Reaberturas repetidas e falhas
+físicas de armazenamento continuam sujeitas a esses limites. Compactação,
+retenção, ciclo de recibos e gestão de chaves exigem outro ADR revisado. Nenhum
+registro é removido e o formato durável permanece inalterado.
+
+Execute `go test -race ./internal/configpoc -run TestCapacity` e
+`go test ./internal/configpoc -run '^$' -bench BenchmarkCapacityAdmission -benchmem`
+no Linux. O benchmark mede somente admissão em memória, não RAM do appliance nem
+throughput. O teste de bytes injeta contabilidade de cota e grava registros reais
+de tamanho variável; não simula um disco fisicamente cheio. O benchmark de recursos
+no Debian e a validação de falhas físicas permanecem pendentes.
