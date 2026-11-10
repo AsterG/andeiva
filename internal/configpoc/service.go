@@ -104,8 +104,9 @@ func (s *Service) Close() error {
 	return s.store.lock.Close()
 }
 func (s *Service) persist(actor string, surface Surface, operation, result string, critical bool) error {
-	// Preserve the final two slots for mandatory compensation, including under audit floods.
-	if !critical && !s.store.capacity(2) {
+	// Rejections and revocations must not spend a pending transaction's reserved
+	// resolution and recovery budget. No audit record is silently discarded.
+	if !critical && !s.store.capacity(s.ordinaryReserve()) {
 		return ErrStorage
 	}
 	audit := Audit{At: time.Now().UTC(), Actor: actor, Surface: surface, Operation: operation, Result: result, RunningHash: s.state.Snapshot.Running.Hash}
@@ -275,7 +276,7 @@ func (s *Service) execute(ctx context.Context, p Principal, surface Surface, req
 	if request.ExpectedGeneration != s.state.Snapshot.Generation {
 		return s.reject(p, surface, request.Operation, ErrConflict)
 	}
-	if len(s.state.Receipts) >= 1024 || !s.store.capacity(4) {
+	if !s.requestCapacity(request) {
 		return Snapshot{}, ErrStorage
 	}
 	if s.state.Snapshot.RecoveryRequired && request.Operation != OpRecover {
@@ -447,7 +448,9 @@ func (s *Service) execute(ctx context.Context, p Principal, surface Surface, req
 			err = ErrInvalid
 			break
 		}
-		err = s.transition(ctx, s.state.Snapshot.LastGood, p.ID, surface, OpRecover, nil, false, key, fingerprint)
+		// Only a required recovery may spend the protected final transition.
+		// Repeated healthy Recover requests remain ordinary bounded operations.
+		err = s.transition(ctx, s.state.Snapshot.LastGood, p.ID, surface, OpRecover, nil, s.state.Snapshot.RecoveryRequired, key, fingerprint)
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -537,6 +540,14 @@ func (s *Service) transitionGuarded(ctx context.Context, target Revision, actor 
 	rollback := operation == "timeout" || operation == "open-recovery" || operation == OpRecover
 	if rollback {
 		previous = clone(target)
+	}
+	// Never begin a critical intent that cannot also record its outcome. Older
+	// exhausted stores remain blocked; their records and receipts are preserved.
+	if critical && !s.store.capacity(recoveryRecords-1) {
+		if rollback || operation == "boot" {
+			s.emergencyRollback(previous)
+		}
+		return ErrStorage
 	}
 	if operation != "timeout" && operation != "open-recovery" {
 		for _, engine := range s.engines {

@@ -124,3 +124,33 @@ Interrumpir procesos, sincronizar archivos y reiniciar no demuestra resistencia 
 un corte físico de energía. Este experimento no selecciona SQLite o PostgreSQL,
 implementa HA, firma historiales, cifra secretos, proporciona autenticación de
 producción ni valida coordinación real de nftables/proxy. Esos gates siguen abiertos.
+
+## Reserva de capacidad: AND01 sigue parcial
+
+Antes de aplicar un commit confirmado o un rollback histórico confirmado, el
+coordinador exige espacio para seis registros: dos de activación, hasta dos de
+resolución y dos para una recuperación/reapertura. Las escrituras ordinarias,
+revocaciones y auditorías de solicitudes rechazadas no pueden consumir los cuatro
+registros reservados mientras haya confirmación pendiente. El propietario
+autorizado puede confirmar con esa reserva. También se reservan recibos para la
+confirmación y una recuperación necesaria; repetir Recover en estado sano no
+elude la cuota. El cálculo de bytes utiliza el máximo existente de 1 MiB por
+registro, cubriendo el crecimiento del estado y los recibos sin ampliar límites.
+
+El journal mantiene límites de vida útil: 64 MiB, el número configurado de
+registros (2.048 por defecto) y 1.024 recibos. Las escrituras pueden detenerse antes
+para proteger la reserva. Una auditoría sin capacidad devuelve error de
+almacenamiento. Estado, historial y reintentos exactos autenticados siguen
+disponibles al alcanzar la cuota si el servicio abierto está sano. No se reparan
+journals ya agotados: una reanudación sana con menos de dos registros disponibles
+falla antes de añadir un intento o aplicar una revisión. Reaperturas repetidas y
+fallos físicos de almacenamiento siguen siendo riesgos acotados por esos límites.
+Compactación, retención, ciclo de recibos y gestión de claves requieren otro ADR
+revisado. Aquí no se eliminan registros ni se cambia el formato durable.
+
+Ejecuta `go test -race ./internal/configpoc -run TestCapacity` y
+`go test ./internal/configpoc -run '^$' -bench BenchmarkCapacityAdmission -benchmem`
+en Linux. El benchmark mide solamente admisión en memoria, no RAM del appliance
+ni throughput. La prueba de bytes inyecta contabilidad de cuota y escribe registros
+reales de tamaño variable; no simula un disco físicamente lleno. Siguen pendientes
+el benchmark de recursos en Debian y la validación de fallos físicos.
