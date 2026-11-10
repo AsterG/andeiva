@@ -63,8 +63,8 @@ func Run(ctx context.Context, o Options) (result error) {
 	// Cancel setup promptly, but retain child processes for ordered cleanup once
 	// the fixture is ready and the supervisor receives a normal stop request.
 	stopStartupCancel := context.AfterFunc(ctx, cancel)
+	defer stopStartupCancel()
 	f, e := nftfixture.NewOwned(childCtx, o.Executable, o.UID, o.GID)
-	stopStartupCancel()
 	if e != nil {
 		return e
 	}
@@ -99,6 +99,9 @@ func Run(ctx context.Context, o Options) (result error) {
 		return e
 	}
 	m = Metadata{SchemaVersion: 1, RunID: hex.EncodeToString(random[:]), BootID: boot, HostNamespace: host, GatewayNamespace: ids["gateway"], SourceNamespace: ids["source"], SinkNamespace: ids["sink"]}
+	if e = ctx.Err(); e != nil {
+		return e
+	}
 	if e = writeMetadata(m); e != nil {
 		return e
 	}
@@ -116,6 +119,10 @@ func Run(ctx context.Context, o Options) (result error) {
 		return e
 	}
 	if e = checkFixture(childCtx, f); e != nil {
+		return e
+	}
+	stopStartupCancel()
+	if e = ctx.Err(); e != nil {
 		return e
 	}
 	if e = notifyReady(); e != nil {
