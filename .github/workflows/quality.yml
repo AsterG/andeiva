@@ -36,6 +36,8 @@ jobs:
         run: bash scripts/check-config-platforms.sh
       - name: Nftables POC unprivileged contracts and platform compilation
         run: bash scripts/check-nft-poc.sh
+      - name: Administrative firewall platform compilation without privileges
+        run: bash scripts/check-firewall-admin.sh
       - run: bash scripts/smoke-api.sh
       - name: Transactional configuration simulator and resource observations
         run: |
@@ -118,6 +120,7 @@ jobs:
           go build -trimpath -buildvcs=false -o dist/andeiva-api ./cmd/andeiva-api
           go build -trimpath -buildvcs=false -o dist/andeiva-config-poc ./cmd/andeiva-config-poc
           go build -trimpath -buildvcs=false -o dist/andeiva-nft-poc ./cmd/andeiva-nft-poc
+          go build -trimpath -buildvcs=false -o dist/andeiva-admin-lab ./cmd/andeiva-admin-lab
 
   debian-package:
     needs: source

@@ -142,6 +142,11 @@ validate Debian/VMware compatibility, capacity or production security.
 
 ## Project documentation
 
+The [authenticated firewall administration laboratory](internal/firewalladmin/README.md)
+adds a shared Web, CLI and HTTPS API workflow for typed IPv4 TCP/UDP rules.
+Its separate executor controls only disposable namespaces; it is not installed as
+the appliance firewall. See the EN/ES/PT procedures and recorded limitations.
+
 The [isolated nftables experiment](internal/nftpoc/README.md) connects the
 transactional configuration engine to a bounded real kernel policy in three
 laboratory namespaces. See its [validation and limitations](internal/nftpoc/VALIDATION.md)

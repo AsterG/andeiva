@@ -3,6 +3,7 @@ package nftpoc
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/AsterG/andeiva/internal/nftengine"
 	"io"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 // their meaning. Kernel handles/metainfo and the documented redundant protocol
 // dependency elision in nft 1.1.3 are normalized; payload selectors stay mandatory.
 func DecodeObservation(data []byte) (configpoc.Revision, error) {
-	if len(data) == 0 || len(data) > MaxObservation || !uniqueJSONFields(data) {
+	if len(data) == 0 || len(data) > MaxObservation || !nftengine.UniqueJSONFields(data) {
 		return configpoc.Revision{}, ErrObservation
 	}
 	var envelope struct {
@@ -32,7 +33,7 @@ func DecodeObservation(data []byte) (configpoc.Revision, error) {
 			return configpoc.Revision{}, ErrObservation
 		}
 		if meta, exists := entry["metainfo"]; exists {
-			if index != 0 || !validMetainfo(meta) {
+			if index != 0 || !nftengine.ValidMetainfo(meta) {
 				return configpoc.Revision{}, ErrObservation
 			}
 			continue
@@ -150,75 +151,4 @@ func sameObservedObject(actual, expected object) bool {
 		}
 	}
 	return false
-}
-
-// Reject duplicate keys rather than letting the decoder silently select a value.
-func uniqueJSONFields(data []byte) bool {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var walk func(int) bool
-	walk = func(depth int) bool {
-		if depth > 24 {
-			return false
-		}
-		token, err := decoder.Token()
-		if err != nil {
-			return false
-		}
-		delimiter, container := token.(json.Delim)
-		if !container {
-			return true
-		}
-		switch delimiter {
-		case '{':
-			seen := map[string]bool{}
-			for decoder.More() {
-				key, err := decoder.Token()
-				name, ok := key.(string)
-				if err != nil || !ok || seen[name] || !walk(depth+1) {
-					return false
-				}
-				seen[name] = true
-			}
-			end, err := decoder.Token()
-			return err == nil && end == json.Delim('}')
-		case '[':
-			for decoder.More() {
-				if !walk(depth + 1) {
-					return false
-				}
-			}
-			end, err := decoder.Token()
-			return err == nil && end == json.Delim(']')
-		default:
-			return false
-		}
-	}
-	if !walk(0) {
-		return false
-	}
-	_, err := decoder.Token()
-	return err == io.EOF
-}
-
-func validMetainfo(value any) bool {
-	meta, ok := value.(map[string]any)
-	if !ok || len(meta) > 3 {
-		return false
-	}
-	for key, item := range meta {
-		switch key {
-		case "version", "release_name":
-			if text, ok := item.(string); !ok || len(text) > 128 {
-				return false
-			}
-		case "json_schema_version":
-			if number, ok := item.(json.Number); !ok || number.String() != "1" {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
 }

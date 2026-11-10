@@ -33,9 +33,31 @@ type Guardian struct {
 	deadline         time.Time
 	timer            *time.Timer
 	closed           bool
+	restricted       bool
+	maxTTL           time.Duration
 }
 
-func New(engine Engine) *Guardian { return &Guardian{engine: engine, state: State{Phase: "idle"}} }
+func New(engine Engine) *Guardian {
+	return &Guardian{engine: engine, state: State{Phase: "idle"}, maxTTL: 30 * time.Second}
+}
+
+// NewRestricted is for the authenticated administration boundary. It requires
+// one trusted bootstrap and an independent lease for subsequent activations.
+func NewRestricted(engine Engine) *Guardian {
+	return &Guardian{engine: engine, state: State{Phase: "bootstrap"}, restricted: true, maxTTL: 120 * time.Second}
+}
+func (g *Guardian) Bootstrap(ctx context.Context, r configpoc.Revision) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed || !g.restricted || g.state.Phase != "bootstrap" || !valid(r) {
+		return ErrLease
+	}
+	if err := g.engine.Apply(ctx, r); err != nil || g.engine.Current() != r.Hash {
+		return ErrLease
+	}
+	g.state = State{Phase: "idle"}
+	return nil
+}
 
 func valid(r configpoc.Revision) bool {
 	c, err := configpoc.Canonical(r.Config)
@@ -45,7 +67,7 @@ func valid(r configpoc.Revision) bool {
 func (g *Guardian) Arm(id string, previous, target configpoc.Revision, ttl time.Duration) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closed || g.state.Phase != "idle" || len(id) < 1 || len(id) > 64 || !valid(previous) || !valid(target) || ttl < 500*time.Millisecond || ttl > 30*time.Second || g.engine.Current() != previous.Hash {
+	if g.closed || g.state.Phase != "idle" || len(id) < 1 || len(id) > 64 || !valid(previous) || !valid(target) || ttl < 500*time.Millisecond || ttl > g.maxTTL || g.engine.Current() != previous.Hash {
 		return ErrLease
 	}
 	g.previous, _ = configpoc.Canonical(previous.Config)
@@ -81,7 +103,7 @@ func (g *Guardian) Apply(ctx context.Context, r configpoc.Revision) error {
 		return ErrLease
 	}
 	g.expire()
-	if g.state.Phase == "blocked" {
+	if g.state.Phase == "blocked" || g.state.Phase == "bootstrap" {
 		return ErrLease
 	}
 	if g.state.Phase == "expired" {
@@ -91,6 +113,12 @@ func (g *Guardian) Apply(ctx context.Context, r configpoc.Revision) error {
 		return ErrLease
 	}
 	if g.state.Phase == "armed" || g.state.Phase == "pending" {
+		// An unchanged candidate still needs an exact lease receipt. It cannot
+		// be mistaken for compensation merely because both hashes are equal.
+		if g.previous.Hash == g.target.Hash && r.Hash == g.target.Hash && g.engine.Current() == r.Hash {
+			g.state.Phase = "pending"
+			return nil
+		}
 		if r.Hash == g.previous.Hash {
 			if g.timer != nil {
 				g.timer.Stop()
@@ -115,6 +143,9 @@ func (g *Guardian) Apply(ctx context.Context, r configpoc.Revision) error {
 		}
 		g.state.Phase = "pending"
 		return nil
+	}
+	if g.restricted && r.Hash != g.engine.Current() && r.Hash != g.previous.Hash {
+		return ErrLease
 	}
 	if r.Hash != g.state.Target {
 		g.state = State{Phase: "idle"}

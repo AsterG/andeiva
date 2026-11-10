@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"regexp"
 	"sync"
 	"time"
@@ -50,6 +51,7 @@ const (
 	OpSave     = "save"
 	OpRecover  = "recover"
 	OpRevoke   = "revoke"
+	OpRollback = "rollback"
 )
 
 // Principal is supplied by a trusted adapter, never decoded from a request body.
@@ -61,6 +63,18 @@ type Principal struct {
 type Rule struct {
 	ID     string `json:"id"`
 	Action string `json:"action"`
+	Match  *Match `json:"match,omitempty"`
+}
+type PortRange struct {
+	From uint16 `json:"from"`
+	To   uint16 `json:"to"`
+}
+type Match struct {
+	Source           string    `json:"source"`
+	Destination      string    `json:"destination"`
+	Protocol         string    `json:"protocol"`
+	SourcePorts      PortRange `json:"source_ports"`
+	DestinationPorts PortRange `json:"destination_ports"`
 }
 type Config struct {
 	SchemaVersion int    `json:"schema_version"`
@@ -77,9 +91,17 @@ type Candidate struct {
 	Revision Revision `json:"revision"`
 }
 type Pending struct {
+	Lease    string    `json:"lease,omitempty"`
 	Owner    string    `json:"owner"`
 	Previous Revision  `json:"previous"`
 	Deadline time.Time `json:"deadline"`
+}
+
+// ActivationGuard is a trusted local authority, never supplied by an API request.
+// Calls occur under the coordinator lock after authorization and validation.
+type ActivationGuard interface {
+	Arm(context.Context, string, Revision, Revision, time.Duration) error
+	Confirm(context.Context, string, string) error
 }
 type Intent struct {
 	Previous Revision `json:"previous"`
@@ -120,6 +142,8 @@ type Engine interface {
 	Current() string
 }
 type Options struct {
+	// Initial applies only to a new empty store. Existing journals retain their schema.
+	Initial *Config
 	// Boot explicitly models appliance boot; ordinary Open models a controller restart.
 	Boot       bool
 	MaxRecords int
@@ -130,23 +154,43 @@ type Options struct {
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 
 func Canonical(config Config) (Revision, error) {
-	if config.SchemaVersion != 1 || config.DefaultAction != "deny" || len(config.Rules) > 64 {
+	if (config.SchemaVersion != 1 && config.SchemaVersion != 2) || config.DefaultAction != "deny" || len(config.Rules) > 64 {
 		return Revision{}, ErrInvalid
 	}
 	seen := make(map[string]bool)
 	for _, rule := range config.Rules {
+		if config.SchemaVersion == 1 && rule.Match != nil || config.SchemaVersion == 2 && !validMatch(rule.Match) {
+			return Revision{}, ErrInvalid
+		}
 		if !identifier.MatchString(rule.ID) || seen[rule.ID] || (rule.Action != "allow" && rule.Action != "deny") {
 			return Revision{}, ErrInvalid
 		}
 		seen[rule.ID] = true
 	}
-	config.Rules = append([]Rule{}, config.Rules...)
+	config.Rules = clone(append([]Rule{}, config.Rules...))
 	data, err := json.Marshal(config)
 	if err != nil {
 		return Revision{}, ErrInvalid
 	}
 	hash := sha256.Sum256(data)
 	return Revision{hex.EncodeToString(hash[:]), config}, nil
+}
+func validMatch(m *Match) bool {
+	if m == nil || (m.Protocol != "tcp" && m.Protocol != "udp") {
+		return false
+	}
+	for _, s := range []string{m.Source, m.Destination} {
+		p, err := netip.ParsePrefix(s)
+		if err != nil || !p.Addr().Is4() || p != p.Masked() || p.String() != s {
+			return false
+		}
+	}
+	for _, p := range []PortRange{m.SourcePorts, m.DestinationPorts} {
+		if p.From == 0 || p.To < p.From {
+			return false
+		}
+	}
+	return true
 }
 func clone[T any](value T) T {
 	data, _ := json.Marshal(value)

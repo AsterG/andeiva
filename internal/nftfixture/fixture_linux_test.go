@@ -22,6 +22,29 @@ func TestPrivilegePlanDropsAllUnneededCapabilities(t *testing.T) {
 	}
 }
 
+func TestReverseTrafficCommandsRemainFixedToOwnedEndpoints(t *testing.T) {
+	f := &Fixture{self: "/fixture", host: 42, uid: 1001, gid: 1001}
+	for _, role := range []string{"source", "sink"} {
+		for _, protocol := range []string{"tcp", "udp"} {
+			args := []string{"--nft-fixture", "probe-source", protocol, "18080", "42"}
+			if !f.allowedCommand(role, f.self, args, "", true, false) {
+				t.Fatal("reverse probe rejected")
+			}
+			if f.allowedCommand("gateway", f.self, args, "", true, false) || f.allowedCommand(role, f.self, args, "", true, true) {
+				t.Fatal("reverse privilege expansion")
+			}
+			args[3] = "22"
+			if f.allowedCommand(role, f.self, args, "", true, false) {
+				t.Fatal("arbitrary port accepted")
+			}
+		}
+	}
+	args := []string{"--nft-fixture", "listen-source", "42"}
+	if !f.allowedCommand("source", f.self, args, "", true, false) || f.allowedCommand("sink", f.self, args, "", true, false) {
+		t.Fatal("listener endpoint expansion")
+	}
+}
+
 func TestNamespaceGuardRejectsHostAndUnownedRoles(t *testing.T) {
 	file, err := os.Open("/proc/self/ns/net")
 	if err != nil {

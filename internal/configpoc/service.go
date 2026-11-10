@@ -46,7 +46,15 @@ func Open(dir string, engines []Engine, options Options) (*Service, error) {
 	}
 	s := &Service{store: store, engines: append([]Engine{}, engines...), hook: options.Hook}
 	if len(store.records) == 0 {
-		initial, _ := Canonical(Config{SchemaVersion: 1, DefaultAction: "deny"})
+		initialConfig := Config{SchemaVersion: 1, DefaultAction: "deny"}
+		if options.Initial != nil {
+			initialConfig = *options.Initial
+		}
+		initial, initialErr := Canonical(initialConfig)
+		if initialErr != nil {
+			_ = store.lock.Close()
+			return nil, initialErr
+		}
 		s.state = durableState{Snapshot: Snapshot{Generation: 1, Running: initial, Startup: initial, LastGood: initial, Revoked: []string{}}, Receipts: map[string]receipt{}}
 		if err = s.persist("system", API, "initialize", "ok", true); err != nil {
 			_ = store.lock.Close()
@@ -124,14 +132,21 @@ func (s *Service) authorized(principal Principal, operation string) bool {
 	}
 	switch principal.Role {
 	case RoleAdmin:
-		return true
+		switch operation {
+		case OpStatus, OpStage, OpValidate, OpCommit, OpConfirm, OpSave, OpRecover, OpRevoke, OpRollback, "history":
+			return true
+		}
 	case RoleOperator:
-		return operation != OpRevoke && operation != "history"
+		switch operation {
+		case OpStatus, OpStage, OpValidate, OpCommit, OpConfirm, OpSave, OpRecover, OpRollback:
+			return true
+		}
 	case RoleViewer:
 		return operation == OpStatus
 	default:
 		return false
 	}
+	return false
 }
 func (s *Service) History(principal Principal) ([]Audit, error) {
 	s.mu.Lock()
@@ -164,6 +179,17 @@ func (s *Service) reject(p Principal, surface Surface, operation string, reason 
 	return Snapshot{}, reason
 }
 func (s *Service) Execute(ctx context.Context, p Principal, surface Surface, request Request) (Snapshot, error) {
+	return s.execute(ctx, p, surface, request, nil)
+}
+
+// ExecuteManaged preserves request identity while requiring independent activation authority.
+func (s *Service) ExecuteManaged(ctx context.Context, p Principal, surface Surface, request Request, guard ActivationGuard) (Snapshot, error) {
+	if guard == nil {
+		return Snapshot{}, ErrInvalid
+	}
+	return s.execute(ctx, p, surface, request, guard)
+}
+func (s *Service) execute(ctx context.Context, p Principal, surface Surface, request Request, guard ActivationGuard) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || s.halted {
@@ -173,12 +199,18 @@ func (s *Service) Execute(ctx context.Context, p Principal, surface Surface, req
 		return Snapshot{}, ErrInvalid
 	}
 	switch request.Operation {
-	case OpStatus, OpStage, OpValidate, OpCommit, OpConfirm, OpSave, OpRecover, OpRevoke:
+	case OpStatus, OpStage, OpValidate, OpCommit, OpConfirm, OpSave, OpRecover, OpRevoke, OpRollback:
 	default:
 		return s.reject(p, surface, "unknown", ErrInvalid)
 	}
 	if !s.authorized(p, request.Operation) {
 		return s.reject(p, surface, request.Operation, ErrDenied)
+	}
+	if guard != nil && request.Operation == OpStatus && (request.Key != "" || request.ExpectedGeneration != 0 || request.Config != nil || request.ConfirmFor != 0 || request.Target != "") {
+		return s.reject(p, surface, request.Operation, ErrInvalid)
+	}
+	if guard != nil && (request.Operation == OpCommit || request.Operation == OpRollback) && request.ConfirmFor != 0 && (request.ConfirmFor < 30*time.Second || request.ConfirmFor > 120*time.Second) {
+		return s.reject(p, surface, request.Operation, ErrInvalid)
 	}
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
@@ -224,6 +256,11 @@ func (s *Service) Execute(ctx context.Context, p Principal, surface Surface, req
 	}
 	if s.state.Snapshot.Pending != nil && request.Operation != OpConfirm && request.Operation != OpRevoke && !(request.Operation == OpRecover && s.state.Snapshot.RecoveryRequired) {
 		return s.reject(p, surface, request.Operation, ErrPending)
+	}
+	if guard != nil {
+		if err := s.managedRequest(p, request); err != nil {
+			return s.reject(p, surface, request.Operation, err)
+		}
 	}
 	if request.Operation != OpRecover && !s.consistent() {
 		s.state.Snapshot.RecoveryRequired = true
@@ -278,8 +315,11 @@ func (s *Service) Execute(ctx context.Context, p Principal, surface Surface, req
 		if request.ConfirmFor > 0 {
 			s.deadline = time.Now().Add(request.ConfirmFor)
 			pending = &Pending{Owner: p.ID, Previous: s.state.Snapshot.Running, Deadline: s.deadline.UTC()}
+			if guard != nil {
+				pending.Lease = request.Key
+			}
 		}
-		err = s.transition(ctx, candidate.Revision, p.ID, surface, OpCommit, pending, false, key, fingerprint)
+		err = s.transitionGuarded(ctx, candidate.Revision, p.ID, surface, OpCommit, pending, false, key, fingerprint, guard, request.Key)
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -305,6 +345,20 @@ func (s *Service) Execute(ctx context.Context, p Principal, surface Surface, req
 			err = ErrInvalid
 			break
 		}
+		if guard != nil {
+			if pending.Lease == "" {
+				return Snapshot{}, ErrRecovery
+			}
+			if err = guard.Confirm(ctx, pending.Lease, request.Target); err != nil {
+				return s.snapshot(), err
+			}
+			if !time.Now().Before(s.deadline) {
+				if err = s.expire(); err != nil {
+					return Snapshot{}, err
+				}
+				return s.snapshot(), ErrExpired
+			}
+		}
 		s.state.Snapshot.Pending = nil
 		s.state.Snapshot.LastGood = s.state.Snapshot.Running
 	case OpSave:
@@ -313,6 +367,22 @@ func (s *Service) Execute(ctx context.Context, p Principal, surface Surface, req
 			break
 		}
 		s.state.Snapshot.Startup = s.state.Snapshot.Running
+	case OpRollback:
+		if request.Config != nil || request.ConfirmFor != 0 || !validHash(request.Target) {
+			err = ErrInvalid
+			break
+		}
+		target, found := s.historical(request.Target)
+		if !found {
+			err = ErrInvalid
+			break
+		}
+		err = s.transitionGuarded(ctx, target, p.ID, surface, OpRollback, nil, false, key, fingerprint, guard, request.Key)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		s.armTimer()
+		return s.snapshot(), nil
 	case OpRecover:
 		if request.Config != nil || request.Target != "" || request.ConfirmFor != 0 {
 			err = ErrInvalid
@@ -378,6 +448,9 @@ func (s *Service) hookAt(point string) error {
 	return nil
 }
 func (s *Service) transition(ctx context.Context, target Revision, actor string, surface Surface, operation string, pending *Pending, critical bool, key, fingerprint string) error {
+	return s.transitionGuarded(ctx, target, actor, surface, operation, pending, critical, key, fingerprint, nil, "")
+}
+func (s *Service) transitionGuarded(ctx context.Context, target Revision, actor string, surface Surface, operation string, pending *Pending, critical bool, key, fingerprint string, guard ActivationGuard, lease string) error {
 	before := clone(s.state)
 	previous := clone(s.state.Snapshot.Running)
 	if s.state.Snapshot.RecoveryRequired {
@@ -415,12 +488,28 @@ func (s *Service) transition(ctx context.Context, target Revision, actor string,
 	if err := s.hookAt("after_intent"); err != nil {
 		return err
 	}
+	if guard != nil {
+		ttl := 120 * time.Second
+		if pending != nil {
+			ttl = time.Until(s.deadline)
+			// Preserve the remaining lifetime after durable intent. Extending it
+			// would also extend effective access if this process then stopped.
+		}
+		if err := guard.Arm(ctx, lease, previous, target, ttl); err != nil {
+			return s.compensate(previous, actor, surface, operation)
+		}
+	}
 	for _, engine := range s.engines {
 		if err := engine.Apply(ctx, clone(target)); err != nil || engine.Current() != target.Hash {
 			return s.compensate(previous, actor, surface, operation)
 		}
 		if err := s.hookAt("after_apply:" + engine.Name()); err != nil {
 			return err
+		}
+	}
+	if guard != nil && pending == nil {
+		if err := guard.Confirm(ctx, lease, target.Hash); err != nil {
+			return s.compensate(previous, actor, surface, operation)
 		}
 	}
 	if err := s.hookAt("before_receipt"); err != nil {

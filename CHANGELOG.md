@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — authenticated firewall administration laboratory
+
+- Add a shared schema for ordered IPv4 TCP/UDP rules and strict kernel readback.
+- Add authenticated HTTPS administration, CLI commands and a localized Web editor
+  using the existing Light/Dark Design System and unchanged official logo.
+- Reuse the transactional engine with independent helper leases, explicit save,
+  historical rollback, audit and fail-closed recovery after uncertain publication.
+- Keep privileged operations in an isolated namespace helper with separate
+  operator/runtime identities, bounded HTTP admission and supervised cleanup.
+- Add unit, fault, race and visual regression coverage plus EN/ES/PT procedures.
+
 ## Unreleased — nftables laboratory adapter
 
 - Add a typed immutable fixture catalog, strict JSON compilation/readback and

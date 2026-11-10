@@ -4,6 +4,7 @@ import type { Locale, Messages } from './messages.js';
 import { applyTheme, parseTheme, readTheme, saveTheme } from './preferences.js';
 import { Button, DataTable, Dialog, Field, FilterBar, HelpTip, Legend, Navigation, Notice, StatusBadge, Surface, TextInput } from './design-system/components.js';
 import type { Tone } from './design-system/components.js';
+import { FirewallPage } from './firewall/FirewallPage.js';
 
 function GridIcon() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>;
@@ -74,6 +75,11 @@ function ComponentLibrary({ copy }: { copy: Messages }) {
 }
 
 export function App({ initialLocale = 'en' }: { initialLocale?: Locale }) {
+  if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/firewall') return <FirewallPage initialLocale={initialLocale} />;
+  return <DevelopmentApp initialLocale={initialLocale} />;
+}
+
+function DevelopmentApp({ initialLocale = 'en' }: { initialLocale?: Locale }) {
   const [locale, setLocale] = useState<Locale>(initialLocale);
   const [theme, setTheme] = useState(readTheme);
   const [view, setView] = useState<'overview' | 'components'>('overview');
