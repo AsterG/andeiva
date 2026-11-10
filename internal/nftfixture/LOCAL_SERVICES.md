@@ -53,3 +53,80 @@ go vet ./internal/nftfixture
 Command-plan and parser tests do not execute namespace changes. Real traffic,
 kernel readback, resource measurements and failure recovery require the authorized
 Debian 13 laboratory and must be recorded separately.
+
+## Typed process handoff
+
+`LaunchLocalAPI`, `LaunchLocalHelper` and `LaunchLocalProbe` are additive laboratory
+launchers. They accept already-open descriptors from the root supervisor, not
+paths, shell strings or administrator-selected executables. They return only
+after starting the fixed role of the already-validated executable. The API uses
+the fixture's UID/GID; the helper requires a different non-root UID and GID and
+receives only NET_ADMIN. Probes have no capabilities and enter only source/sink.
+The existing forwarding and echo launchers keep their previous contract.
+
+| Role | FD3 | FD4 | FD5 | FD6 | FD7 | FD8 |
+| --- | --- | --- | --- | --- | --- | --- |
+| API | Gateway namespace | LAN recovery TCP | Loopback recovery TCP | Transaction stream | Listener stream | Bootstrap pipe |
+| Helper | Gateway namespace | Transaction stream | Listener stream | Collector stream | Bootstrap pipe | None |
+| Probe | Selected client namespace | Bootstrap pipe | None | None | None | None |
+
+Control descriptors must be connected Unix stream sockets; bootstrap must be the
+read end of a pipe. Aliased descriptors, wrong types and missing slots are rejected.
+Recovery descriptors must already listen on explicit, non-wildcard addresses and
+ports above 1023. FD4 must not be loopback; FD5 must be loopback. The runtime must
+separately validate the approved host interface, exact tuple, TLS and source ACL
+before handing them over. The fixture does not authorize a LAN address, open that
+host socket or change the host firewall.
+
+The caller owns every supplied file. Successful `exec` duplicates the fixed map;
+close the parent's child-side copies after launch while retaining any independent
+recovery originals. Create all parent descriptors close-on-exec so no unrelated
+file or secret channel can leak outside that map. Do not retain unnecessary
+writers that prevent EOF. Fixture
+cleanup retains and stops only its own processes and namespace descriptors.
+
+Each child must call `GuardLocalAPI`, `GuardLocalHelper` or `GuardLocalProbe`
+before opening or consuming inherited files. Guards check every required slot
+before any `/proc` open, namespace type and identity, the root parent, exact
+UID/GID/capability envelope, no-new-privileges, empty supplementary groups and
+root-owned descriptors. Unix peer credentials identify the supervisor that
+created the socketpair; the higher-level channel still pins the actual peer role,
+run, instance and generation. No guard substitutes for channel authorization.
+
+The probe runner must bound and strictly decode its bootstrap, restrict all
+destinations and operations to the fixed fixture and verify real HTTPS/SSH peer
+identity. A typed process launch alone is not an authenticated traffic test.
+Command-plan and descriptor tests run without privileges and do not establish
+native isolation, recovery or resource usage. Those remain Debian acceptance gates.
+
+### Español
+
+Los nuevos launchers aceptan descriptores ya abiertos por el supervisor root,
+nunca rutas o comandos del administrador. API y helper usan UID/GID distintos;
+sólo el helper recibe NET_ADMIN. La tabla define posiciones fijas: sockets Unix
+conectados, bootstrap por pipe de lectura y recuperación TCP en direcciones
+explícitas. El runtime valida interfaz LAN autorizada, puerto, TLS y orígenes.
+No se abren sockets del host ni se modifica su firewall desde este componente.
+
+El padre conserva la propiedad de los archivos y cierra las copias para hijos
+después del lanzamiento. Cada hijo ejecuta su guard antes de abrir archivos o
+leer bootstrap; se rechazan slots ausentes, tipos incorrectos, alias y privilegios
+excesivos. Las pruebas sin privilegios no demuestran aislamiento ni recuperación
+en Debian. Los probes reales deben validar certificados o claves SSH y limitarse
+a los destinos de la fixture.
+
+### Português
+
+Os novos launchers recebem descritores já abertos pelo supervisor root, nunca
+caminhos ou comandos do administrador. API e helper usam UID/GID distintos;
+somente o helper recebe NET_ADMIN. A tabela fixa as posições: sockets Unix
+conectados, bootstrap por pipe de leitura e recuperação TCP em endereços explícitos.
+O runtime valida interface LAN autorizada, porta, TLS e origens. Este componente
+não abre sockets do host nem modifica seu firewall.
+
+O pai mantém a propriedade dos arquivos e fecha as cópias destinadas aos filhos
+após iniciar os processos. Cada filho executa seu guard antes de abrir arquivos
+ou ler bootstrap; slots ausentes, tipos incorretos, aliases e privilégios excessivos
+são rejeitados. Testes sem privilégios não comprovam isolamento ou recuperação
+no Debian. Probes reais devem validar certificados ou chaves SSH e limitar-se aos
+destinos da fixture.

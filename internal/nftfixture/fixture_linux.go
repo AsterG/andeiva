@@ -233,7 +233,14 @@ func (f *Fixture) checked(role string) (*namespace, error) {
 }
 
 func (f *Fixture) command(ctx context.Context, role, binary string, args []string, peer string, unprivileged, netAdmin bool) (*exec.Cmd, error) {
+	return f.commandWithIdentity(ctx, role, binary, args, peer, unprivileged, netAdmin, f.uid, f.gid)
+}
+
+func (f *Fixture) commandWithIdentity(ctx context.Context, role, binary string, args []string, peer string, unprivileged, netAdmin bool, uid, gid uint32) (*exec.Cmd, error) {
 	if !f.allowedCommand(role, binary, args, peer, unprivileged, netAdmin) {
+		return nil, errors.New("ANDEIVA_NFT_FIXTURE_COMMAND_DENIED")
+	}
+	if (uid != f.uid || gid != f.gid) && (!f.localOnly || !unprivileged || !netAdmin || !validLocalIdentity(uid, gid) || uid == f.uid || gid == f.gid) {
 		return nil, errors.New("ANDEIVA_NFT_FIXTURE_COMMAND_DENIED")
 	}
 	ns, err := f.checked(role)
@@ -242,7 +249,7 @@ func (f *Fixture) command(ctx context.Context, role, binary string, args []strin
 	}
 	argv := []string{"--net=/proc/self/fd/3", "--"}
 	if unprivileged {
-		argv = append(argv, privilegeArgs(f.uid, f.gid, netAdmin)...)
+		argv = append(argv, privilegeArgs(uid, gid, netAdmin)...)
 	}
 	argv = append(argv, binary)
 	argv = append(argv, args...)

@@ -50,6 +50,9 @@ func (f *Fixture) allowedLocalCommand(role string, args []string) bool {
 		}
 		return slices.Equal(args, []string{"--local-services", strconv.FormatUint(f.host, 10), strconv.Itoa(os.Getpid())})
 	}
+	if (role == "source" || role == "sink") && slices.Equal(args, []string{"--local-probe", strconv.FormatUint(f.host, 10), strconv.Itoa(os.Getpid()), role}) {
+		return true
+	}
 	p, host, err := parseLocalProbe(args)
 	return err == nil && host == f.host && role == p.Side
 }
