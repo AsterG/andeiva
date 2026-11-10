@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Button, DataTable, Field, StatusBadge, TextInput } from '../design-system/components.js';
 import type { Locale } from '../messages.js';
@@ -8,10 +8,11 @@ import type { FirewallState, Rule } from './model.js';
 import { matchesRuleSearch, ruleChange, sameRuleAtPosition } from './rulePresentation.js';
 import { ruleTableMessages } from './ruleTableMessages.js';
 
-type Drag = { from: number; to: number; id: string; pointer?: number; y?: number };
+type Drag = { from: number; to: number; id: string; rules: Rule[]; generation: number; view: string; pointer?: number; y?: number };
 
-export function RuleTable({ controls, rules, reference, state, locale, copy, editable, reorderable, showCounters, verified, editing, supportsEnabled, onToggle, onMove, onEdit, onRemove }: {
+export function RuleTable({ controls, view, rules, reference, state, locale, copy, editable, reorderable, showCounters, verified, editing, supportsEnabled, onToggle, onMove, onEdit, onRemove }: {
   controls: ReactNode;
+  view: string;
   rules: Rule[]; reference: Rule[] | undefined; state: FirewallState; locale: Locale; copy: FirewallMessages; editable: boolean; reorderable: boolean;
   showCounters: boolean; verified: boolean; editing: boolean; supportsEnabled: boolean; onToggle: (index: number, enabled: boolean) => void; onMove: (from: number, to: number) => void; onEdit: (index: number) => void; onRemove: (index: number) => void;
 }) {
@@ -27,6 +28,17 @@ export function RuleTable({ controls, rules, reference, state, locale, copy, edi
   const canMove = reorderable && !filtered && !editing && rules.length > 1;
   const visible = rules.map((rule, index) => ({ rule, index })).filter(({ rule }) => matchesRuleSearch(rule, query) && (action === 'all' || rule.action === action));
 
+  // A gesture belongs to one editable snapshot. Refreshes and view changes invalidate its indices.
+  useLayoutEffect(() => {
+    const current = activeDrag.current;
+    if (!current) return;
+    activeDrag.current = null; setDrag(null); setAnnouncement(labels.cancelled);
+    if (current.pointer !== undefined) {
+      const handle = [...(root.current?.querySelectorAll<HTMLButtonElement>('[data-rule-handle]') ?? [])].find((element) => element.dataset.ruleHandle === current.id);
+      if (handle?.hasPointerCapture(current.pointer)) handle.releasePointerCapture(current.pointer);
+    }
+  }, [rules, state.snapshot.generation, view, canMove, labels.cancelled]);
+
   function updateDrag(next: Drag | null) { activeDrag.current = next; setDrag(next); }
   function targetAt(y: number): number | undefined {
     const rows = [...(root.current?.querySelectorAll<HTMLElement>('tr[data-rule-position]') ?? [])];
@@ -39,7 +51,7 @@ export function RuleTable({ controls, rules, reference, state, locale, copy, edi
     const current = activeDrag.current;
     updateDrag(null);
     if (!current) return;
-    if (!cancel && canMove && rules[current.from]?.id === current.id) {
+    if (!cancel && canMove && current.rules === rules && current.generation === state.snapshot.generation && current.view === view && rules[current.from]?.id === current.id) {
       onMove(current.from, current.to);
       setAnnouncement(`${labels.placed} ${current.id}: ${current.to + 1} / ${rules.length}`);
     } else setAnnouncement(labels.cancelled);
@@ -95,7 +107,7 @@ export function RuleTable({ controls, rules, reference, state, locale, copy, edi
             if (event.key === ' ' || event.key === 'Enter') {
               event.preventDefault();
               if (drag?.id === rule.id) finish();
-              else { const next = { from: index, to: index, id: rule.id }; updateDrag(next); announceDrag(next); }
+              else { const next = { from: index, to: index, id: rule.id, rules, generation: state.snapshot.generation, view }; updateDrag(next); announceDrag(next); }
               return;
             }
             if (drag?.id !== rule.id || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
@@ -106,7 +118,7 @@ export function RuleTable({ controls, rules, reference, state, locale, copy, edi
           }} onBlur={() => { if (activeDrag.current?.pointer === undefined) finish(true, false); }} onPointerDown={(event) => {
             if (!canMove || !event.isPrimary || event.button !== 0) return;
             event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
-            const next = { from: index, to: index, id: rule.id, pointer: event.pointerId, y: event.clientY }; updateDrag(next); announceDrag(next);
+            const next = { from: index, to: index, id: rule.id, rules, generation: state.snapshot.generation, view, pointer: event.pointerId, y: event.clientY }; updateDrag(next); announceDrag(next);
           }} onPointerMove={(event) => {
             const current = activeDrag.current;
             if (current?.pointer !== event.pointerId) return;

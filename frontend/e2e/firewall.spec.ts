@@ -345,3 +345,28 @@ test('rule handle autoscrolls a bounded policy and restores keyboard focus on ca
   expect(new Set(ids).size).toBe(20);
   expect(mock.transactions).toEqual([]);
 });
+
+
+test('late pointer release cannot reorder a refreshed snapshot', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  const rules = ['first', 'second', 'third'].map((id) => ({ id, action: 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: 443, to: 443 } } }));
+  mock.state().snapshot.running.config.rules = rules;
+  mock.state().snapshot.startup.config.rules = structuredClone(rules);
+  await page.goto('/firewall');
+  const handle = page.getByRole('button', { name: 'Reorder: first', exact: true });
+  await handle.scrollIntoViewIfNeeded();
+  const from = await handle.boundingBox(); const to = await page.getByRole('button', { name: 'Reorder: third', exact: true }).boundingBox();
+  if (!from || !to) throw new Error('Drag geometry unavailable');
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2); await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 5 });
+  await expect(handle).toHaveAttribute('aria-pressed', 'true');
+  mock.state().snapshot.generation++;
+  mock.state().snapshot.running.config.rules = [rules[0]!, rules[2]!, rules[1]!];
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).evaluate((button) => button.click());
+  await expect(page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link')).toHaveText(['first', 'third', 'second']);
+  await expect(handle).toHaveAttribute('aria-pressed', 'false');
+  await page.mouse.up();
+  await expect(page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link')).toHaveText(['first', 'third', 'second']);
+  await expect(page.getByRole('button', { name: 'Stage candidate', exact: true })).toBeDisabled();
+  expect(mock.transactions).toEqual([]);
+});
