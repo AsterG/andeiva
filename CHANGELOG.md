@@ -8,6 +8,15 @@
 - Detect observable changes between readings and cover invalid observations,
   cancellation and concurrency. Administrative integration remains separate.
 
+## Unreleased — internal checkpoint preparation
+
+- Prepare two validated checkpoint images and an atomic selection manifest in a
+  separate private area while retaining the authoritative v1 journal and receipts.
+- Refuse unsafe or overlapping workspaces and verify the originally synchronized
+  file before publication. Add interruption, process-exit and corruption tests.
+- Keep preparation disconnected from runtime mutations; compaction, migration,
+  protected-history reclamation and storage continuity remain separate work.
+
 ## Unreleased — experimental offline boot dependency bundle
 
 - Add a development-only Debian 13 AMD64 bundle builder and offline verifier,
