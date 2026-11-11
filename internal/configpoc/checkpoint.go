@@ -163,7 +163,10 @@ func (s *Service) prepareCheckpoint(area *os.Root, options checkpointOptions) (r
 	if _, err := area.Lstat(name); !os.IsNotExist(err) {
 		return ErrStorage
 	}
-	if err := area.Rename(checkpointTemporaryName, name); err != nil {
+	if err := checkpointPoint(options.hook, "after_image_destination_check"); err != nil {
+		return err
+	}
+	if err := publishCheckpointImage(area, name); err != nil {
 		return ErrStorage
 	}
 	if err := checkpointPoint(options.hook, "after_image_publish"); err != nil {

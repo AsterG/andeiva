@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — checkpoint publication safety
+
+- Publish checkpoint images atomically without replacing an existing destination,
+  including one created after the initial existence check.
+- Refuse unsupported no-replace operations and preserve staging data and the
+  previously selected checkpoint on publication conflicts.
+
 ## Unreleased — internal checkpoint preparation
 
 - Prepare two validated checkpoint images and an atomic selection manifest in a

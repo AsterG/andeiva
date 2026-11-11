@@ -14,6 +14,13 @@ descriptor is required. The live journal inode, aliases, unrecognized entries,
 links, inappropriate ownership/permissions and oversized files are refused before
 checkpoint publication. The two fixed image names are never overwritten.
 
+Linux image publication uses `renameat2(RENAME_NOREPLACE)` relative to a verified
+workspace directory descriptor. A competing destination created after the
+existence guard is preserved, including a symlink; unsupported kernel/filesystem
+operations are refused without a replacing-rename fallback. Owner, temporary and
+previous-manifest creation use exclusive writes. Only selecting the current
+manifest intentionally replaces its prior selection through atomic rename.
+
 The image contains the complete validated state, unchanged v1 receipts, original
 journal sequence/tip hash and an ownership binding derived from the registered
 source journal. Every source record is revalidated in sequence without retaining

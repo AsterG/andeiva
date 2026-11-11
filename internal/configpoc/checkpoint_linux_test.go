@@ -140,7 +140,7 @@ func TestCheckpointPreservesPendingConfirmationAndIntent(t *testing.T) {
 }
 
 func TestCheckpointInterruptionKeepsSelectedPairAndJournal(t *testing.T) {
-	points := []string{"after_image_create", "after_image_partial_write", "before_image_sync", "after_image_sync", "before_image_publish", "after_image_publish", "before_image_directory_sync", "after_image_directory_sync", "after_previous_manifest_create", "after_previous_manifest_partial_write", "before_previous_manifest_sync", "after_previous_manifest_sync", "before_previous_manifest_directory_sync", "after_previous_manifest_directory_sync", "after_manifest_create", "after_manifest_partial_write", "before_manifest_sync", "after_manifest_sync", "before_manifest_select", "after_manifest_select", "before_selection_directory_sync", "after_selection_directory_sync"}
+	points := []string{"after_image_create", "after_image_partial_write", "before_image_sync", "after_image_sync", "before_image_publish", "after_image_destination_check", "after_image_publish", "before_image_directory_sync", "after_image_directory_sync", "after_previous_manifest_create", "after_previous_manifest_partial_write", "before_previous_manifest_sync", "after_previous_manifest_sync", "before_previous_manifest_directory_sync", "after_previous_manifest_directory_sync", "after_manifest_create", "after_manifest_partial_write", "before_manifest_sync", "after_manifest_sync", "before_manifest_select", "after_manifest_select", "before_selection_directory_sync", "after_selection_directory_sync"}
 	for _, point := range points {
 		t.Run(point, func(t *testing.T) {
 			s, _, dir := fixture(t, Options{})
