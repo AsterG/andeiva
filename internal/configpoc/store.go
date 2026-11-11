@@ -1,7 +1,6 @@
 package configpoc
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -33,12 +32,14 @@ type journalRecord struct {
 	Hash     string       `json:"hash"`
 }
 type fileStore struct {
-	dir     string
-	lock    *os.File
-	records []journalRecord
-	bytes   int64
-	limit   int
-	owner   []byte
+	dir        string
+	lock       *os.File
+	records    []recordMetadata
+	latest     durableState
+	readFailed bool
+	bytes      int64
+	limit      int
+	owner      []byte
 }
 
 func openStore(dir string, limit int) (*fileStore, error) {
@@ -111,24 +112,20 @@ func (s *fileStore) load() (result error) {
 		if s.bytes > maxJournalBytes || entry.Name() != fmt.Sprintf("%08d.json", len(s.records)+1) {
 			return ErrStorage
 		}
-		data, err := root.ReadFile(entry.Name())
-		if err != nil {
-			return ErrStorage
-		}
-		var record journalRecord
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if decoder.Decode(&record) != nil || decoder.Decode(new(any)) != io.EOF {
-			return ErrStorage
-		}
 		previous := ""
 		if len(s.records) > 0 {
 			previous = s.records[len(s.records)-1].Hash
 		}
-		if record.Previous != previous || record.Audit.Sequence != uint64(len(s.records)+1) || record.Hash != recordHash(record) || !validState(record.State) {
-			return ErrStorage
+		data, verified, err := readRecordData(root, uint64(len(s.records)+1), info)
+		if err != nil {
+			return err
 		}
-		s.records = append(s.records, record)
+		record, err := decodeRecord(data, uint64(len(s.records)+1), previous, "")
+		if err != nil {
+			return err
+		}
+		s.records = append(s.records, metadata(record, verified))
+		s.latest = record.State
 		if len(s.records) > s.limit {
 			return ErrStorage
 		}
@@ -221,6 +218,11 @@ func (s *fileStore) append(state durableState, audit Audit, critical bool, hook 
 	if !s.capacity(reserve) {
 		return ErrStorage
 	}
+	// Keep critical recovery available after a failed historical read. Ordinary
+	// writes cannot extend a journal whose integrity is no longer established.
+	if s.readFailed && !critical {
+		return ErrStorage
+	}
 	previous := ""
 	if len(s.records) > 0 {
 		previous = s.records[len(s.records)-1].Hash
@@ -305,7 +307,12 @@ func (s *fileStore) append(state durableState, audit Audit, critical bool, hook 
 	if err = syncDirectory(root, stagingDirectory); err != nil {
 		return err
 	}
-	s.records = append(s.records, record)
+	info, err := root.Lstat(final)
+	if err != nil || !regularOwned(info, maxRecordBytes) || !os.SameFile(created, info) || info.Size() != int64(len(data)) {
+		return ErrStorage
+	}
+	s.records = append(s.records, metadata(record, info))
+	s.latest = record.State
 	s.bytes += int64(len(data))
 	return nil
 }

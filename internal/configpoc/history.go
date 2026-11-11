@@ -6,14 +6,18 @@ type RevisionEntry struct {
 	Revision Revision `json:"revision"`
 }
 
-func (s *Service) historical(hash string) (Revision, bool) {
+func (s *Service) historical(hash string) (Revision, bool, error) {
 	for i := len(s.store.records) - 1; i >= 0; i-- {
 		r := s.store.records[i]
-		if r.State.Intent == nil && r.State.Snapshot.Pending == nil && !r.State.Snapshot.RecoveryRequired && r.State.Snapshot.Running.Hash == hash {
-			return clone(r.State.Snapshot.Running), true
+		if r.confirmed && r.runningHash == hash {
+			record, err := s.store.read(uint64(i + 1))
+			if err != nil {
+				return Revision{}, false, err
+			}
+			return clone(record.State.Snapshot.Running), true, nil
 		}
 	}
-	return Revision{}, false
+	return Revision{}, false, nil
 }
 
 // Revisions returns newest distinct confirmed Running revisions. Candidate and
@@ -34,18 +38,23 @@ func (s *Service) Revisions(p Principal, before uint64, limit int) ([]RevisionEn
 	out := []RevisionEntry{}
 	for i := len(s.store.records) - 1; i >= 0 && len(out) < limit; i-- {
 		r := s.store.records[i]
-		if r.State.Intent != nil || r.State.Snapshot.Pending != nil || r.State.Snapshot.RecoveryRequired {
+		if !r.confirmed {
 			continue
 		}
-		hash := r.State.Snapshot.Running.Hash
+		hash := r.runningHash
 		if seen[hash] {
 			continue
 		}
 		seen[hash] = true
-		if before != 0 && r.Audit.Sequence >= before {
+		sequence := uint64(i + 1)
+		if before != 0 && sequence >= before {
 			continue
 		}
-		out = append(out, RevisionEntry{r.Audit.Sequence, clone(r.State.Snapshot.Running)})
+		record, err := s.store.read(sequence)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, RevisionEntry{sequence, clone(record.State.Snapshot.Running)})
 	}
 	return out, nil
 }

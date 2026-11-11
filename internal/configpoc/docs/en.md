@@ -2,6 +2,30 @@
 
 [Español](es.md) · [Português](pt.md) · [Design and acceptance matrix](../README.md)
 
+## Verified journal reads
+
+Startup still validates every committed record. The store keeps lightweight
+metadata, validated audit and the latest durable state. Audit copies come from
+open/append validation as before; they do not revalidate later disk changes.
+Historical configuration queries read bounded records and
+verify file identity, permissions, ownership, size, sequence and hashes. A changed
+or missing record returns a storage error without a partial page. No receipt is
+expired or evicted from the persisted v1 state. Exact replay retains the current
+Snapshot plus original ReplayedGeneration behavior, authorization and body binding.
+
+No format migration, history deletion, checkpoint or compaction is implemented.
+Detected historical-read corruption blocks new mutations, including Confirm/Recover,
+until a valid reopen; status reports recovery required. An existing pending timeout
+keeps its automatic safety rollback and original persistence requirements. Deleting
+records or resetting the store is not recovery.
+Limits remain 1,024 receipts, default 2,048 records, 64 MiB journal/1 MiB per record.
+Ordinary service resume still writes its existing recovery records. This prepares
+lower-memory reading, not full-disk recovery or 5,000 complete transaction cycles.
+Use the checks below; resource results must identify dataset, toolchain and whether
+they measure retained heap, allocations or process RSS.
+Legacy audit strings have no individual byte cap; fixture results are not a
+universal heap ceiling.
+
 This guide is for a trusted local development environment. The experiment changes
 temporary configuration files and simulated component state. It does not configure
 a real firewall, proxy, network interface or production ANDEIVA service. No root
