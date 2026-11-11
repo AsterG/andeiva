@@ -120,8 +120,9 @@ func (m *Manager) login(source netip.Addr, name, credential string, legacy bool)
 		return Identity{}, "", ErrUnavailable
 	}
 	now := m.now()
-	// The compatible internal entry point shares the anonymous budget rather
-	// than creating an additional allowance. Network transports use LoginFrom.
+	// Every legacy attempt shares the anonymous gate. A successful credential
+	// must also obey the verified gate below; this entry point cannot create
+	// another verified-login allowance. Network transports use LoginFrom.
 	if legacy && !m.admission.anonymous.allow(now) {
 		return Identity{}, "", ErrLimited
 	}

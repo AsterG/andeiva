@@ -83,6 +83,45 @@ func TestAnonymousGlobalBudgetAndLegacyEntryPointShareAllowance(t *testing.T) {
 	}
 }
 
+func TestVerifiedBudgetIncludesLegacyCredentialSuccess(t *testing.T) {
+	m, secret, events, clock := frozenManager(t)
+	source := netip.MustParseAddr("198.18.0.1")
+	if _, _, err := m.Login("alice", secret); err != nil {
+		t.Fatal("legacy credential rejected", err)
+	}
+	for i := 1; i < loginAttemptsPerSecond; i++ {
+		if _, _, err := m.LoginFrom(source, "alice", secret); err != nil {
+			t.Fatal("shared verified allowance exhausted early", err)
+		}
+	}
+	if _, _, err := m.LoginFrom(source, "alice", secret); !errors.Is(err, ErrLimited) {
+		t.Fatal("legacy success did not consume the shared verified allowance", err)
+	}
+	if _, _, err := m.Login("alice", secret); !errors.Is(err, ErrLimited) {
+		t.Fatal("legacy entry point created another verified allowance", err)
+	}
+	if len(m.sessions) != loginAttemptsPerSecond || len(*events) != loginAttemptsPerSecond {
+		t.Fatal("limited login created a session or audit event")
+	}
+	*clock = clock.Add(time.Second)
+	for i := 0; i < loginAttemptsPerSecond; i++ {
+		if _, _, err := m.Login("alice", "invalid"); !errors.Is(err, ErrDenied) {
+			t.Fatal("anonymous legacy attempt was not denied", err)
+		}
+	}
+	for i := 0; i < loginAttemptsPerSecond; i++ {
+		if _, _, err := m.LoginFrom(source, "alice", secret); err != nil {
+			t.Fatal("invalid legacy credentials consumed verified allowance", err)
+		}
+	}
+	if _, _, err := m.LoginFrom(source, "alice", secret); !errors.Is(err, ErrLimited) {
+		t.Fatal("refilled verified allowance exceeded", err)
+	}
+	if len(m.sessions) != 2*loginAttemptsPerSecond || len(*events) != 3*loginAttemptsPerSecond {
+		t.Fatal("unexpected session or audit counts across admission windows")
+	}
+}
+
 func TestLoginOriginNormalizationAndIPv6(t *testing.T) {
 	m, _, _, _ := frozenManager(t)
 	for _, source := range []netip.Addr{netip.MustParseAddr("::ffff:198.18.0.1"), netip.MustParseAddr("198.18.0.1")} {

@@ -52,9 +52,17 @@ func (c peerConnection) RemoteAddr() net.Addr { return c.peer }
 // The injected connection metadata is invalid while the SSH byte transport is
 // real. A correct username and credential cannot replace the transport peer.
 func TestSSHInvalidConnectionPeerCannotAuthenticate(t *testing.T) {
-	for _, peer := range []net.Addr{nil, peerAddress("not-an-address"), peerAddress("[fe80::1%src0]:1234"), peerAddress("224.0.0.1:1234")} {
-		t.Run("invalid-peer", func(t *testing.T) {
-			h := newHarness(t, "admin", nil, func(listener net.Listener, _ *testAudit) net.Listener { return peerListener{listener, peer} })
+	for _, test := range []struct {
+		name string
+		peer net.Addr
+	}{
+		{"missing-peer", nil},
+		{"malformed-address", peerAddress("not-an-address")},
+		{"scoped-ipv6", peerAddress("[fe80::1%src0]:1234")},
+		{"multicast-ipv4", peerAddress("224.0.0.1:1234")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t, "admin", nil, func(listener net.Listener, _ *testAudit) net.Listener { return peerListener{listener, test.peer} })
 			client, err := ssh.Dial("tcp", h.address, h.config())
 			if err == nil {
 				_ = client.Close()

@@ -11,6 +11,8 @@
 
 ## Unreleased — bounded login admission
 
+- Clarify the shared verified-login allowance for valid compatibility logins;
+  cover mixed entry points and give invalid SSH peer cases distinct test names.
 - Separate anonymous and verified login allowances using the receiving HTTP/SSH
   socket peer, a fixed origin table and unchanged required audit/session controls.
 - Preserve verified access under anonymous allowance exhaustion, including a
