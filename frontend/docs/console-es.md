@@ -1,10 +1,27 @@
 # Consola administrativa
 
 Antes de autenticarte solo se muestra la pantalla de acceso, el logotipo original
-y los selectores de idioma y tema. Los menús y las vistas administrativas se
-montan tras validar una sesión vigente; se retiran al cerrar sesión, caducar o
-recibir un rechazo de sesión. Este límite de presentación complementa la
-autorización del servidor y no sustituye la autenticación ni el RBAC de la API.
+y el control Preferencias. Los menús y las vistas administrativas se montan tras
+validar una sesión vigente; se retiran al cerrar sesión, caducar o recibir un
+rechazo de sesión. Este límite de presentación complementa la autorización del
+servidor y no sustituye la autenticación ni el RBAC de la API.
+
+## Preferencias y cuenta en la cabecera
+
+Abre el engranaje de la esquina superior derecha para elegir Idioma o Apariencia.
+El tema inicial es Claro, independientemente del sistema operativo; el tema
+Oscuro elegido expresamente se guarda en este navegador. Estas preferencias no
+preparan ni aplican cambios de configuración.
+
+Tras iniciar sesión, abre el control con tu avatar/nombre junto al engranaje para
+consultar tu rol, la caducidad de la sesión o Cerrar sesión. Está separado de las
+acciones Candidate, Running y Startup. Actualizar estado permanece en la vista
+de configuración correspondiente; Sistema tiene su propia acción Actualizar
+información.
+
+Enter o Espacio abre el control de cabecera enfocado. Escape cierra su panel y
+devuelve el foco al control; un clic fuera también lo cierra. Los paneles usan
+semántica normal de formularios y diálogos, también en pantallas pequeñas.
 
 Abre la dirección HTTPS del appliance para entrar en la consola autenticada.
 `/firewall` sigue disponible. La navegación usa `#dashboard`, `#rules`, `#audit`,
@@ -18,7 +35,7 @@ ni conexiones individuales. GeoIP, tasas RX/TX por interfaz, CPU y memoria queda
 no disponibles si la API no proporciona esas observaciones. El mapa es geografía
 estática, sin flujos ni clasificaciones de países inventados.
 
-El editor lateral admite IPv4, TCP/UDP, rangos inclusivos de puertos de origen y
+El editor de reglas admite IPv4, TCP/UDP, rangos inclusivos de puertos de origen y
 destino, Permitir/Denegar y habilitación según las capacidades anunciadas. Los
 objetos reutilizables, grupos FQDN e identificación de aplicaciones aún no están
 disponibles. Cambiar de vista conserva el formulario y borrador local; cerrar la

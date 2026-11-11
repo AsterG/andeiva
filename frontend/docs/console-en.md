@@ -1,10 +1,26 @@
 # Administration console
 
-Before authentication, only the access screen, original logo, language and theme
-selectors are rendered. Administrative menus and views are mounted only after a
+Before authentication, only the access screen, original logo and Preferences
+control are rendered. Administrative menus and views are mounted only after a
 valid session is verified, and removed on logout, expiry or a rejected session.
 This presentation boundary complements server-side authorization; it does not
 replace API authentication or RBAC.
+
+## Header preferences and account
+
+Open the gear in the upper-right header to choose Language or Appearance. Light
+is the initial theme regardless of the operating system; an explicitly chosen
+Dark theme is saved in this browser. These preferences do not stage or apply
+configuration changes.
+
+After signing in, open the avatar/name control beside the gear to inspect your
+role and session expiry or choose Sign out. This control is separate from
+Candidate, Running and Startup actions. Refresh status remains with the relevant
+configuration view; System has its own Refresh information action.
+
+Enter or Space opens a focused header control. Escape closes its panel and
+returns focus to the control; clicking outside also dismisses it. The panels use
+normal form and dialog semantics, including on smaller screens.
 
 Open the appliance HTTPS address to enter the authenticated console. `/firewall`
 remains supported. Navigation uses `#dashboard`, `#rules`, `#audit`,

@@ -1,3 +1,4 @@
+import { selectLocale, selectTheme } from './headerHelpers.js';
 import { createHash } from 'node:crypto';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
@@ -18,7 +19,7 @@ test.describe('Turkish browser locale', () => {
         defaultLower: 'I'.toLocaleLowerCase(),
         invariantLower: 'I'.toLowerCase(),
       }))).toEqual({ language: 'tr-TR', locale: 'tr-TR', defaultLower: 'ı', invariantLower: 'i' });
-      await page.locator('#theme').selectOption(theme);
+      await selectTheme(page, theme);
       await page.getByTestId('nav-components').click();
       const examples = [
         { locale: 'en', interfaceQuery: 'interface', interfaceName: 'Interface preferences', validationName: 'Form validation', rowsWithI: ['Interface preferences', 'Documentation draft', 'Form validation', 'Component guidance'] },
@@ -26,7 +27,7 @@ test.describe('Turkish browser locale', () => {
         { locale: 'pt', interfaceQuery: 'interface', interfaceName: 'Preferências da interface', validationName: 'Validação do formulário', rowsWithI: ['Preferências da interface', 'Validação do formulário', 'Guia de componentes'] },
       ];
       for (const example of examples) {
-        await page.locator('#language').selectOption(example.locale);
+        await selectLocale(page, example.locale);
         await expect(page.locator('html')).toHaveAttribute('lang', example.locale);
         for (const [query, expected] of [
           [example.interfaceQuery, [example.interfaceName]],
@@ -86,14 +87,14 @@ test('light stays default when the operating system prefers dark', async ({ page
 
 test('manual theme preference persists without following the operating system', async ({ page }) => {
   await page.goto('/?view=design-system');
-  await page.locator('#theme').selectOption('dark');
+  await selectTheme(page, 'dark');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect(await page.evaluate((key) => localStorage.getItem(key), preferenceKey)).toBe('dark');
   await page.reload();
   await expect(page.locator('#theme')).toHaveValue('dark');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await page.locator('#theme').selectOption('light');
+  await selectTheme(page, 'light');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });
@@ -109,7 +110,7 @@ test('invalid or unavailable storage falls back safely to light', async ({ page 
   });
   await page.reload();
   await expect(page.locator('#theme')).toHaveValue('light');
-  await page.locator('#theme').selectOption('dark');
+  await selectTheme(page, 'dark');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
@@ -160,7 +161,7 @@ for (const theme of ['light', 'dark'] as const) {
 
   test(`${theme}: filters, local form feedback, menu and tooltip work`, async ({ page }) => {
     await page.goto('/?view=design-system');
-    await page.locator('#theme').selectOption(theme);
+    await selectTheme(page, theme);
     await page.getByTestId('nav-components').click();
     const table = page.getByRole('table');
     await expect(table.locator('tbody tr')).toHaveCount(4);
@@ -215,7 +216,7 @@ for (const theme of ['light', 'dark'] as const) {
   test(`${theme}: 320px reflow and 200 percent text remain usable`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 900 });
     await page.goto('/?view=design-system');
-    await page.locator('#theme').selectOption(theme);
+    await selectTheme(page, theme);
     await expectNoPageOverflow(page);
     await page.getByTestId('nav-components').click();
     await expectNoPageOverflow(page);
@@ -239,7 +240,7 @@ for (const theme of ['light', 'dark'] as const) {
 
   test(`${theme}: logo, responsive layout, semantics and both views`, async ({ page, request }) => {
     await page.goto('/?view=design-system');
-    await page.locator('#theme').selectOption(theme);
+    await selectTheme(page, theme);
     const image = page.getByRole('img', { name: 'ANDEIVA Security Gateway', exact: true });
     await expect(image).toBeVisible();
     const logo = await request.get('/andeiva-logo.png');
@@ -267,12 +268,12 @@ for (const theme of ['light', 'dark'] as const) {
 
   test(`${theme}: keyboard, dialog focus and localized content`, async ({ page }) => {
     await page.goto('/?view=design-system');
-    await page.locator('#theme').selectOption(theme);
+    await selectTheme(page, theme);
     await page.getByTestId('nav-components').focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('table')).toBeVisible();
     for (const locale of ['en', 'es', 'pt']) {
-      await page.locator('#language').selectOption(locale);
+      await selectLocale(page, locale);
       await expect(page.locator('html')).toHaveAttribute('lang', locale);
       await expect(page.getByRole('heading', { name: locale === 'en' ? 'Component library' : 'Biblioteca de componentes', exact: true })).toBeVisible();
       await expect(page.locator('#theme option[value="dark"]')).toHaveText(locale === 'en' ? 'Dark' : locale === 'es' ? 'Oscuro' : 'Escuro');
@@ -304,7 +305,7 @@ for (const theme of ['light', 'dark'] as const) {
 
   test(`${theme}: visual baseline`, async ({ page }) => {
     await page.goto('/?view=design-system');
-    await page.locator('#theme').selectOption(theme);
+    await selectTheme(page, theme);
     await page.getByRole('img', { name: 'ANDEIVA Security Gateway', exact: true }).evaluate(async (element) => { await (element as HTMLImageElement).decode(); });
     await expect(page).toHaveScreenshot(`${theme}-overview.png`, { fullPage: true });
     await page.getByTestId('nav-components').click();

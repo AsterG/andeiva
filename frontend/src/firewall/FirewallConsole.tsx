@@ -20,12 +20,13 @@ import { consoleMessages } from './consoleMessages.js';
 import type { ConsoleView } from './consoleMessages.js';
 import { productInfoResponse } from './productInfo.js';
 import type { ProductInfoState } from './productInfo.js';
+import { HeaderAccount } from '../design-system/HeaderAccount.js';
 import { SystemInfoView } from './SystemInfoView.js';
 
 type Review = { operation: Operation; target: string; confirm_for?: number } | { operation: 'remove'; index: number; target: string } | { operation: 'discard'; target: string };
 type RuleView = 'draft' | 'candidate' | 'running' | 'startup';
 
-export function FirewallConsole({ locale, page = 'rules', onLocalServices, renderFrame }: { locale: Locale; page?: ConsoleView; onLocalServices?: (available: boolean) => void; renderFrame: (content: ReactNode, authenticated: boolean, product: ProductInfoState) => ReactNode }) {
+export function FirewallConsole({ locale, page = 'rules', onLocalServices, renderFrame }: { locale: Locale; page?: ConsoleView; onLocalServices?: (available: boolean) => void; renderFrame: (content: ReactNode, authenticated: boolean, product: ProductInfoState, account: ReactNode) => ReactNode }) {
   const copy = firewallMessages[locale];
   const tableCopy = ruleTableMessages[locale];
   const [session, setSession] = useState<Session | null>(null);
@@ -181,7 +182,6 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
   const config = view === 'draft' ? draft : selectedRevision?.config;
   const selectedHash = view === 'draft' && !dirty ? snapshot?.candidate?.revision.hash ?? snapshot?.running.hash : selectedRevision?.hash;
   const showCounters = healthy && selectedHash === state?.effective.revision;
-  const date = (value: string) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString(locale) : copy.unknown;
   function move(from: number, to: number) {
     if (!canEdit || !draft || editor) return;
     const rules = moveRule(draft.rules, from, to);
@@ -213,7 +213,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
       <Field id="login-credential" label={copy.credential} hint={copy.credentialHint}><TextInput id="login-credential" name="credential" type="password" autoComplete="off" maxLength={256} required disabled={busy} aria-describedby="login-credential-hint" /></Field>
       <Button type="submit" disabled={busy}>{busy ? copy.loading : copy.login}</Button>
     </form></Surface> : <>
-      <div className="fw-state"><div><strong>{copy.identity}: {session.username}</strong><p className="fw-meta">{admin ? copy.admin : copy.viewer} · {copy.expires}: {date(session.expires_at)}</p></div><div className="fw-toolbar"><Button variant="secondary" disabled={busy || !!editor} onClick={() => void refresh()}>{copy.retry}</Button><Button variant="secondary" disabled={busy} onClick={() => void logout()}>{copy.logout}</Button></div></div>
+      {page !== 'system' && <div className="fw-status-tools"><Button variant="secondary" disabled={busy || !!editor} onClick={() => void refresh()}>{copy.retry}</Button></div>}
       {(!healthy || !state) && <Notice title={copy.disconnected}>{copy.disconnectedBody}</Notice>}
       {success && <Notice title={copy.success} live>{copy.successBody}</Notice>}
       {page === 'system' && <SystemInfoView state={product} locale={locale} refresh={() => setProductRefresh((value) => value + 1)} />}
@@ -243,5 +243,5 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
       else if (review.operation !== 'remove' && review.operation !== 'discard') void transact(review.operation, { ...(review.operation === 'confirm' || review.operation === 'rollback' ? { target: review.target } : {}), ...(review.confirm_for ? { confirm_for: review.confirm_for } : {}) });
     }}>{copy.proceed}</Button></>}</Dialog>
   </div>;
-  return renderFrame(content, authenticated, product);
+  return renderFrame(content, authenticated, product, authenticated && session ? <HeaderAccount locale={locale} username={session.username} role={session.role} expiresAt={session.expires_at} busy={busy} logout={() => void logout()} /> : null);
 }

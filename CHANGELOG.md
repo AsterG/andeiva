@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — compact administrative header
+
+- Move account information and sign-out to the top header, separate from
+  configuration operations, with compact language and appearance preferences.
+- Share accessible, localized menus across administrative and sign-in views;
+  support keyboard dismissal, focus return, zoom and small screens in both themes.
+
 ## Unreleased — configuration storage admission
 
 - Check available filesystem bytes and inodes before ordinary configuration

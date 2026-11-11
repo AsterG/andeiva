@@ -1,3 +1,4 @@
+import { selectLocale, selectTheme, signOut } from './headerHelpers.js';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
@@ -47,7 +48,7 @@ async function login(page: Page) {
   await page.getByLabel('Username', { exact: true }).fill('lab-admin');
   await page.getByLabel('Provisioned access credential', { exact: true }).fill('fixture-only');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+  await expect(page.getByTestId('account-trigger')).toBeVisible();
 }
 async function editHTTPS(page: Page) {
   await page.getByRole('button', { name: 'Edit service: HTTPS', exact: true }).click();
@@ -164,17 +165,39 @@ test('late endpoint proof cannot restore sensitive state after session expiry', 
 for (const theme of ['light', 'dark']) test(`local services ${theme}: visual baseline and accessibility`, async ({ page }, info) => {
   await fixture(page); await page.emulateMedia({ colorScheme: 'dark' }); await login(page);
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  if (theme === 'dark') await page.getByLabel('Appearance', { exact: true }).selectOption('dark');
+  if (theme === 'dark') await selectTheme(page, 'dark');
   await editHTTPS(page);
   await expect(page.locator('.app')).toHaveAttribute('data-theme', theme);
   const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
   expect(result.violations).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
   const capture = await page.screenshot({ fullPage: true });
   await info.attach(`local-services-${theme}-${info.project.name}-fixture`, { body: capture, contentType: 'image/png' });
   await expect(page).toHaveScreenshot(`local-services-${theme}-editor.png`, { fullPage: true });
-  await page.getByLabel('Language', { exact: true }).selectOption('es');
+  await selectLocale(page, 'es');
   await expect(page.getByRole('heading', { name: 'Servicios locales', exact: true })).toBeVisible();
-  await page.getByLabel('Idioma', { exact: true }).selectOption('pt');
+  await selectLocale(page, 'pt');
   await expect(page.getByRole('heading', { name: 'Serviços locais', exact: true })).toBeVisible();
+});
+
+
+test('local services header keeps account and preferences above navigation on every viewport', async ({ page }) => {
+  const mock = await fixture(page); await login(page);
+  const account = page.getByTestId('account-trigger');
+  await expect(page.locator('header').getByTestId('account-trigger')).toBeVisible();
+  expect((await account.boundingBox())!.y).toBeLessThan(80);
+  await expect(page.locator('main').getByTestId('account-trigger')).toHaveCount(0);
+  await expect(page.locator('.fw-state')).toHaveCount(0);
+  await page.locator('.skip-link').focus();
+  expect(await page.locator('.skip-link').evaluate((element) => { const box = element.getBoundingClientRect(); return element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)); })).toBe(true);
+  await selectLocale(page, 'es');
+  await expect(account).toHaveAccessibleName('Cuenta: lab-admin');
+  await account.click();
+  await expect(page.getByTestId('account-panel').getByText('Administrador', { exact: true })).toBeVisible();
+  await page.getByTestId('account-panel').press('Escape');
+  await signOut(page, 'es');
+  await expect(page.getByRole('button', { name: 'Iniciar sesión', exact: true })).toBeVisible();
+  await expect(page.getByTestId('account-trigger')).toHaveCount(0);
+  expect(mock.operations).toEqual([]);
 });
