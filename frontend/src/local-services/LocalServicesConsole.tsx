@@ -125,7 +125,6 @@ export function LocalServicesConsole({ locale, view, renderFrame }: { locale: Lo
       </>}
     </>}
     <Dialog open={authenticated && !!review} title={common.review} closeLabel={common.cancel} onClose={() => setReview(null)}>{authenticated && review && <><p>{review.operation === 'save' ? common.saveWarning : copy.confirmWarning}</p><dl className="fw-review"><dt>{common.operation}</dt><dd>{common[review.operation]}</dd><dt>{copy.target}</dt><dd><code className="fw-hash">{review.target}</code></dd></dl><Button disabled={!healthy || busy} onClick={() => void transact(review.operation, review.target)}>{common.proceed}</Button></>}</Dialog>
-    {authenticated && <Notice title={copy.scope}>{copy.limitation}</Notice>}
   </div>;
   return renderFrame(content, authenticated);
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — product version visibility
+
+- Show the authenticated appliance product version in System and the navigation
+  footer, with equivalent CLI/API reads and explicit unavailable update status.
+- Stamp preview backend and CLI identities from the Debian package version and
+  verify that identity during package validation.
+- Remove general laboratory-scope banners from the web interface while retaining
+  contextual errors, authorization, confirmation and recovery controls.
+
 ## Unreleased — movable rule editor
 
 - Open a centered movable desktop editor, with mouse, touch and keyboard controls,
@@ -69,7 +78,6 @@
   before enabling the new rule-state contract in Web, CLI and API.
 - Record isolated Debian traffic and browser validation, resource observations
   and limits in [the validation report](frontend/docs/firewall-rule-validation.md).
-  Updating source or CI does not deploy the installed Alpha appliance.
 
 ## Unreleased — isolated local service administration
 
@@ -79,7 +87,7 @@
   listeners; require bounded recovery and endpoint proofs before confirmation.
 - Add an explicit Debian laboratory runner with separate process identities,
   a fixed recovery endpoint and three owned network namespaces.
-- Keep host SSH, host firewall, forwarding and installed Alpha services outside
+- Keep host SSH, host firewall and forwarding outside
   this experiment. Native acceptance remains subject to the validation report.
 
 ## Unreleased — isolated local service policy compiler

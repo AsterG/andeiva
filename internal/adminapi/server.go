@@ -21,6 +21,7 @@ import (
 	"github.com/AsterG/andeiva/internal/firewalltraffic"
 	"github.com/AsterG/andeiva/internal/localadmin"
 	"github.com/AsterG/andeiva/internal/localpolicy"
+	"github.com/AsterG/andeiva/internal/productinfo"
 )
 
 const cookieName = "__Host-andeiva-session"
@@ -170,6 +171,18 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Surface is diagnostic metadata only. Every transport uses the same identity and permissions.
+	if r.URL.Path == "/api/v1/system/info" {
+		if r.Method != http.MethodGet {
+			h.fail(w, http.StatusMethodNotAllowed, "ANDEIVA_METHOD_NOT_ALLOWED")
+			return
+		}
+		if id.Role != "admin" && id.Role != "viewer" {
+			h.deny(w, r, id.Username, "write", http.StatusForbidden, "ANDEIVA_AUTH_DENIED")
+			return
+		}
+		h.write(w, http.StatusOK, productinfo.Current())
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if r.URL.Path == "/api/v1/capabilities" && r.Method == http.MethodGet {

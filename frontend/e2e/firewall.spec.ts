@@ -4,6 +4,7 @@ import type { Page } from '@playwright/test';
 import type { Config, FirewallState, History, Session, Transaction } from '../src/firewall/model.js';
 import { firewallMessages } from '../src/firewall/messages.js';
 import { consoleMessages } from '../src/firewall/consoleMessages.js';
+import { systemMessages } from '../src/firewall/systemMessages.js';
 import { floatingWindowMessages } from '../src/design-system/floatingWindowMessages.js';
 
 // Explicit transport fixtures only. These tests do not prove authentication or packet enforcement.
@@ -35,6 +36,7 @@ async function fixture(page: Page, role: Session['role'] = 'admin', authenticate
       return route.fulfill({ json: session });
     }
     if (!loggedIn) return route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_REQUIRED', request_id: 'fixture' } });
+    if (path.endsWith('/system/info')) return route.fulfill({ json: { product: 'ANDEIVA Security Gateway', version: '0.1.0~alpha16', channel: 'experimental', update_status: 'unavailable' } });
     if (path.endsWith('/capabilities')) return route.fulfill({ json: { firewall_rule_enabled: true, firewall_config_schema_versions: [2, 4] } });
     if (path.endsWith('/auth/session')) return route.fulfill({ json: session });
     if (path.endsWith('/auth/logout')) { expect(req.headers()['x-csrf-token']).toBe(session.csrf); loggedIn = false; return route.fulfill({ json: { ok: true } }); }
@@ -871,5 +873,168 @@ test('floating controls and validation stay localized in EN ES PT', async ({ pag
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
     await page.getByRole('button', { name: windowCopy.close, exact: true }).click();
   }
+  expect(mock.transactions).toEqual([]);
+});
+
+
+test('system information is queried only after login and clears on logout', async ({ page }) => {
+  const mock = await fixture(page);
+  const requests: string[] = [];
+  page.on('request', (request) => { if (request.url().endsWith('/system/info')) requests.push(request.method()); });
+  await page.goto('/firewall#system');
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expectAccessOnly(page);
+  expect(requests).toEqual([]);
+  await page.getByLabel('Username', { exact: true }).fill('lab-admin');
+  await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toBeVisible();
+  await expect(page.locator('.console-transaction-bar')).toHaveCount(0);
+  expect(requests).toEqual(['GET']);
+  await page.getByRole('button', { name: 'Refresh information', exact: true }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expectAccessOnly(page);
+  await expect(page.getByText('0.1.0~alpha16', { exact: true })).toHaveCount(0);
+  expect(mock.transactions).toEqual([]);
+});
+
+test('system metadata failure and development fallback do not invalidate healthy configuration', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.route('**/system/info', (route) => route.fulfill({ json: { product: 'ANDEIVA Security Gateway', version: 'not-a-version', channel: 'experimental', update_status: 'unavailable', kernel: 'private-fixture' } }));
+  await page.goto('/firewall#system');
+  await expect(page.getByText('Product information unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('private-fixture')).toHaveCount(0);
+  await page.evaluate(() => { location.hash = 'rules'; });
+  await expect(page.getByRole('button', { name: 'Add rule', exact: true })).toBeEnabled();
+  await page.evaluate(() => { location.hash = 'system'; });
+  await page.unroute('**/system/info');
+  await page.route('**/system/info', (route) => route.fulfill({ json: { product: 'ANDEIVA Security Gateway', channel: 'development', update_status: 'unavailable' } }));
+  await page.getByRole('button', { name: 'Refresh information', exact: true }).click();
+  await expect(page.getByText('No packaged version', { exact: true })).toBeVisible();
+  await expect(page.locator('.console-system-info').getByText('Development build', { exact: false })).toBeVisible();
+  await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toHaveCount(0);
+  for (const failure of ['unavailable', 'connection'] as const) {
+    await page.unroute('**/system/info');
+    await page.route('**/system/info', (route) => failure === 'connection' ? route.abort('failed') : route.fulfill({ status: 503, json: { code: 'ANDEIVA_UNAVAILABLE' } }));
+    await page.getByRole('button', { name: 'Refresh information', exact: true }).click();
+    await expect(page.getByText('Product information unavailable', { exact: true })).toBeVisible();
+    await page.evaluate(() => { location.hash = 'rules'; });
+    await expect(page.getByRole('button', { name: 'Add rule', exact: true })).toBeEnabled();
+    await page.evaluate(() => { location.hash = 'system'; });
+  }
+  expect(mock.transactions).toEqual([]);
+});
+
+test('system information remains readable when configuration is unavailable', async ({ page }) => {
+  const mock = await fixture(page, 'viewer', true);
+  await page.route('**/api/v1/firewall', (route) => route.fulfill({ status: 503, json: { code: 'ANDEIVA_CONFIG_UNAVAILABLE' } }));
+  await page.goto('/firewall#system');
+  await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toBeVisible();
+  await expect(page.locator('.console-transaction-bar')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Refresh information', exact: true })).toBeEnabled();
+  expect(mock.transactions).toEqual([]);
+});
+
+test('system unauthorized response clears the session and delayed metadata cannot restore it', async ({ page }) => {
+  await fixture(page, 'admin', true);
+  await page.goto('/firewall#system');
+  await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toBeVisible();
+  await page.route('**/system/info', (route) => route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_REQUIRED' } }));
+  await page.getByRole('button', { name: 'Refresh information', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expectAccessOnly(page);
+  await page.unroute('**/system/info');
+  let release!: () => void;
+  const held = new Promise<void>((done) => { release = done; });
+  await page.route('**/system/info', async (route) => { await held; await route.fulfill({ json: { product: 'ANDEIVA Security Gateway', version: '0.1.0~alpha999', channel: 'experimental', update_status: 'unavailable' } }); });
+  await page.getByLabel('Username', { exact: true }).fill('lab-admin');
+  await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.locator('.console-system-info').getByText('Reading product information…', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  release();
+  await expectAccessOnly(page);
+  await expect(page.getByText('0.1.0~alpha999', { exact: true })).toHaveCount(0);
+});
+
+test('system loading and expiry expose no stale identity', async ({ page }) => {
+  await fixture(page, 'viewer', true);
+  let release!: () => void;
+  const held = new Promise<void>((done) => { release = done; });
+  await page.route('**/system/info', async (route) => { await held; await route.fulfill({ json: { product: 'ANDEIVA Security Gateway', version: '0.1.0~alpha999', channel: 'experimental', update_status: 'unavailable' } }); });
+  await page.goto('/firewall#system');
+  await expect(page.getByRole('button', { name: 'Refresh information', exact: true })).toBeDisabled();
+  await page.clock.setFixedTime(new Date('2026-11-09T13:00:01Z'));
+  await page.clock.fastForward(60 * 60 * 1000);
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  release();
+  await expectAccessOnly(page);
+  await expect(page.getByText('0.1.0~alpha999', { exact: true })).toHaveCount(0);
+});
+
+for (const theme of ['light', 'dark'] as const) {
+  test('system ' + theme + ' visual baseline, translations and authorized viewer', async ({ page }) => {
+    const mock = await fixture(page, 'viewer', true);
+    await page.goto('/firewall#system');
+    await page.locator('#theme').selectOption(theme);
+    await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toBeVisible();
+    for (const locale of ['es', 'pt', 'en'] as const) {
+      await page.locator('#language').selectOption(locale);
+      await expect(page.getByRole('heading', { name: consoleMessages[locale].system, exact: true, level: 1 })).toBeVisible();
+      await expect(page.getByRole('heading', { name: systemMessages[locale].about, exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: systemMessages[locale].refresh, exact: true })).toBeEnabled();
+      await expect(page.getByText(/Laboratory scope|Alcance de laboratorio|Escopo do laboratório|Isolated laboratory|Laboratorio aislado|Laboratório isolado/)).toHaveCount(0);
+      expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+    }
+    const refresh = page.getByRole('button', { name: 'Refresh information', exact: true });
+    const response = page.waitForResponse((value) => value.url().endsWith('/system/info') && value.request().method() === 'GET');
+    await refresh.focus();
+    await page.keyboard.press('Enter');
+    await response;
+    await expect(refresh).toBeEnabled();
+    await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toBeVisible();
+    await refresh.focus();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+    await expect(page).toHaveScreenshot('system-' + theme + '.png', { fullPage: true });
+    if (page.viewportSize()!.width > 768) {
+      await expect(page.locator('.console-version')).toBeVisible();
+      await page.getByRole('button', { name: 'Collapse navigation', exact: true }).click();
+      await expect(page.locator('.console-version')).toBeHidden();
+    }
+    expect(mock.transactions).toEqual([]);
+  });
+}
+
+
+test('System navigation preserves the floating draft and an unauthorized metadata response closes it', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/firewall');
+  await expect(page.locator('.console-version strong')).toHaveText('0.1.0~alpha16');
+  await fillRule(page, 'system-roundtrip-local');
+  const editor = page.locator('.fw-rule-editor');
+  await expect(editor).toBeVisible();
+  await page.evaluate(() => { location.hash = 'system'; });
+  await expect(editor).toBeHidden();
+  await expect(page.locator('.fw-editor-notice')).toContainText(firewallMessages.en.editorOpen);
+  await expect(page.getByRole('button', { name: 'Refresh status', exact: true })).toBeDisabled();
+  await expect(page.locator('.console-transaction-bar')).toHaveCount(0);
+  await expect(page.locator('.console-system-info')).toBeVisible();
+  await page.getByRole('link', { name: firewallMessages.en.returnToRules, exact: true }).click();
+  await expect(editor).toBeVisible();
+  await expect(page.getByLabel('Rule ID', { exact: true })).toHaveValue('system-roundtrip-local');
+  await expect(page.getByLabel('Rule ID', { exact: true })).toBeFocused();
+  await expect(page.getByLabel('Destination ports', { exact: true })).toHaveValue('443-445');
+  await page.evaluate(() => { location.hash = 'system'; });
+  await expect(page.locator('.console-system-info')).toBeVisible();
+  await page.route('**/system/info', (route) => route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_REQUIRED' } }));
+  await page.getByRole('button', { name: 'Refresh information', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.locator('.ds-floating-window')).toHaveCount(0);
+  await expectAccessOnly(page);
+  expect(mock.state().snapshot.running.config.rules).toEqual([]);
   expect(mock.transactions).toEqual([]);
 });

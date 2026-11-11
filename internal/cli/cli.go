@@ -2,9 +2,12 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/AsterG/andeiva/internal/productinfo"
 )
 
 type messages struct {
@@ -59,6 +62,17 @@ func RunInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		locale = args[1]
 		args = args[2:]
 	}
+	if len(args) == 1 && args[0] == "--version" {
+		if err := json.NewEncoder(stdout).Encode(productinfo.Current()); err != nil {
+			fmt.Fprintln(stderr, "ANDEIVA_CLIENT_RESPONSE:", systemText[locale][1])
+			return 2
+		}
+		return 0
+	}
+	// A bare "s" is ambiguous with the existing local status command.
+	if len(args) > 0 && args[0] != "" && strings.HasPrefix("system", args[0]) && !strings.HasPrefix("status", args[0]) {
+		return runSystem(args[1:], locale, stdout, stderr)
+	}
 	if len(args) > 0 && (args[0] == "firewall" || args[0] == "f" || args[0] == "fi" || args[0] == "fir" || args[0] == "fire" || args[0] == "firew" || args[0] == "firewa" || args[0] == "firewal") {
 		return runFirewall(args[1:], locale, stdin, stdout, stderr)
 	}
@@ -70,7 +84,7 @@ func RunInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if len(args) == 0 || len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		fmt.Fprint(stdout, text.help)
-		fmt.Fprintln(stdout, "\nandeiva firewall help\nandeiva local-services help\nandeiva firewall completion")
+		fmt.Fprintln(stdout, "\nandeiva firewall help\nandeiva local-services help\nandeiva system help\nandeiva --version\nandeiva firewall completion")
 		return 0
 	}
 	if len(args) == 1 && args[0] == "status" {

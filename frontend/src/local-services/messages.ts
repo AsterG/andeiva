@@ -3,7 +3,6 @@ import type { Locale } from '../messages.js';
 const en = {
   title: 'Local Services', system: 'System', firewall: 'Firewall', effective: 'Effective Policies', state: 'State', cancel: 'Cancel',
   subtitle: 'Manage access to the appliance. These policies never grant transit access.',
-  scope: 'Isolated laboratory', limitation: 'Only the managed HTTPS and restricted SSH listeners are available. Host services and forwarding policies are not changed.',
   unavailable: 'Local Services is not available on this endpoint.', recovery: 'Recovery endpoint', managed: 'Managed endpoint',
   recoveryHint: 'This authenticated recovery endpoint is fixed and cannot be changed here. Managed port changes retire the old listener; keep this page available.',
   managedHint: 'Use this authenticated connection to verify the new endpoint. Return its proof to the recovery console. Configuration changes require the recovery console.',
@@ -26,7 +25,6 @@ export const localMessages: Record<Locale, LocalMessages> = {
   es: {
     title: 'Servicios locales', system: 'Sistema', firewall: 'Firewall', effective: 'Políticas efectivas', state: 'Estado', cancel: 'Cancelar',
     subtitle: 'Administre el acceso al appliance. Estas políticas nunca permiten tráfico de tránsito.',
-    scope: 'Laboratorio aislado', limitation: 'Solo están disponibles los listeners HTTPS y SSH restringido administrados. No se cambian los servicios del host ni las políticas de tránsito.',
     unavailable: 'Servicios locales no está disponible en este punto de acceso.', recovery: 'Acceso de recuperación', managed: 'Acceso administrado',
     recoveryHint: 'Este acceso autenticado de recuperación es fijo y no puede cambiarse aquí. Un cambio de puerto retira el listener anterior; mantenga esta página disponible.',
     managedHint: 'Use esta conexión autenticada para verificar el nuevo acceso. Devuelva su comprobante a la consola de recuperación. Los cambios requieren esa consola.',
@@ -46,7 +44,6 @@ export const localMessages: Record<Locale, LocalMessages> = {
   pt: {
     title: 'Serviços locais', system: 'Sistema', firewall: 'Firewall', effective: 'Políticas efetivas', state: 'Estado', cancel: 'Cancelar',
     subtitle: 'Gerencie o acesso ao appliance. Estas políticas nunca permitem tráfego de trânsito.',
-    scope: 'Laboratório isolado', limitation: 'Apenas os listeners HTTPS e SSH restrito gerenciados estão disponíveis. Os serviços do host e as políticas de trânsito não são alterados.',
     unavailable: 'Serviços locais não está disponível neste ponto de acesso.', recovery: 'Acesso de recuperação', managed: 'Acesso gerenciado',
     recoveryHint: 'Este acesso autenticado de recuperação é fixo e não pode ser alterado aqui. Alterar a porta remove o listener anterior; mantenha esta página disponível.',
     managedHint: 'Use esta conexão autenticada para verificar o novo acesso. Devolva o comprovante ao console de recuperação. Alterações exigem esse console.',

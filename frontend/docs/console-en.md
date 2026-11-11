@@ -51,6 +51,10 @@ canonical browser environment from the repository root with
 
 Rule-editor address and port fields expose individual guidance and validation errors to assistive technology. During reordering, column visibility, filters, revision selection and explicit position changes are locked until drop or cancellation. Escape cancels the move; changes remain local until explicitly staged.
 
+## Product version
+
+After signing in, open System → About ANDEIVA to read the installed product version. The navigation footer shows the same authenticated value. Development builds and unavailable metadata are explicit. No update availability is inferred. See the [package guide](../../packaging/preview/docs/en.md#installed-product-version) for the matching CLI query and local-versus-remote identity.
+
 ## Movable rule editor
 
 On desktop the rule editor opens as a wide, centered window. Drag its title bar

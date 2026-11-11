@@ -11,6 +11,9 @@ dpkg-deb -e "$package" "$stage/control"
 for binary in usr/bin/andeiva usr/lib/andeiva-preview/andeiva-preview; do
   [[ -x "$stage/root/$binary" ]]
 done
+version=$(dpkg-deb -f "$package" Version)
+expected=$(printf '{"product":"ANDEIVA Security Gateway","version":"%s","channel":"experimental","update_status":"unavailable"}' "$version")
+[[ $("$stage/root/usr/bin/andeiva" --version) = "$expected" ]]
 for script in preinst postinst prerm postrm; do sh -n "$stage/control/$script"; done
 [[ -s "$stage/root/usr/share/andeiva-preview/web/index.html" ]]
 [[ -s "$stage/root/usr/share/doc/andeiva-firewall-preview/dependencies/npm-inventory.json" ]]

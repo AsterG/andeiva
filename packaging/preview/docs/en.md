@@ -146,3 +146,21 @@ after the provisioned validity interval. Automatic certificate renewal, audit
 archival, multi-interface runtime changes and the Local Service Policy Manager
 are separate gates; configuration contracts do not imply those integrations work.
 Native test results must be recorded separately before declaring this preview validated.
+
+## Installed product version
+
+After signing in, open System to read the ANDEIVA version reported by the running
+API. A development build without packaged identity is labeled as development;
+no installed version is inferred from browser assets. The current runtime has no
+verified update catalogue and reports update availability as unavailable.
+
+The authenticated CLI query uses the same endpoint and access controls:
+
+```sh
+andeiva system info --url https://LAN_ADDRESS:9443 --ca-file /trusted/ca.crt --credentials-file /private/operator.json
+```
+
+`andeiva --version` reports the local CLI build, which can differ from the
+connected appliance. Package validation checks that local identity matches the
+Debian package version. Only ANDEIVA product identity is returned; operating
+system, kernel and engine versions are outside this public contract.

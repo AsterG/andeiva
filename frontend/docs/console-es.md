@@ -50,6 +50,10 @@ raíz: `docker build -f frontend/Dockerfile.visual -t andeiva-console-check .` y
 
 Los campos de dirección y puertos del editor asocian individualmente su ayuda y sus errores para tecnologías de asistencia. Durante un arrastre se bloquean las columnas, filtros, selección de revisión y posición explícita hasta colocar o cancelar. Escape cancela el movimiento; el cambio sigue siendo local hasta preparar la candidata.
 
+## Versión del producto
+
+Tras iniciar sesión, abre Sistema → Acerca de ANDEIVA para consultar la versión instalada. El pie de navegación muestra el mismo valor autenticado. Se indican las compilaciones de desarrollo y los datos no disponibles. No se deduce la disponibilidad de actualizaciones. La [guía del paquete](../../packaging/preview/docs/es.md#versión-instalada-del-producto) explica la consulta CLI y la identidad local frente a la remota.
+
 ## Editor de reglas movible
 
 En escritorio el editor se abre como una ventana amplia y centrada. Arrastra su
