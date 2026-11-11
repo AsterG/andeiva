@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — verified journal reads
+
+- Retain lightweight journal metadata and the latest durable state instead of
+  keeping every historical configuration snapshot in memory.
+- Verify historical records on demand without changing the journal format,
+  authenticated retry behavior, revision history or recovery reservations.
+- Keep lifetime capacity and full-volume recovery as unresolved limitations;
+  this preparation does not compact, expire or delete protected records.
+
 ## Unreleased — bounded login admission
 
 - Separate anonymous and verified login allowances using the receiving HTTP/SSH

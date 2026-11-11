@@ -2,6 +2,32 @@
 
 [English](en.md) · [Português](pt.md) · [Diseño y criterios de aceptación](../README.md)
 
+## Lecturas verificadas del journal
+
+El arranque sigue validando todos los registros confirmados. El almacén conserva
+metadatos ligeros, auditoría validada y el último estado durable. La auditoría se
+copia desde lo validado al abrir/escribir, como antes; no detecta inmediatamente
+cambios posteriores del disco. Las configuraciones históricas leen registros acotados
+y verifican identidad, permisos, propietario, tamaño, secuencia y hashes. Un archivo
+modificado o ausente devuelve error de almacenamiento sin una página parcial.
+No se caducan ni expulsan recibos del estado v1 persistido. El replay conserva
+Snapshot actual más ReplayedGeneration original, autorización y vínculo al cuerpo.
+
+No hay migración, borrado de historial, checkpoint ni compactación.
+Los errores de integridad al consultar bloquean nuevas mutaciones, incluso Confirm
+y Recover, hasta una reapertura íntegra; el estado indica recuperación requerida.
+El plazo pendiente conserva su rollback automático y sus requisitos de persistencia.
+Borrar registros o reiniciar el almacén no constituye recuperación. Permanecen
+1.024 recibos, 2.048 registros por defecto, 64 MiB de journal y 1 MiB por registro.
+Reanudar el servicio sigue escribiendo sus registros de recuperación existentes.
+Esto prepara lecturas con menos memoria; no resuelve disco lleno ni demuestra
+5.000 ciclos completos. Las mediciones deben indicar datos, toolchain y si miden
+heap retenido, asignaciones o RSS del proceso. Las comprobaciones siguen abajo.
+Los textos de auditoría legados no tienen un límite individual de bytes; estas
+mediciones no constituyen un techo universal de heap.
+La [comparación medida y reproducción](../READ_VALIDATION.md) distingue la mejora
+de memoria del coste adicional de consultar revisiones verificadas en disco.
+
 Esta guía corresponde a un entorno local de desarrollo confiable. El experimento
 modifica archivos temporales de configuración y estados de componentes simulados.
 No configura un firewall, proxy, interfaz de red ni servicio ANDEIVA de producción.
