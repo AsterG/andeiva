@@ -1,6 +1,7 @@
 import type { Locale } from '../messages.js';
 
 const en = {
+  editorOpen: 'A rule is open in the editor. Return to Rules to continue or cancel.', returnToRules: 'Return to Rules',
   title: 'Firewall administration', subtitle: 'Authenticated laboratory · IPv4 TCP/UDP policy', navigation: 'Administration',
   scope: 'Laboratory scope', limitation: 'Changes affect the isolated laboratory only. This is not production appliance management. Security profiles and content inspection are not implemented here.',
   login: 'Sign in', username: 'Username', credential: 'Provisioned access credential', credentialHint: 'Use your individually provisioned random access credential. No default password is provided.', logout: 'Sign out',
@@ -22,6 +23,7 @@ const en = {
 };
 export type FirewallMessages = typeof en;
 const es: FirewallMessages = {
+  editorOpen: 'Hay una regla abierta en el editor. Vuelve a Reglas para continuar o cancelar.', returnToRules: 'Volver a Reglas',
   title: 'Administración del firewall', subtitle: 'Laboratorio autenticado · Políticas IPv4 TCP/UDP', navigation: 'Administración',
   scope: 'Alcance de laboratorio', limitation: 'Los cambios afectan solo al laboratorio aislado. No es administración de un appliance de producción. Los perfiles de seguridad y la inspección de contenido no están implementados aquí.',
   login: 'Iniciar sesión', username: 'Usuario', credential: 'Credencial de acceso provisionada', credentialHint: 'Utilice su credencial aleatoria de acceso individual. No hay una contraseña predeterminada.', logout: 'Cerrar sesión',
@@ -42,6 +44,7 @@ const es: FirewallMessages = {
   https: 'Utilice la dirección HTTPS de confianza proporcionada por el operador del laboratorio.',
 };
 const pt: FirewallMessages = {
+  editorOpen: 'Há uma regra aberta no editor. Volte a Regras para continuar ou cancelar.', returnToRules: 'Voltar a Regras',
   title: 'Administração do firewall', subtitle: 'Laboratório autenticado · Políticas IPv4 TCP/UDP', navigation: 'Administração',
   scope: 'Escopo do laboratório', limitation: 'As alterações afetam apenas o laboratório isolado. Não é gerenciamento de appliance de produção. Perfis de segurança e inspeção de conteúdo não estão implementados aqui.',
   login: 'Entrar', username: 'Usuário', credential: 'Credencial de acesso provisionada', credentialHint: 'Use sua credencial aleatória de acesso individual. Não há senha padrão.', logout: 'Sair',

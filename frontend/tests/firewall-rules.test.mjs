@@ -12,7 +12,7 @@ import { ruleEnabledCapability, firewallResponse } from '../.test-build/firewall
 const rule = (id) => ({ id, action: 'allow', match: { source: '10.1.0.0/24', destination: '10.2.0.1/32', protocol: 'tcp', source_ports: { from: 1, to: 65535 }, destination_ports: { from: 443, to: 443 } } });
 
 for (const locale of ['en', 'es', 'pt']) test(`editor ${locale} instances have unique labels and contextual hint references`, () => {
-  const props = { rules: [], index: null, copy: firewallMessages[locale], labels: ruleTableMessages[locale], supportsEnabled: true, disabled: false, onSave() {}, onCancel() {} };
+  const props = { rules: [], index: null, locale, copy: firewallMessages[locale], labels: ruleTableMessages[locale], supportsEnabled: true, disabled: false, onSave() {}, onCancel() {} };
   const html = renderToStaticMarkup(createElement('div', null, createElement(RuleEditor, props), createElement(RuleEditor, props)));
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((entry) => entry[1]);
   assert.equal(new Set(ids).size, ids.length);

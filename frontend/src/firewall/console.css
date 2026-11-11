@@ -35,7 +35,6 @@
 .console-app .fw-rule-table .ds-table th, .console-app .fw-rule-table .ds-table td { padding: var(--space-2); }
 .console-app .fw-rule-table .ds-badge { font-size: var(--text-xs); padding: var(--space-1) var(--space-2); }
 .console-app .fw-rule-table .ds-table-scroll { max-height: 30rem; }
-.console-app .fw-rule-editor { position: sticky; top: 5.5rem; max-height: calc(100vh - 6.5rem); overflow-y: auto; }
 .console-app .fw-rule-editor .ds-field-hint { font-size: var(--text-xs); }
 .console-app .fw-rule-editor .ds-actions { padding-block: var(--space-3); background: var(--color-surface); }
 .console-object-note { margin-bottom: var(--space-4); color: var(--color-text-secondary); font-size: var(--text-xs); }
@@ -80,11 +79,10 @@
 .console-other-actions > div { position: absolute; right: 0; display: grid; gap: var(--space-2); width: 15rem; padding: var(--space-3); background: var(--color-menu); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-elevated); z-index: 8; }
 .console-confirmation { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-3); }
 @media (min-width: 75rem) { .console-transaction-bar--pending { position: sticky; top: 4.5rem; z-index: 6; } }
-@media (min-width: 75rem) { .console-app .fw-policy-workspace--editing { grid-template-columns: minmax(0, 1fr) 27rem; align-items: start; } .console-app .fw-rule-editor .fw-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); } }
 .console-app .fw-rule-editor .fw-field--full-width { grid-column: 1 / -1; }
 
 .console-app .fw-state > div:first-child { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .console-app .fw-state { padding-block: var(--space-2); font-size: var(--text-xs); }
 .console-app .console-transaction-bar { padding-block: var(--space-3); }
-@media (max-width: 75rem) { .console-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .console-dashboard-grid, .console-audit-layout { grid-template-columns: minmax(0, 1fr); } .console-app .fw-rule-editor { position: static; max-height: none; } }
+@media (max-width: 75rem) { .console-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .console-dashboard-grid, .console-audit-layout { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 48rem) { .console-product { display: none; } .console-header { padding-inline: var(--space-2); gap: var(--space-2); } .console-brand { width: 5rem; height: 2.5rem; } .console-preferences { gap: var(--space-2); } .console-preferences select { max-width: 6rem; } .console-sidebar { display: none; width: 12rem; box-shadow: var(--shadow-elevated); } .console-menu-open .console-sidebar { display: block; width: 12rem; } .console-menu-open .console-sidebar span, .console-menu-open .console-group { display: block; } .console-menu-open .console-sidebar a { justify-content: start; } .console-content, .console-collapsed .console-content { margin-left: 0; padding: var(--space-3); } .console-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .console-state-cards, .console-dashboard-lower { grid-template-columns: minmax(0, 1fr); } }

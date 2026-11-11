@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — movable rule editor
+
+- Open a centered movable desktop editor, with mouse, touch and keyboard controls,
+  and a viewport-sized modal editor on small screens. Preserve drafts across
+  navigation, explain blocked actions and retain session and transaction guards.
+- Add Light/Dark responsive captures and movement, focus and recovery regressions.
+
 ## Unreleased — verified journal reads
 
 - Retain lightweight journal metadata and the latest durable state instead of

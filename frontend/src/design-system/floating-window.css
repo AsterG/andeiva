@@ -1,0 +1,14 @@
+.ds-floating-window { position: fixed; inset: auto; margin: 0; padding: 0; width: 60rem; max-width: calc(100vw - var(--space-8)); max-height: calc(100dvh - var(--space-8)); min-width: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--color-border-control); border-radius: var(--radius-lg); background: var(--color-surface-elevated); color: var(--color-text); box-shadow: var(--shadow-elevated); z-index: 30; }
+.ds-floating-window:not([open]) { display: none; }
+.ds-floating-window [hidden] { display: none; }
+.ds-floating-titlebar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex: none; padding: var(--space-4); border-bottom: 1px solid var(--color-border); background: var(--color-header); cursor: grab; touch-action: none; user-select: none; }
+.ds-floating-window[data-moving] .ds-floating-titlebar { cursor: grabbing; }
+.ds-floating-title { min-width: 0; }
+.ds-floating-title h2 { font-size: var(--text-lg); line-height: var(--line-heading); margin: 0; }
+.ds-floating-title p { font-size: var(--text-xs); margin: var(--space-1) 0 0; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.ds-floating-window-actions { display: flex; gap: var(--space-2); flex: none; }
+.ds-floating-window-actions .ds-button { padding: var(--space-2); min-width: var(--control-min-height); font-size: var(--text-lg); }
+.ds-floating-window-actions svg { width: 1.25rem; height: 1.25rem; }
+.ds-floating-content { padding: var(--space-5); min-height: 0; overflow-y: auto; overscroll-behavior: contain; background: var(--color-surface); }
+@media (max-width: 48rem) { .ds-floating-window { border: 0; border-radius: 0; } .ds-floating-titlebar { cursor: default; touch-action: auto; } .ds-floating-content { flex: 1; padding: var(--space-4); } }
+:root:has(.ds-floating-window:modal) { overflow: hidden; }
