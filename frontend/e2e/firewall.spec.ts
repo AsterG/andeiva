@@ -4,6 +4,7 @@ import type { Page } from '@playwright/test';
 import type { Config, FirewallState, History, Session, Transaction } from '../src/firewall/model.js';
 import { firewallMessages } from '../src/firewall/messages.js';
 import { consoleMessages } from '../src/firewall/consoleMessages.js';
+import { floatingWindowMessages } from '../src/design-system/floatingWindowMessages.js';
 
 // Explicit transport fixtures only. These tests do not prove authentication or packet enforcement.
 const now = new Date('2026-11-09T12:00:00Z');
@@ -380,10 +381,10 @@ for (const theme of ['light', 'dark'] as const) {
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     await page.evaluate(() => window.scrollTo(0, 0));
-    await expect(page).toHaveScreenshot(`firewall-${theme}-editor.png`, { fullPage: true });
-    for (const [locale, title] of [['es', 'Reglas'], ['pt', 'Regras'], ['en', 'Rules']]) {
-      await page.locator('#language').selectOption(locale!);
-      await expect(page.getByRole('heading', { name: title!, exact: true, level: 1 })).toBeVisible();
+    await expect(page).toHaveScreenshot(`firewall-${theme}-editor.png`);
+    for (const locale of ['es', 'pt', 'en'] as const) {
+      await page.locator('#language').selectOption(locale);
+      await expect(page.getByRole('dialog', { name: firewallMessages[locale].editor, exact: true })).toBeVisible();
       expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
     }
   });
@@ -612,10 +613,21 @@ test('root opens the authenticated console and internal anchors preserve views a
   await fillRule(page, 'unsubmitted-editor');
   await page.evaluate(() => { window.location.hash = 'dashboard'; });
   await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
+  await expect(page.locator('.fw-editor-notice')).toContainText(firewallMessages.en.editorOpen);
+  for (const locale of ['es', 'pt', 'en'] as const) {
+    await page.locator('#language').selectOption(locale);
+    await expect(page.locator('.fw-editor-notice')).toContainText(firewallMessages[locale].editorOpen);
+    await expect(page.getByRole('link', { name: firewallMessages[locale].returnToRules, exact: true })).toHaveAttribute('href', '#rules');
+  }
+  await expect(page.getByRole('button', { name: 'Refresh status', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Stage candidate', exact: true })).toBeDisabled();
+  await expect(page.locator('.fw-rule-editor')).not.toBeVisible();
   await page.locator('.skip-link').focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
-  await page.evaluate(() => { window.location.hash = 'rules'; });
+  await page.getByRole('link', { name: firewallMessages.en.returnToRules, exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Rule editor', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Rule ID', { exact: true })).toBeFocused();
   await expect(page.getByLabel('Rule ID', { exact: true })).toHaveValue('unsubmitted-editor');
   await expect(page.getByLabel('Destination ports', { exact: true })).toHaveValue('443-445');
   expect(mock.transactions).toEqual([]);
@@ -698,5 +710,166 @@ for (const theme of ['light', 'dark'] as const) test(`rule editor ${theme}: iden
   await expect(page.locator('.fw-rule-editor .fw-field--full-width')).toHaveCount(1);
   await expect(identity).toHaveValue('layout-regression');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+  expect(mock.transactions).toEqual([]);
+});
+
+for (const theme of ['light', 'dark'] as const) test(`floating rule editor ${theme}: wide centered window keeps the rule list available`, async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  await page.locator('#theme').selectOption(theme);
+  await fillRule(page, 'floating-draft');
+  const editor = page.locator('.fw-rule-editor');
+  expect(await editor.evaluate((element) => getComputedStyle(element).position)).toBe('fixed');
+  await expect(page.getByRole('dialog', { name: 'Rule editor', exact: true })).toBeVisible();
+  const bounds = await editor.boundingBox();
+  const viewport = page.viewportSize()!;
+  expect(bounds).not.toBeNull();
+  expect(bounds!.width).toBeGreaterThanOrEqual(Math.min(800, viewport.width - 32));
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width + 1);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height + 1);
+  const compact = viewport.width <= 768;
+  await expect(editor).toHaveAttribute('aria-modal', String(compact));
+  expect(await editor.evaluate((element) => element.matches(':modal'))).toBe(compact);
+  if (!compact) {
+    expect(Math.abs(bounds!.x - (viewport.width - bounds!.width) / 2)).toBeLessThanOrEqual(1);
+    await expect(page.getByRole('table', { name: 'Ordered rules', exact: true })).toBeVisible();
+  }
+  expect(mock.transactions).toEqual([]);
+});
+
+for (const input of ['mouse', 'touch'] as const) test(`floating window moves with real ${input} input and keeps edits local`, async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/firewall');
+  await fillRule(page, 'movable-local-rule');
+  const editor = page.locator('.fw-rule-editor'); const title = editor.locator('.ds-floating-title');
+  const before = await editor.boundingBox(); const start = await title.boundingBox();
+  if (!before || !start) throw Error('Window geometry unavailable');
+  const x = start.x + 30; const y = start.y + start.height / 2;
+  if (input === 'mouse') {
+    await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x - 100, y + 35, { steps: 7 }); await page.mouse.up();
+  } else {
+    const client = await page.context().newCDPSession(page);
+    await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    await client.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - 100, y: y + 35 }] });
+    await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await client.detach();
+  }
+  const after = await editor.boundingBox();
+  expect(after!.x).toBeCloseTo(before.x - 100, 0);
+  expect(after!.y).toBeCloseTo(before.y + 35, 0);
+  await expect(page.getByLabel('Rule ID', { exact: true })).toHaveValue('movable-local-rule');
+  await expect(page.getByRole('button', { name: 'Stage candidate', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Refresh status', exact: true })).toBeDisabled();
+  await expect(page.locator('#rule-view')).toBeDisabled();
+  await expect(page.getByRole('table', { name: 'Ordered rules', exact: true })).toBeVisible();
+  expect(mock.state().snapshot.running.config.rules).toEqual([]);
+  expect(mock.transactions).toEqual([]);
+});
+
+test('floating keyboard movement distinguishes move cancellation from closing and restores focus', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 1440, height: 1000 }); await page.goto('/firewall');
+  await addRule(page, 'previous-local-rule');
+  await fillRule(page, 'keyboard-local-rule');
+  const editor = page.locator('.fw-rule-editor'); const move = page.getByRole('button', { name: 'Move window', exact: true });
+  const before = await editor.boundingBox();
+  await page.locator('.console-other-actions > summary').evaluate((element) => element.click());
+  await expect(page.getByRole('button', { name: 'Discard local edits', exact: true })).toBeDisabled();
+  await page.locator('.console-other-actions > summary').evaluate((element) => element.click());
+  await move.click(); await expect(move).toHaveAttribute('aria-pressed', 'true');
+  await move.press('ArrowLeft'); await move.press('Shift+ArrowDown');
+  const moved = await editor.boundingBox();
+  expect(moved!.x).toBeCloseTo(before!.x - 10, 0); expect(moved!.y).toBeCloseTo(before!.y + 1, 0);
+  await move.press('Escape'); await expect(editor).toBeVisible();
+  const restored = await editor.boundingBox();
+  expect(restored!.x).toBeCloseTo(before!.x, 0); expect(restored!.y).toBeCloseTo(before!.y, 0);
+  await move.click(); await move.press('ArrowRight'); await move.press('Enter');
+  expect((await editor.boundingBox())!.x).toBeCloseTo(before!.x + 10, 0);
+  await move.click(); await move.press('Home'); await move.press('Enter');
+  expect((await editor.boundingBox())!.x).toBeCloseTo(before!.x, 0);
+  await move.press('Escape'); await expect(editor).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Add rule', exact: true })).toBeFocused();
+  expect(mock.transactions).toEqual([]);
+});
+
+test('floating window remains reachable on resize and mobile focus stays in the fitted editor', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 1440, height: 1000 }); await page.goto('/firewall');
+  await fillRule(page, 'responsive-local-rule');
+  const editor = page.locator('.fw-rule-editor'); const title = editor.locator('.ds-floating-title');
+  const start = await title.boundingBox(); if (!start) throw Error('Window geometry unavailable');
+  await page.mouse.move(start.x + 30, start.y + 10); await page.mouse.down();
+  await page.mouse.move(-500, 2000, { steps: 6 }); await page.mouse.up();
+  expect((await editor.boundingBox())!.x).toBeGreaterThanOrEqual(0);
+  await page.getByRole('button', { name: 'Move window', exact: true }).click();
+  await page.getByRole('button', { name: 'Move window', exact: true }).press('ArrowRight');
+  await page.setViewportSize({ width: 390, height: 680 });
+  await expect(editor).toHaveAttribute('aria-modal', 'true');
+  expect(await editor.evaluate((element) => element.matches(':modal'))).toBe(true);
+  expect(await editor.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  const fitted = await editor.boundingBox();
+  expect(fitted!.x).toBe(0); expect(fitted!.y).toBe(0); expect(fitted!.width).toBeCloseTo(390, 0); expect(fitted!.height).toBeCloseTo(680, 0);
+  await expect(page.getByRole('button', { name: 'Move window', exact: true })).toHaveCount(0);
+  await page.getByLabel('Rule ID', { exact: true }).focus(); await page.keyboard.press('Tab');
+  expect(await editor.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  const close = page.getByRole('button', { name: 'Close editor', exact: true });
+  const cancel = editor.getByRole('button', { name: 'Cancel', exact: true });
+  await expect(close).toBeInViewport();
+  await close.focus(); await close.press('Shift+Tab'); await expect(cancel).toBeFocused();
+  await cancel.press('Tab'); await expect(close).toBeFocused();
+  await expect(page.getByLabel('Rule ID', { exact: true })).toHaveValue('responsive-local-rule');
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(editor).toHaveAttribute('aria-modal', 'false');
+  expect(await editor.evaluate((element) => element.matches(':modal'))).toBe(false);
+  await expect(page.getByRole('button', { name: 'Move window', exact: true })).toBeVisible();
+  await title.locator('..').evaluate((element) => element.addEventListener('gotpointercapture', (event) => { (element as HTMLElement).dataset.testPointer = String((event as PointerEvent).pointerId); }, { once: true }));
+  const activeStart = await title.boundingBox(); if (!activeStart) throw Error('Window geometry unavailable');
+  await page.mouse.move(activeStart.x + 25, activeStart.y + 10); await page.mouse.down();
+  await page.mouse.move(activeStart.x + 40, activeStart.y + 20, { steps: 3 });
+  await expect(editor).toHaveAttribute('data-moving', 'true');
+  const header = title.locator('..');
+  await expect(header).toHaveAttribute('data-test-pointer', /^\d+$/);
+  await page.setViewportSize({ width: 390, height: 680 });
+  await expect(editor).toHaveAttribute('aria-modal', 'true');
+  expect(await header.evaluate((element) => element.hasPointerCapture(Number((element as HTMLElement).dataset.testPointer)))).toBe(false);
+  await page.setViewportSize({ width: 1280, height: 800 }); await page.mouse.up();
+  await expect(editor).toHaveAttribute('aria-modal', 'false');
+  await expect(page.getByLabel('Rule ID', { exact: true })).toHaveValue('responsive-local-rule');
+  expect(mock.transactions).toEqual([]);
+});
+
+test('floating editor closes on logout or expiry without publishing its unsaved rule', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 1440, height: 1000 }); await page.goto('/firewall');
+  await fillRule(page, 'logout-local-rule');
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.locator('.ds-floating-window')).toHaveCount(0);
+  await login(page); await fillRule(page, 'expiry-local-rule');
+  await page.clock.fastForward(3_601_000);
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.locator('.ds-floating-window')).toHaveCount(0);
+  expect(mock.state().snapshot.running.config.rules).toEqual([]);
+  expect(mock.transactions).toEqual([]);
+});
+
+test('floating controls and validation stay localized in EN ES PT', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 1440, height: 1000 }); await page.goto('/firewall');
+  for (const locale of ['en', 'es', 'pt'] as const) {
+    await page.locator('#language').selectOption(locale);
+    const copy = firewallMessages[locale]; const windowCopy = floatingWindowMessages[locale];
+    await page.getByRole('button', { name: copy.add, exact: true }).click();
+    const editor = page.getByRole('dialog', { name: copy.editor, exact: true });
+    await expect(editor).toBeVisible();
+    await expect(page.getByRole('button', { name: windowCopy.move, exact: true })).toHaveAccessibleDescription(windowCopy.moveHint);
+    await page.getByRole('button', { name: copy.applyRule, exact: true }).click();
+    await expect(page.getByLabel(copy.id, { exact: true })).toBeFocused();
+    await expect(page.getByLabel(copy.id, { exact: true })).toHaveAttribute('aria-invalid', 'true');
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+    await page.getByRole('button', { name: windowCopy.close, exact: true }).click();
+  }
   expect(mock.transactions).toEqual([]);
 });

@@ -1,22 +1,20 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { Button, Field, Notice, Surface, TextInput } from '../design-system/components.js';
+import { useId, useRef, useState } from 'react';
+import { Button, Field, Notice, TextInput } from '../design-system/components.js';
+import { FloatingWindow } from '../design-system/FloatingWindow.js';
+import { floatingWindowMessages } from '../design-system/floatingWindowMessages.js';
+import type { Locale } from '../messages.js';
 import type { FirewallMessages } from './messages.js';
 import { editRule, emptyRule, validateRule } from './model.js';
 import type { Rule, RuleDraft, RuleErrors } from './model.js';
 import type { RuleTableMessages } from './ruleTableMessages.js';
 import type { ConsoleMessages } from './consoleMessages.js';
 
-export function RuleEditor({ rules, index, copy, labels, consoleCopy, supportsEnabled, disabled, onSave, onCancel }: { rules: Rule[]; index: number | null; copy: FirewallMessages; labels: RuleTableMessages; consoleCopy?: ConsoleMessages; supportsEnabled: boolean; disabled: boolean; onSave: (rule: Rule) => void; onCancel: () => void }) {
+export function RuleEditor({ rules, index, copy, labels, consoleCopy, locale = 'en', visible = true, supportsEnabled, disabled, onSave, onCancel }: { rules: Rule[]; index: number | null; copy: FirewallMessages; labels: RuleTableMessages; consoleCopy?: ConsoleMessages; locale?: Locale; visible?: boolean; supportsEnabled: boolean; disabled: boolean; onSave: (rule: Rule) => void; onCancel: () => void }) {
   const [draft, setDraft] = useState<RuleDraft>(() => index === null ? { ...emptyRule } : editRule(rules[index]!));
   const [errors, setErrors] = useState<RuleErrors>({});
   const form = useRef<HTMLFormElement>(null);
   const fieldPrefix = useId();
-  useEffect(() => {
-    const opener = document.activeElement;
-    form.current?.querySelector<HTMLInputElement>('input:not([type="checkbox"])')?.focus();
-    return () => { requestAnimationFrame(() => { if (opener instanceof HTMLElement && opener.isConnected) opener.focus(); }); };
-  }, []);
-  return <Surface title={copy.editor} description={index === null ? copy.newRule : draft.id} className="fw-rule-editor">
+  return <FloatingWindow title={copy.editor} description={index === null ? copy.newRule : draft.id} labels={floatingWindowMessages[locale]} className="fw-rule-editor" visible={visible} initialFocusSelector="input:not([type=checkbox])" onClose={onCancel}>
     {consoleCopy && <details className="console-object-note"><summary>{consoleCopy.objects}</summary><p>{consoleCopy.objectsHint}</p></details>}
     <form ref={form} noValidate onSubmit={(event) => {
       event.preventDefault();
@@ -44,5 +42,5 @@ export function RuleEditor({ rules, index, copy, labels, consoleCopy, supportsEn
       </fieldset>
       <div className="ds-actions"><Button type="submit" disabled={disabled}>{copy.applyRule}</Button><Button variant="secondary" onClick={onCancel}>{copy.cancel}</Button></div>
     </form>
-  </Surface>;
+  </FloatingWindow>;
 }

@@ -49,3 +49,18 @@ raíz: `docker build -f frontend/Dockerfile.visual -t andeiva-console-check .` y
 `docker run --rm --network none --shm-size 256m andeiva-console-check`.
 
 Los campos de dirección y puertos del editor asocian individualmente su ayuda y sus errores para tecnologías de asistencia. Durante un arrastre se bloquean las columnas, filtros, selección de revisión y posición explícita hasta colocar o cancelar. Escape cancela el movimiento; el cambio sigue siendo local hasta preparar la candidata.
+
+## Editor de reglas movible
+
+En escritorio el editor se abre como una ventana amplia y centrada. Arrastra su
+cabecera o utiliza Mover ventana con las flechas (Mayús para un paso más fino),
+Inicio para centrar y Entrar para terminar. Escape cancela el movimiento; otro
+Escape cierra el editor. Centrar ventana restaura su posición. Puedes consultar
+la tabla del fondo; las escrituras de configuración y la actualización de estado
+quedan bloqueadas mientras editas. Salir de Reglas conserva el formulario y
+muestra un enlace de regreso en las demás vistas.
+
+En pantallas pequeñas ocupa el viewport y mantiene el foco de teclado dentro.
+Cerrar o cancelar descarta el formulario actual; conservar una regla en el
+borrador local no la prepara ni aplica. ID de regla sigue siendo su identificador
+técnico, no una descripción libre. Objetos y otros protocolos siguen separados.

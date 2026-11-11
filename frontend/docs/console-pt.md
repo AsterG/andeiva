@@ -48,3 +48,18 @@ Em `frontend`, execute `npm run lint`, `npm test` e `npm run build`. Na raiz:
 `docker run --rm --network none --shm-size 256m andeiva-console-check`.
 
 Os campos de endereço e portas do editor associam individualmente suas orientações e erros às tecnologias assistivas. Durante a reordenação, colunas, filtros, seleção de revisão e posição explícita ficam bloqueados até concluir ou cancelar. Escape cancela o movimento; a alteração permanece local até preparar a candidata.
+
+## Editor de regras móvel
+
+No desktop o editor abre em uma janela ampla e centralizada. Arraste o cabeçalho
+ou use Mover janela com as setas (Shift para um passo menor), Home para centralizar
+e Enter para concluir. Escape cancela o movimento; outro Escape fecha o editor.
+Centralizar janela restaura sua posição. A tabela ao fundo pode ser consultada;
+escritas de configuração e atualização de estado ficam bloqueadas durante a
+edição. Sair de Regras preserva o formulário e mostra um link de retorno nas
+outras telas.
+
+Em telas pequenas ocupa o viewport e mantém o foco do teclado dentro. Fechar ou
+cancelar descarta o formulário atual; manter uma regra no rascunho local não a
+prepara nem aplica. ID da regra continua sendo seu identificador técnico, não uma
+descrição livre. Objetos e outros protocolos permanecem em trabalho separado.
