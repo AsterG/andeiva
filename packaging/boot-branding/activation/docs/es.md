@@ -25,3 +25,13 @@ El menú queda visible cinco segundos. No modifica `10_linux`; pueden persistir 
 El arranque normal utiliza `loglevel=3`: conserva emergencias, alertas y mensajes críticos del kernel en consola; los errores y avisos ordinarios permanecen en el registro para diagnóstico autorizado. Esc muestra los diagnósticos textuales disponibles; para ver todo el kernel usar un arranque temporal sin `quiet`/`loglevel=3` o con nivel de consola superior. No cambia los argumentos de recuperación, bloquea drivers, omite comprobaciones del sistema de archivos ni desactiva registros. Puede aparecer texto de comprobación del disco antes de Plymouth; requiere observación nativa.
 
 El arranque normal usa `systemd.show_status=error`: oculta las líneas de servicios correctos y conserva los estados de fallo y el journal. Comprobar la consola real tras salir de Plymouth.
+
+## Comprobaciones portables y diagnóstico temporal
+
+La elegibilidad usa la topología real de montajes y el tamaño de bloque del sistema de archivos, no el nombre del disco ni el hipervisor. Las pruebas del parser no acreditan validación nativa de Proxmox, servidores físicos o firmware no ensayado.
+
+Solo el operador de plataforma autorizado puede usar `andeiva-boot-activation apply --diagnostic-boot`, después de restaurar y preparar con una nueva declaración de recuperación. Envía la traza a `/dev/null` y conserva un búfer acotado, potencialmente sensible, en `/run/andeiva-boot-plymouth-debug.log` al terminar Plymouth. No introducir credenciales en preguntas de Plymouth durante este ensayo de laboratorio. Se rechazan parámetros debug previos y un archivo de traza preexistente. La comprobación de capacidad no reserva espacio tras reiniciar.
+
+Después de terminar Plymouth, verificar que la ruta fija sea un archivo regular, de root, modo 0600 y menor de 1 MiB antes de recogerla privadamente. Nunca subir trazas sin filtrar a Git, CI, administración ordinaria o paquetes de soporte. La traza puede ser incompleta; otro reinicio puede sustituirla. No modifica controladores, conectores, resolución, firmware ni argumentos de recuperación.
+
+El diagnóstico permanece seleccionado hasta ejecutar `restore`, `prepare --recovery-verified`, `apply` normal y reiniciar normalmente. Se rechaza cambiar de modo con una configuración pendiente; repetir el mismo apply es idempotente. Recoger primero la traza y retirar el diagnóstico antes de devolver el appliance al uso habitual.

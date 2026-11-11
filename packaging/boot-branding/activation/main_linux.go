@@ -59,10 +59,11 @@ type machine struct {
 
 // The test seams are private and have no command-line or environment equivalent.
 type system struct {
-	root  *os.Root
-	owner uint32
-	probe func() (machine, error)
-	run   func(string, string) error
+	root        *os.Root
+	owner       uint32
+	probe       func() (machine, error)
+	run         func(string, string) error
+	diagnostics func() error
 }
 
 func fail(code string) error { return errors.New(code) }
@@ -557,6 +558,17 @@ func (s *system) observe(st *state, touched string) error {
 }
 
 func (s *system) apply() error {
+	return s.applyMode(false)
+}
+
+func bootConfiguration(diagnostic bool) string {
+	if !diagnostic {
+		return dropin
+	}
+	return strings.Replace(dropin, "systemd.show_status=error", "systemd.show_status=error plymouth.debug=stream:/dev/null plymouth.debug=file:/run/andeiva-boot-plymouth-debug.log", 1)
+}
+
+func (s *system) applyMode(diagnostic bool) error {
 	m, err := s.preflight()
 	if err != nil {
 		return err
@@ -572,10 +584,23 @@ func (s *system) apply() error {
 		return err
 	}
 	if st.Phase == "pending-reboot" && st.Pending == "" {
+		configuration, err := s.readSmall("etc/default/grub.d/99-andeiva-branding.cfg", false)
+		if err != nil || string(configuration) != bootConfiguration(diagnostic) {
+			return fail("ANDEIVA_BOOT_MODE_CONFLICT")
+		}
 		return nil
 	}
 	if st.Phase != "prepared" || st.Pending != "" {
 		return fail("ANDEIVA_BOOT_RECOVERY_REQUIRED")
+	}
+	if diagnostic {
+		check := s.diagnosticReady
+		if s.diagnostics != nil {
+			check = s.diagnostics
+		}
+		if err := check(); err != nil {
+			return err
+		}
 	}
 	st.Phase = "applying"
 	for _, step := range []string{"dropin", "select-theme", "initramfs", "grub", "check-grub"} {
@@ -588,7 +613,7 @@ func (s *system) apply() error {
 			if targetErr != nil {
 				return targetErr
 			}
-			err = s.atomic(name, []byte(dropin), 0o644)
+			err = s.atomic(name, []byte(bootConfiguration(diagnostic)), 0o644)
 		} else {
 			err = s.run(step, st.Kernel)
 		}
@@ -735,27 +760,8 @@ func (s *system) nativeProbe() (machine, error) {
 	if err != nil {
 		return result, fail("ANDEIVA_BOOT_MOUNT_INFO")
 	}
-	rootFound := false
-	for _, line := range strings.Split(string(mounts), "\n") {
-		fields := strings.Split(line, " - ")
-		if len(fields) != 2 {
-			continue
-		}
-		left, right := strings.Fields(fields[0]), strings.Fields(fields[1])
-		if len(left) < 6 || len(right) < 2 {
-			return result, fail("ANDEIVA_BOOT_MOUNT_INFO")
-		}
-		if left[4] == "/" {
-			rootFound = right[0] == "ext4" && right[1] == "/dev/sda1" && strings.Contains(","+left[5]+",", ",rw,")
-		}
-		for _, owned := range []string{"/boot", "/etc", "/usr", "/var/backups"} {
-			if left[4] == owned || strings.HasPrefix(left[4], owned+"/") || left[4] == "/var" {
-				return result, fail("ANDEIVA_BOOT_LAYOUT_UNQUALIFIED")
-			}
-		}
-	}
-	if !rootFound {
-		return result, fail("ANDEIVA_BOOT_LAYOUT_UNQUALIFIED")
+	if err := checkBootMounts(mounts); err != nil {
+		return result, err
 	}
 	cmdline, err := readProc(false)
 	if err != nil || bytes.Contains(cmdline, []byte("console=ttyS")) || bytes.Contains(cmdline, []byte("console=hvc")) {
@@ -794,11 +800,129 @@ func (s *system) nativeProbe() (machine, error) {
 	if err := syscall.Statfs("/", &capacity); err != nil {
 		return result, err
 	}
-	if capacity.Type != 0xef53 || capacity.Bsize != 4096 || capacity.Bavail > ^uint64(0)/4096 {
-		return result, fail("ANDEIVA_BOOT_LAYOUT_UNQUALIFIED")
+	result.Free, err = availableBytes(capacity)
+	if err != nil {
+		return result, err
 	}
-	result.Free, result.Inodes = capacity.Bavail*4096, capacity.Ffree
+	result.Inodes = capacity.Ffree
 	return result, nil
+}
+
+// Device names differ between physical disks and virtual storage controllers.
+// Qualification is based on filesystem and mount layout, never a device label.
+func checkBootMounts(mounts []byte) error {
+	rootFound := false
+	for _, line := range strings.Split(string(mounts), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, " - ")
+		if len(fields) != 2 {
+			return fail("ANDEIVA_BOOT_MOUNT_INFO")
+		}
+		left, right := strings.Fields(fields[0]), strings.Fields(fields[1])
+		if len(left) < 6 || len(right) < 3 {
+			return fail("ANDEIVA_BOOT_MOUNT_INFO")
+		}
+		if left[4] == "/" {
+			if rootFound || right[0] != "ext4" || !strings.Contains(","+left[5]+",", ",rw,") {
+				return fail("ANDEIVA_BOOT_LAYOUT_UNQUALIFIED")
+			}
+			rootFound = true
+		}
+		for _, owned := range []string{"/boot", "/etc", "/usr", "/var/backups"} {
+			if left[4] == owned || strings.HasPrefix(left[4], owned+"/") || left[4] == "/var" {
+				return fail("ANDEIVA_BOOT_LAYOUT_UNQUALIFIED")
+			}
+		}
+	}
+	if !rootFound {
+		return fail("ANDEIVA_BOOT_LAYOUT_UNQUALIFIED")
+	}
+	return nil
+}
+
+func availableBytes(capacity syscall.Statfs_t) (uint64, error) {
+	if capacity.Type != 0xef53 {
+		return 0, fail("ANDEIVA_BOOT_LAYOUT_UNQUALIFIED")
+	}
+	return filesystemFreeBytes(capacity)
+}
+
+func filesystemFreeBytes(capacity syscall.Statfs_t) (uint64, error) {
+	if capacity.Bsize <= 0 || capacity.Frsize <= 0 {
+		return 0, fail("ANDEIVA_BOOT_CAPACITY")
+	}
+	// statfs block counts use the fundamental allocation unit, not the I/O size.
+	blockSize := uint64(capacity.Frsize)
+	if capacity.Bavail > ^uint64(0)/blockSize {
+		return 0, fail("ANDEIVA_BOOT_CAPACITY")
+	}
+	return capacity.Bavail * blockSize, nil
+}
+
+func (s *system) checkDebugDefaults() error {
+	defaults, err := s.readSmall("etc/default/grub", false)
+	if err != nil {
+		return err
+	}
+	if bytes.Contains(defaults, []byte("plymouth.debug")) {
+		return fail("ANDEIVA_BOOT_EXISTING_DEBUG")
+	}
+	dir, err := s.root.Open("etc/default/grub.d")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	entries, err := dir.ReadDir(65)
+	if err != nil && !errors.Is(err, io.EOF) || len(entries) > 64 {
+		return fail("ANDEIVA_BOOT_DEFAULTS_DIRECTORY")
+	}
+	for _, entry := range entries {
+		if entry.Name() == "99-andeiva-branding.cfg" || !strings.HasSuffix(entry.Name(), ".cfg") {
+			continue
+		}
+		content, err := s.readSmall("etc/default/grub.d/"+entry.Name(), false)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(content, []byte("plymouth.debug")) {
+			return fail("ANDEIVA_BOOT_EXISTING_DEBUG")
+		}
+	}
+	return nil
+}
+
+func (s *system) diagnosticReady() error {
+	if err := s.checkDebugDefaults(); err != nil {
+		return err
+	}
+	if _, err := s.secure("run", false); err != nil {
+		return err
+	}
+	if _, err := s.root.Lstat("run/andeiva-boot-plymouth-debug.log"); !errors.Is(err, fs.ErrNotExist) {
+		return fail("ANDEIVA_BOOT_DEBUG_LOG_EXISTS")
+	}
+	if _, err := s.secure("dev", false); err != nil {
+		return err
+	}
+	info, err := s.root.Lstat("dev/null")
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != s.owner || info.Mode()&fs.ModeCharDevice == 0 || info.Mode()&fs.ModeSymlink != 0 || stat.Rdev != 0x103 {
+		return fail("ANDEIVA_BOOT_NULL_DEVICE")
+	}
+	var capacity syscall.Statfs_t
+	if err := syscall.Statfs("/run", &capacity); err != nil {
+		return err
+	}
+	free, err := filesystemFreeBytes(capacity)
+	if err != nil || capacity.Type != 0x01021994 || free < 2<<20 || capacity.Ffree < 2 {
+		return fail("ANDEIVA_BOOT_DIAGNOSTIC_CAPACITY")
+	}
+	return nil
 }
 
 func (s *system) rejectPostUpdateHooks() error {
@@ -845,7 +969,8 @@ func main() {
 	s.probe = s.nativeProbe
 	operation := os.Args[1]
 	ack := len(os.Args) == 3 && os.Args[2] == "--recovery-verified" && operation == "prepare"
-	if len(os.Args) == 3 && !ack {
+	diagnostic := len(os.Args) == 3 && os.Args[2] == "--diagnostic-boot" && operation == "apply"
+	if len(os.Args) == 3 && !ack && !diagnostic {
 		err = fail("ANDEIVA_BOOT_ARGUMENT")
 	} else if operation == "preflight" {
 		_, err = s.preflight()
@@ -859,7 +984,7 @@ func main() {
 			case "prepare":
 				err = s.prepare(ack)
 			case "apply":
-				err = s.apply()
+				err = s.applyMode(diagnostic)
 			case "restore":
 				err = s.restore()
 			case "status":

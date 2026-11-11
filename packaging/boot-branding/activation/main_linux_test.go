@@ -10,11 +10,182 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
 const currentTestKernel = "6.12.116+deb13-amd64"
 const alternateTestKernel = "6.12.107+deb13-amd64"
+
+func TestBootLayoutUsesCapabilitiesInsteadOfDeviceNames(t *testing.T) {
+	for _, device := range []string{"/dev/sda1", "/dev/vda1", "/dev/nvme0n1p2", "/dev/mapper/system-root", "/dev/root"} {
+		t.Run(device, func(t *testing.T) {
+			mounts := "29 1 8:1 / / rw,relatime - ext4 " + device + " rw\n30 29 0:10 / /run rw - tmpfs tmpfs rw\n"
+			if err := checkBootMounts([]byte(mounts)); err != nil {
+				t.Fatalf("equivalent ext4 layout rejected: %v", err)
+			}
+		})
+	}
+	root := "29 1 8:1 / / rw,relatime - ext4 /dev/root rw\n"
+	for name, mounts := range map[string]string{
+		"missing-root":   "",
+		"malformed":      "not mountinfo\n",
+		"read-only":      strings.Replace(root, "rw,relatime", "ro,relatime", 1),
+		"overlay":        strings.Replace(root, "ext4", "overlay", 1),
+		"duplicate-root": root + root,
+		"separate-boot":  root + "30 29 8:2 / /boot rw - ext4 /dev/other rw\n",
+		"boot-submount":  root + "30 29 8:2 / /boot/grub rw - ext4 /dev/other rw\n",
+		"separate-var":   root + "30 29 8:2 / /var rw - ext4 /dev/other rw\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := checkBootMounts([]byte(mounts)); err == nil {
+				t.Fatal("unqualified or malformed layout accepted")
+			}
+		})
+	}
+}
+
+func TestCapacityUsesReportedFilesystemBlockSize(t *testing.T) {
+	for _, blockSize := range []int64{1024, 4096, 65536} {
+		got, err := availableBytes(syscall.Statfs_t{Type: 0xef53, Bsize: blockSize, Frsize: blockSize, Bavail: 42})
+		if err != nil || got != uint64(blockSize)*42 {
+			t.Fatalf("block size %d: bytes=%d err=%v", blockSize, got, err)
+		}
+	}
+	if got, err := availableBytes(syscall.Statfs_t{Type: 0xef53, Bsize: 65536, Frsize: 4096, Bavail: 42}); err != nil || got != 42*4096 {
+		t.Fatalf("I/O size used as allocation unit: bytes=%d err=%v", got, err)
+	}
+	for _, capacity := range []syscall.Statfs_t{
+		{Type: 0xef53, Bsize: 0, Frsize: 4096, Bavail: 1},
+		{Type: 0xef53, Bsize: -1, Frsize: 4096, Bavail: 1},
+		{Type: 0xef53, Bsize: 4096, Frsize: 0, Bavail: 1},
+		{Type: 0xef53, Bsize: 4096, Frsize: -1, Bavail: 1},
+		{Type: 0xef53, Bsize: 65536, Frsize: 4096, Bavail: ^uint64(0)},
+		{Type: 0x794c7630, Bsize: 4096, Frsize: 4096, Bavail: 1},
+	} {
+		if _, err := availableBytes(capacity); err == nil {
+			t.Fatal("invalid or overflowing filesystem capacity accepted")
+		}
+	}
+}
+
+func TestDiagnosticBootModeIsExplicitAndReversible(t *testing.T) {
+	s := fixture(t)
+	checks := 0
+	s.diagnostics = func() error { checks++; return nil }
+	if err := s.prepare(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyMode(true); err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := s.root.ReadFile("etc/default/grub.d/99-andeiva-branding.cfg")
+	if err != nil || string(configuration) != bootConfiguration(true) {
+		t.Fatalf("diagnostic configuration: %v", err)
+	}
+	if strings.Count(string(configuration), "plymouth.debug=") != 2 ||
+		!strings.Contains(string(configuration), "plymouth.debug=stream:/dev/null plymouth.debug=file:/run/andeiva-boot-plymouth-debug.log") ||
+		strings.Contains(string(configuration), "/dev/kmsg") || strings.Contains(string(configuration), "GRUB_CMDLINE_LINUX=") {
+		t.Fatal("diagnostic output is not restricted to fixed normal-boot destinations")
+	}
+	if err := s.apply(); err == nil {
+		t.Fatal("normal apply accepted pending diagnostic configuration")
+	}
+	if err := s.applyMode(true); err != nil || checks != 1 {
+		t.Fatalf("idempotent diagnostic apply: %v checks=%d", err, checks)
+	}
+	if err := s.restore(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.prepare(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.apply(); err != nil {
+		t.Fatal(err)
+	}
+	configuration, err = s.root.ReadFile("etc/default/grub.d/99-andeiva-branding.cfg")
+	if err != nil || string(configuration) != dropin || strings.Contains(string(configuration), "plymouth.debug") {
+		t.Fatal("normal configuration retained diagnostic parameters")
+	}
+	if err := s.applyMode(true); err == nil {
+		t.Fatal("diagnostic apply accepted pending normal configuration")
+	}
+}
+
+func TestDiagnosticRefusalHasNoBootEffects(t *testing.T) {
+	s := fixture(t)
+	s.diagnostics = func() error { return errors.New("diagnostic storage unavailable") }
+	if err := s.prepare(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyMode(true); err == nil {
+		t.Fatal("diagnostic readiness failure ignored")
+	}
+	st, err := s.load()
+	if err != nil || st.Phase != "prepared" || st.Pending != "" {
+		t.Fatalf("state changed after refusal: %+v %v", st, err)
+	}
+	if err := s.verifyLive(st); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExistingDebugDefaultsAreRejected(t *testing.T) {
+	s := fixture(t)
+	if err := s.checkDebugDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.root.WriteFile("etc/default/grub.d/other.cfg", []byte("GRUB_CMDLINE_LINUX_DEFAULT=\"plymouth.debug=stream:/tmp/other\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.checkDebugDefaults(); err == nil {
+		t.Fatal("conflicting debug drop-in accepted")
+	}
+	if err := s.root.Remove("etc/default/grub.d/other.cfg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.root.WriteFile("etc/default/grub", []byte("GRUB_CMDLINE_LINUX_DEFAULT=\"plymouth.debug=file:/tmp/other\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.checkDebugDefaults(); err == nil {
+		t.Fatal("conflicting debug defaults accepted")
+	}
+}
+
+func TestDiagnosticRuntimePathsRejectExistingAndUnsafeFiles(t *testing.T) {
+	for _, kind := range []string{"existing-log", "log-symlink", "writable-run", "regular-null"} {
+		t.Run(kind, func(t *testing.T) {
+			s := fixture(t)
+			if err := s.root.Mkdir("run", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "existing-log":
+				if err := s.root.WriteFile("run/andeiva-boot-plymouth-debug.log", []byte("retained trace"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "log-symlink":
+				if err := os.Symlink("../etc/default/grub", filepath.Join(s.root.Name(), "run/andeiva-boot-plymouth-debug.log")); err != nil {
+					t.Fatal(err)
+				}
+			case "writable-run":
+				if err := os.Chmod(filepath.Join(s.root.Name(), "run"), 0o777); err != nil {
+					t.Fatal(err)
+				}
+			case "regular-null":
+				if err := s.root.Mkdir("dev", 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.root.WriteFile("dev/null", []byte("not a device"), 0o666); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.diagnosticReady(); err == nil {
+				t.Fatal("unsafe diagnostic path accepted")
+			}
+		})
+	}
+}
 
 func fixture(t *testing.T) *system {
 	t.Helper()

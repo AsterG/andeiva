@@ -20,6 +20,8 @@ cmp "$stage/control-files" "$stage/expected-control-files"
 # Inspect names without extracting archive paths or running package scripts.
 dpkg-deb --fsys-tarfile "$pkg" | tar -tf - > "$stage/data-files"
 grep -Fx './usr/sbin/andeiva-boot-activation' "$stage/data-files"
+dpkg-deb --fsys-tarfile "$pkg" | tar -xOf - ./usr/share/doc/andeiva-boot-activation/GO_LICENSE > "$stage/go-license"
+cmp "$stage/go-license" "$(go env GOROOT)/LICENSE"
 [[ $(grep -c '\.md$' "$stage/data-files") = 4 ]]
 ! grep -Eq '^\./(etc|boot|var)/|/systemd/|/init\.d/' "$stage/data-files"
 [[ $(stat -c %s "$pkg") -lt 8388608 ]]

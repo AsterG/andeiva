@@ -25,3 +25,13 @@ O menu permanece visível por cinco segundos. Não altera `10_linux`; mensagens 
 A inicialização normal usa `loglevel=3`: emergências, alertas e mensagens críticas do kernel continuam no console; erros e avisos comuns permanecem no registro para diagnóstico autorizado. Esc mostra os diagnósticos textuais disponíveis; para saída completa do kernel usar uma inicialização temporária sem `quiet`/`loglevel=3` ou com nível de console superior. Não altera argumentos de recuperação, bloqueia drivers, ignora verificações do sistema de arquivos ou desativa registros. Texto de verificação do disco pode aparecer antes do Plymouth; observação nativa ainda é necessária.
 
 A inicialização normal usa `systemd.show_status=error`: oculta linhas de unidades bem-sucedidas e mantém estados de falha e o journal. Verifique o console real após a saída do Plymouth.
+
+## Verificações portáveis e diagnóstico temporário
+
+A elegibilidade usa a topologia real das montagens e o tamanho de bloco do sistema de arquivos, sem depender do nome do disco ou hipervisor. Testes do parser não comprovam qualificação nativa do Proxmox, servidores físicos ou firmware não testado.
+
+Somente o operador de plataforma autorizado pode usar `andeiva-boot-activation apply --diagnostic-boot`, após restaurar e preparar com nova confirmação de recuperação. Envia o fluxo para `/dev/null` e preserva um buffer limitado, potencialmente sensível, em `/run/andeiva-boot-plymouth-debug.log` quando o Plymouth termina. Não introduza credenciais nas perguntas do Plymouth durante este teste de laboratório. Configurações debug anteriores e arquivo de log preexistente são recusados. A verificação de capacidade não reserva espaço após reiniciar.
+
+Após a saída do Plymouth, confirme que o caminho fixo é um arquivo regular de root, modo 0600 e menor que 1 MiB antes da coleta privada. Nunca publique traces brutos no Git, CI, administração comum ou pacotes de suporte. A coleta pode ser incompleta; outro reinício pode substituí-la. Não altera drivers, conectores, resolução, firmware ou argumentos de recuperação.
+
+O diagnóstico permanece selecionado até executar `restore`, `prepare --recovery-verified`, `apply` normal e reiniciar normalmente. Trocar de modo com configuração pendente é recusado; repetir o mesmo apply é idempotente. Colete primeiro o trace e retire o diagnóstico antes de devolver o appliance ao uso normal.

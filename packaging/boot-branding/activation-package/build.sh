@@ -35,6 +35,7 @@ doc="$root/usr/share/doc/andeiva-boot-activation"
 install -d "$root/DEBIAN" "$root/usr/sbin" "$doc/docs"
 (cd "$repo" && go build -mod=readonly -trimpath -buildvcs=false -o "$root/usr/sbin/andeiva-boot-activation" ./packaging/boot-branding/activation)
 install -m 0644 "$repo/LICENSE" "$repo/NOTICE" "$here/../activation/DESIGN.md" "$doc/"
+install -m 0644 "$(go env GOROOT)/LICENSE" "$doc/GO_LICENSE"
 install -m 0644 "$here/../activation/docs/"*.md "$doc/docs/"
 sed "s/@VERSION@/$version/g" "$here/control" > "$root/DEBIAN/control"
 chmod 0755 "$root/DEBIAN" "$root/usr/sbin/andeiva-boot-activation"

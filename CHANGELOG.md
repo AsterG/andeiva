@@ -8,6 +8,8 @@
 - Preserve the original logo while using a proportional GRUB display copy to
   keep boot and recovery choices visible at low resolutions.
 - Show failed systemd units without printing successful boot-status lines.
+- Validate storage layout by capabilities instead of a device label, and provide
+  an explicit temporary diagnostic boot with private bounded traces in RAM.
 
 ## Unreleased — inactive boot theme resources
 

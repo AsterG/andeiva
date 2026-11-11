@@ -25,3 +25,13 @@ The menu stays visible for five seconds. Vendor `10_linux` is untouched, so ordi
 Normal boot uses `loglevel=3`: kernel emergency/alert/critical messages remain on the console, while ordinary errors/warnings stay in the kernel log for authorized diagnostics. Esc shows available text diagnostics; for full kernel output use a temporary diagnostic boot without `quiet`/`loglevel=3` or with a higher console loglevel. Recovery arguments are unchanged. No driver blacklist, skipped filesystem check or disabled logging is introduced. Filesystem-check output may remain before Plymouth starts; native observation is still required.
 
 Normal boot uses `systemd.show_status=error`: successful unit lines are suppressed; failed-unit status and journals remain available. Inspect the actual console after Plymouth quits.
+
+## Portable checks and temporary diagnostics
+
+Storage eligibility follows the actual mount layout and reported filesystem block size, not a disk name or hypervisor. Parser fixtures are not evidence that Proxmox, physical servers or untested firmware have passed native qualification.
+
+Only the authorized platform operator may use `andeiva-boot-activation apply --diagnostic-boot`, after restore and a newly acknowledged prepare. It sends the trace stream to `/dev/null` and retains a bounded, potentially sensitive buffer at `/run/andeiva-boot-plymouth-debug.log` when Plymouth exits. Do not enter credentials into Plymouth prompts during this laboratory test. Existing debug settings and a pre-existing log are refused. Runtime capacity is checked, not reserved across reboot.
+
+After Plymouth has stopped, verify the fixed log is a regular root-owned file with mode 0600 and less than 1 MiB before collecting it privately. Never upload raw traces to Git, CI, ordinary administration or support bundles. Trace data may be incomplete. A further reboot can replace it. This does not change drivers, connectors, resolution, firmware or recovery arguments.
+
+Diagnostic selection is persistent until the explicit sequence `restore`, `prepare --recovery-verified`, normal `apply` and a normal reboot. Switching modes while a configuration is pending is rejected; repeating the same apply is idempotent. Collect the trace first and retire the diagnostic selection before returning the appliance to ordinary use.

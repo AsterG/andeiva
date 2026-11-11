@@ -4,7 +4,7 @@ Status: packaged activation and restart exercised in the Debian laboratory; visu
 
 This increment is a local privileged operator tool, separate from the data package and administrative API. Production paths, commands and theme name are fixed. Test fixtures and command substitutes exist only in unit tests; there is no runtime alternate root, executable, kernel argument or command-string option.
 
-Initial compatibility is deliberately narrow: Debian 13, BIOS, root `/dev/sda1` mounted ext4, `/boot`, `/etc`, `/usr` and backups on that root filesystem, an intact alternative kernel/initramfs, and installed/verified theme and Plymouth prerequisites. Other layouts, encryption, UEFI, serial boot, unsafe ownership/permissions and insufficient free bytes/inodes are rejected. This is not a general Debian installer.
+Initial compatibility is deliberately narrow: Debian 13, BIOS, a writable ext4 root filesystem, `/boot`, `/etc`, `/usr` and backups on that root filesystem, an intact alternative kernel/initramfs, and installed/verified theme and Plymouth prerequisites. Other layouts, encryption, UEFI, serial boot, unsafe ownership/permissions and insufficient free bytes/inodes are rejected. This is not a general Debian installer.
 
 ## Operations
 
@@ -37,3 +37,17 @@ Normal entries append `quiet splash loglevel=3 systemd.show_status=error` throug
 Pure tests must cover clean preparation, idempotence, command ordering, current-kernel-only initramfs generation, drift, unsafe metadata/links, capacity rejection, malformed state, interrupted steps, command failures, restoration and concurrency. Native gates remain: offline dependency closure/triggers, alternative-kernel or independent recovery rehearsal, activation, cold boot/reboot/shutdown, resolution and diagnostics, service/network invariance, update and restoration. Measure package/initramfs bytes, elapsed time and peak memory/CPU; no active measurements are claimed by fixture tests.
 
 Normal boot uses systemd.show_status=error to suppress successful unit-status lines while retaining failed-unit status. Journals, filesystem checks and recovery boot arguments remain enabled. Native validation must check the handoff after Plymouth quits; a successful theme load alone does not establish a clean console.
+
+## Platform-independent design and qualification
+
+Device labels, hypervisor names, connector names, fixed monitor resolutions and GPU drivers are not activation criteria. Mount topology, filesystem type, reported block size, firmware, console, available capacity and verified recovery determine eligibility. Device-name fixtures cover SATA/SCSI, virtio, NVMe, mapper and root aliases; these are simulated parser cases, not native platform certifications.
+
+The current native evidence comes from one Debian 13 AMD64 BIOS laboratory. Proxmox/KVM, physical servers, UEFI/Secure Boot, separate boot filesystems and ARM64 require their own installation, rendering and recovery evidence. Untested layouts remain gated; the portable architecture does not imply they have passed.
+
+## Explicit diagnostic boot
+
+Only `apply --diagnostic-boot` adds both fixed Plymouth debug parameters to normal entries: stream to `/dev/null` and buffered dump to `/run/andeiva-boot-plymouth-debug.log`. It refuses existing debug settings, a pre-existing log, unsafe runtime paths and insufficient tmpfs capacity. No graphical driver, connector, resolution or GRUB video payload is forced. Normal and diagnostic pending configurations cannot silently replace one another.
+
+The pinned Plymouth implementation retains less than 1 MiB of buffered trace and may discard earlier messages. Its dump truncates the destination on quit/root transition; creation uses mode 0600. Traces are potentially sensitive, including interactive question answers: use only the authorized unencrypted laboratory without entering credentials into Plymouth prompts. Read after Plymouth has stopped, validate regular-file type/root ownership/0600/size, and collect privately. Never include raw traces in Git, CI, ordinary administration or support exports. Capacity checks are not a reservation across reboot. Diagnostics do not promise evidence after power loss or SIGKILL.
+
+This mode remains selected until restore, prepare and normal apply. Collect evidence before another reboot can replace it, then retire the diagnostic selection. It is not an automatic remediation, a complete trace guarantee or a completed graphical-boot fix.
