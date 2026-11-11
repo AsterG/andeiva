@@ -20,7 +20,10 @@ func TestStagingProcessInterruption(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer store.lock.Close()
-		last := store.records[len(store.records)-1]
+		last, err := store.read(uint64(len(store.records)))
+		if err != nil {
+			t.Fatal(err)
+		}
 		err = store.append(last.State, last.Audit, false, func(actual string) error {
 			if actual == point {
 				os.Exit(74)
@@ -209,11 +212,14 @@ func TestStagingPublicationRejectsChangedMetadataAndExistingTarget(t *testing.T)
 		t.Run(kind, func(t *testing.T) {
 			s, _, dir := fixture(t, Options{})
 			store := s.store
-			last := store.records[len(store.records)-1]
+			last, err := store.read(uint64(len(store.records)))
+			if err != nil {
+				t.Fatal(err)
+			}
 			final := filepath.Join(dir, fmt.Sprintf("%08d.json", len(store.records)+1))
 			payload := filepath.Join(dir, stagingDirectory, stagingPayload)
 			canary := []byte("unrelated content")
-			err := store.append(last.State, last.Audit, false, func(point string) error {
+			err = store.append(last.State, last.Audit, false, func(point string) error {
 				if point != "before_publish" {
 					return nil
 				}

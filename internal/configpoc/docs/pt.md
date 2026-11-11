@@ -2,6 +2,32 @@
 
 [English](en.md) · [Español](es.md) · [Projeto e critérios de aceitação](../README.md)
 
+## Leituras verificadas do journal
+
+A inicialização continua validando todos os registros confirmados. O armazenamento
+mantém metadados leves, auditoria validada e o último estado durável. A auditoria
+é copiada do validado ao abrir/gravar, como antes; não detecta imediatamente
+alterações posteriores no disco. Configurações históricas leem registros limitados
+e verificam identidade, permissões, proprietário, tamanho, sequência e hashes.
+Arquivo alterado ou ausente retorna erro de armazenamento sem página parcial.
+Recibos do estado v1 persistido não expiram nem são removidos do mapa. Replay mantém
+Snapshot atual mais ReplayedGeneration original, autorização e vínculo ao conteúdo.
+
+Não há migração, exclusão de histórico, checkpoint nem compactação.
+Erros de integridade na consulta bloqueiam novas mutações, incluindo Confirm/Recover,
+até reabertura íntegra; o estado indica recuperação necessária. Um prazo pendente
+mantém rollback automático e os requisitos de persistência existentes. Apagar
+registros ou redefinir o armazenamento não é recuperação. Permanecem
+1.024 recibos, 2.048 registros por padrão, 64 MiB de journal e 1 MiB por registro.
+Retomar o serviço ainda grava os registros de recuperação existentes. Isso prepara
+leituras com menos memória; não resolve disco cheio nem comprova 5.000 ciclos
+completos. Medições devem identificar dados, toolchain e se medem heap retido,
+alocações ou RSS do processo. As verificações continuam abaixo.
+Textos de auditoria legados não têm limite individual de bytes; as medições não
+constituem um teto universal de heap.
+A [comparação medida e reprodução](../READ_VALIDATION.md) distingue a redução de
+memória do custo adicional de consultar revisões verificadas no disco.
+
 Este guia se destina a um ambiente local de desenvolvimento confiável. O experimento
 altera arquivos temporários de configuração e estados de componentes simulados.
 Não configura firewall, proxy, interface de rede ou serviço ANDEIVA de produção.

@@ -61,7 +61,7 @@ func Open(dir string, engines []Engine, options Options) (*Service, error) {
 			return nil, err
 		}
 	} else {
-		s.state = clone(store.records[len(store.records)-1].State)
+		s.state = clone(store.latest)
 	}
 	// Unacknowledged transitions and unconfirmed commits are conservatively rolled back.
 	target := s.state.Snapshot.Running
@@ -106,7 +106,7 @@ func (s *Service) Close() error {
 func (s *Service) persist(actor string, surface Surface, operation, result string, critical bool) error {
 	// Rejections and revocations must not spend a pending transaction's reserved
 	// resolution and recovery budget. No audit record is silently discarded.
-	if !critical && !s.store.capacity(s.ordinaryReserve()) {
+	if !critical && (s.store.readFailed || !s.store.capacity(s.ordinaryReserve())) {
 		return ErrStorage
 	}
 	audit := Audit{At: time.Now().UTC(), Actor: actor, Surface: surface, Operation: operation, Result: result, RunningHash: s.state.Snapshot.Running.Hash}
@@ -158,15 +158,20 @@ func (s *Service) History(principal Principal) ([]Audit, error) {
 	if !s.authorized(principal, "history") {
 		return nil, ErrDenied
 	}
+	if s.store.readFailed {
+		return nil, ErrStorage
+	}
 	out := make([]Audit, 0, len(s.store.records))
+	// This is the same validated audit snapshot previously held alongside full
+	// historical states. Historical configuration reads verify disk on demand.
 	for _, record := range s.store.records {
-		out = append(out, record.Audit)
+		out = append(out, record.audit)
 	}
 	return out, nil
 }
 func (s *Service) snapshot() Snapshot {
 	out := clone(s.state.Snapshot)
-	out.RecoveryRequired = out.RecoveryRequired || s.halted
+	out.RecoveryRequired = out.RecoveryRequired || s.halted || s.store.readFailed
 	return out
 }
 func (s *Service) reject(p Principal, surface Surface, operation string, reason error) (Snapshot, error) {
@@ -276,7 +281,7 @@ func (s *Service) execute(ctx context.Context, p Principal, surface Surface, req
 	if request.ExpectedGeneration != s.state.Snapshot.Generation {
 		return s.reject(p, surface, request.Operation, ErrConflict)
 	}
-	if !s.requestCapacity(request) {
+	if s.store.readFailed || !s.requestCapacity(request) {
 		return Snapshot{}, ErrStorage
 	}
 	if s.state.Snapshot.RecoveryRequired && request.Operation != OpRecover {
@@ -287,12 +292,21 @@ func (s *Service) execute(ctx context.Context, p Principal, surface Surface, req
 	}
 	if guard != nil {
 		if err := s.managedRequest(p, request); err != nil {
+			if errors.Is(err, ErrStorage) {
+				return Snapshot{}, err
+			}
 			return s.reject(p, surface, request.Operation, err)
 		}
 		if admission, ok := guard.(AdmissionGuard); ok {
 			var target *Revision
 			if request.Operation == OpRollback {
-				known, _ := s.historical(request.Target)
+				known, found, err := s.historical(request.Target)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				if !found {
+					return Snapshot{}, ErrInvalid
+				}
 				target = &known
 			}
 			if err := admission.Check(clone(request), s.snapshot(), target); err != nil {
@@ -414,7 +428,10 @@ func (s *Service) execute(ctx context.Context, p Principal, surface Surface, req
 			err = ErrInvalid
 			break
 		}
-		target, found := s.historical(request.Target)
+		target, found, readErr := s.historical(request.Target)
+		if readErr != nil {
+			return Snapshot{}, readErr
+		}
 		if !found || !validRollbackWindow(s.state.Snapshot.Running.Config, target.Config, request.ConfirmFor) {
 			err = ErrInvalid
 			break

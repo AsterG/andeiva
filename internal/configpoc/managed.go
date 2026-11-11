@@ -49,7 +49,10 @@ func (s *Service) managedRequest(p Principal, r Request) error {
 		if !validHash(r.Target) {
 			return ErrInvalid
 		}
-		target, ok := s.historical(r.Target)
+		target, ok, err := s.historical(r.Target)
+		if err != nil {
+			return err
+		}
 		if !ok || !validRollbackWindow(snap.Running.Config, target.Config, r.ConfirmFor) {
 			return ErrInvalid
 		}

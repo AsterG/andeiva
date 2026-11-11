@@ -9,6 +9,44 @@ the production database.
 Developer guides: [English](docs/en.md), [Español](docs/es.md),
 [Português](docs/pt.md).
 
+## Journal reading and capacity
+
+The store validates the complete committed chain at open, retaining lightweight
+record metadata, validated audit and the latest durable state rather than every
+historical state. Audit queries retain the previous behavior: copies of audit
+validated at open/append, without rereading all configuration records. They do not
+promise immediate detection of later disk tampering. Historical configuration
+queries read bounded records on demand and
+verify identity, ownership, permissions, size, sequence, predecessor and hash.
+A missing or changed record is a storage error, not an absent rollback target or
+permission to execute a previously seen request again. Queries return no partial
+configuration page after a verification error. This does not provide protection against a
+privileged attacker rewriting all trusted storage.
+
+An integrity error discovered during a historical read blocks new administrative
+mutations, including Confirm and Recover, and reports recovery required. It does
+not repair files or cancel an existing pending timeout: automatic safety rollback
+retains its existing journal/reservation requirements. A complete valid reopen is
+required before ordinary writes resume. Do not delete records or reset the store
+to clear this condition. This is distinct from a physical full-volume recovery broker.
+
+The v1 disk format, hashes and full current receipt map are unchanged. Exact retry
+still checks authorization and actor/body binding, then returns the current
+Snapshot with the original ReplayedGeneration before checking a new generation.
+Reading history does not expire receipts or migrate files. A legacy compatible
+binary can read the same unchanged journal; ordinary service open/resume still
+performs its existing durable recovery writes.
+
+This reduces retained historical state in RAM. It does not remove the full-chain
+startup scan, add checkpoints or compaction, increase capacity or implement disk
+quotas. The 1,024 receipts, default 2,048 records, 64 MiB journal and 1 MiB record
+limits remain. AND01, protected-audit exhaustion and continuity with a full volume
+remain separate release blockers. No 5,000-cycle or power-loss claim is made.
+Legacy audit strings have no separate per-field byte cap; measured memory for a
+fixture is not a universal heap bound. Total journal limits still apply.
+See [measured observations and reproduction](READ_VALIDATION.md), including the
+additional cost of verified revision reads and the unchanged capacity limitations.
+
 ## State and revision contract
 
 | State | Meaning |
