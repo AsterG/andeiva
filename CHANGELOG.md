@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — bounded login admission
+
+- Separate anonymous and verified login allowances using the receiving HTTP/SSH
+  socket peer, a fixed origin table and unchanged required audit/session controls.
+- Preserve verified access under anonymous allowance exhaustion, including a
+  shared source address; keep persistent audit exhaustion as a separate limitation.
+- Add negative, concurrent and verified loopback TLS tests and EN/ES/PT guidance.
+
 ## Unreleased — unified administration console
 
 - Rebuild with the Go 1.27.4 security patch and its pinned development image;
