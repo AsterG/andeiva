@@ -34,9 +34,10 @@ export function RuleEditor({ rules, index, copy, labels, consoleCopy, supportsEn
           const hint = key === 'source' || key === 'destination' ? copy.cidrHint : key === 'source_ports' || key === 'destination_ports' ? copy.portsHint : undefined;
           const id = `${fieldPrefix}-rule-${key}`;
           const describedBy = [hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(' ') || undefined;
-          return <Field key={key} id={id} label={copy[key]} {...(hint ? { hint } : {})} {...(error ? { error: copy[error] } : {})}>
+          const field = <Field key={key} id={id} label={copy[key]} {...(hint ? { hint } : {})} {...(error ? { error: copy[error] } : {})}>
             <TextInput id={id} value={draft[key]} maxLength={key === 'id' ? 64 : 32} required spellCheck={false} autoComplete="off" aria-invalid={!!error} aria-describedby={describedBy} onChange={(event) => { setDraft({ ...draft, [key]: event.target.value }); const next = { ...errors }; delete next[key]; setErrors(next); }} />
           </Field>;
+          return key === 'id' ? <div key={key} className="fw-field--full-width">{field}</div> : field;
         })}
         <Field id={`${fieldPrefix}-rule-protocol`} label={copy.protocol}><select id={`${fieldPrefix}-rule-protocol`} className="ds-select" value={draft.protocol} onChange={(event) => setDraft({ ...draft, protocol: event.target.value === 'udp' ? 'udp' : 'tcp' })}><option value="tcp">TCP</option><option value="udp">UDP</option></select></Field>
         <Field id={`${fieldPrefix}-rule-action`} label={copy.action}><select id={`${fieldPrefix}-rule-action`} className="ds-select" value={draft.action} onChange={(event) => setDraft({ ...draft, action: event.target.value === 'allow' ? 'allow' : 'deny' })}><option value="deny">{copy.deny}</option><option value="allow">{copy.allow}</option></select></Field>
