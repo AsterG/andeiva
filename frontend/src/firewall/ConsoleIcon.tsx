@@ -5,6 +5,7 @@ export function ConsoleIcon({ name }: { name: string }) {
     audit: 'M5 3h14v18H5zM8 7h8M8 11h8M8 15h5',
     configuration: 'M3 6h18M3 12h18M3 18h18M7 3v6M16 9v6M10 15v6',
     traffic: 'M3 18h18M5 14V9M10 14V4M15 14v-3M20 14V6',
+    system: 'M4 4h16v6H4zM4 14h16v6H4zM7 7h.01M7 17h.01M11 7h6M11 17h6',
     menu: 'M4 6h16M4 12h16M4 18h16',
   };
   return <svg className="console-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] ?? paths.rules} /></svg>;

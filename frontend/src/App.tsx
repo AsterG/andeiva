@@ -54,7 +54,6 @@ function ComponentLibrary({ copy }: { copy: Messages }) {
     </Surface>
     <Surface title={copy.indicators} description={copy.indicatorDescription}>
       <div className="status-list">{(['success', 'warning', 'error', 'info'] as const).map((value) => <StatusBadge key={value} tone={value}>{copy[value]}</StatusBadge>)}</div>
-      <div className="component-note"><Notice title={copy.scope}>{copy.limitation}</Notice></div>
       <div className="legend-example"><h3>{copy.legendTitle}</h3><p>{copy.legendDescription}</p><Legend labels={[copy.seriesOne, copy.seriesTwo, copy.seriesThree, copy.seriesFour]} /></div>
     </Surface>
     <Surface title={copy.tableTitle} description={copy.tableDescription} className="wide-surface">
@@ -70,7 +69,7 @@ function ComponentLibrary({ copy }: { copy: Messages }) {
     </Surface>
     <Surface title={copy.overlays} description={copy.overlayDescription} className="wide-surface">
       <div className="overlay-controls"><Button data-testid="open-dialog" onClick={() => setDialog(true)}>{copy.openDialog}</Button><HelpTip label={copy.helpLabel} text={copy.helpText} /><details className="ds-disclosure"><summary>{copy.details}<span aria-hidden="true">⌄</span></summary><div className="ds-disclosure-panel">{copy.detailsBody}</div></details></div>
-      <Dialog open={dialog} onClose={() => setDialog(false)} title={copy.dialogTitle} closeLabel={copy.close}><p>{copy.dialogBody}</p><Notice title={copy.scope}>{copy.limitation}</Notice></Dialog>
+      <Dialog open={dialog} onClose={() => setDialog(false)} title={copy.dialogTitle} closeLabel={copy.close}><p>{copy.dialogBody}</p></Dialog>
     </Surface>
   </div>;
 }
@@ -118,8 +117,8 @@ function DevelopmentApp({ initialLocale = 'en' }: { initialLocale?: Locale }) {
         {view === 'overview' ? <>
           <section className="welcome" aria-labelledby="welcome-title"><div className="welcome-copy"><span className="accent-rule" /><h2 id="welcome-title">{copy.introduction}</h2><p>{copy.introBody}</p><div className="ds-actions"><Button onClick={() => setView('components')}>{copy.explore}<span aria-hidden="true">→</span></Button><Button variant="secondary" onClick={() => setAbout(true)}>{copy.about}</Button></div></div><div className="theme-preview" aria-label={copy.currentTheme}><span className="theme-preview-label">{copy.currentTheme}</span><div className="theme-preview-window" aria-hidden="true"><div className="theme-preview-top"><i /><i /><i /></div><div className="theme-preview-layout"><span /><div><i /><i /><i /></div></div></div><strong>{theme === 'light' ? copy.light : copy.dark}</strong><p>{copy.themeHint}</p></div></section>
           <div className="overview-grid"><Surface title={copy.themeTitle}><p className="card-copy">{copy.themeBody}</p></Surface><Surface title={copy.accessTitle}><p className="card-copy">{copy.accessBody}</p></Surface><Surface title={copy.modulesTitle}><p className="card-copy">{copy.modulesBody}</p></Surface></div>
-          <Notice title={copy.scope}>{copy.limitation}</Notice>
-          <Dialog open={about} onClose={() => setAbout(false)} title={copy.about} closeLabel={copy.close}><p>{copy.detailsBody}</p><p>{copy.limitation}</p></Dialog>
+
+          <Dialog open={about} onClose={() => setAbout(false)} title={copy.about} closeLabel={copy.close}><p>{copy.detailsBody}</p></Dialog>
         </> : <ComponentLibrary copy={copy} />}
         <footer className="footer">{copy.footer}</footer>
       </main>

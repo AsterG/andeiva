@@ -163,6 +163,10 @@ func (c *Client) Traffic(ctx context.Context, before uint64, limit int, stream s
 }
 func jsonNumber(n uint64) string { b, _ := json.Marshal(n); return string(b) }
 func (c *Client) call(ctx context.Context, method, path string, body, out any) error {
+	return c.callWithLimit(ctx, method, path, body, out, 1024*1024)
+}
+
+func (c *Client) callWithLimit(ctx context.Context, method, path string, body, out any, limit int64) error {
 	var data []byte
 	var err error
 	if body != nil {
@@ -188,8 +192,8 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 		return ErrTransport
 	}
 	defer response.Body.Close()
-	data, err = io.ReadAll(io.LimitReader(response.Body, 1024*1024+1))
-	if err != nil || len(data) > 1024*1024 || response.Header.Get("Content-Type") != "application/json" {
+	data, err = io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil || int64(len(data)) > limit || response.Header.Get("Content-Type") != "application/json" {
 		return ErrResponse
 	}
 	if response.StatusCode != http.StatusOK {

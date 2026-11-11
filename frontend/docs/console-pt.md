@@ -48,3 +48,7 @@ Em `frontend`, execute `npm run lint`, `npm test` e `npm run build`. Na raiz:
 `docker run --rm --network none --shm-size 256m andeiva-console-check`.
 
 Os campos de endereço e portas do editor associam individualmente suas orientações e erros às tecnologias assistivas. Durante a reordenação, colunas, filtros, seleção de revisão e posição explícita ficam bloqueados até concluir ou cancelar. Escape cancela o movimento; a alteração permanece local até preparar a candidata.
+
+## Versão do produto
+
+Após entrar, abra Sistema → Sobre o ANDEIVA para consultar a versão instalada. O rodapé da navegação mostra o mesmo valor autenticado. Compilações de desenvolvimento e dados indisponíveis são indicados. A disponibilidade de atualizações não é inferida. O [guia do pacote](../../packaging/preview/docs/pt.md#versão-instalada-do-produto) explica a consulta CLI e a identidade local versus remota.

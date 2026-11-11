@@ -5,6 +5,7 @@ umask 022
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 (( $# >= 2 && $# <= 3 )) || fail 'Usage: build.sh VERSION OUTPUT_DIRECTORY [SOURCE_DATE_EPOCH]'
 version=$1
+(( ${#version} <= 64 )) || fail ANDEIVA_PREVIEW_VERSION
 [[ "$version" =~ ^0\.1\.0~alpha[1-9][0-9]*$ ]] || fail ANDEIVA_PREVIEW_VERSION
 (( EUID != 0 )) || fail ANDEIVA_BUILD_REQUIRES_NONROOT
 [[ $(uname -s) = Linux ]] || fail ANDEIVA_BUILD_REQUIRES_LINUX
@@ -42,8 +43,9 @@ root="$stage/package"
 install -d "$root/DEBIAN" "$root/usr/bin" "$root/usr/lib/andeiva-preview" \
   "$root/usr/lib/systemd/system" "$root/etc/andeiva-preview" "$root/usr/share/andeiva-preview/web" \
   "$root/usr/share/doc/andeiva-firewall-preview"
-go build -mod=readonly -trimpath -buildvcs=false -o "$root/usr/lib/andeiva-preview/andeiva-preview" ./cmd/andeiva-preview
-go build -mod=readonly -trimpath -buildvcs=false -o "$root/usr/bin/andeiva" ./cmd/andeiva
+identity="-X github.com/AsterG/andeiva/internal/productinfo.Version=$version"
+go build -mod=readonly -trimpath -buildvcs=false -ldflags "$identity" -o "$root/usr/lib/andeiva-preview/andeiva-preview" ./cmd/andeiva-preview
+go build -mod=readonly -trimpath -buildvcs=false -ldflags "$identity" -o "$root/usr/bin/andeiva" ./cmd/andeiva
 cp -a frontend/dist/. "$root/usr/share/andeiva-preview/web/"
 find "$root/usr/share/andeiva-preview/web" -type d -exec chmod 0755 {} +
 find "$root/usr/share/andeiva-preview/web" -type f -exec chmod 0644 {} +

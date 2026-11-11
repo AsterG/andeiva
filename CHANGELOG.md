@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — installed product identity
+
+- Show the authenticated appliance product version in System and the navigation
+  footer, with equivalent CLI/API reads and explicit unavailable update status.
+- Stamp preview backend and CLI identities from the Debian package version and
+  verify that identity during package validation.
+- Remove general laboratory-scope banners from the web interface while retaining
+  contextual errors, authorization, confirmation and recovery controls.
+
 ## Unreleased — bounded login admission
 
 - Separate anonymous and verified login allowances using the receiving HTTP/SSH

@@ -31,14 +31,14 @@ test('first render is English and light without browser preferences', () => {
   const html = renderToStaticMarkup(createElement(App));
   assert.match(html, /data-theme="light"/);
   assert.match(html, /lang="en"/);
-  assert.ok(html.includes(messages.en.limitation));
+  assert.doesNotMatch(html, /Current scope|This page does not manage or protect network traffic/);
   assert.match(html, /<main/);
   assert.match(html, /for="language"/);
   assert.match(html, /for="theme"/);
 });
 
 for (const locale of ['en', 'es', 'pt']) {
-  test(`renders complete ${locale} text with an explicit development limitation`, () => {
+  test(`renders complete ${locale} text without a generic scope banner`, () => {
     const html = renderToStaticMarkup(createElement(App, { initialLocale: locale }));
     // Views render their own copy; every locale must still provide the complete contract.
     assert.deepEqual(Object.keys(messages[locale]).sort(), Object.keys(messages.en).sort());
@@ -46,10 +46,11 @@ for (const locale of ['en', 'es', 'pt']) {
       assert.equal(typeof value, 'string', `invalid translation: ${key}`);
       assert.ok(value.trim(), `empty translation: ${key}`);
     }
-    for (const key of ['phase', 'limitation', 'language', 'theme']) {
+    for (const key of ['phase', 'language', 'theme']) {
       assert.ok(html.includes(messages[locale][key]), `missing overview copy: ${key}`);
     }
     assert.match(html, new RegExp(`lang="${locale}"`));
+    assert.doesNotMatch(html, /Current scope|Alcance actual|Escopo atual/);
     assert.equal(Object.keys(messages[locale]).length, Object.keys(messages.en).length);
   });
 }

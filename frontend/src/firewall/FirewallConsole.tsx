@@ -18,11 +18,14 @@ import { ConfigurationView } from './ConfigurationView.js';
 import { TransactionControls } from './TransactionControls.js';
 import { consoleMessages } from './consoleMessages.js';
 import type { ConsoleView } from './consoleMessages.js';
+import { productInfoResponse } from './productInfo.js';
+import type { ProductInfoState } from './productInfo.js';
+import { SystemInfoView } from './SystemInfoView.js';
 
 type Review = { operation: Operation; target: string; confirm_for?: number } | { operation: 'remove'; index: number; target: string } | { operation: 'discard'; target: string };
 type RuleView = 'draft' | 'candidate' | 'running' | 'startup';
 
-export function FirewallConsole({ locale, page = 'rules', onLocalServices, renderFrame }: { locale: Locale; page?: ConsoleView; onLocalServices?: (available: boolean) => void; renderFrame: (content: ReactNode, authenticated: boolean) => ReactNode }) {
+export function FirewallConsole({ locale, page = 'rules', onLocalServices, renderFrame }: { locale: Locale; page?: ConsoleView; onLocalServices?: (available: boolean) => void; renderFrame: (content: ReactNode, authenticated: boolean, product: ProductInfoState) => ReactNode }) {
   const copy = firewallMessages[locale];
   const tableCopy = ruleTableMessages[locale];
   const [session, setSession] = useState<Session | null>(null);
@@ -47,9 +50,12 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
   const loginForm = useRef<HTMLFormElement>(null);
   const mounted = useRef(true);
   const authVersion = useRef(0);
+  const [product, setProduct] = useState<ProductInfoState>({ state: 'loading' });
+  const [productRefresh, setProductRefresh] = useState(0);
 
   function forgetSession() {
     authVersion.current++;
+    setProduct({ state: 'loading' });
     onLocalServices?.(false);
     setSession(null); setSupportsEnabled(false); setState(null); setDraft(null); setHistory(null); setFresh(false); setDirty(false); setEditor(null); setReview(null); setSuccess(false);
   }
@@ -183,6 +189,23 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
   }
 
   const authenticated = !loading && !!session && Date.parse(session.expires_at) > Date.now();
+  useEffect(() => {
+    if (!authenticated) return;
+    let active = true;
+    const version = authVersion.current;
+    setProduct({ state: 'loading' });
+    void (async () => {
+      try {
+        const info = productInfoResponse(await request('system/info'));
+        if (active && mounted.current && version === authVersion.current) setProduct({ state: 'ready', info });
+      } catch (reason) {
+        if (!active || !mounted.current || version !== authVersion.current) return;
+        if (reason instanceof ApiError && reason.status === 401) { forgetSession(); setError(reason); }
+        else setProduct({ state: 'unavailable' });
+      }
+    })();
+    return () => { active = false; };
+  }, [authenticated, productRefresh]);
   const content = <div className="fw-stack" aria-busy={loading || busy}>
     {error && <Notice title={copy.error} live>{errorMessage(error.code, copy, error.status)}</Notice>}
     {loading ? <Notice title={copy.loading}>{copy.https}</Notice> : !authenticated ? <Surface title={copy.login} description={copy.https} className="fw-login"><form ref={loginForm} onSubmit={(event) => void login(event)}>
@@ -193,6 +216,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
       <div className="fw-state"><div><strong>{copy.identity}: {session.username}</strong><p className="fw-meta">{admin ? copy.admin : copy.viewer} · {copy.expires}: {date(session.expires_at)}</p></div><div className="fw-toolbar"><Button variant="secondary" disabled={busy} onClick={() => void refresh()}>{copy.retry}</Button><Button variant="secondary" disabled={busy} onClick={() => void logout()}>{copy.logout}</Button></div></div>
       {(!healthy || !state) && <Notice title={copy.disconnected}>{copy.disconnectedBody}</Notice>}
       {success && <Notice title={copy.success} live>{copy.successBody}</Notice>}
+      {page === 'system' && <SystemInfoView state={product} locale={locale} refresh={() => setProductRefresh((value) => value + 1)} />}
       {state && snapshot && <>
         {(page === 'audit' || page === 'traffic') && !admin && <Notice title={copy.viewer}>{errorMessage('ANDEIVA_CONFIG_DENIED', copy, 403)}</Notice>}
         {page === 'dashboard' && <ConsoleDashboard state={state} verified={healthy} locale={locale} observed={observed} />}
@@ -207,7 +231,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
 
         </Surface></div>
 
-        <TransactionControls state={state} session={session} locale={locale} healthy={healthy} fresh={fresh} busy={busy} writable={!!writable} dirty={dirty} staleDraft={staleDraft} editing={!!editor} observed={observed} confirmSeconds={confirmSeconds} setConfirmSeconds={setConfirmSeconds} execute={(operation) => void transact(operation)} discard={() => setReview({ operation: 'discard', target: snapshot.candidate?.revision.hash ?? snapshot.running.hash })} review={(operation, confirmed) => setReview({ operation, target: operation === 'commit' ? snapshot.candidate!.revision.hash : snapshot.running.hash, ...(confirmed ? { confirm_for: confirmed } : {}) })} />
+        {page !== 'system' && <TransactionControls state={state} session={session} locale={locale} healthy={healthy} fresh={fresh} busy={busy} writable={!!writable} dirty={dirty} staleDraft={staleDraft} editing={!!editor} observed={observed} confirmSeconds={confirmSeconds} setConfirmSeconds={setConfirmSeconds} execute={(operation) => void transact(operation)} discard={() => setReview({ operation: 'discard', target: snapshot.candidate?.revision.hash ?? snapshot.running.hash })} review={(operation, confirmed) => setReview({ operation, target: operation === 'commit' ? snapshot.candidate!.revision.hash : snapshot.running.hash, ...(confirmed ? { confirm_for: confirmed } : {}) })} />}
         {page === 'audit' && admin && !historyDenied && <HistoryPanel history={history} copy={copy} locale={locale} busy={busy} canRestore={writable && !dirty && !editor} load={(before) => void loadHistory(before)} restore={(target) => setReview({ operation: 'rollback', target })} />}
         {page === 'traffic' && admin && healthy && <TrafficPanel locale={locale} busy={busy} onFailure={fail} />}
       </>}
@@ -217,7 +241,6 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
       else if (review.operation === 'discard' && snapshot) { setDraft(draftConfig(snapshot)); setBaseGeneration(snapshot.generation); setDirty(false); setEditor(null); setReview(null); }
       else if (review.operation !== 'remove' && review.operation !== 'discard') void transact(review.operation, { ...(review.operation === 'confirm' || review.operation === 'rollback' ? { target: review.target } : {}), ...(review.confirm_for ? { confirm_for: review.confirm_for } : {}) });
     }}>{copy.proceed}</Button></>}</Dialog>
-    {authenticated && <Notice title={copy.scope}>{copy.limitation}</Notice>}
   </div>;
-  return renderFrame(content, authenticated);
+  return renderFrame(content, authenticated, product);
 }

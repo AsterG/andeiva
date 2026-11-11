@@ -25,7 +25,7 @@ export function LocalServicesPage({ initialLocale = 'en' }: { initialLocale?: Lo
     <aside className="sidebar"><div className="brand-panel" data-testid="brand-surface"><img className="brand-image" src="/andeiva-logo.png" alt="ANDEIVA Security Gateway" width={1100} height={550} /></div>
       <p className="workspace-label">{copy.system}</p><Navigation label={copy.system} items={[{ id: 'local-services', label: copy.title, active: view === 'services', onSelect: () => { setView('services'); document.getElementById('main-content')?.focus(); }, icon }]} />
       <p className="workspace-label">{copy.firewall}</p><Navigation label={copy.firewall} items={[{ id: 'effective-policies', label: copy.effective, active: view === 'effective', onSelect: () => { setView('effective'); document.getElementById('main-content')?.focus(); }, icon }]} />
-      <div className="sidebar-note"><span className="sidebar-rule" /><p>{copy.scope}</p></div></aside>
+      </aside>
     <div className="workspace"><header className="header"><div className="header-title"><span className="header-marker" aria-hidden="true" /><p>{copy.system}</p></div><div className="preferences">{preferences}</div></header><main id="main-content" className="content" tabIndex={-1}><div className="page-heading"><div><p className="eyebrow">ANDEIVA Security Gateway</p><h1>{view === 'services' ? copy.title : copy.effective}</h1><p className="page-description">{copy.subtitle}</p></div></div>{content}</main></div>
   </div>} />;
 }

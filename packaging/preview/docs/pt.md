@@ -139,3 +139,21 @@ Nunca trunque registros protegidos para recuperar acesso. TLS expira ao terminar
 sua validade. Renovação automática, arquivamento, alterações em múltiplas
 interfaces e Local Service Policy Manager têm gates separados. Contratos não
 comprovam integrações. Registre a execução nativa antes de validar o preview.
+
+## Versão instalada do produto
+
+Após entrar, abra Sistema para consultar a versão ANDEIVA informada pela API em
+execução. Uma compilação sem identidade de pacote aparece como desenvolvimento;
+a versão não é inferida dos arquivos do navegador. Este runtime não possui
+catálogo verificado de atualizações e informa disponibilidade indisponível.
+
+A consulta autenticada pela CLI usa o mesmo endpoint e permissões:
+
+```sh
+andeiva system info --url https://ENDERECO_LAN:9443 --ca-file /trusted/ca.crt --credentials-file /private/operator.json
+```
+
+`andeiva --version` informa a compilação local da CLI, que pode diferir do
+appliance conectado. A validação do pacote verifica se essa identidade coincide
+com sua versão Debian. Apenas a identidade do produto ANDEIVA é retornada, sem
+versões do sistema operacional, kernel ou motores.

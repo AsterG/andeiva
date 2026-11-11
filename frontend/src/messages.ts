@@ -3,7 +3,6 @@ export type Locale = 'en' | 'es' | 'pt';
 const en = {
   language: 'Language', theme: 'Appearance', light: 'Light', dark: 'Dark',
   phase: 'Development preview', title: 'A consistent foundation.', description: 'One visual language for ANDEIVA Security Gateway.',
-  scope: 'Current scope', limitation: 'This page does not manage or protect network traffic.',
   skip: 'Skip to content', navigation: 'Preview navigation', overview: 'Overview', components: 'Component library',
   workspace: 'DESIGN SYSTEM', local: 'Local preview', version: 'Interface foundation',
   introduction: 'Designed for clarity. Built to grow.',
@@ -41,7 +40,6 @@ export const messages: Record<Locale, Messages> = {
   es: {
     language: 'Idioma', theme: 'Apariencia', light: 'Claro', dark: 'Oscuro',
     phase: 'Vista previa de desarrollo', title: 'Una base consistente.', description: 'Un lenguaje visual para ANDEIVA Security Gateway.',
-    scope: 'Alcance actual', limitation: 'Esta página no administra ni protege el tráfico de red.',
     skip: 'Saltar al contenido', navigation: 'Navegación de la vista previa', overview: 'Resumen', components: 'Biblioteca de componentes',
     workspace: 'SISTEMA DE DISEÑO', local: 'Vista previa local', version: 'Base de la interfaz',
     introduction: 'Diseñado para la claridad. Preparado para crecer.',
@@ -75,7 +73,6 @@ export const messages: Record<Locale, Messages> = {
   pt: {
     language: 'Idioma', theme: 'Aparência', light: 'Claro', dark: 'Escuro',
     phase: 'Prévia de desenvolvimento', title: 'Uma base consistente.', description: 'Uma linguagem visual para o ANDEIVA Security Gateway.',
-    scope: 'Escopo atual', limitation: 'Esta página não administra nem protege o tráfego de rede.',
     skip: 'Ir para o conteúdo', navigation: 'Navegação da prévia', overview: 'Visão geral', components: 'Biblioteca de componentes',
     workspace: 'SISTEMA DE DESIGN', local: 'Prévia local', version: 'Base da interface',
     introduction: 'Projetado para clareza. Preparado para crescer.',
