@@ -23,3 +23,5 @@ After a complete restore, `prepare --recovery-verified` can rearm that same set 
 The menu stays visible for five seconds. Vendor `10_linux` is untouched, so ordinary loading lines can remain. No A/B, power-loss, full package rollback or completed branding guarantee is provided. See [design](../DESIGN.md) for paths, limitations and remaining native gates.
 
 Normal boot uses `loglevel=3`: kernel emergency/alert/critical messages remain on the console, while ordinary errors/warnings stay in the kernel log for authorized diagnostics. Esc shows available text diagnostics; for full kernel output use a temporary diagnostic boot without `quiet`/`loglevel=3` or with a higher console loglevel. Recovery arguments are unchanged. No driver blacklist, skipped filesystem check or disabled logging is introduced. Filesystem-check output may remain before Plymouth starts; native observation is still required.
+
+Normal boot uses `systemd.show_status=error`: successful unit lines are suppressed; failed-unit status and journals remain available. Inspect the actual console after Plymouth quits.

@@ -23,3 +23,5 @@ Após uma restauração completa, `prepare --recovery-verified` permite rearmar 
 O menu permanece visível por cinco segundos. Não altera `10_linux`; mensagens normais podem permanecer. Não garante A/B, resistência a cortes, reversão completa de pacotes ou branding concluído. Consultar [desenho](../DESIGN.md) e os testes nativos pendentes.
 
 A inicialização normal usa `loglevel=3`: emergências, alertas e mensagens críticas do kernel continuam no console; erros e avisos comuns permanecem no registro para diagnóstico autorizado. Esc mostra os diagnósticos textuais disponíveis; para saída completa do kernel usar uma inicialização temporária sem `quiet`/`loglevel=3` ou com nível de console superior. Não altera argumentos de recuperação, bloqueia drivers, ignora verificações do sistema de arquivos ou desativa registros. Texto de verificação do disco pode aparecer antes do Plymouth; observação nativa ainda é necessária.
+
+A inicialização normal usa `systemd.show_status=error`: oculta linhas de unidades bem-sucedidas e mantém estados de falha e o journal. Verifique o console real após a saída do Plymouth.

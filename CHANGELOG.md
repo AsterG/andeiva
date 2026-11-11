@@ -5,6 +5,9 @@
 - Add an explicit local experimental boot-theme activation and restoration tool,
   with recovery preflight, protected backups, serialized changes and a retained
   previous kernel. Native boot qualification remains separate from fixture tests.
+- Preserve the original logo while using a proportional GRUB display copy to
+  keep boot and recovery choices visible at low resolutions.
+- Show failed systemd units without printing successful boot-status lines.
 
 ## Unreleased — inactive boot theme resources
 

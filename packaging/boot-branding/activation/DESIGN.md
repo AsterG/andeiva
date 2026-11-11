@@ -1,6 +1,6 @@
 # BOOT-ACTIVATION-001: local experimental activation
 
-Status: implementation under review; no native activation or power-loss qualification.
+Status: packaged activation and restart exercised in the Debian laboratory; visual defects found during operator review remain under correction. No power-loss qualification.
 
 This increment is a local privileged operator tool, separate from the data package and administrative API. Production paths, commands and theme name are fixed. Test fixtures and command substitutes exist only in unit tests; there is no runtime alternate root, executable, kernel argument or command-string option.
 
@@ -30,8 +30,10 @@ Each mutation has durable intent before execution, then observed hashes after co
 
 The installed GRUB generator's `quiet_boot=0` has no supported override established here. Ordinary kernel/initramfs loading lines may remain. The menu is kept visible; this increment does not meet the final message-free branding acceptance criterion. Existing authentication, diagnostics and prior kernels remain in place. No Web/CLI reboot integration is implemented.
 
-Normal entries append `quiet splash loglevel=3 systemd.show_status=auto` through `GRUB_CMDLINE_LINUX_DEFAULT`, preserving prior arguments and leaving recovery-specific arguments unchanged. Kernel console output retains emergency, alert and critical priorities; ordinary errors and warnings are not printed there. Kernel logs remain available to authorized diagnostics. No driver is blacklisted, filesystem check skipped, logging disabled or failure result changed. Esc exposes available Plymouth text diagnostics; detailed kernel troubleshooting also requires a temporary diagnostic boot with `quiet`/`loglevel=3` removed or an explicitly higher console loglevel. This does not suppress initramfs/fsck stdout or prove that all normal text is invisible; actual Plymouth start order requires native observation.
+Normal entries append `quiet splash loglevel=3 systemd.show_status=error` through `GRUB_CMDLINE_LINUX_DEFAULT`, preserving prior arguments and leaving recovery-specific arguments unchanged. Kernel console output retains emergency, alert and critical priorities; ordinary errors and warnings are not printed there. Kernel logs remain available to authorized diagnostics. No driver is blacklisted, filesystem check skipped, logging disabled or failure result changed. Esc exposes available Plymouth text diagnostics; detailed kernel troubleshooting also requires a temporary diagnostic boot with `quiet`/`loglevel=3` removed or an explicitly higher console loglevel. This does not suppress initramfs/fsck stdout or prove that all normal text is invisible; actual Plymouth start order requires native observation.
 
 ## Required evidence
 
 Pure tests must cover clean preparation, idempotence, command ordering, current-kernel-only initramfs generation, drift, unsafe metadata/links, capacity rejection, malformed state, interrupted steps, command failures, restoration and concurrency. Native gates remain: offline dependency closure/triggers, alternative-kernel or independent recovery rehearsal, activation, cold boot/reboot/shutdown, resolution and diagnostics, service/network invariance, update and restoration. Measure package/initramfs bytes, elapsed time and peak memory/CPU; no active measurements are claimed by fixture tests.
+
+Normal boot uses systemd.show_status=error to suppress successful unit-status lines while retaining failed-unit status. Journals, filesystem checks and recovery boot arguments remain enabled. Native validation must check the handoff after Plymouth quits; a successful theme load alone does not establish a clean console.

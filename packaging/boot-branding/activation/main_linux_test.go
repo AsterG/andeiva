@@ -111,7 +111,7 @@ func TestPrepareApplyRestoreAndIdempotence(t *testing.T) {
 		t.Fatal(err)
 	}
 	configuration, err := s.root.ReadFile("etc/default/grub.d/99-andeiva-branding.cfg")
-	if err != nil || !strings.Contains(string(configuration), `GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} quiet splash loglevel=3 systemd.show_status=auto"`) {
+	if err != nil || !strings.Contains(string(configuration), `GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} quiet splash loglevel=3 systemd.show_status=error"`) {
 		t.Fatalf("normal-boot console policy missing: %v", err)
 	}
 	if strings.Contains(string(configuration), "GRUB_CMDLINE_LINUX=") || !strings.Contains(string(configuration), "GRUB_TIMEOUT=5\nGRUB_DISABLE_RECOVERY=false\n") {

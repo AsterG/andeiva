@@ -2,12 +2,39 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestGRUBCopyIsDeterministicAndProportional(t *testing.T) {
+	logo, err := grubLogo("../../../frontend/public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logo.Bounds().Dx() != 320 || logo.Bounds().Dy() != 160 {
+		t.Fatal("GRUB copy must be 320x160")
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, logo); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(encoded.Bytes())
+	if hex.EncodeToString(digest[:]) != "44fcce594c0744ba51fd5792236bc4c775c63e8e4903f3fcaabbf0a74bf9cd50" {
+		t.Fatal("GRUB copy differs from approved deterministic area reduction")
+	}
+	wrong := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wrong, "andeiva-logo.png"), []byte("not approved artwork"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grubLogo(wrong); err == nil {
+		t.Fatal("unapproved source accepted")
+	}
+}
 
 func TestAssetsHaveDeterministicDimensionsAndClearCenter(t *testing.T) {
 	first, second := background(), background()

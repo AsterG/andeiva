@@ -1,11 +1,15 @@
-// Command render creates original decorative assets; it never opens the logo.
+// Command render creates decoration and a proportional GRUB copy of the approved logo.
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"math"
 	"os"
 )
@@ -15,6 +19,74 @@ var (
 	blue = color.NRGBA{8, 124, 245, 255}
 	cyan = color.NRGBA{0, 207, 232, 255}
 )
+
+const approvedLogo = "1f79f5ec7f33327c9285c702b63fc5c5a618a28395b2161d594001fdb0199f81"
+
+func grubLogo(sourceDir string) (*image.NRGBA, error) {
+	root, err := os.OpenRoot(sourceDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat("andeiva-logo.png")
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return nil, fmt.Errorf("ANDEIVA_BOOT_LOGO_SOURCE")
+	}
+	f, err := root.Open("andeiva-logo.png")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	if err != nil || len(data) > 1<<20 {
+		return nil, fmt.Errorf("ANDEIVA_BOOT_LOGO_SOURCE")
+	}
+	digest := sha256.Sum256(data)
+	if hex.EncodeToString(digest[:]) != approvedLogo {
+		return nil, fmt.Errorf("ANDEIVA_BOOT_LOGO_INTEGRITY")
+	}
+	source, err := png.Decode(bytes.NewReader(data))
+	if err != nil || source.Bounds() != image.Rect(0, 0, 1100, 550) {
+		return nil, fmt.Errorf("ANDEIVA_BOOT_LOGO_DIMENSIONS")
+	}
+	return reduceLogo(source), nil
+}
+
+// Area sampling changes resolution only. Both axes use the identical 1100/320 ratio.
+func reduceLogo(source image.Image) *image.NRGBA {
+	const width, height = 320, 160
+	result := image.NewNRGBA(image.Rect(0, 0, width, height))
+	const area int64 = 1100 * 550
+	channel := func(sum int64) uint8 {
+		value := (sum + area*128) / (area * 257)
+		if value < 0 {
+			return 0
+		}
+		if value > 255 {
+			return 255
+		}
+		return uint8(value)
+	}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			left, right := x*1100, (x+1)*1100
+			top, bottom := y*550, (y+1)*550
+			var red, green, blue, alpha int64
+			for sy := top / height; sy < (bottom+height-1)/height; sy++ {
+				for sx := left / width; sx < (right+width-1)/width; sx++ {
+					weight := int64(min(right, (sx+1)*width)-max(left, sx*width)) * int64(min(bottom, (sy+1)*height)-max(top, sy*height))
+					r, g, b, a := source.At(sx, sy).RGBA()
+					red += int64(r) * weight
+					green += int64(g) * weight
+					blue += int64(b) * weight
+					alpha += int64(a) * weight
+				}
+			}
+			result.SetNRGBA(x, y, color.NRGBA{channel(red), channel(green), channel(blue), channel(alpha)})
+		}
+	}
+	return result
+}
 
 func blend(a, b color.NRGBA, t float64) color.NRGBA {
 	t = math.Max(0, math.Min(1, t))
@@ -64,7 +136,7 @@ func bar(width int, segment bool) *image.NRGBA {
 
 func writePNG(dir, name string, img image.Image) error {
 	switch name {
-	case "background.png", "activity-track.png", "activity-segment.png":
+	case "background.png", "activity-track.png", "activity-segment.png", "andeiva-grub-logo.png":
 	default:
 		return fmt.Errorf("unsupported decorative asset: %q", name)
 	}
@@ -85,14 +157,19 @@ func writePNG(dir, name string, img image.Image) error {
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "Usage: render OUTPUT_DIRECTORY")
+	if len(os.Args) != 3 {
+		fmt.Fprintln(os.Stderr, "Usage: render OUTPUT_DIRECTORY APPROVED_LOGO_DIRECTORY")
 		os.Exit(2)
+	}
+	logo, err := grubLogo(os.Args[2])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 	for _, asset := range []struct {
 		name string
 		img  image.Image
-	}{{"background.png", background()}, {"activity-track.png", bar(360, false)}, {"activity-segment.png", bar(90, true)}} {
+	}{{"background.png", background()}, {"activity-track.png", bar(360, false)}, {"activity-segment.png", bar(90, true)}, {"andeiva-grub-logo.png", logo}} {
 		if err := writePNG(os.Args[1], asset.name, asset.img); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

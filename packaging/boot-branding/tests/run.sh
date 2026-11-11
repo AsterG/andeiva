@@ -8,8 +8,8 @@ cleanup() { case "$test_root" in /tmp/andeiva-boot-tests.*) rm -rf -- "$test_roo
 trap cleanup EXIT
 export GOTOOLCHAIN=local GOWORK=off GOTELEMETRY=off GOPROXY=off GOSUMDB=off
 bash -n "$source_dir/build.sh" "$source_dir/tests/run.sh"
-go test -race "$source_dir/render/main.go" "$source_dir/render/main_test.go"
-go vet "$source_dir/render/main.go" "$source_dir/render/main_test.go"
+(cd "$source_dir/render" && go test -race . && go vet .)
+python3 "$source_dir/tests/grub_layout.py"
 for build in first second; do
   bash "$source_dir/build.sh" '0.1.0~alpha901' "$test_root/$build" 1794355200
   python3 "$source_dir/tests/check-package.py" "$test_root/$build/andeiva-boot-branding_0.1.0~alpha901_all.deb"
@@ -19,7 +19,7 @@ if bash "$source_dir/build.sh" '0.1.0;false' "$test_root/invalid" 1794355200; th
 [[ ! -e "$test_root/invalid" ]]
 if bash "$source_dir/build.sh" '0.1.0~alpha901' "$test_root/first" 1794355200; then exit 1; fi
 # Mutation checks do not install or execute the candidate packages.
-for mutation in hook logo path oversize conflicts duplicate; do
+for mutation in hook logo grub-copy path oversize conflicts duplicate; do
   candidate="$test_root/$mutation"
   dpkg-deb -R "$test_root/first/andeiva-boot-branding_0.1.0~alpha901_all.deb" "$candidate"
   if [[ "$mutation" = hook ]]; then
@@ -27,6 +27,8 @@ for mutation in hook logo path oversize conflicts duplicate; do
     chmod 0755 "$candidate/DEBIAN/postinst"
   elif [[ "$mutation" = logo ]]; then
     printf invalid > "$candidate/usr/share/plymouth/themes/andeiva/andeiva-logo.png"
+  elif [[ "$mutation" = grub-copy ]]; then
+    cp "$candidate/usr/share/grub/themes/andeiva/andeiva-logo.png" "$candidate/usr/share/grub/themes/andeiva/andeiva-grub-logo.png"
   elif [[ "$mutation" = path ]]; then
     mkdir -p "$candidate/etc/andeiva-boot-unexpected"
   elif [[ "$mutation" = oversize ]]; then
@@ -43,6 +45,7 @@ for mutation in hook logo path oversize conflicts duplicate; do
   case "$mutation" in
     hook) grep -qx ANDEIVA_BOOT_PACKAGE_ACTIVE_CONTENT "$test_root/$mutation.result" ;;
     logo) grep -qx ANDEIVA_BOOT_LOGO_INTEGRITY "$test_root/$mutation.result" ;;
+    grub-copy) grep -qx ANDEIVA_BOOT_GRUB_COPY_INTEGRITY "$test_root/$mutation.result" ;;
     path) grep -qx ANDEIVA_BOOT_PACKAGE_PATH "$test_root/$mutation.result" ;;
     oversize) grep -qx ANDEIVA_BOOT_ARCHIVE_SIZE "$test_root/$mutation.result" ;;
     conflicts) grep -qx ANDEIVA_BOOT_PACKAGE_CONTROL "$test_root/$mutation.result" ;;

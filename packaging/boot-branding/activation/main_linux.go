@@ -27,7 +27,7 @@ const (
 	privateDir = "var/backups/andeiva-boot-branding"
 	journal    = privateDir + "/journal.json"
 	logoHash   = "1f79f5ec7f33327c9285c702b63fc5c5a618a28395b2161d594001fdb0199f81"
-	dropin     = "# Owned by ANDEIVA boot branding; recovery menu remains visible.\nGRUB_DISTRIBUTOR=ANDEIVA\nGRUB_THEME=/usr/share/grub/themes/andeiva/theme.txt\nGRUB_TIMEOUT_STYLE=menu\nGRUB_TIMEOUT=5\nGRUB_DISABLE_RECOVERY=false\nGRUB_GFXMODE=auto\nGRUB_CMDLINE_LINUX_DEFAULT=\"${GRUB_CMDLINE_LINUX_DEFAULT} quiet splash loglevel=3 systemd.show_status=auto\"\n"
+	dropin     = "# Owned by ANDEIVA boot branding; recovery menu remains visible.\nGRUB_DISTRIBUTOR=ANDEIVA\nGRUB_THEME=/usr/share/grub/themes/andeiva/theme.txt\nGRUB_TIMEOUT_STYLE=menu\nGRUB_TIMEOUT=5\nGRUB_DISABLE_RECOVERY=false\nGRUB_GFXMODE=auto\nGRUB_CMDLINE_LINUX_DEFAULT=\"${GRUB_CMDLINE_LINUX_DEFAULT} quiet splash loglevel=3 systemd.show_status=error\"\n"
 	maxConfig  = 4 << 20
 	maxImage   = 256 << 20
 )
