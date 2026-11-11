@@ -7,6 +7,8 @@
 
 - Restore individually associated address and port guidance in the rule editor;
   keep labels, hints and validation errors linked with unique field identifiers.
+- Preserve the rule identity field's full width using a layout class independent
+  of generated accessible identifiers, with responsive Light/Dark geometry checks.
 - Lock column visibility, filters and revision controls during rule reordering,
   preserving pointer capture, keyboard cancellation and the local draft.
 

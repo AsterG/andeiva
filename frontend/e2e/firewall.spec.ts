@@ -675,3 +675,28 @@ test('console Back and Forward restore hashless Rules without losing a local dra
   await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
   expect(mock.transactions).toEqual([]);
 });
+
+for (const theme of ['light', 'dark'] as const) test(`rule editor ${theme}: identity field spans the layout independently of generated IDs`, async ({ page }, info) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  await page.locator('#theme').selectOption(theme);
+  await fillRule(page, 'layout-regression');
+  const identity = page.getByLabel('Rule ID', { exact: true });
+  const layout = await identity.evaluate((control) => {
+    const grid = control.closest('.fw-fields')!;
+    const item = [...grid.children].find((child) => child.contains(control))!;
+    const style = getComputedStyle(item);
+    const bounds = item.getBoundingClientRect();
+    const gridBounds = grid.getBoundingClientRect();
+    return { start: style.gridColumnStart, end: style.gridColumnEnd, left: bounds.left, width: bounds.width, gridLeft: gridBounds.left, gridWidth: gridBounds.width };
+  });
+  await info.attach(`identity-layout-${theme}-${info.project.name}`, { body: JSON.stringify(layout), contentType: 'application/json' });
+  expect(layout.start).toBe('1');
+  expect(layout.end).toBe('-1');
+  expect(Math.abs(layout.left - layout.gridLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(layout.width - layout.gridWidth)).toBeLessThanOrEqual(1);
+  await expect(page.locator('.fw-rule-editor .fw-field--full-width')).toHaveCount(1);
+  await expect(identity).toHaveValue('layout-regression');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+  expect(mock.transactions).toEqual([]);
+});

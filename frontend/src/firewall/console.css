@@ -81,7 +81,7 @@
 .console-confirmation { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-3); }
 @media (min-width: 75rem) { .console-transaction-bar--pending { position: sticky; top: 4.5rem; z-index: 6; } }
 @media (min-width: 75rem) { .console-app .fw-policy-workspace--editing { grid-template-columns: minmax(0, 1fr) 27rem; align-items: start; } .console-app .fw-rule-editor .fw-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); } }
-.console-app .fw-rule-editor .ds-field:has(#rule-id) { grid-column: 1 / -1; }
+.console-app .fw-rule-editor .fw-field--full-width { grid-column: 1 / -1; }
 
 .console-app .fw-state > div:first-child { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .console-app .fw-state { padding-block: var(--space-2); font-size: var(--text-xs); }
