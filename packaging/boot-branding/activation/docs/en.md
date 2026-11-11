@@ -41,3 +41,6 @@ Diagnostic selection is persistent until the explicit sequence `restore`, `prepa
 For an observed DRM presentation fault, after verifying recovery, use `restore`, `prepare --recovery-verified`, then `apply --redraw-compatibility`. This explicit mode adds the standard Plymouth redraw argument to normal boot only. It does not force a resolution or change drivers; default apply is unchanged. It cannot be combined with diagnostic boot.
 
 Check a real reboot, complete logo/text, Esc diagnostics, service health and CPU/RAM cost. More frequent scanout resets can increase graphics work; a held preview alone is insufficient qualification. To remove the option, repeat restore and preparation, use ordinary `apply`, then reboot. No universal hardware compatibility is claimed.
+## Pending offline installation
+
+If `ANDEIVA_BOOT_OFFLINE_INSTALL_PENDING` is returned, do not retry activation or restoration and do not delete the marker just because a lock or PID disappeared. An interrupted dependency installation may have surviving package processes. Read-only `status` and root-only `capabilities` remain available. Use authorized local recovery to inspect the installer journal/backups and prove package processing has stopped before resolving the pending condition. No automatic package rollback or power-loss guarantee is provided.

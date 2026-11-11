@@ -46,3 +46,19 @@ backup and recovery snapshot; never purge Plymouth automatically as rollback.
 The static executable also ships the Go toolchain license as GO_LICENSE. Native compatibility is determined by capabilities and qualification evidence, not a hypervisor or disk label. The explicit diagnostic mode and its private runtime trace limits are documented in the operator guides.
 
 The packaged `apply --redraw-compatibility` mode is explicit and reversible. It adds a standard Plymouth redraw argument without choosing a display mode or driver. Default activation remains unchanged; qualify real boot/recovery and resource cost on each target platform before adopting it. See the operator guides for removal and the prohibition on combining it with diagnostic boot.
+
+## Native offline-guard test
+
+In an exclusively administered, authorized Debian laboratory with an existing
+boot-activation journal, run `native-guard-test.sh ROOT_OWNED_DEB TRUSTED_DEB_SHA256 TRUSTED_BINARY_SHA256`
+as local root. Obtain both hashes from an independently trusted build. The script
+extracts only the checked executable into a private directory; it does not install
+it, execute APT, rebuild boot files or reboot.
+
+It tests four exact refusals under a durable test marker, checks read-only queries
+and compares boot/journal hashes. It removes only its own verified marker after
+success. On any ambiguity, inspect the retained private evidence; never remove a
+real install marker just because the package process or lock disappeared.
+
+This qualifies the staged executable's guard only. It does not add protection to
+an older installed tool or prove that an offline dependency installer is safe.

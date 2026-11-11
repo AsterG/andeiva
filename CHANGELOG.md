@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — offline boot installation coordination
+
+- Expose the local activation tool's offline-install guard capability and refuse
+  boot mutations while an installation marker remains, including after its
+  process loses the shared lock. Keep status and capability queries available.
+- Add failure and process-interruption tests and a guard-only native laboratory
+  test that does not install packages or run APT.
+
 ## Unreleased — recovery-gated boot activation
 
 - Add an explicit local experimental boot-theme activation and restoration tool,

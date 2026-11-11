@@ -380,6 +380,9 @@ func uniqueJSON(decoder *json.Decoder, depth int) error {
 }
 
 func (s *system) preflight() (machine, error) {
+	if err := s.checkOfflineInstallPending(); err != nil {
+		return machine{}, err
+	}
 	m, err := s.probe()
 	if err != nil {
 		return m, err
@@ -415,6 +418,23 @@ func (s *system) preflight() (machine, error) {
 		}
 	}
 	return m, nil
+}
+
+func (s *system) checkOfflineInstallPending() error {
+	const directory = "var/backups/andeiva-boot-offline"
+	info, err := s.secure(directory, true)
+	if err != nil || info == nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return fail("ANDEIVA_BOOT_OFFLINE_DIRECTORY")
+	}
+	_, err = s.root.Lstat(directory + "/install-pending")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	// Ambiguous state, including a link or an unreadable marker, is not idle.
+	return fail("ANDEIVA_BOOT_OFFLINE_INSTALL_PENDING")
 }
 
 func (s *system) verifyContext(st *state) error {
@@ -642,6 +662,9 @@ func (s *system) applyOptions(diagnostic, redraw bool) error {
 }
 
 func (s *system) restore() error {
+	if err := s.checkOfflineInstallPending(); err != nil {
+		return err
+	}
 	st, err := s.load()
 	if err != nil {
 		return err
@@ -987,6 +1010,8 @@ func main() {
 	redraw := len(os.Args) == 3 && os.Args[2] == "--redraw-compatibility" && operation == "apply"
 	if len(os.Args) == 3 && !ack && !diagnostic && !redraw {
 		err = fail("ANDEIVA_BOOT_ARGUMENT")
+	} else if operation == "capabilities" {
+		err = json.NewEncoder(os.Stdout).Encode(map[string]int{"offline_install_guard": 1})
 	} else if operation == "preflight" {
 		_, err = s.preflight()
 	} else {

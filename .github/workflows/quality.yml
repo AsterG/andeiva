@@ -50,6 +50,7 @@ jobs:
           go vet ./packaging/boot-branding/activation
           go build -o /tmp/andeiva-boot-activation ./packaging/boot-branding/activation
           bash packaging/boot-branding/activation-package/test.sh
+          bash -n packaging/boot-branding/activation-package/native-guard-test.sh
       - name: Nftables POC unprivileged contracts and platform compilation
         run: bash scripts/check-nft-poc.sh
       - name: Administrative firewall platform compilation without privileges
