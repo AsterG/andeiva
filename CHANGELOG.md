@@ -6,6 +6,8 @@
   footer, with equivalent CLI/API reads and explicit unavailable update status.
 - Stamp preview backend and CLI identities from the Debian package version and
   verify that identity during package validation.
+- Correct relative links from packaged console guides to the EN/ES/PT package
+  guides, preserving their section anchors.
 - Remove general laboratory-scope banners from the web interface while retaining
   contextual errors, authorization, confirmation and recovery controls.
 

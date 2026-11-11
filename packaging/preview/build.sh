@@ -67,6 +67,7 @@ for language in en es pt; do
   install -m 0644 "frontend/docs/console-$language.md" "$doc/console/$language.md"
   sed -i 's|../../../internal/firewalladmin/docs/|../firewalladmin/docs/|g' "$doc/docs/$language.md"
   sed -i 's|../../../frontend/docs/console-|../console/|g' "$doc/docs/$language.md"
+  sed -i 's|\.\./\.\./packaging/preview/docs/|../docs/|g' "$doc/console/$language.md"
 done
 install -d "$doc/dependencies"
 node scripts/check-licenses.mjs > "$doc/dependencies/npm-inventory.json"

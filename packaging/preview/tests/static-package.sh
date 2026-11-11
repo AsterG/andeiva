@@ -39,6 +39,11 @@ fi
 for language in en es pt; do
   [[ -s "$stage/root/usr/share/doc/andeiva-firewall-preview/firewalladmin/docs/$language.md" ]]
   grep -q '../firewalladmin/docs/' "$stage/root/usr/share/doc/andeiva-firewall-preview/docs/$language.md"
+  console="$stage/root/usr/share/doc/andeiva-firewall-preview/console/$language.md"
+  [[ -s "$console" && -s "$stage/root/usr/share/doc/andeiva-firewall-preview/docs/$language.md" ]]
+  if ! grep -Fq "(../docs/$language.md#" "$console" || grep -Fq '../../packaging/preview/docs/' "$console"; then
+    echo ANDEIVA_PREVIEW_CONSOLE_GUIDE_LINK >&2; exit 1
+  fi
 done
 if find "$stage/root" -type f \( -name '*.key' -o -name 'accounts.json' -o -name 'identities.json' \) | read -r _; then
   echo ANDEIVA_PREVIEW_SECRET_IN_PACKAGE >&2; exit 1
