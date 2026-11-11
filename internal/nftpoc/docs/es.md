@@ -10,7 +10,7 @@ requiere cambios de Windows, VPN, rutas, forwarding o firewall del host.
 
 ## Compilación y pruebas sin privilegios
 
-Usar la versión de Go del repositorio, actualmente 1.27.3. Desde su raíz:
+Usar la versión de Go del repositorio, actualmente 1.27.4. Desde su raíz:
 
 ```bash
 bash scripts/check-nft-poc.sh

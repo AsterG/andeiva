@@ -2,6 +2,9 @@
 
 ## Unreleased — unified administration console
 
+- Rebuild with the Go 1.27.4 security patch and its pinned development image;
+  update current build instructions while retaining historical benchmark records.
+
 - Restore individually associated address and port guidance in the rule editor;
   keep labels, hints and validation errors linked with unique field identifiers.
 - Lock column visibility, filters and revision controls during rule reordering,

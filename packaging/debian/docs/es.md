@@ -16,7 +16,7 @@ esas pruebas hayan pasado.
 ## Requisitos y roles
 
 Compile con un usuario ordinario en una estación Linux confiable que ya disponga
-de la revisión fuente, Bash, Git, Go 1.27.3, `dpkg-deb`, `sha256sum` y las utilidades
+de la revisión fuente, Bash, Git, Go 1.27.4, `dpkg-deb`, `sha256sum` y las utilidades
 habituales de compilación. No se necesita Docker como runtime. Si falta un
 requisito, existe un bloqueo; no haga descargar dependencias automáticamente a la VM.
 
@@ -55,7 +55,7 @@ test "$(id -u)" -ne 0
 export GOENV=off GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOTELEMETRY=off
 export GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}"
 test -d "$GOMODCACHE"
-test "$(go env GOVERSION)" = go1.27.3
+test "$(go env GOVERSION)" = go1.27.4
 out_dir=$(mktemp -d "${TMPDIR:-/tmp}/andeiva-debian-package.XXXXXX")
 bash packaging/debian/build.sh '0.0.0~exp1' "$out_dir"
 cd -- "$out_dir"

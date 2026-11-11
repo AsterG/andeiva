@@ -8,7 +8,7 @@ Status: experimental implementation with bounded Debian validation. See
 Use a disposable Debian 13 VM with an authorized recovery snapshot. The literal
 `--snapshot-confirmed` acknowledges that prerequisite; it does not create or verify
 a hypervisor snapshot. Do not run the privileged lab on the Windows host, a customer
-appliance or a shared production network. Go 1.27.3, the repository's pinned frontend
+appliance or a shared production network. Go 1.27.4, the repository's pinned frontend
 toolchain/dependencies, nftables 1.1.3 and the fixed tools `/usr/bin/ip`,
 `/usr/bin/nsenter`, `/usr/bin/setpriv`, `/usr/sbin/nft` must already be available.
 Build dependencies belong to the development environment; this procedure performs

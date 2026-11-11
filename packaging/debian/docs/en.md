@@ -14,7 +14,7 @@ recorded against the exact build; this guide is not a claim that those tests pas
 ## Requirements and roles
 
 Build as an ordinary user on a trusted Linux workstation with the source revision,
-Bash, Git, Go 1.27.3, `dpkg-deb`, `sha256sum` and standard build utilities already
+Bash, Git, Go 1.27.4, `dpkg-deb`, `sha256sum` and standard build utilities already
 available. No Docker runtime is needed. Missing prerequisites are a blocker; do not
 make the development VM download dependencies automatically.
 
@@ -53,7 +53,7 @@ test "$(id -u)" -ne 0
 export GOENV=off GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOTELEMETRY=off
 export GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}"
 test -d "$GOMODCACHE"
-test "$(go env GOVERSION)" = go1.27.3
+test "$(go env GOVERSION)" = go1.27.4
 out_dir=$(mktemp -d "${TMPDIR:-/tmp}/andeiva-debian-package.XXXXXX")
 bash packaging/debian/build.sh '0.0.0~exp1' "$out_dir"
 cd -- "$out_dir"
