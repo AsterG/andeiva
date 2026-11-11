@@ -40,6 +40,7 @@ type fileStore struct {
 	bytes      int64
 	limit      int
 	owner      []byte
+	spaceProbe func(*os.File) (storageSpace, error)
 }
 
 func openStore(dir string, limit int) (*fileStore, error) {

@@ -5,7 +5,7 @@ export CGO_ENABLED=0 GOTOOLCHAIN=local GOWORK=off
 # Cross-compilation verifies source selection, not appliance runtime support.
 for target in linux windows darwin; do
   case "$target" in linux) selected=linux; excluded=other;; *) selected=other; excluded=linux;; esac
-  for spec in 'cmd/andeiva-config-poc usage' 'internal/configpoc lock'; do
+  for spec in 'cmd/andeiva-config-poc usage' 'internal/configpoc lock' 'internal/configpoc space'; do
     read -r package base <<< "$spec"
     files=$(GOOS=$target GOARCH=amd64 go list -f '{{join .GoFiles " "}}' "./$package")
     ignored=$(GOOS=$target GOARCH=amd64 go list -f '{{join .IgnoredGoFiles " "}}' "./$package")

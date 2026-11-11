@@ -32,5 +32,6 @@ func (s *Service) requestCapacity(request Request) bool {
 	case request.Operation == OpRecover && s.state.Snapshot.RecoveryRequired:
 		recordReserve, receiptReserve = recoveryRecords-1, 0
 	}
-	return len(s.state.Receipts)+1+receiptReserve <= maxReceipts && s.store.capacity(recordReserve)
+	criticalRecovery := request.Operation == OpRecover && s.state.Snapshot.RecoveryRequired
+	return len(s.state.Receipts)+1+receiptReserve <= maxReceipts && s.store.capacity(recordReserve) && (criticalRecovery || s.store.spaceCapacity(recordReserve))
 }

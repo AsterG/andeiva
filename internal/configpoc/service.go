@@ -175,6 +175,11 @@ func (s *Service) snapshot() Snapshot {
 	return out
 }
 func (s *Service) reject(p Principal, surface Surface, operation string, reason error) (Snapshot, error) {
+	// Rejections have no admitted mutation budget. Refuse their ordinary audit
+	// before touching state; transient pressure is not evidence of corruption.
+	if !s.store.spaceCapacity(s.ordinaryReserve()) {
+		return Snapshot{}, ErrStorage
+	}
 	actor := p.ID
 	if !identifier.MatchString(actor) || actor == "system" {
 		actor = "invalid"
