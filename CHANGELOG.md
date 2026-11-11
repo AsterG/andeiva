@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — experimental offline boot dependency bundle
+
+- Add a development-only Debian 13 AMD64 bundle builder and offline verifier,
+  with a reviewed dependency profile, signed Debian metadata checks and a closed
+  checksum inventory. Installation requires a compatible baseline and verified
+  recovery; this is not the signed appliance update format.
+- Coordinate package installation with boot activation through protected locks
+  and a durable pending marker, retain recovery evidence after failures and bound
+  installer output without enabling network package downloads.
+
 ## Unreleased — offline boot installation coordination
 
 - Expose the local activation tool's offline-install guard capability and refuse
