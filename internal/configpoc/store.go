@@ -276,6 +276,10 @@ func (s *fileStore) append(state durableState, audit Audit, critical bool, hook 
 	if err = temp.Sync(); err != nil {
 		return ErrStorage
 	}
+	synced, err := temp.Stat()
+	if err != nil || !regularOwned(synced, maxRecordBytes) || !os.SameFile(created, synced) || synced.Size() != int64(len(data)) {
+		return ErrStorage
+	}
 	if err = stageHook(hook, "after_stage_sync"); err != nil {
 		return err
 	}
@@ -293,7 +297,10 @@ func (s *fileStore) append(state durableState, audit Audit, critical bool, hook 
 	if _, err = root.Lstat(final); !os.IsNotExist(err) {
 		return ErrStorage
 	}
-	if err = root.Rename(tempName, final); err != nil {
+	if err = stageHook(hook, "after_record_destination_check"); err != nil {
+		return err
+	}
+	if err = s.publishJournalRecord(root, uint64(len(s.records))+1, synced); err != nil {
 		return ErrStorage
 	}
 	published = true
