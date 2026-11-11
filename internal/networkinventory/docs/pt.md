@@ -23,6 +23,9 @@ bytes e endereços de hardware de 64 bytes. A enumeração inicial do sistema po
 alocar memória antes desses limites. Códigos estáveis:
 `network_inventory_unavailable`, `network_inventory_limit`,
 `network_inventory_invalid_observation`, `network_inventory_changed`.
+O cancelamento ou o fim do prazo também podem retornar `context.Canceled` ou
+`context.DeadlineExceeded`; distinguir esses casos com `errors.Is`. A lista de
+códigos de inventário não inclui esses erros de contexto.
 
 Testes a partir da raiz do repositório:
 

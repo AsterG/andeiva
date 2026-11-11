@@ -23,6 +23,9 @@ Límites del resultado: 256 interfaces, 256 direcciones por interfaz, nombres de
 sistema puede asignar memoria antes de aplicar estos límites. Errores estables:
 `network_inventory_unavailable`, `network_inventory_limit`,
 `network_inventory_invalid_observation`, `network_inventory_changed`.
+La cancelación o el vencimiento del plazo también pueden devolver
+`context.Canceled` o `context.DeadlineExceeded`; distinguirlos mediante `errors.Is`.
+La lista de códigos del inventario no incluye estos errores de contexto.
 
 Pruebas desde la raíz del repositorio:
 

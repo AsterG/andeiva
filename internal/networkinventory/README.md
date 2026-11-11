@@ -28,7 +28,9 @@ The retained result is limited to 256 interfaces, 256 addresses per interface,
 256-byte names and 64-byte hardware addresses. Invalid/duplicate identities or
 limits fail the entire observation. The standard library first allocates its OS
 enumeration result; these limits do not cap that preliminary allocation. Errors
-are stable codes and do not expose raw syscall or filesystem details.
+use stable inventory codes and do not expose raw syscall or filesystem details.
+Cancellation or deadline expiry can also return `context.Canceled` or
+`context.DeadlineExceeded`; consumers should distinguish these using `errors.Is`.
 
 Run from the repository with its Go toolchain:
 
