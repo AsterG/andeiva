@@ -87,11 +87,11 @@ export function RuleTable({ controls, view, rules, reference, state, locale, cop
 
   return <div ref={root} className="fw-rule-table">
     <div className="fw-rule-filters">
-      {controls}
-      <Field id="rule-search" label={labels.search}><TextInput id="rule-search" type="search" placeholder={labels.searchHint} value={query} disabled={!!drag} onChange={(event) => setQuery(event.target.value)} /></Field>
-      <Field id="rule-action-filter" label={labels.actionFilter}><select id="rule-action-filter" className="ds-select" disabled={!!drag} value={action} onChange={(event) => setAction(event.target.value)}><option value="all">{labels.allActions}</option><option value="allow">{copy.allow}</option><option value="deny">{copy.deny}</option></select></Field>
+      <fieldset className="fw-rule-context" disabled={!!drag} onChangeCapture={(event) => { if (activeDrag.current) { event.preventDefault(); event.stopPropagation(); } }} onClickCapture={(event) => { if (activeDrag.current) { event.preventDefault(); event.stopPropagation(); } }}>{controls}</fieldset>
+      <Field id="rule-search" label={labels.search}><TextInput id="rule-search" type="search" placeholder={labels.searchHint} value={query} disabled={!!drag} onChange={(event) => { if (!activeDrag.current) setQuery(event.target.value); }} /></Field>
+      <Field id="rule-action-filter" label={labels.actionFilter}><select id="rule-action-filter" className="ds-select" disabled={!!drag} value={action} onChange={(event) => { if (!activeDrag.current) setAction(event.target.value); }}><option value="all">{labels.allActions}</option><option value="allow">{copy.allow}</option><option value="deny">{copy.deny}</option></select></Field>
       <span className="fw-meta">{visible.length} / {rules.length} {labels.ruleCount}</span>
-      <ColumnChooser label={labels.columns} columns={(Object.keys(columns) as (keyof typeof columns)[]).map((id) => ({ id, label: id === 'source' || id === 'destination' ? copy[id] : labels[id], visible: columns[id] }))} onChange={(id, visible) => { if (Object.hasOwn(columns, id)) setColumns({ ...columns, [id]: visible }); }} />
+      <ColumnChooser label={labels.columns} disabled={!!drag} columns={(Object.keys(columns) as (keyof typeof columns)[]).map((id) => ({ id, label: id === 'source' || id === 'destination' ? copy[id] : labels[id], visible: columns[id] }))} onChange={(id, visible) => { if (!activeDrag.current && Object.hasOwn(columns, id)) setColumns({ ...columns, [id]: visible }); }} />
     </div>
     {filtered && <p className="fw-meta">{labels.filtered}</p>}
     <details className="fw-rule-help"><summary>{labels.reorder}</summary><p id={hintId} className="fw-meta">{labels.reorderHint} {copy.rulesHint} {copy.maxRules}</p></details>
@@ -139,9 +139,9 @@ export function RuleTable({ controls, view, rules, reference, state, locale, cop
           <td hidden={!columns.counters}>{rule.enabled === false ? labels.notApplicable : <><span>{copy.packets}: {counter?.packets ?? copy.unknown}</span><small>{copy.bytes}: {counter?.bytes ?? copy.unknown}</small></>}</td>
           {editable && <td><details className="fw-row-menu"><summary aria-label={`${copy.actions}: ${rule.id}`}><span aria-hidden="true">•••</span></summary><div className="fw-row-menu-content">
             <Button variant="secondary" disabled={!reorderable || editing || !!drag} aria-label={`${copy.remove}: ${rule.id}`} onClick={() => onRemove(index)}>{copy.remove}</Button>
-            <form onSubmit={(event) => { event.preventDefault(); const to = Number(new FormData(event.currentTarget).get('position')) - 1; if (canMove && Number.isInteger(to) && to >= 0 && to < rules.length) { onMove(index, to); setAnnouncement(`${labels.placed} ${rule.id}: ${to + 1} / ${rules.length}`); const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); menu?.querySelector('summary')?.focus(); } }}>
-              <Field id={`position-${rule.id}`} label={labels.position}><TextInput id={`position-${rule.id}`} name="position" type="number" min={1} max={rules.length} defaultValue={index + 1} key={index} required disabled={!canMove} /></Field>
-              <Button variant="secondary" type="submit" disabled={!canMove}>{labels.move}</Button>
+            <form onSubmit={(event) => { event.preventDefault(); const to = Number(new FormData(event.currentTarget).get('position')) - 1; if (!activeDrag.current && canMove && Number.isInteger(to) && to >= 0 && to < rules.length) { onMove(index, to); setAnnouncement(`${labels.placed} ${rule.id}: ${to + 1} / ${rules.length}`); const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); menu?.querySelector('summary')?.focus(); } }}>
+              <Field id={`position-${rule.id}`} label={labels.position}><TextInput id={`position-${rule.id}`} name="position" type="number" min={1} max={rules.length} defaultValue={index + 1} key={index} required disabled={!canMove || !!drag} /></Field>
+              <Button variant="secondary" type="submit" disabled={!canMove || !!drag}>{labels.move}</Button>
             </form>
           </div></details></td>}
         </tr>;

@@ -48,3 +48,5 @@ Run `npm run lint`, `npm test`, and `npm run build` from `frontend`. Build the
 canonical browser environment from the repository root with
 `docker build -f frontend/Dockerfile.visual -t andeiva-console-check .`, then run
 `docker run --rm --network none --shm-size 256m andeiva-console-check`.
+
+Rule-editor address and port fields expose individual guidance and validation errors to assistive technology. During reordering, column visibility, filters, revision selection and explicit position changes are locked until drop or cancellation. Escape cancels the move; changes remain local until explicitly staged.

@@ -2,6 +2,11 @@
 
 ## Unreleased — unified administration console
 
+- Restore individually associated address and port guidance in the rule editor;
+  keep labels, hints and validation errors linked with unique field identifiers.
+- Lock column visibility, filters and revision controls during rule reordering,
+  preserving pointer capture, keyboard cancellation and the local draft.
+
 - Isolate sign-in from administrative navigation during session lookup, rejected
   access, logout and expiry, including direct firewall and local-service URLs.
 

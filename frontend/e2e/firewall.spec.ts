@@ -222,6 +222,78 @@ test('firewall validation focuses invalid fields and prevents transport writes',
   expect(mock.transactions).toEqual([]);
 });
 
+test('editor associates localized CIDR and port hints with labels and validation errors', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  for (const locale of ['en', 'es', 'pt'] as const) {
+    const copy = firewallMessages[locale];
+    await page.locator('#language').selectOption(locale);
+    await page.getByRole('button', { name: copy.add, exact: true }).click();
+    const id = page.getByLabel(copy.id, { exact: true });
+    await expect(id).toBeFocused(); await id.fill('accessible');
+    for (const key of ['source', 'destination', 'source_ports', 'destination_ports'] as const) {
+      const control = page.getByLabel(copy[key], { exact: true });
+      const hint = key.includes('ports') ? copy.portsHint : copy.cidrHint;
+      await expect(control).toHaveAccessibleDescription(hint);
+      await control.fill(key.includes('ports') ? '0' : '999.1.1.1');
+    }
+    await page.getByRole('button', { name: copy.applyRule, exact: true }).click();
+    await expect(page.getByLabel(copy.source, { exact: true })).toBeFocused();
+    for (const key of ['source', 'destination', 'source_ports', 'destination_ports'] as const) {
+      const control = page.getByLabel(copy[key], { exact: true });
+      const hint = key.includes('ports') ? copy.portsHint : copy.cidrHint;
+      const error = key.includes('ports') ? copy.portsError : copy.cidrError;
+      await expect(control).toHaveAccessibleDescription(`${hint} ${error}`);
+      expect(await control.evaluate((element) => (element.getAttribute('aria-describedby') ?? '').split(/\s+/).every((id) => !!id && document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length === 1))).toBe(true);
+      await control.fill(key.includes('ports') ? '443' : '10.42.0.0/24');
+      await expect(control).toHaveAccessibleDescription(hint);
+      await expect(control).toHaveAttribute('aria-invalid', 'false');
+    }
+    await page.getByLabel(copy.source, { exact: true }).focus(); await page.keyboard.press('Tab');
+    await expect(page.getByLabel(copy.destination, { exact: true })).toBeFocused();
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+    await page.getByRole('button', { name: copy.cancel, exact: true }).last().click();
+  }
+  expect(mock.transactions).toEqual([]);
+});
+
+test('active drag locks column visibility and other table mutations until explicit drop or cancel', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  const rules = ['first', 'second', 'third'].map((id) => ({ id, action: 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: 443, to: 443 } } }));
+  mock.state().snapshot.running.config.rules = rules;
+  mock.state().snapshot.startup.config.rules = structuredClone(rules);
+  await page.goto('/firewall');
+  const summary = page.locator('.ds-column-chooser summary');
+  const column = page.getByRole('checkbox', { name: 'Columns: Service', exact: true, includeHidden: true });
+  await summary.click(); await column.uncheck();
+  await summary.click();
+  const handle = page.getByRole('button', { name: 'Reorder: third', exact: true });
+  await handle.scrollIntoViewIfNeeded(); const from = await handle.boundingBox();
+  const target = await page.getByRole('button', { name: 'Reorder: first', exact: true }).boundingBox();
+  if (!from || !target) throw Error('Drag geometry unavailable');
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2); await page.mouse.down();
+  await expect(handle).toHaveAttribute('aria-pressed', 'true');
+  // Reproduce the original cancellation from a queued second input source.
+  await column.evaluate((element: HTMLInputElement) => element.click());
+  await expect(handle).toHaveAttribute('aria-pressed', 'true'); await expect(column).not.toBeChecked();
+  await expect(summary).toHaveAttribute('aria-disabled', 'true');
+  await expect(column).toBeDisabled();
+  await expect(page.getByLabel('Search rules', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Filter by action', { exact: true })).toBeDisabled();
+  await expect(page.locator('#rule-view')).toBeDisabled();
+  await page.mouse.move(from.x + from.width / 2, target.y + target.height / 2, { steps: 6 }); await page.mouse.up();
+  await expect(page.locator('.fw-rule-link')).toHaveText(['third', 'first', 'second']);
+  await expect(summary).not.toHaveAttribute('aria-disabled', 'true');
+  await handle.focus(); await handle.press('Space'); await handle.press('End');
+  await expect(column).toBeDisabled(); await handle.press('Escape');
+  await expect(handle).toBeFocused();
+  await expect(page.locator('.fw-rule-link')).toHaveText(['third', 'first', 'second']);
+  await page.getByLabel('Search rules', { exact: true }).fill('first'); await expect(page.getByRole('button', { name: 'Reorder: first', exact: true })).toBeDisabled();
+  await page.getByLabel('Search rules', { exact: true }).clear();
+  expect(mock.state().snapshot.running.config.rules.map((rule) => rule.id)).toEqual(['first', 'second', 'third']);
+  expect(mock.transactions).toEqual([]);
+});
+
 test('firewall viewer cannot edit or load privileged history', async ({ page }) => {
   await fixture(page, 'viewer', true);
   await page.goto('/firewall');
@@ -411,6 +483,9 @@ test('rule handle autoscrolls a bounded policy and restores keyboard focus on ca
   mock.state().snapshot.startup.config.rules = structuredClone(rules);
   await page.goto('/firewall');
   const handle = page.getByRole('button', { name: 'Reorder: rule-01', exact: true });
+  await page.locator('.ds-column-chooser summary').click();
+  await page.getByRole('checkbox', { name: 'Columns: Service', exact: true }).uncheck();
+  await page.locator('.ds-column-chooser summary').click();
   const region = page.getByRole('region', { name: 'Ordered rules', exact: true });
   await handle.focus(); await handle.press('Space'); await handle.press('End'); await handle.press('Escape');
   await page.clock.runFor(100);
@@ -424,6 +499,9 @@ test('rule handle autoscrolls a bounded policy and restores keyboard focus on ca
   await page.mouse.move(x, bounds.y + bounds.height - 8, { steps: 5 });
   await page.clock.runFor(500);
   expect(await region.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ ...viewport, height: viewport.height - 30 });
+  await expect(handle).toHaveAttribute('aria-pressed', 'true');
   await page.mouse.up(); await page.clock.runFor(100);
   const ids = await page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link').allTextContents();
   expect(ids.indexOf('rule-01')).toBeGreaterThan(0);

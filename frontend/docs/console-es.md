@@ -47,3 +47,5 @@ requiere validación nativa en Debian autorizado.
 Desde `frontend`, ejecuta `npm run lint`, `npm test` y `npm run build`. Desde la
 raíz: `docker build -f frontend/Dockerfile.visual -t andeiva-console-check .` y
 `docker run --rm --network none --shm-size 256m andeiva-console-check`.
+
+Los campos de dirección y puertos del editor asocian individualmente su ayuda y sus errores para tecnologías de asistencia. Durante un arrastre se bloquean las columnas, filtros, selección de revisión y posición explícita hasta colocar o cancelar. Escape cancela el movimiento; el cambio sigue siendo local hasta preparar la candidata.

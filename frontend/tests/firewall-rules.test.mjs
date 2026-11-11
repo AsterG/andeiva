@@ -1,10 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { RuleEditor } from '../.test-build/firewall/RuleEditor.js';
+import { firewallMessages } from '../.test-build/firewall/messages.js';
+import { ruleTableMessages } from '../.test-build/firewall/ruleTableMessages.js';
 import { sameRuleAtPosition, moveRule, matchesRuleSearch } from '../.test-build/firewall/rulePresentation.js';
 import { configWithRules } from '../.test-build/firewall/model.js';
 import { ruleEnabledCapability, firewallResponse } from '../.test-build/firewall/responses.js';
 
 const rule = (id) => ({ id, action: 'allow', match: { source: '10.1.0.0/24', destination: '10.2.0.1/32', protocol: 'tcp', source_ports: { from: 1, to: 65535 }, destination_ports: { from: 443, to: 443 } } });
+
+for (const locale of ['en', 'es', 'pt']) test(`editor ${locale} instances have unique labels and contextual hint references`, () => {
+  const props = { rules: [], index: null, copy: firewallMessages[locale], labels: ruleTableMessages[locale], supportsEnabled: true, disabled: false, onSave() {}, onCancel() {} };
+  const html = renderToStaticMarkup(createElement('div', null, createElement(RuleEditor, props), createElement(RuleEditor, props)));
+  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((entry) => entry[1]);
+  assert.equal(new Set(ids).size, ids.length);
+  const controls = [...html.matchAll(/<input\b[^>]+>/g)].map((entry) => entry[0]);
+  const described = controls.filter((control) => control.includes('aria-describedby'));
+  assert.equal(described.length, 8);
+  for (const control of described) {
+    const references = control.match(/aria-describedby="([^"]+)"/)[1].split(' ');
+    for (const reference of references) assert.equal(ids.filter((id) => id === reference).length, 1);
+    const id = control.match(/\bid="([^"]+)"/)[1];
+    assert.ok(html.includes(`for="${id}"`));
+  }
+});
 test('Startup comparison includes position, match, verdict and enablement', () => {
   const rules = [rule('one'), rule('two')];
   assert(sameRuleAtPosition(structuredClone(rules[0]), 0, rules));

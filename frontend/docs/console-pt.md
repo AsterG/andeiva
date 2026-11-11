@@ -46,3 +46,5 @@ Debian autorizado é necessária antes da implantação.
 Em `frontend`, execute `npm run lint`, `npm test` e `npm run build`. Na raiz:
 `docker build -f frontend/Dockerfile.visual -t andeiva-console-check .` e
 `docker run --rm --network none --shm-size 256m andeiva-console-check`.
+
+Os campos de endereço e portas do editor associam individualmente suas orientações e erros às tecnologias assistivas. Durante a reordenação, colunas, filtros, seleção de revisão e posição explícita ficam bloqueados até concluir ou cancelar. Escape cancela o movimento; a alteração permanece local até preparar a candidata.
