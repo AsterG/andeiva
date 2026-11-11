@@ -168,7 +168,7 @@ class InstallerFixture(unittest.TestCase):
             text = (source / name).read_text()
             text = text.replace("EUID == 0", f"EUID == {os.geteuid()}").replace(") = 0", f") = {os.geteuid()}")
             text = text.replace("PATH=/usr/sbin:/usr/bin:/sbin:/bin", f"PATH={self.bin}:/usr/sbin:/usr/bin:/sbin:/bin")
-            for path in ["/usr/sbin/andeiva-boot-activation", "/usr/lib/os-release", "/usr/share/keyrings", "/usr/bin/sqv", "/proc/self/ns/mnt", "/proc/self/mountinfo", "/var", "/etc", "/boot"]:
+            for path in ["/usr/sbin/andeiva-boot-activation", "/usr/lib/os-release", "/usr/share/keyrings", "/usr/bin/sqv", "/proc/self/ns/mnt", "/proc/self/mountinfo", "/sys/firmware/efi", "/var", "/etc", "/boot"]:
                 text = re.sub(r"(?<![\w$}])" + re.escape(path), str(self.root) + path, text)
             # Fixture security paths are owned by this test user, not OS root.
             text = text.replace("/usr /usr/bin /usr/share ", f"{self.root}/usr {self.root}/usr/bin {self.root}/usr/share ")
@@ -189,6 +189,26 @@ class InstallerFixture(unittest.TestCase):
 
     def marker(self):
         return self.root / "var/backups/andeiva-boot-offline/install-pending"
+
+    def test_firmware_presence_uses_fixture_not_runner(self):
+        script = (self.bundle / "install.sh").read_text()
+        firmware = self.root / "sys/firmware/efi"
+        self.assertIn(f"! -e {firmware}", script)
+        self.assertNotIn("! -e /sys/firmware/efi", script)
+        for present in [False, True, False]:
+            with self.subTest(efi_present=present):
+                if present:
+                    firmware.mkdir(parents=True)
+                elif firmware.exists():
+                    firmware.rmdir()
+                result = self.run_installer("inspect")
+                if present:
+                    self.assertIn("ANDEIVA_OFFLINE_PLATFORM", result.stderr)
+                    self.assertNotEqual(result.returncode, 0)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(self.marker().exists())
+                self.assertFalse((self.root / "apt-started").exists())
 
     def test_inspect_then_install_then_idempotent(self):
         inspect = self.run_installer("inspect")
