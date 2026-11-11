@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — unified administration console
+
+- Rebuild with the Go 1.27.4 security patch and its pinned development image;
+  update current build instructions while retaining historical benchmark records.
+
+- Restore individually associated address and port guidance in the rule editor;
+  keep labels, hints and validation errors linked with unique field identifiers.
+- Preserve the rule identity field's full width using a layout class independent
+  of generated accessible identifiers, with responsive Light/Dark geometry checks.
+- Lock column visibility, filters and revision controls during rule reordering,
+  preserving pointer capture, keyboard cancellation and the local draft.
+
+- Isolate sign-in from administrative navigation during session lookup, rejected
+  access, logout and expiry, including direct firewall and local-service URLs.
+
+- Open the authenticated console at the management root address, with compact
+  navigation for Dashboard, Rules, Audit, Configuration and Traffic records.
+- Preserve the shared session and local editor across views; add contextual
+  transaction actions, configurable rule columns and readable revision details.
+- Keep Light as the default, optional Dark, EN/ES/PT and the unchanged logo.
+  Show unavailable telemetry explicitly rather than inventing dashboard values.
+- Include multilingual console guides in the experimental Debian package;
+  keep component examples at the explicit design-system preview address.
+
 ## Unreleased — confirmed transaction capacity
 
 - Reserve journal and receipt capacity before a confirmed transaction changes

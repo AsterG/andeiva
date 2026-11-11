@@ -9,7 +9,7 @@ No requiere privilegios root, Docker ni acceso de red a un appliance.
 
 ## Ejecutar las comprobaciones
 
-Utiliza Linux con Go 1.27.3 ya instalado y un compilador compatible con el detector
+Utiliza Linux con Go 1.27.4 ya instalado y un compilador compatible con el detector
 de carreras de Go. WSL sirve para desarrollo; utiliza su sistema de archivos Linux
 para las pruebas de persistencia, no un directorio montado desde Windows. Si falta
 un requisito, registra el bloqueo; no debilites las pruebas ni instales herramientas

@@ -3,9 +3,9 @@
 All current and future management modules share this system. Firewall, NAT, VPN,
 SD-WAN, QoS, security profiles, inspection, DNS, logs, PCAP, administration,
 transactional configuration and system pages must not introduce independent
-palettes. Those product modules are not implemented by this preview.
+palettes. The current administrative console exposes only operations supported by its authenticated runtime; future engines remain unavailable.
 
-The component library contains local interface examples. Its rows, states and
+The component library at `/?view=design-system` contains local interface examples. The root URL and `/firewall` open the authenticated console. See [EN](docs/console-en.md), [ES](docs/console-es.md) and [PT](docs/console-pt.md). Its rows, states and
 form actions are demonstrations, not appliance observations or configuration.
 
 ## Theme ownership

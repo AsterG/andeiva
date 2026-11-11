@@ -2,6 +2,8 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import type { Config, FirewallState, History, Session, Transaction } from '../src/firewall/model.js';
+import { firewallMessages } from '../src/firewall/messages.js';
+import { consoleMessages } from '../src/firewall/consoleMessages.js';
 
 // Explicit transport fixtures only. These tests do not prove authentication or packet enforcement.
 const now = new Date('2026-11-09T12:00:00Z');
@@ -63,8 +65,77 @@ async function fixture(page: Page, role: Session['role'] = 'admin', authenticate
     }
     return route.fulfill({ json: status });
   });
-  return { transactions, disconnect: () => { disconnected = true; }, conflict: () => { conflict = true; }, state: () => status };
+  return { transactions, history, disconnect: () => { disconnected = true; }, conflict: () => { conflict = true; }, state: () => status };
 }
+
+async function expectAccessOnly(page: Page) {
+  await expect(page.locator('aside, nav, .console-page-heading, .page-heading, .console-menu-button, .fw-state, .fw-transaction-controls')).toHaveCount(0);
+  await expect(page.getByRole('table')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+}
+
+test('anonymous direct routes never mount administrative navigation, including during session lookup', async ({ page }) => {
+  await fixture(page);
+  await page.addInitScript(() => {
+    const state = window as Window & { administrativeMounts: number };
+    state.administrativeMounts = 0;
+    new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) if (node instanceof Element && (node.matches('aside, nav, .console-page-heading, .fw-state') || node.querySelector('aside, nav, .console-page-heading, .fw-state'))) state.administrativeMounts++;
+    }).observe(document, { childList: true, subtree: true });
+  });
+  for (const path of ['/', '/#dashboard', '/firewall#audit', '/firewall#configuration', '/firewall#traffic', '/local-services']) {
+    let release!: () => void;
+    const held = new Promise<void>((done) => { release = done; });
+    await page.route('**/auth/session', async (route) => { await held; await route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_REQUIRED' } }); });
+    const destination = new URL(path, 'http://127.0.0.1:4173');
+    destination.searchParams.set('access-check', path);
+    await page.goto(destination.href);
+    await expect(page.locator('[aria-busy="true"]')).toBeVisible();
+    await expectAccessOnly(page);
+    release();
+    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+    await expectAccessOnly(page);
+    expect(await page.evaluate(() => (window as Window & { administrativeMounts: number }).administrativeMounts)).toBe(0);
+    await page.unroute('**/auth/session');
+  }
+});
+
+test('rejected login, logout, history navigation and server revocation preserve the access boundary', async ({ page }) => {
+  await fixture(page);
+  await page.route('**/auth/login', (route) => route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_DENIED' } }));
+  await page.goto('/firewall');
+  await page.getByLabel('Username', { exact: true }).fill('lab-admin');
+  await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('status')).toBeVisible();
+  await expect(page.getByLabel('Username', { exact: true })).toHaveValue('');
+  await expectAccessOnly(page);
+  await page.unroute('**/auth/login');
+  await page.getByLabel('Username', { exact: true }).fill('lab-admin');
+  await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.locator('#console-navigation')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await page.evaluate(() => { location.hash = 'configuration'; });
+  await page.goBack();
+  await expectAccessOnly(page);
+  await login(page);
+  await page.route('**/api/v1/firewall', (route) => route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_REQUIRED' } }));
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expectAccessOnly(page);
+});
+
+test('an already expired session response cannot mount protected content', async ({ page }) => {
+  await fixture(page, 'admin', true);
+  await page.route('**/auth/session', (route) => route.fulfill({ json: { username: 'expired', role: 'admin', csrf: 'fixture-only', expires_at: now.toISOString() } }));
+  for (const path of ['/firewall#configuration', '/local-services']) {
+    await page.goto(path);
+    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+    await expectAccessOnly(page);
+  }
+});
 async function login(page: Page) {
   await page.goto('/firewall');
   await page.getByLabel('Username', { exact: true }).fill('lab-admin');
@@ -86,6 +157,7 @@ async function addRule(page: Page, id = 'allow-web', protocol = 'tcp') {
   await page.getByRole('button', { name: 'Keep in local draft', exact: true }).click();
 }
 async function proceed(page: Page, name: string) {
+  if (name === 'Commit now') await page.locator('.console-other-actions > summary').click();
   await page.getByRole('button', { name, exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Proceed', exact: true }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
@@ -117,13 +189,17 @@ test('firewall session, CRUD, ordering, confirmed commit, save and historical ro
   await proceed(page, 'Confirm running revision');
   await proceed(page, 'Save running to startup');
   expect(mock.state().snapshot.running.hash).toBe(mock.state().snapshot.startup.hash);
+  await page.evaluate(() => { window.location.hash = 'audit'; });
   await page.getByRole('button', { name: 'Load history', exact: true }).click();
   await page.getByLabel('Actor or revision', { exact: true }).fill('LAB-VIEWER');
   const audit = page.getByRole('table', { name: 'Transaction audit', exact: true });
   await expect(audit.locator('tbody tr')).toHaveCount(1);
   await expect(audit).toContainText('lab-viewer');
+  await page.locator('.console-history-revisions > summary').click();
+  await page.locator('.console-history-revisions tbody summary').click();
   await page.getByRole('button', { name: `Restore revision: ${initialHash}`, exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Proceed', exact: true }).click();
+  await page.evaluate(() => { window.location.hash = 'rules'; });
   await expect(page.getByText('No rules. Default deny applies.', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => ({ local: JSON.stringify(localStorage), session: JSON.stringify(sessionStorage) }))).toEqual({ local: '{}', session: '{}' });
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
@@ -146,6 +222,78 @@ test('firewall validation focuses invalid fields and prevents transport writes',
   expect(mock.transactions).toEqual([]);
 });
 
+test('editor associates localized CIDR and port hints with labels and validation errors', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  for (const locale of ['en', 'es', 'pt'] as const) {
+    const copy = firewallMessages[locale];
+    await page.locator('#language').selectOption(locale);
+    await page.getByRole('button', { name: copy.add, exact: true }).click();
+    const id = page.getByLabel(copy.id, { exact: true });
+    await expect(id).toBeFocused(); await id.fill('accessible');
+    for (const key of ['source', 'destination', 'source_ports', 'destination_ports'] as const) {
+      const control = page.getByLabel(copy[key], { exact: true });
+      const hint = key.includes('ports') ? copy.portsHint : copy.cidrHint;
+      await expect(control).toHaveAccessibleDescription(hint);
+      await control.fill(key.includes('ports') ? '0' : '999.1.1.1');
+    }
+    await page.getByRole('button', { name: copy.applyRule, exact: true }).click();
+    await expect(page.getByLabel(copy.source, { exact: true })).toBeFocused();
+    for (const key of ['source', 'destination', 'source_ports', 'destination_ports'] as const) {
+      const control = page.getByLabel(copy[key], { exact: true });
+      const hint = key.includes('ports') ? copy.portsHint : copy.cidrHint;
+      const error = key.includes('ports') ? copy.portsError : copy.cidrError;
+      await expect(control).toHaveAccessibleDescription(`${hint} ${error}`);
+      expect(await control.evaluate((element) => (element.getAttribute('aria-describedby') ?? '').split(/\s+/).every((id) => !!id && document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length === 1))).toBe(true);
+      await control.fill(key.includes('ports') ? '443' : '10.42.0.0/24');
+      await expect(control).toHaveAccessibleDescription(hint);
+      await expect(control).toHaveAttribute('aria-invalid', 'false');
+    }
+    await page.getByLabel(copy.source, { exact: true }).focus(); await page.keyboard.press('Tab');
+    await expect(page.getByLabel(copy.destination, { exact: true })).toBeFocused();
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+    await page.getByRole('button', { name: copy.cancel, exact: true }).last().click();
+  }
+  expect(mock.transactions).toEqual([]);
+});
+
+test('active drag locks column visibility and other table mutations until explicit drop or cancel', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  const rules = ['first', 'second', 'third'].map((id) => ({ id, action: 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: 443, to: 443 } } }));
+  mock.state().snapshot.running.config.rules = rules;
+  mock.state().snapshot.startup.config.rules = structuredClone(rules);
+  await page.goto('/firewall');
+  const summary = page.locator('.ds-column-chooser summary');
+  const column = page.getByRole('checkbox', { name: 'Columns: Service', exact: true, includeHidden: true });
+  await summary.click(); await column.uncheck();
+  await summary.click();
+  const handle = page.getByRole('button', { name: 'Reorder: third', exact: true });
+  await handle.scrollIntoViewIfNeeded(); const from = await handle.boundingBox();
+  const target = await page.getByRole('button', { name: 'Reorder: first', exact: true }).boundingBox();
+  if (!from || !target) throw Error('Drag geometry unavailable');
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2); await page.mouse.down();
+  await expect(handle).toHaveAttribute('aria-pressed', 'true');
+  // Reproduce the original cancellation from a queued second input source.
+  await column.evaluate((element: HTMLInputElement) => element.click());
+  await expect(handle).toHaveAttribute('aria-pressed', 'true'); await expect(column).not.toBeChecked();
+  await expect(summary).toHaveAttribute('aria-disabled', 'true');
+  await expect(column).toBeDisabled();
+  await expect(page.getByLabel('Search rules', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Filter by action', { exact: true })).toBeDisabled();
+  await expect(page.locator('#rule-view')).toBeDisabled();
+  await page.mouse.move(from.x + from.width / 2, target.y + target.height / 2, { steps: 6 }); await page.mouse.up();
+  await expect(page.locator('.fw-rule-link')).toHaveText(['third', 'first', 'second']);
+  await expect(summary).not.toHaveAttribute('aria-disabled', 'true');
+  await handle.focus(); await handle.press('Space'); await handle.press('End');
+  await expect(column).toBeDisabled(); await handle.press('Escape');
+  await expect(handle).toBeFocused();
+  await expect(page.locator('.fw-rule-link')).toHaveText(['third', 'first', 'second']);
+  await page.getByLabel('Search rules', { exact: true }).fill('first'); await expect(page.getByRole('button', { name: 'Reorder: first', exact: true })).toBeDisabled();
+  await page.getByLabel('Search rules', { exact: true }).clear();
+  expect(mock.state().snapshot.running.config.rules.map((rule) => rule.id)).toEqual(['first', 'second', 'third']);
+  expect(mock.transactions).toEqual([]);
+});
+
 test('firewall viewer cannot edit or load privileged history', async ({ page }) => {
   await fixture(page, 'viewer', true);
   await page.goto('/firewall');
@@ -160,10 +308,12 @@ test('firewall removal stays local and session expiry removes sensitive views', 
   await page.getByLabel('Actions: allow-web', { exact: true }).click();
   await page.getByRole('button', { name: 'Remove: allow-web', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Proceed', exact: true }).click();
+  await page.evaluate(() => { window.location.hash = 'rules'; });
   await expect(page.getByText('No rules. Default deny applies.', { exact: true })).toBeVisible();
   expect(mock.transactions).toEqual([]);
   await page.clock.fastForward(3_601_000);
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expectAccessOnly(page);
   await expect(page.getByRole('table')).toHaveCount(0);
 });
 
@@ -212,6 +362,13 @@ for (const theme of ['light', 'dark'] as const) {
     await page.goto('/firewall');
     await page.locator('#theme').selectOption(theme);
     await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+    for (const locale of ['es', 'pt', 'en'] as const) {
+      await page.locator('#language').selectOption(locale);
+      await expect(page.getByRole('heading', { name: firewallMessages[locale].login, exact: true })).toBeVisible();
+      await expectAccessOnly(page);
+    }
+    await expectAccessOnly(page);
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
     await expect(page).toHaveScreenshot(`firewall-${theme}-login.png`, { fullPage: true });
     const rules = ['lab-web', 'lab-dns', 'lab-maintenance'].map((id, index) => ({ id, enabled: index !== 2, action: index === 1 ? 'deny' as const : 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: index === 1 ? 'udp' as const : 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: index === 1 ? 53 : 443, to: index === 1 ? 53 : 443 } } }));
     mock.state().snapshot.running.config = { schema_version: 4, default_action: 'deny', rules };
@@ -224,9 +381,9 @@ for (const theme of ['light', 'dark'] as const) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`firewall-${theme}-editor.png`, { fullPage: true });
-    for (const [locale, title] of [['es', 'Administración del firewall'], ['pt', 'Administração do firewall'], ['en', 'Firewall administration']]) {
+    for (const [locale, title] of [['es', 'Reglas'], ['pt', 'Regras'], ['en', 'Rules']]) {
       await page.locator('#language').selectOption(locale!);
-      await expect(page.getByRole('heading', { name: title!, exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: title!, exact: true, level: 1 })).toBeVisible();
       expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
     }
   });
@@ -326,6 +483,9 @@ test('rule handle autoscrolls a bounded policy and restores keyboard focus on ca
   mock.state().snapshot.startup.config.rules = structuredClone(rules);
   await page.goto('/firewall');
   const handle = page.getByRole('button', { name: 'Reorder: rule-01', exact: true });
+  await page.locator('.ds-column-chooser summary').click();
+  await page.getByRole('checkbox', { name: 'Columns: Service', exact: true }).uncheck();
+  await page.locator('.ds-column-chooser summary').click();
   const region = page.getByRole('region', { name: 'Ordered rules', exact: true });
   await handle.focus(); await handle.press('Space'); await handle.press('End'); await handle.press('Escape');
   await page.clock.runFor(100);
@@ -339,6 +499,9 @@ test('rule handle autoscrolls a bounded policy and restores keyboard focus on ca
   await page.mouse.move(x, bounds.y + bounds.height - 8, { steps: 5 });
   await page.clock.runFor(500);
   expect(await region.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ ...viewport, height: viewport.height - 30 });
+  await expect(handle).toHaveAttribute('aria-pressed', 'true');
   await page.mouse.up(); await page.clock.runFor(100);
   const ids = await page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link').allTextContents();
   expect(ids.indexOf('rule-01')).toBeGreaterThan(0);
@@ -368,5 +531,172 @@ test('late pointer release cannot reorder a refreshed snapshot', async ({ page }
   await page.mouse.up();
   await expect(page.getByRole('table', { name: 'Ordered rules', exact: true }).locator('tbody th .fw-rule-link')).toHaveText(['first', 'third', 'second']);
   await expect(page.getByRole('button', { name: 'Stage candidate', exact: true })).toBeDisabled();
+  expect(mock.transactions).toEqual([]);
+});
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`console V3 ${theme}: view navigation and visual baseline`, async ({ page }) => {
+    const mock = await fixture(page, 'admin', true);
+    const sample = ['web', 'dns', 'maintenance'].map((id, index) => ({ id, enabled: index !== 2, action: index === 1 ? 'deny' as const : 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: index === 1 ? 'udp' as const : 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: index === 1 ? 53 : 443, to: index === 1 ? 53 : 443 } } }));
+    mock.state().snapshot.running.config = { schema_version: 4, default_action: 'deny', rules: sample };
+    mock.state().snapshot.startup = { hash: 'b'.repeat(64), config: { schema_version: 4, default_action: 'deny', rules: [sample[0]!] } };
+    mock.state().effective.rules = sample.filter((rule) => rule.enabled).map((rule) => ({ id: rule.id, packets: 7, bytes: 256 }));
+    await page.goto('/firewall#dashboard');
+    await page.locator('#theme').selectOption(theme);
+    await expect(page.locator('.console-kpis')).toContainText('14');
+    await expect(page.locator('.console-geo')).toContainText('No geographic traffic observations');
+    for (const view of ['dashboard', 'configuration', 'audit'] as const) {
+      await page.evaluate((next) => { window.location.hash = next; }, view);
+      await expect(page.getByRole('heading', { name: consoleMessages.en[view], level: 1, exact: true })).toBeVisible();
+      if (view === 'audit') {
+        await page.getByRole('button', { name: 'Load history', exact: true }).click();
+        await page.getByRole('button', { name: 'Inspect event: 2', exact: true }).click();
+        await expect(page.locator('.console-audit-detail')).toContainText('lab-admin');
+      }
+      expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await expect(page).toHaveScreenshot(`console-${theme}-${view}.png`, { fullPage: true });
+      for (const locale of ['es', 'pt', 'en'] as const) {
+        await page.locator('#language').selectOption(locale);
+        await expect(page.getByRole('heading', { name: consoleMessages[locale][view], level: 1, exact: true })).toBeVisible();
+      }
+    }
+    expect(mock.transactions).toEqual([]);
+  });
+}
+
+test('console hash navigation preserves draft and does not stage until explicitly requested', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  await addRule(page, 'preserved-draft');
+  await page.evaluate(() => { window.location.hash = 'configuration'; });
+  await expect(page.getByRole('heading', { name: 'Configuration', level: 1, exact: true })).toBeVisible();
+  await page.evaluate(() => { window.location.hash = 'rules'; });
+  await expect(page.getByRole('table', { name: 'Ordered rules', exact: true })).toContainText('preserved-draft');
+  expect(mock.transactions).toEqual([]);
+  await page.getByRole('button', { name: 'Stage candidate', exact: true }).click();
+  expect(mock.transactions).toHaveLength(1);
+  expect(mock.transactions[0]?.config?.rules[0]?.id).toBe('preserved-draft');
+});
+
+test('console navigation expansion describes mobile visibility and supports Escape and resize', async ({ page }) => {
+  await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/firewall');
+  const toggle = page.locator('.console-menu-button');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.console-sidebar')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(toggle).toBeFocused();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await page.getByRole('link', { name: 'Dashboard', exact: true }).click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('root opens the authenticated console and internal anchors preserve views and editor input', async ({ page }) => {
+  const mock = await fixture(page);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.getByText('Development foundation', { exact: true })).toHaveCount(0);
+  await page.getByLabel('Username', { exact: true }).fill('lab-admin');
+  await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await fillRule(page, 'unsubmitted-editor');
+  await page.evaluate(() => { window.location.hash = 'dashboard'; });
+  await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
+  await page.locator('.skip-link').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
+  await page.evaluate(() => { window.location.hash = 'rules'; });
+  await expect(page.getByLabel('Rule ID', { exact: true })).toHaveValue('unsubmitted-editor');
+  await expect(page.getByLabel('Destination ports', { exact: true })).toHaveValue('443-445');
+  expect(mock.transactions).toEqual([]);
+});
+
+test('audit pagination retains visible selected filters when the loaded page no longer has matches', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall#audit');
+  await page.getByRole('button', { name: 'Load history', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Origin', exact: true }).selectOption('cli');
+  await expect(page.getByRole('table', { name: 'Transaction audit', exact: true })).toContainText('lab-viewer');
+  mock.history.audit.splice(1, 1);
+  await page.getByRole('button', { name: 'Newest page', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Origin', exact: true })).toHaveValue('cli');
+  await expect(page.getByRole('combobox', { name: 'Origin', exact: true }).locator('option:checked')).toHaveText('cli');
+  await page.getByRole('combobox', { name: 'Origin', exact: true }).selectOption('all');
+  await expect(page.getByRole('table', { name: 'Transaction audit', exact: true })).toContainText('lab-admin');
+});
+
+test('rule column choices affect presentation only and retain global persistence status', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  mock.state().snapshot.startup.hash = 'b'.repeat(64);
+  await page.goto('/firewall');
+  await addRule(page, 'column-rule');
+  const table = page.getByRole('table', { name: 'Ordered rules', exact: true });
+  await page.locator('.ds-column-chooser > summary').click();
+  const chooser = page.locator('.ds-column-chooser');
+  const bounds = await chooser.locator(':scope > div').boundingBox();
+  const viewport = page.viewportSize();
+  expect(bounds).not.toBeNull(); expect(viewport).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport!.height);
+  for (const label of ['Source IPv4 / CIDR', 'Destination IPv4 / CIDR', 'Service', 'Execution', 'At next boot', 'Observed counters']) {
+    await chooser.getByRole('checkbox', { name: `Columns: ${label}`, exact: true }).uncheck();
+    await expect(table.getByRole('columnheader', { name: label, exact: true })).toHaveCount(0);
+  }
+  await expect(table.getByRole('columnheader', { name: 'Rule ID', exact: true })).toBeVisible();
+  await expect(table.getByRole('columnheader', { name: 'Action', exact: true })).toBeVisible();
+  await expect(page.locator('.console-transaction-summary')).toContainText('Running revision has unsaved changes');
+  await chooser.getByRole('checkbox', { name: 'Columns: At next boot', exact: true }).check();
+  await expect(table.getByRole('columnheader', { name: 'At next boot', exact: true })).toBeVisible();
+  expect(mock.transactions).toEqual([]);
+});
+
+test('console Back and Forward restore hashless Rules without losing a local draft', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  await addRule(page, 'history-preserved');
+  await page.evaluate(() => { window.location.hash = 'dashboard'; });
+  await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Rules', level: 1, exact: true })).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Ordered rules', exact: true })).toContainText('history-preserved');
+  await page.goForward();
+  await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
+  expect(mock.transactions).toEqual([]);
+});
+
+for (const theme of ['light', 'dark'] as const) test(`rule editor ${theme}: identity field spans the layout independently of generated IDs`, async ({ page }, info) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall');
+  await page.locator('#theme').selectOption(theme);
+  await fillRule(page, 'layout-regression');
+  const identity = page.getByLabel('Rule ID', { exact: true });
+  const layout = await identity.evaluate((control) => {
+    const grid = control.closest('.fw-fields')!;
+    const item = [...grid.children].find((child) => child.contains(control))!;
+    const style = getComputedStyle(item);
+    const bounds = item.getBoundingClientRect();
+    const gridBounds = grid.getBoundingClientRect();
+    return { start: style.gridColumnStart, end: style.gridColumnEnd, left: bounds.left, width: bounds.width, gridLeft: gridBounds.left, gridWidth: gridBounds.width };
+  });
+  await info.attach(`identity-layout-${theme}-${info.project.name}`, { body: JSON.stringify(layout), contentType: 'application/json' });
+  expect(layout.start).toBe('1');
+  expect(layout.end).toBe('-1');
+  expect(Math.abs(layout.left - layout.gridLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(layout.width - layout.gridWidth)).toBeLessThanOrEqual(1);
+  await expect(page.locator('.fw-rule-editor .fw-field--full-width')).toHaveCount(1);
+  await expect(identity).toHaveValue('layout-regression');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
   expect(mock.transactions).toEqual([]);
 });

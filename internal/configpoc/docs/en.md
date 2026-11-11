@@ -9,7 +9,7 @@ privileges, Docker runtime or network access to an appliance are required.
 
 ## Run the checks
 
-Use Linux with Go 1.27.3 already installed and a compiler suitable for the Go race
+Use Linux with Go 1.27.4 already installed and a compiler suitable for the Go race
 detector. WSL is suitable for development checks; use its Linux filesystem for
 persistence tests, not a Windows-mounted directory. Missing prerequisites are a
 blocker; do not weaken the tests or make the appliance install build tools.

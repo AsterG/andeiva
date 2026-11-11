@@ -10,7 +10,7 @@ No Windows, VPN, host routing, host forwarding or host firewall changes are need
 
 ## Build and unprivileged checks
 
-Use the repository's Go version, currently 1.27.3. From its root:
+Use the repository's Go version, currently 1.27.4. From its root:
 
 ```bash
 bash scripts/check-nft-poc.sh

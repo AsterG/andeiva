@@ -25,6 +25,11 @@ metadata and retain applicable notices with redistributed source and binaries.
 Upstream license texts must accompany redistributed copies as required by
 their respective licenses; this attribution summary does not replace them.
 
+Static world-map geometry is derived from Natural Earth (public domain):
+https://www.naturalearthdata.com/about/terms-of-use/
+Source provenance is recorded in frontend/src/assets/README.md. This geometry
+contains no traffic observations or geolocation data about appliance users.
+
 Go module and toolchain requirements are recorded in go.mod, with resolved
 module checksums in go.sum. Frontend direct
 dependencies and development tools are listed in frontend/package.json;

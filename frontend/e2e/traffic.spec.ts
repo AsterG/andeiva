@@ -26,7 +26,9 @@ async function setup(page: Page, role = 'admin') {
     if (unavailable) return route.abort('failed');
     return route.fulfill({ json: { snapshot: { generation: 1, running: revision, startup: revision, recovery_required: false }, effective: { revision: hash, state: 'verified', rules: [] } } });
   });
-  await page.goto('/firewall');
+  await page.goto('/firewall#traffic');
+  // A replacement transport fixture must start a new document, not retain a prior role through hash navigation.
+  await page.reload();
   return { calls, restart: () => { stream = 'b'.repeat(32); }, deny: () => { denied = true; }, disconnect: () => { unavailable = true; }, evict: () => { truncated = true; } };
 }
 

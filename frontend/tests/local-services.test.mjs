@@ -80,7 +80,8 @@ for (const locale of ['en', 'es', 'pt']) test(`Local Services preserves branding
   const html = renderToStaticMarkup(createElement(LocalServicesPage, { initialLocale: locale }));
   assert.match(html, /data-theme="light"/); assert.match(html, /src="\/andeiva-logo.png"/);
   assert.match(html, /alt="ANDEIVA Security Gateway"/); assert.match(html, new RegExp(`lang="${locale}"`));
-  assert.ok(html.includes(localMessages[locale].title));
+  assert.ok(html.includes('ANDEIVA Security Gateway'));
+  assert.doesNotMatch(html, /<aside|<nav|class="page-heading"/);
   assert.deepEqual(Object.keys(localMessages[locale]).sort(), Object.keys(localMessages.en).sort());
   assert.ok(Object.values(localMessages[locale]).every((value) => typeof value === 'string' && value.trim().length > 0));
 });

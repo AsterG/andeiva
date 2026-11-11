@@ -58,10 +58,13 @@ cp -a "$templates/docs" "$doc/"
 install -d "$doc/tests"
 install -m 0755 "$templates/tests/native.sh" "$doc/tests/native.sh"
 install -d "$doc/firewalladmin/docs"
+install -d "$doc/console"
 install -m 0644 internal/firewalladmin/VALIDATION.md internal/firewalladmin/TRAFFIC.md internal/firewalladmin/MILESTONE.md "$doc/firewalladmin/"
 for language in en es pt; do
   install -m 0644 "internal/firewalladmin/docs/$language.md" "$doc/firewalladmin/docs/"
+  install -m 0644 "frontend/docs/console-$language.md" "$doc/console/$language.md"
   sed -i 's|../../../internal/firewalladmin/docs/|../firewalladmin/docs/|g' "$doc/docs/$language.md"
+  sed -i 's|../../../frontend/docs/console-|../console/|g' "$doc/docs/$language.md"
 done
 install -d "$doc/dependencies"
 node scripts/check-licenses.mjs > "$doc/dependencies/npm-inventory.json"

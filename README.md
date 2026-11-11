@@ -31,7 +31,7 @@ tested behavior and limitations.
 
 ## Development
 
-Use Go 1.27.3 and Node.js 24.20.0 with npm. Commands for Linux/WSL:
+Use Go 1.27.4 and Node.js 24.20.0 with npm. Commands for Linux/WSL:
 
 ```bash
 npm --prefix frontend ci --ignore-scripts --no-audit --no-fund

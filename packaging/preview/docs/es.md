@@ -6,6 +6,14 @@ un snapshot recuperable y revise los [límites del runtime](../README.md).
 
 ## Instalación
 
+La URL raíz de administración abre la consola autenticada. Reglas, Dashboard,
+Auditoría, Configuración y Registros de tráfico comparten la sesión y los
+contratos transaccionales existentes. Consulte la [guía de la consola](../../../frontend/docs/console-es.md)
+para cambios pendientes, confirmación, persistencia en Startup y teclado.
+El ancho de banda por interfaz, la atribución por país y la selección de objetos
+persistentes siguen sin estar disponibles hasta implementar sus capacidades.
+
+
 Descargue `firewall-alpha-preview-debian13-amd64` de una ejecución Quality aprobada
 del repositorio privado. La retención es de tres días. Compruebe el commit revisado
 y `SHA256SUMS`; el checksum no es una firma del proveedor. Transfiera por un medio

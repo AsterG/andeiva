@@ -8,7 +8,7 @@ Estado: implementación experimental con validación acotada en Debian. Consulte
 Use una VM Debian 13 desechable con snapshot de recuperación autorizado. El argumento
 `--snapshot-confirmed` reconoce ese requisito; no crea ni comprueba un snapshot del
 hipervisor. No ejecute el laboratorio privilegiado en Windows, appliances de clientes
-ni redes productivas compartidas. Deben estar disponibles Go 1.27.3, las herramientas
+ni redes productivas compartidas. Deben estar disponibles Go 1.27.4, las herramientas
 y dependencias frontend fijadas por el repositorio, nftables 1.1.3 y las rutas
 `/usr/bin/ip`, `/usr/bin/nsenter`, `/usr/bin/setpriv`, `/usr/sbin/nft`. Las dependencias
 de compilación pertenecen al entorno de desarrollo; este procedimiento no instala
