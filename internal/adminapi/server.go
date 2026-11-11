@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -344,7 +345,12 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, 400, "ANDEIVA_REQUEST_INVALID")
 		return
 	}
-	id, token, err := h.options.Auth.Login(request.Username, request.Credential)
+	peer, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil {
+		h.authError(w, adminauth.ErrDenied)
+		return
+	}
+	id, token, err := h.options.Auth.LoginFrom(peer.Addr(), request.Username, request.Credential)
 	if err != nil {
 		h.authError(w, err)
 		return

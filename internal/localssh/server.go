@@ -239,7 +239,15 @@ func (s *Server) serveConnection(parent context.Context, raw net.Conn) {
 		if len(password) == 64 {
 			credential = string(password)
 		}
-		_, newToken, err := s.options.Auth.Login(meta.User(), credential)
+		remote := meta.RemoteAddr()
+		if remote == nil {
+			return nil, adminauth.ErrDenied
+		}
+		peer, err := netip.ParseAddrPort(remote.String())
+		if err != nil {
+			return nil, adminauth.ErrDenied
+		}
+		_, newToken, err := s.options.Auth.LoginFrom(peer.Addr(), meta.User(), credential)
 		if err != nil {
 			return nil, err
 		}

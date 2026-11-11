@@ -7,7 +7,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"net/netip"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -49,8 +51,7 @@ type Manager struct {
 	sessions     map[[32]byte]session
 	audit        func(Event) error
 	now          func() time.Time
-	window       time.Time
-	attempts     int
+	admission    loginAdmission
 	failed       bool
 	denialWindow time.Time
 	denials      int
@@ -96,30 +97,46 @@ func (m *Manager) record(actor, action, result string) error {
 	}
 	return nil
 }
+
+// Login retains compatibility for internal callers without a socket peer.
+// Network transports must use LoginFrom.
 func (m *Manager) Login(name, credential string) (Identity, string, error) {
+	return m.login(netip.Addr{}, name, credential, true)
+}
+
+// LoginFrom uses a receiving transport's socket peer, not a forwarded
+// header or user-supplied identity. Storage/audit failures still fail closed.
+func (m *Manager) LoginFrom(source netip.Addr, name, credential string) (Identity, string, error) {
+	if !validLoginSource(source) {
+		return Identity{}, "", ErrDenied
+	}
+	return m.login(source.Unmap(), name, credential, false)
+}
+
+func (m *Manager) login(source netip.Addr, name, credential string, legacy bool) (Identity, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.failed {
 		return Identity{}, "", ErrUnavailable
 	}
 	now := m.now()
-	if now.Sub(m.window) >= time.Second {
-		m.window = now
-		m.attempts = 0
-	}
-	if m.attempts >= 4 {
+	// The compatible internal entry point shares the anonymous budget rather
+	// than creating an additional allowance. Network transports use LoginFrom.
+	if legacy && !m.admission.anonymous.allow(now) {
 		return Identity{}, "", ErrLimited
 	}
-	m.attempts++
-	known, ok := m.accounts[name]
-	sum := sha256.Sum256([]byte(credential))
-	valid := subtle.ConstantTimeCompare(sum[:], known.digest[:]) == 1
-	decoded, decodeErr := hex.DecodeString(credential)
-	if !ok || !valid || decodeErr != nil || len(decoded) != 32 || credential != hex.EncodeToString(decoded) {
+	known, valid := m.credential(name, credential)
+	if !valid {
+		if !legacy && !m.admission.allowAnonymous(source, now) {
+			return Identity{}, "", ErrLimited
+		}
 		if err := m.record("unknown", "login", "denied"); err != nil {
 			return Identity{}, "", err
 		}
 		return Identity{}, "", ErrDenied
+	}
+	if !m.admission.verified.allow(now) {
+		return Identity{}, "", ErrLimited
 	}
 	for key, s := range m.sessions {
 		if !now.Before(s.identity.ExpiresAt) || now.Sub(s.last) >= 5*time.Minute {
@@ -143,6 +160,21 @@ func (m *Manager) Login(name, credential string) (Identity, string, error) {
 	}
 	m.sessions[sha256.Sum256([]byte(token))] = session{id, now}
 	return id, token, nil
+}
+
+func (m *Manager) credential(name, credential string) (account, bool) {
+	// Classification precedes admission, so bound hashing/decoding work even
+	// for a malformed request at the HTTP body's maximum size.
+	if len(name) > 64 || len(credential) != 64 {
+		return account{}, false
+	}
+	known, ok := m.accounts[name]
+	sum := sha256.Sum256([]byte(credential))
+	valid := subtle.ConstantTimeCompare(sum[:], known.digest[:]) == 1
+	var decoded [32]byte
+	n, err := hex.Decode(decoded[:], []byte(credential))
+	canonical := err == nil && n == len(decoded) && strings.IndexAny(credential, "ABCDEF") < 0
+	return known, ok && valid && canonical
 }
 func (m *Manager) Authenticate(token string) (Identity, error) {
 	m.mu.Lock()
