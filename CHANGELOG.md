@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — inactive boot theme resources
+
+- Add GRUB and Plymouth theme resources with the original logo, English status
+  text and an indeterminate activity indicator, plus reproducible package checks.
+- Keep theme selection, bootloader changes and initramfs activation separate;
+  native boot and recovery qualification remain pending.
+
 ## Unreleased — compact administrative header
 
 - Move account information and sign-out to the top header, separate from

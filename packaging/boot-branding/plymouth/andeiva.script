@@ -1,0 +1,110 @@
+# The activity bar is indeterminate. It is not a boot percentage or health check.
+Window.SetBackgroundTopColor(1, 1, 1);
+Window.SetBackgroundBottomColor(0.949, 0.976, 0.996);
+background.source = Image("background.png");
+background.sprite = Sprite();
+logo.source = Image("andeiva-logo.png");
+logo.sprite = Sprite();
+track.source = Image("activity-track.png");
+track.sprite = Sprite();
+activity.source = Image("activity-segment.png");
+activity.sprite = Sprite();
+title.sprite = Sprite(Image.Text("ANDEIVA OS", 0.024, 0.106, 0.294, 1, "Sans Bold 20"));
+subtitle.sprite = Sprite(Image.Text("Network Security Appliance", 0.024, 0.106, 0.294, 1, "Sans 12"));
+hint.sprite = Sprite(Image.Text("Press Esc for diagnostics", 0.024, 0.106, 0.294, 1, "Sans 10"));
+status.text = "System activity...";
+mode = Plymouth.GetMode();
+if (mode == "boot") status.text = "Starting system...";
+if (mode == "reboot") status.text = "Restarting...";
+if (mode == "shutdown") status.text = "Shutting down...";
+if (mode == "updates" || mode == "system-upgrade") status.text = "Updating system...";
+status.sprite = Sprite(Image.Text(status.text, 0.024, 0.106, 0.294, 1, "Sans 12"));
+message.sprite = Sprite();
+prompt.sprite = Sprite();
+entry.sprite = Sprite();
+state = "normal";
+tick = 0;
+screen.width = 0;
+screen.height = 0;
+
+fun center_text(sprite, y, z) {
+  sprite.SetPosition(Window.GetX() + (Window.GetWidth() - sprite.GetImage().GetWidth()) / 2, Window.GetY() + y, z);
+}
+
+fun layout() {
+  global.screen.width = Window.GetWidth();
+  global.screen.height = Window.GetHeight();
+  background.sprite.SetImage(background.source.Scale(screen.width, screen.height));
+  background.sprite.SetPosition(Window.GetX(), Window.GetY(), -10);
+  local.logo_width = Math.Int(screen.width * 0.62);
+  if (logo_width > 660) logo_width = 660;
+  if (logo_width > screen.height * 0.95) logo_width = Math.Int(screen.height * 0.95);
+  # Scale the complete 2:1 source uniformly; never crop or filter its artwork.
+  local.logo_height = Math.Int(logo_width / 2);
+  logo_width = logo_height * 2;
+  logo.sprite.SetImage(logo.source.Scale(logo_width, logo_height));
+  logo.sprite.SetPosition(Window.GetX() + (screen.width - logo_width) / 2, Window.GetY() + screen.height * 0.10, 0);
+  global.content_y = screen.height * 0.10 + logo_height + 16;
+  center_text(title.sprite, content_y, 1);
+  center_text(subtitle.sprite, content_y + 34, 1);
+  global.bar_width = Math.Int(screen.width * 0.48);
+  if (bar_width > 360) global.bar_width = 360;
+  global.bar_x = Window.GetX() + (screen.width - bar_width) / 2;
+  global.bar_y = Window.GetY() + content_y + 74;
+  track.sprite.SetImage(track.source.Scale(bar_width, 8));
+  track.sprite.SetPosition(bar_x, bar_y, 1);
+  activity.sprite.SetImage(activity.source.Scale(Math.Int(bar_width / 4), 8));
+  center_text(status.sprite, content_y + 98, 1);
+  center_text(hint.sprite, screen.height - 28, 1);
+  message.sprite.SetPosition(Window.GetX() + 20, Window.GetY() + 12, 100);
+  prompt.sprite.SetPosition(Window.GetX() + 20, Window.GetY() + screen.height - 110, 100);
+  entry.sprite.SetPosition(Window.GetX() + 20, Window.GetY() + screen.height - 76, 100);
+}
+
+fun refresh() {
+  if (screen.width != Window.GetWidth() || screen.height != Window.GetHeight()) layout();
+  if (state == "normal") {
+    # A fixed-width segment moves in both directions; it never fills to completion.
+    global.tick += 1;
+    local.offset = (1 - Math.Cos(tick * 0.04)) / 2;
+    activity.sprite.SetPosition(bar_x + offset * (bar_width - Math.Int(bar_width / 4)), bar_y, 2);
+  }
+}
+
+fun normal() {
+  global.state = "normal";
+  prompt.sprite.SetOpacity(0);
+  entry.sprite.SetOpacity(0);
+  activity.sprite.SetOpacity(1);
+}
+
+fun show_prompt(text, answer) {
+  global.state = "prompt";
+  activity.sprite.SetOpacity(0);
+  prompt.sprite.SetImage(Image.Text(text, 0.024, 0.106, 0.294, 1, "Sans 12"));
+  entry.sprite.SetImage(Image.Text(answer, 0.024, 0.106, 0.294, 1, "Sans 12"));
+  prompt.sprite.SetOpacity(1);
+  entry.sprite.SetOpacity(1);
+  layout();
+}
+
+fun password(text, count) {
+  local.mask = "";
+  # Never draw or retain secret input. Bound visual bullets, not the input itself.
+  for (i = 0; i < count && i < 48; i++) mask += "*";
+  show_prompt(text, mask);
+}
+
+fun question(text, answer) { show_prompt(text, answer); }
+fun display_message(text) {
+  # Preserve third-party diagnostics verbatim rather than hiding failure text.
+  message.sprite.SetImage(Image.Text(text, 0.024, 0.106, 0.294, 1, "Sans 12"));
+  message.sprite.SetOpacity(1);
+}
+fun hide_message(text) { message.sprite.SetOpacity(0); }
+Plymouth.SetRefreshFunction(refresh);
+Plymouth.SetDisplayNormalFunction(normal);
+Plymouth.SetDisplayPasswordFunction(password);
+Plymouth.SetDisplayQuestionFunction(question);
+Plymouth.SetDisplayMessageFunction(display_message);
+Plymouth.SetHideMessageFunction(hide_message);

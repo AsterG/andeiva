@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=ANDEIVA
+Description=ANDEIVA Security Gateway boot activity
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/andeiva
+ScriptFile=/usr/share/plymouth/themes/andeiva/andeiva.script

@@ -1,0 +1,46 @@
+# Resource template only; selecting this theme is a separate recovery-gated step.
+title-text: ""
+desktop-image: "background.png"
+desktop-image-scale-method: "stretch"
+desktop-color: "#F2F9FE"
+message-color: "#061B4B"
+message-bg-color: "#FFFFFF"
+terminal-font: "Unifont Regular 16"
+
++ image {
+  left = 50%-160
+  top = 4%
+  width = 320
+  height = 160
+  file = "andeiva-logo.png"
+}
++ label {
+  left = 10%
+  top = 38%
+  width = 80%
+  height = 30
+  align = "center"
+  text = "ANDEIVA OS"
+  color = "#061B4B"
+}
++ boot_menu {
+  left = 12%
+  top = 47%
+  width = 76%
+  height = 35%
+  item_color = "#061B4B"
+  selected_item_color = "#087CF5"
+  item_height = 32
+  item_spacing = 8
+  item_padding = 8
+  scrollbar = true
+}
++ label {
+  left = 5%
+  top = 90%
+  width = 90%
+  height = 32
+  align = "center"
+  text = "Use arrow keys to select an entry. Press Enter to boot."
+  color = "#061B4B"
+}

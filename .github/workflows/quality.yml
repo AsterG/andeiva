@@ -42,6 +42,8 @@ jobs:
         run: |
           bash scripts/check-config-platforms.sh
           bash -n packaging/preview/tests/storage-pressure.sh
+      - name: Inactive boot themes and reproducible data package
+        run: bash packaging/boot-branding/tests/run.sh
       - name: Nftables POC unprivileged contracts and platform compilation
         run: bash scripts/check-nft-poc.sh
       - name: Administrative firewall platform compilation without privileges
