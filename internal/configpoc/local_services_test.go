@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/AsterG/andeiva/internal/localpolicy"
@@ -284,37 +285,43 @@ func TestLocalHistoricalRollbackConfirmationAndDenials(t *testing.T) {
 func TestLocalRollbackExpiryAndRestartRestorePrevious(t *testing.T) {
 	for _, restart := range []bool{false, true} {
 		t.Run(fmt.Sprint(restart), func(t *testing.T) {
-			legacy := firewallSample()
-			s, engines, dir := fixture(t, Options{Initial: &legacy})
-			initial := status(t, s)
-			current := commitLocal(t, s, localSample(t, 18443))
-			ttl := 150 * time.Millisecond
-			if restart {
-				ttl = time.Minute
-			}
-			out, err := s.Execute(context.Background(), admin, API, Request{Operation: OpRollback, Key: "legacy-rollback", ExpectedGeneration: current.Generation, Target: initial.Running.Hash, ConfirmFor: ttl})
-			if err != nil || out.Pending == nil || out.Running.Config.SchemaVersion != 2 {
-				t.Fatal("legacy rollback failed", err)
-			}
-			if restart {
-				if err := s.Close(); err != nil {
-					t.Fatal(err)
+			synctest.Test(t, func(t *testing.T) {
+				legacy := firewallSample()
+				s, engines, dir := fixture(t, Options{Initial: &legacy})
+				initial := status(t, s)
+				current := commitLocal(t, s, localSample(t, 18443))
+				ttl := 150 * time.Millisecond
+				if restart {
+					ttl = time.Minute
 				}
-				s, err = Open(dir, []Engine{engines[0], engines[1]}, Options{})
-				if err != nil {
-					t.Fatal(err)
+				out, err := s.Execute(context.Background(), admin, API, Request{Operation: OpRollback, Key: "legacy-rollback", ExpectedGeneration: current.Generation, Target: initial.Running.Hash, ConfirmFor: ttl})
+				if err != nil || out.Pending == nil || out.Running.Config.SchemaVersion != 2 {
+					t.Fatal("legacy rollback failed", err)
 				}
-				defer s.Close()
-			} else {
-				deadline := time.Now().Add(3 * time.Second)
-				for status(t, s).Pending != nil && time.Now().Before(deadline) {
-					time.Sleep(5 * time.Millisecond)
+				if restart {
+					if err := s.Close(); err != nil {
+						t.Fatal(err)
+					}
+					s, err = Open(dir, []Engine{engines[0], engines[1]}, Options{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer s.Close()
+				} else {
+					time.Sleep(ttl)
+					synctest.Wait()
+					s.mu.Lock()
+					expired := s.state.Snapshot.Pending == nil && s.state.Snapshot.Running.Hash == current.Running.Hash
+					s.mu.Unlock()
+					if !expired {
+						t.Fatal("timer did not restore the previous revision before a status request")
+					}
 				}
-			}
-			after := status(t, s)
-			if after.Pending != nil || after.Running.Hash != current.Running.Hash || after.Startup.Hash != initial.Startup.Hash || after.RecoveryRequired {
-				t.Fatal("rollback safety recovery lost previous schema 3")
-			}
+				after := status(t, s)
+				if after.Pending != nil || after.Running.Hash != current.Running.Hash || after.Startup.Hash != initial.Startup.Hash || after.RecoveryRequired {
+					t.Fatal("rollback safety recovery lost previous schema 3")
+				}
+			})
 		})
 	}
 }
