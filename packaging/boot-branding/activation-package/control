@@ -1,0 +1,12 @@
+Package: andeiva-boot-activation
+Version: @VERSION@
+Section: admin
+Priority: optional
+Architecture: amd64
+Depends: andeiva-boot-branding (= @VERSION@), plymouth (= 24.004.60-5), plymouth-themes (= 24.004.60-5), initramfs-tools (= 0.148.4), grub-pc
+Maintainer: ASTERG
+Homepage: https://github.com/AsterG/andeiva
+Description: Experimental local ANDEIVA boot activation and restoration
+ Explicit recovery-gated operator commands for qualified Debian 13 BIOS systems.
+ The payload has no theme-selection or boot-rebuild maintainer scripts.
+ Dependency installation needs the separately reviewed offline procedure.

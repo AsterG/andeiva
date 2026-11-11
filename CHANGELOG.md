@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — recovery-gated boot activation
+
+- Add an explicit local experimental boot-theme activation and restoration tool,
+  with recovery preflight, protected backups, serialized changes and a retained
+  previous kernel. Native boot qualification remains separate from fixture tests.
+
 ## Unreleased — inactive boot theme resources
 
 - Add GRUB and Plymouth theme resources with the original logo, English status
