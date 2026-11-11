@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — internal read-only network inventory
+
+- Observe real interfaces, IPv4/IPv6 addresses, masks and link flags through an
+  internal read-only collector, with conservative device classification and
+  explicit limits. Do not infer roles, gateways, DNS or connectivity.
+- Detect observable changes between readings and cover invalid observations,
+  cancellation and concurrency. Administrative integration remains separate.
+
 ## Unreleased — experimental offline boot dependency bundle
 
 - Add a development-only Debian 13 AMD64 bundle builder and offline verifier,
