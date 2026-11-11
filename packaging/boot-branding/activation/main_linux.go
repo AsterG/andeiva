@@ -562,6 +562,13 @@ func (s *system) apply() error {
 }
 
 func bootConfiguration(diagnostic bool) string {
+	return bootConfigurationOptions(diagnostic, false)
+}
+
+func bootConfigurationOptions(diagnostic, redraw bool) string {
+	if redraw {
+		return strings.Replace(dropin, "systemd.show_status=error", "systemd.show_status=error plymouth.set-mode-on-redraws", 1)
+	}
 	if !diagnostic {
 		return dropin
 	}
@@ -569,6 +576,13 @@ func bootConfiguration(diagnostic bool) string {
 }
 
 func (s *system) applyMode(diagnostic bool) error {
+	return s.applyOptions(diagnostic, false)
+}
+
+func (s *system) applyOptions(diagnostic, redraw bool) error {
+	if diagnostic && redraw {
+		return fail("ANDEIVA_BOOT_ARGUMENT")
+	}
 	m, err := s.preflight()
 	if err != nil {
 		return err
@@ -585,7 +599,7 @@ func (s *system) applyMode(diagnostic bool) error {
 	}
 	if st.Phase == "pending-reboot" && st.Pending == "" {
 		configuration, err := s.readSmall("etc/default/grub.d/99-andeiva-branding.cfg", false)
-		if err != nil || string(configuration) != bootConfiguration(diagnostic) {
+		if err != nil || string(configuration) != bootConfigurationOptions(diagnostic, redraw) {
 			return fail("ANDEIVA_BOOT_MODE_CONFLICT")
 		}
 		return nil
@@ -613,7 +627,7 @@ func (s *system) applyMode(diagnostic bool) error {
 			if targetErr != nil {
 				return targetErr
 			}
-			err = s.atomic(name, []byte(bootConfiguration(diagnostic)), 0o644)
+			err = s.atomic(name, []byte(bootConfigurationOptions(diagnostic, redraw)), 0o644)
 		} else {
 			err = s.run(step, st.Kernel)
 		}
@@ -970,7 +984,8 @@ func main() {
 	operation := os.Args[1]
 	ack := len(os.Args) == 3 && os.Args[2] == "--recovery-verified" && operation == "prepare"
 	diagnostic := len(os.Args) == 3 && os.Args[2] == "--diagnostic-boot" && operation == "apply"
-	if len(os.Args) == 3 && !ack && !diagnostic {
+	redraw := len(os.Args) == 3 && os.Args[2] == "--redraw-compatibility" && operation == "apply"
+	if len(os.Args) == 3 && !ack && !diagnostic && !redraw {
 		err = fail("ANDEIVA_BOOT_ARGUMENT")
 	} else if operation == "preflight" {
 		_, err = s.preflight()
@@ -984,7 +999,7 @@ func main() {
 			case "prepare":
 				err = s.prepare(ack)
 			case "apply":
-				err = s.applyMode(diagnostic)
+				err = s.applyOptions(diagnostic, redraw)
 			case "restore":
 				err = s.restore()
 			case "status":

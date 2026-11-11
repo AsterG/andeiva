@@ -69,6 +69,55 @@ func TestCapacityUsesReportedFilesystemBlockSize(t *testing.T) {
 	}
 }
 
+func TestRedrawCompatibilityIsExplicitReversibleAndModeBound(t *testing.T) {
+	s := fixture(t)
+	if err := s.prepare(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyOptions(true, true); err == nil {
+		t.Fatal("combined diagnostic and compatibility modes accepted")
+	}
+	st, err := s.load()
+	if err != nil || st.Phase != "prepared" || st.Pending != "" {
+		t.Fatalf("invalid mode changed journal: %+v %v", st, err)
+	}
+	if err := s.verifyLive(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyOptions(false, true); err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := s.root.ReadFile("etc/default/grub.d/99-andeiva-branding.cfg")
+	want := strings.Replace(dropin, "systemd.show_status=error", "systemd.show_status=error plymouth.set-mode-on-redraws", 1)
+	if err != nil || string(configuration) != want || strings.Contains(string(configuration), "plymouth.debug") {
+		t.Fatalf("unexpected compatibility configuration: %v", err)
+	}
+	if err := s.applyOptions(false, true); err != nil {
+		t.Fatalf("idempotent compatibility apply: %v", err)
+	}
+	for _, diagnostic := range []bool{false, true} {
+		if err := s.applyMode(diagnostic); err == nil {
+			t.Fatalf("different mode accepted pending compatibility configuration: diagnostic=%v", diagnostic)
+		}
+	}
+	if err := s.restore(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.prepare(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.apply(); err != nil {
+		t.Fatal(err)
+	}
+	configuration, err = s.root.ReadFile("etc/default/grub.d/99-andeiva-branding.cfg")
+	if err != nil || string(configuration) != dropin {
+		t.Fatalf("default retained compatibility mode: %v", err)
+	}
+	if err := s.applyOptions(false, true); err == nil {
+		t.Fatal("compatibility mode accepted pending default configuration")
+	}
+}
+
 func TestDiagnosticBootModeIsExplicitAndReversible(t *testing.T) {
 	s := fixture(t)
 	checks := 0

@@ -35,3 +35,9 @@ Solo el operador de plataforma autorizado puede usar `andeiva-boot-activation ap
 Después de terminar Plymouth, verificar que la ruta fija sea un archivo regular, de root, modo 0600 y menor de 1 MiB antes de recogerla privadamente. Nunca subir trazas sin filtrar a Git, CI, administración ordinaria o paquetes de soporte. La traza puede ser incompleta; otro reinicio puede sustituirla. No modifica controladores, conectores, resolución, firmware ni argumentos de recuperación.
 
 El diagnóstico permanece seleccionado hasta ejecutar `restore`, `prepare --recovery-verified`, `apply` normal y reiniciar normalmente. Se rechaza cambiar de modo con una configuración pendiente; repetir el mismo apply es idempotente. Recoger primero la traza y retirar el diagnóstico antes de devolver el appliance al uso habitual.
+
+## Compatibilidad gráfica opcional
+
+Ante un fallo de presentación DRM observado, y tras comprobar la recuperación, ejecute `restore`, `prepare --recovery-verified` y `apply --redraw-compatibility`. Este modo explícito añade el argumento estándar de refresco de Plymouth solo al arranque normal. No fuerza una resolución ni cambia controladores; el modo predeterminado no cambia. No puede combinarse con el arranque de diagnóstico.
+
+Compruebe un reinicio real, el logo y los textos completos, los diagnósticos con Esc, la salud del servicio y el consumo de CPU/RAM. Los restablecimientos más frecuentes de la imagen pueden aumentar el trabajo gráfico; una vista previa no basta para validar la plataforma. Para retirar la opción, restaure, prepare de nuevo, ejecute `apply` sin opciones y reinicie. No se afirma compatibilidad universal.

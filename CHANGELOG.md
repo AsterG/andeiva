@@ -10,6 +10,8 @@
 - Show failed systemd units without printing successful boot-status lines.
 - Validate storage layout by capabilities instead of a device label, and provide
   an explicit temporary diagnostic boot with private bounded traces in RAM.
+- Add an opt-in graphical redraw compatibility mode, without forcing a display
+  resolution or changing drivers; preserve the default and recovery configuration.
 
 ## Unreleased — inactive boot theme resources
 

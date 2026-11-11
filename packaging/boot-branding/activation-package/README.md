@@ -44,3 +44,5 @@ dependencies or undo every operating-system package change. Keep the independent
 backup and recovery snapshot; never purge Plymouth automatically as rollback.
 
 The static executable also ships the Go toolchain license as GO_LICENSE. Native compatibility is determined by capabilities and qualification evidence, not a hypervisor or disk label. The explicit diagnostic mode and its private runtime trace limits are documented in the operator guides.
+
+The packaged `apply --redraw-compatibility` mode is explicit and reversible. It adds a standard Plymouth redraw argument without choosing a display mode or driver. Default activation remains unchanged; qualify real boot/recovery and resource cost on each target platform before adopting it. See the operator guides for removal and the prohibition on combining it with diagnostic boot.

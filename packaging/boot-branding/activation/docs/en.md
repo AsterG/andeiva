@@ -35,3 +35,9 @@ Only the authorized platform operator may use `andeiva-boot-activation apply --d
 After Plymouth has stopped, verify the fixed log is a regular root-owned file with mode 0600 and less than 1 MiB before collecting it privately. Never upload raw traces to Git, CI, ordinary administration or support bundles. Trace data may be incomplete. A further reboot can replace it. This does not change drivers, connectors, resolution, firmware or recovery arguments.
 
 Diagnostic selection is persistent until the explicit sequence `restore`, `prepare --recovery-verified`, normal `apply` and a normal reboot. Switching modes while a configuration is pending is rejected; repeating the same apply is idempotent. Collect the trace first and retire the diagnostic selection before returning the appliance to ordinary use.
+
+## Optional graphical compatibility
+
+For an observed DRM presentation fault, after verifying recovery, use `restore`, `prepare --recovery-verified`, then `apply --redraw-compatibility`. This explicit mode adds the standard Plymouth redraw argument to normal boot only. It does not force a resolution or change drivers; default apply is unchanged. It cannot be combined with diagnostic boot.
+
+Check a real reboot, complete logo/text, Esc diagnostics, service health and CPU/RAM cost. More frequent scanout resets can increase graphics work; a held preview alone is insufficient qualification. To remove the option, repeat restore and preparation, use ordinary `apply`, then reboot. No universal hardware compatibility is claimed.
