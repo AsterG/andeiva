@@ -51,6 +51,33 @@ jobs:
           go build -o /tmp/andeiva-boot-activation ./packaging/boot-branding/activation
           bash packaging/boot-branding/activation-package/test.sh
           bash -n packaging/boot-branding/activation-package/native-guard-test.sh
+      - name: Offline boot bundle unprivileged contracts
+        run: |
+          bash packaging/boot-branding/offline/tests/run.sh
+          go build -o /tmp/andeiva-boot-offline-check ./packaging/boot-branding/offline/check
+      - name: Debian signature verifier positive and negative cases
+        run: |
+          docker build -f packaging/boot-branding/offline/tests/Dockerfile.dev -t andeiva-offline-verifier packaging/boot-branding/offline/tests
+          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 --max-filesize 1048576 \
+            --output "${RUNNER_TEMP}/andeiva-public-InRelease" https://deb.debian.org/debian/dists/trixie/InRelease
+          sdk=$(go env GOROOT)
+          docker run --rm --network none --read-only --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,nosuid,nodev,noexec,size=1073741824,mode=1777 \
+            --tmpfs /work:rw,nosuid,nodev,exec,size=536870912,mode=1777 \
+            --mount "type=bind,src=${sdk},dst=/opt/go,readonly" \
+            --mount "type=bind,src=${GITHUB_WORKSPACE}/go.mod,dst=/src/go.mod,readonly" \
+            --mount "type=bind,src=${GITHUB_WORKSPACE}/go.sum,dst=/src/go.sum,readonly" \
+            --mount "type=bind,src=${GITHUB_WORKSPACE}/packaging/boot-branding/offline,dst=/src/offline,readonly" \
+            --mount "type=bind,src=${RUNNER_TEMP}/andeiva-public-InRelease,dst=/fixture/InRelease,readonly" \
+            --env PATH=/opt/go/bin:/usr/bin:/bin --env GOENV=off --env GOTOOLCHAIN=local \
+            --env GOWORK=off --env GOTELEMETRY=off --env GOPROXY=off --env GOSUMDB=off --env CGO_ENABLED=0 --env GOTMPDIR=/work \
+            andeiva-offline-verifier /bin/bash -c '
+              set -euo pipefail
+              mkdir -p /tmp/source/packaging/boot-branding/offline
+              cp /src/go.mod /src/go.sum /tmp/source/
+              cp -R /src/offline/. /tmp/source/packaging/boot-branding/offline/
+              bash /tmp/source/packaging/boot-branding/offline/tests/signature-native.sh /fixture/InRelease
+            '
       - name: Nftables POC unprivileged contracts and platform compilation
         run: bash scripts/check-nft-poc.sh
       - name: Administrative firewall platform compilation without privileges
