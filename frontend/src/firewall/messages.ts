@@ -1,6 +1,7 @@
 import type { Locale } from '../messages.js';
 
 const en = {
+  editorOpen: 'A rule is open in the editor. Return to Rules to continue or cancel.', returnToRules: 'Return to Rules',
   title: 'Firewall administration', subtitle: 'Authenticated laboratory · IPv4 TCP/UDP policy', navigation: 'Administration',
   login: 'Sign in', username: 'Username', credential: 'Provisioned access credential', credentialHint: 'Use your individually provisioned random access credential. No default password is provided.', logout: 'Sign out',
   loading: 'Loading…', retry: 'Refresh status', disconnected: 'Effective state unknown', disconnectedBody: 'The latest effective policy cannot be verified. Previously displayed data may be stale. Refresh before changing configuration.',
@@ -21,6 +22,7 @@ const en = {
 };
 export type FirewallMessages = typeof en;
 const es: FirewallMessages = {
+  editorOpen: 'Hay una regla abierta en el editor. Vuelve a Reglas para continuar o cancelar.', returnToRules: 'Volver a Reglas',
   title: 'Administración del firewall', subtitle: 'Laboratorio autenticado · Políticas IPv4 TCP/UDP', navigation: 'Administración',
   login: 'Iniciar sesión', username: 'Usuario', credential: 'Credencial de acceso provisionada', credentialHint: 'Utilice su credencial aleatoria de acceso individual. No hay una contraseña predeterminada.', logout: 'Cerrar sesión',
   loading: 'Cargando…', retry: 'Actualizar estado', disconnected: 'Estado efectivo desconocido', disconnectedBody: 'No se puede verificar la política efectiva más reciente. Los datos anteriores pueden estar desactualizados. Actualice antes de cambiar la configuración.',
@@ -40,6 +42,7 @@ const es: FirewallMessages = {
   https: 'Utilice la dirección HTTPS de confianza proporcionada por el operador del laboratorio.',
 };
 const pt: FirewallMessages = {
+  editorOpen: 'Há uma regra aberta no editor. Volte a Regras para continuar ou cancelar.', returnToRules: 'Voltar a Regras',
   title: 'Administração do firewall', subtitle: 'Laboratório autenticado · Políticas IPv4 TCP/UDP', navigation: 'Administração',
   login: 'Entrar', username: 'Usuário', credential: 'Credencial de acesso provisionada', credentialHint: 'Use sua credencial aleatória de acesso individual. Não há senha padrão.', logout: 'Sair',
   loading: 'Carregando…', retry: 'Atualizar estado', disconnected: 'Estado efetivo desconhecido', disconnectedBody: 'Não é possível verificar a política efetiva mais recente. Os dados anteriores podem estar desatualizados. Atualize antes de alterar a configuração.',

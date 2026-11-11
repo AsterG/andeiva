@@ -14,10 +14,14 @@ The package builder sets the same identity in backend and CLI. Runtime environme
 variables do not override it. The CLI system info command queries the connected
 appliance with verified HTTPS; --version reports its own local build instead.
 The browser consumes the authenticated server contract and does not infer a
-version from its assets. Client decoding is bounded to 4096 bytes and rejects
+version from its assets. Go client decoding is bounded to 4096 bytes and rejects
 unknown, duplicate, case-folded or inconsistent identity fields.
 
-Run go test -race ./internal/productinfo ./internal/adminapi ./internal/adminclient
-./internal/cli, then the normal frontend and package checks. EN/ES/PT operator
+Run the following, then the normal frontend and package checks:
+
+```sh
+go test -race ./internal/productinfo ./internal/adminapi ./internal/adminclient ./internal/cli
+```
+EN/ES/PT operator
 instructions are in packaging/preview/docs and frontend/docs. These tests include
 fixtures; installed service evidence is recorded separately after deployment.

@@ -52,3 +52,18 @@ Os campos de endereço e portas do editor associam individualmente suas orienta�
 ## Versão do produto
 
 Após entrar, abra Sistema → Sobre o ANDEIVA para consultar a versão instalada. O rodapé da navegação mostra o mesmo valor autenticado. Compilações de desenvolvimento e dados indisponíveis são indicados. A disponibilidade de atualizações não é inferida. O [guia do pacote](../../packaging/preview/docs/pt.md#versão-instalada-do-produto) explica a consulta CLI e a identidade local versus remota.
+
+## Editor de regras móvel
+
+No desktop o editor abre em uma janela ampla e centralizada. Arraste o cabeçalho
+ou use Mover janela com as setas (Shift para um passo menor), Home para centralizar
+e Enter para concluir. Escape cancela o movimento; outro Escape fecha o editor.
+Centralizar janela restaura sua posição. A tabela ao fundo pode ser consultada;
+escritas de configuração e atualização de estado ficam bloqueadas durante a
+edição. Sair de Regras preserva o formulário e mostra um link de retorno nas
+outras telas.
+
+Em telas pequenas ocupa o viewport e mantém o foco do teclado dentro. Fechar ou
+cancelar descarta o formulário atual; manter uma regra no rascunho local não a
+prepara nem aplica. ID da regra continua sendo seu identificador técnico, não uma
+descrição livre. Objetos e outros protocolos permanecem em trabalho separado.

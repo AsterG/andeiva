@@ -54,3 +54,17 @@ Rule-editor address and port fields expose individual guidance and validation er
 ## Product version
 
 After signing in, open System → About ANDEIVA to read the installed product version. The navigation footer shows the same authenticated value. Development builds and unavailable metadata are explicit. No update availability is inferred. See the [package guide](../../packaging/preview/docs/en.md#installed-product-version) for the matching CLI query and local-versus-remote identity.
+
+## Movable rule editor
+
+On desktop the rule editor opens as a wide, centered window. Drag its title bar
+or use Move window with arrow keys (Shift for a finer step), Home to center,
+and Enter to finish. Escape cancels movement; a second Escape closes the editor.
+Center window restores its position. The underlying table remains available for
+reference; configuration writes and status refresh are blocked until editing ends.
+Leaving Rules keeps the form and shows a return link on other views.
+
+On small screens the editor fills the viewport and keeps keyboard focus inside.
+Closing or cancelling discards the current form; keeping a rule in the local draft
+does not stage or apply it. Rule ID remains its technical identifier, not a free
+description. Reusable objects and additional protocols remain separate work.

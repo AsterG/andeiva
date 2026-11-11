@@ -31,7 +31,11 @@ func readLastRecord(t *testing.T, dir string) journalRecord {
 		t.Fatal(err)
 	}
 	defer store.lock.Close()
-	return clone(store.records[len(store.records)-1])
+	record, err := store.read(uint64(len(store.records)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return record
 }
 
 func TestBootApplyFailureRetainsConfirmedAnchor(t *testing.T) {

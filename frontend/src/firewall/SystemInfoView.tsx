@@ -19,7 +19,7 @@ export function SystemInfoView({ state, locale, refresh }: { state: ProductInfoS
           <div><dt>{copy.channel}</dt><dd><StatusBadge tone="info">{state.info.channel === 'experimental' ? copy.experimental : copy.development}</StatusBadge></dd></div>
           <div><dt>{copy.updates}</dt><dd>{copy.updateUnavailable}</dd></div>
         </dl>
-        <Notice title={copy.updates}>{copy.updateHint}</Notice>
+        <p className="fw-meta">{copy.updateHint}</p>
         <p className="fw-meta">{copy.sourceHint}</p>
       </>}
     </div>

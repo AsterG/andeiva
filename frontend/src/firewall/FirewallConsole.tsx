@@ -80,7 +80,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
     if (resetDraft) { setDraft(draftConfig(next.snapshot)); setBaseGeneration(next.snapshot.generation); setDirty(false); setEditor(null); }
   }
   async function refresh(resetDraft = !dirty) {
-    if (lock.current) return;
+    if (lock.current || editor) return;
     lock.current = true; setBusy(true); setError(null); setSuccess(false); setFresh(false);
     const version = authVersion.current;
     try { await readCapabilities(); const next = await request<FirewallState>('firewall'); if (version === authVersion.current) accept(next, resetDraft); }
@@ -148,7 +148,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
     finally { lock.current = false; setBusy(false); }
   }
   async function transact(operation: Operation, options: { target?: string; confirm_for?: number } = {}) {
-    if (!session || !state || !fresh || lock.current || session.role !== 'admin') return;
+    if (!session || !state || !fresh || lock.current || editor || session.role !== 'admin') return;
     lock.current = true; setBusy(true); setError(null); setSuccess(false); setReview(null);
     const transaction: Transaction = { operation, key: crypto.randomUUID(), expected_generation: state.snapshot.generation, ...options };
     if (operation === 'stage' && draft) transaction.config = draft;
@@ -213,10 +213,11 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
       <Field id="login-credential" label={copy.credential} hint={copy.credentialHint}><TextInput id="login-credential" name="credential" type="password" autoComplete="off" maxLength={256} required disabled={busy} aria-describedby="login-credential-hint" /></Field>
       <Button type="submit" disabled={busy}>{busy ? copy.loading : copy.login}</Button>
     </form></Surface> : <>
-      <div className="fw-state"><div><strong>{copy.identity}: {session.username}</strong><p className="fw-meta">{admin ? copy.admin : copy.viewer} · {copy.expires}: {date(session.expires_at)}</p></div><div className="fw-toolbar"><Button variant="secondary" disabled={busy} onClick={() => void refresh()}>{copy.retry}</Button><Button variant="secondary" disabled={busy} onClick={() => void logout()}>{copy.logout}</Button></div></div>
+      <div className="fw-state"><div><strong>{copy.identity}: {session.username}</strong><p className="fw-meta">{admin ? copy.admin : copy.viewer} · {copy.expires}: {date(session.expires_at)}</p></div><div className="fw-toolbar"><Button variant="secondary" disabled={busy || !!editor} onClick={() => void refresh()}>{copy.retry}</Button><Button variant="secondary" disabled={busy} onClick={() => void logout()}>{copy.logout}</Button></div></div>
       {(!healthy || !state) && <Notice title={copy.disconnected}>{copy.disconnectedBody}</Notice>}
       {success && <Notice title={copy.success} live>{copy.successBody}</Notice>}
       {page === 'system' && <SystemInfoView state={product} locale={locale} refresh={() => setProductRefresh((value) => value + 1)} />}
+      {editor && page !== 'rules' && <div className="fw-editor-notice"><Notice title={copy.editor} live>{copy.editorOpen} <a className="ds-button ds-button--secondary" href="#rules" onClick={() => requestAnimationFrame(() => document.querySelector<HTMLElement>('.fw-rule-editor input:not([type=checkbox])')?.focus())}>{copy.returnToRules}</a></Notice></div>}
       {state && snapshot && <>
         {(page === 'audit' || page === 'traffic') && !admin && <Notice title={copy.viewer}>{errorMessage('ANDEIVA_CONFIG_DENIED', copy, 403)}</Notice>}
         {page === 'dashboard' && <ConsoleDashboard state={state} verified={healthy} locale={locale} observed={observed} />}
@@ -224,13 +225,13 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
         <div hidden={page !== 'rules'}><Surface title={copy.rules} className="fw-policy-surface">
 
           {view === 'draft' && <><div className="fw-draft-note"><StatusBadge tone={dirty ? 'warning' : 'info'}>{dirty ? copy.dirty : copy.clean}</StatusBadge><span className="fw-meta">{copy.draftHint}</span></div>{staleDraft && <Notice title={copy.dirty}>{copy.staleDraft}</Notice>}{!ownsCandidate && <Notice title={copy.owner}>{copy.candidateBusy}</Notice>}</>}
-          <div className={`fw-policy-workspace${editor ? ' fw-policy-workspace--editing' : ''}`}>
-            <RuleTable view={view} controls={<div className="fw-toolbar"><Field id="rule-view" label={copy.revisions}><select id="rule-view" className="ds-select" value={view} onChange={(event) => { setView(event.target.value as RuleView); setEditor(null); }}>{admin && <option value="draft">{copy.draft}</option>}<option value="candidate" disabled={!snapshot.candidate}>{copy.candidate}</option><option value="running">{copy.running}</option><option value="startup">{copy.startup}</option></select></Field>{admin && <Button disabled={!canEdit || !!editor || !draft || draft.rules.length >= 64} onClick={() => setEditor({ index: null })}>{copy.add}</Button>}</div>} rules={config?.rules ?? []} reference={view === 'draft' ? snapshot.candidate?.revision.config.rules ?? snapshot.running.config.rules : view === 'candidate' ? snapshot.running.config.rules : undefined} state={state} locale={locale} copy={copy} editable={!!admin && view === 'draft'} reorderable={!!canEdit} showCounters={showCounters} verified={healthy} editing={!!editor} supportsEnabled={supportsEnabled} onToggle={(index, enabled) => { if (canEdit && supportsEnabled && draft) { setDraft(configWithRules(draft, draft.rules.map((rule, position) => position === index ? { ...rule, enabled } : rule))); setDirty(true); } }} onMove={move} onEdit={(index) => setEditor({ index })} onRemove={(index) => setReview({ operation: 'remove', index, target: config!.rules[index]!.id })} />
-            {editor && draft && <RuleEditor key={editor.index ?? 'new'} rules={draft.rules} index={editor.index} copy={copy} labels={tableCopy} consoleCopy={consoleMessages[locale]} supportsEnabled={supportsEnabled} disabled={!canEdit} onCancel={() => setEditor(null)} onSave={(rule) => { setDraft(configWithRules(draft, editor.index === null ? [...draft.rules, rule] : draft.rules.map((previous, index) => index === editor.index ? rule : previous))); setDirty(true); setEditor(null); }} />}
+          <div className="fw-policy-workspace">
+            <RuleTable view={view} controls={<div className="fw-toolbar"><Field id="rule-view" label={copy.revisions}><select id="rule-view" className="ds-select" disabled={!!editor} value={view} onChange={(event) => { if (!editor) setView(event.target.value as RuleView); }}>{admin && <option value="draft">{copy.draft}</option>}<option value="candidate" disabled={!snapshot.candidate}>{copy.candidate}</option><option value="running">{copy.running}</option><option value="startup">{copy.startup}</option></select></Field>{admin && <Button disabled={!canEdit || !!editor || !draft || draft.rules.length >= 64} onClick={() => setEditor({ index: null })}>{copy.add}</Button>}</div>} rules={config?.rules ?? []} reference={view === 'draft' ? snapshot.candidate?.revision.config.rules ?? snapshot.running.config.rules : view === 'candidate' ? snapshot.running.config.rules : undefined} state={state} locale={locale} copy={copy} editable={!!admin && view === 'draft'} reorderable={!!canEdit} showCounters={showCounters} verified={healthy} editing={!!editor} supportsEnabled={supportsEnabled} onToggle={(index, enabled) => { if (canEdit && supportsEnabled && draft) { setDraft(configWithRules(draft, draft.rules.map((rule, position) => position === index ? { ...rule, enabled } : rule))); setDirty(true); } }} onMove={move} onEdit={(index) => setEditor({ index })} onRemove={(index) => setReview({ operation: 'remove', index, target: config!.rules[index]!.id })} />
           </div>
 
         </Surface></div>
 
+            {editor && draft && <RuleEditor key={editor.index ?? 'new'} rules={draft.rules} index={editor.index} copy={copy} locale={locale} visible={page === 'rules'} labels={tableCopy} consoleCopy={consoleMessages[locale]} supportsEnabled={supportsEnabled} disabled={!canEdit} onCancel={() => setEditor(null)} onSave={(rule) => { setDraft(configWithRules(draft, editor.index === null ? [...draft.rules, rule] : draft.rules.map((previous, index) => index === editor.index ? rule : previous))); setDirty(true); setEditor(null); }} />}
         {page !== 'system' && <TransactionControls state={state} session={session} locale={locale} healthy={healthy} fresh={fresh} busy={busy} writable={!!writable} dirty={dirty} staleDraft={staleDraft} editing={!!editor} observed={observed} confirmSeconds={confirmSeconds} setConfirmSeconds={setConfirmSeconds} execute={(operation) => void transact(operation)} discard={() => setReview({ operation: 'discard', target: snapshot.candidate?.revision.hash ?? snapshot.running.hash })} review={(operation, confirmed) => setReview({ operation, target: operation === 'commit' ? snapshot.candidate!.revision.hash : snapshot.running.hash, ...(confirmed ? { confirm_for: confirmed } : {}) })} />}
         {page === 'audit' && admin && !historyDenied && <HistoryPanel history={history} copy={copy} locale={locale} busy={busy} canRestore={writable && !dirty && !editor} load={(before) => void loadHistory(before)} restore={(target) => setReview({ operation: 'rollback', target })} />}
         {page === 'traffic' && admin && healthy && <TrafficPanel locale={locale} busy={busy} onFailure={fail} />}

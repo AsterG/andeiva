@@ -57,7 +57,7 @@ func decodeSystemInfo(data []byte) (productinfo.Info, error) {
 		}
 	}
 	closing, err := d.Token()
-	if err != nil || closing != json.Delim('}') || d.Decode(new(any)) != io.EOF || !productinfo.Valid(info) {
+	if err != nil || closing != json.Delim('}') || d.Decode(new(any)) != io.EOF || (seen["version"] && info.Version == "") || !productinfo.Valid(info) {
 		return productinfo.Info{}, ErrResponse
 	}
 	return info, nil

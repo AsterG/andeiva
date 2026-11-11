@@ -24,6 +24,7 @@ func TestSystemInfoBoundedPublicContract(t *testing.T) {
 	}{
 		{"preview", valid, true},
 		{"development", `{"product":"ANDEIVA Security Gateway","channel":"development","update_status":"unavailable"}`, true},
+		{"empty-development-version", `{"product":"ANDEIVA Security Gateway","version":"","channel":"development","update_status":"unavailable"}`, false},
 		{"unknown-field", strings.TrimSuffix(valid, "}") + `,"os_version":"private"}`, false},
 		{"case-folded-field", strings.Replace(valid, `"product"`, `"Product"`, 1), false},
 		{"duplicate-field", strings.TrimSuffix(valid, "}") + `,"version":"0.1.0~alpha15"}`, false},

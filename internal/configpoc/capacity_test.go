@@ -2,7 +2,6 @@ package configpoc
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -148,11 +147,7 @@ func logCapacity(t *testing.T, s *Service) {
 	t.Helper()
 	largest := 0
 	for _, record := range s.store.records {
-		data, err := json.Marshal(record)
-		if err != nil {
-			t.Fatal(err)
-		}
-		largest = max(largest, len(data))
+		largest = max(largest, int(record.info.Size()))
 	}
 	t.Logf("records=%d receipts=%d accounted_bytes=%d largest_record_bytes=%d", len(s.store.records), len(s.state.Receipts), s.store.bytes, largest)
 }

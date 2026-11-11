@@ -12,7 +12,10 @@ por origem. A tabela fixa mantém até 128 origens, com expiração preguiçosa 
 Rejeições não prolongam retenção nem expulsam entradas ativas. Credenciais válidas
 usam outra cota de quatro por segundo e independem dessa tabela, mesmo cheia ou atrás
 do mesmo NAT. Permanecem as 32 sessões, expiração, CSRF, RBAC e auditoria obrigatória.
-O método interno `Login` compartilha a cota anônima.
+Cada tentativa do método interno `Login` compartilha a cota anônima; credenciais
+válidas também consomem a cota verificada global. Credenciais inválidas nunca a
+consomem. Assim essa entrada compatível não cria outra cota verificada. HTTP e SSH
+usam `LoginFrom`.
 
 A classificação limita usuário a 64 bytes e credencial a 64 caracteres: são 32 bytes
 aleatórios, não senhas escolhidas pelo usuário. Não reutilizar esse armazenamento

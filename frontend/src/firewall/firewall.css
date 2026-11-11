@@ -68,9 +68,5 @@
 .fw-revision-details { margin-block: var(--space-3); }
 .fw-revision-details summary { color: var(--color-link); cursor: pointer; padding-block: var(--space-2); }
 .fw-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-@media (min-width: 90rem) {
-  .fw-policy-workspace--editing { grid-template-columns: minmax(0, 1fr) 24rem; align-items: start; }
-  .fw-rule-editor .fw-fields { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
-}
 @media (max-width: 68rem) { .fw-revisions { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 48rem) { .fw-fields { grid-template-columns: minmax(0, 1fr); } }

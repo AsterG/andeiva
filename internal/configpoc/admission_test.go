@@ -114,8 +114,8 @@ func TestAdmissionHistoricalTargetIsResolvedAndDetached(t *testing.T) {
 	if !errors.Is(err, ErrDenied) {
 		t.Fatal(err)
 	}
-	stored, ok := s.historical(previous.Hash)
-	if !ok || stored.Config.DefaultAction != "deny" || status(t, s).Running.Config.Rules[0].ID != "changed" {
+	stored, ok, err := s.historical(previous.Hash)
+	if err != nil || !ok || stored.Config.DefaultAction != "deny" || status(t, s).Running.Config.Rules[0].ID != "changed" {
 		t.Fatal("historical or snapshot alias")
 	}
 }
