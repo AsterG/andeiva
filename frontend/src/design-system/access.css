@@ -9,8 +9,6 @@
 .access-panel h1 { margin: 0 0 var(--space-5); text-align: center; font-size: var(--text-xl); font-weight: var(--weight-medium); }
 .access-panel .fw-login { max-width: none; }
 @media (max-width: 30rem) {
-  .access-header { align-items: start; flex-wrap: wrap; padding: var(--space-3); }
-  .access-preferences { width: 100%; }
-  .access-preferences .ds-field { flex: 1; }
+  .access-header { padding: var(--space-3); }
   .access-content { min-height: auto; padding-block: var(--space-6); }
 }

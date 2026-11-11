@@ -1,3 +1,4 @@
+import { selectLocale, selectTheme, signOut } from './headerHelpers.js';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
@@ -35,11 +36,11 @@ async function setup(page: Page, role = 'admin') {
 for (const theme of ['light', 'dark'] as const) {
   test(`traffic ${theme}: precise baseline/delta counters and localized accessible semantics`, async ({ page }) => {
     const mock = await setup(page);
-    await page.locator('#theme').selectOption(theme);
+    await selectTheme(page, theme);
     await expect(page.getByTestId('traffic-panel')).toBeVisible();
     expect(mock.calls).toHaveLength(0);
     for (const locale of ['en', 'es', 'pt'] as const) {
-      await page.locator('#language').selectOption(locale);
+      await selectLocale(page, locale);
       const copy = trafficMessages[locale];
       await page.getByRole('button', { name: copy.sample, exact: true }).click();
       const table = page.getByRole('table', { name: copy.title, exact: true });
@@ -94,6 +95,6 @@ test('traffic hides viewer controls, clears on denied reads, stale status and lo
   await page.unrouteAll(); await setup(page);
   await page.getByRole('button', { name: trafficMessages.en.sample }).click();
   await expect(page.getByRole('table', { name: trafficMessages.en.title })).toBeVisible();
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await signOut(page);
   await expect(page.getByTestId('traffic-panel')).toHaveCount(0);
 });

@@ -1,3 +1,4 @@
+import { selectLocale, selectTheme, signOut } from './headerHelpers.js';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
@@ -72,7 +73,7 @@ async function fixture(page: Page, role: Session['role'] = 'admin', authenticate
 }
 
 async function expectAccessOnly(page: Page) {
-  await expect(page.locator('aside, nav, .console-page-heading, .page-heading, .console-menu-button, .fw-state, .fw-transaction-controls')).toHaveCount(0);
+  await expect(page.locator('aside, nav, .console-page-heading, .page-heading, .console-menu-button, [data-testid=account-trigger], [data-testid=account-panel], .fw-transaction-controls')).toHaveCount(0);
   await expect(page.getByRole('table')).toHaveCount(0);
   await expect(page.getByRole('dialog')).toHaveCount(0);
 }
@@ -83,7 +84,7 @@ test('anonymous direct routes never mount administrative navigation, including d
     const state = window as Window & { administrativeMounts: number };
     state.administrativeMounts = 0;
     new MutationObserver((records) => {
-      for (const record of records) for (const node of record.addedNodes) if (node instanceof Element && (node.matches('aside, nav, .console-page-heading, .fw-state') || node.querySelector('aside, nav, .console-page-heading, .fw-state'))) state.administrativeMounts++;
+      for (const record of records) for (const node of record.addedNodes) if (node instanceof Element && (node.matches('aside, nav, .console-page-heading, [data-testid=account-trigger]') || node.querySelector('aside, nav, .console-page-heading, [data-testid=account-trigger]'))) state.administrativeMounts++;
     }).observe(document, { childList: true, subtree: true });
   });
   for (const path of ['/', '/#dashboard', '/firewall#audit', '/firewall#configuration', '/firewall#traffic', '/local-services']) {
@@ -118,7 +119,7 @@ test('rejected login, logout, history navigation and server revocation preserve 
   await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.locator('#console-navigation')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await signOut(page);
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
   await page.evaluate(() => { location.hash = 'configuration'; });
   await page.goBack();
@@ -205,7 +206,7 @@ test('firewall session, CRUD, ordering, confirmed commit, save and historical ro
   await page.evaluate(() => { window.location.hash = 'rules'; });
   await expect(page.getByText('No rules. Default deny applies.', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => ({ local: JSON.stringify(localStorage), session: JSON.stringify(sessionStorage) }))).toEqual({ local: '{}', session: '{}' });
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await signOut(page);
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
 });
 
@@ -230,7 +231,7 @@ test('editor associates localized CIDR and port hints with labels and validation
   await page.goto('/firewall');
   for (const locale of ['en', 'es', 'pt'] as const) {
     const copy = firewallMessages[locale];
-    await page.locator('#language').selectOption(locale);
+    await selectLocale(page, locale);
     await page.getByRole('button', { name: copy.add, exact: true }).click();
     const id = page.getByLabel(copy.id, { exact: true });
     await expect(id).toBeFocused(); await id.fill('accessible');
@@ -363,10 +364,10 @@ for (const theme of ['light', 'dark'] as const) {
   test(`firewall ${theme}: visual baseline login and rule editor`, async ({ page }) => {
     const mock = await fixture(page);
     await page.goto('/firewall');
-    await page.locator('#theme').selectOption(theme);
+    await selectTheme(page, theme);
     await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
     for (const locale of ['es', 'pt', 'en'] as const) {
-      await page.locator('#language').selectOption(locale);
+      await selectLocale(page, locale);
       await expect(page.getByRole('heading', { name: firewallMessages[locale].login, exact: true })).toBeVisible();
       await expectAccessOnly(page);
     }
@@ -384,10 +385,14 @@ for (const theme of ['light', 'dark'] as const) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`firewall-${theme}-editor.png`);
+    await page.getByRole('button', { name: 'Close editor', exact: true }).click();
     for (const locale of ['es', 'pt', 'en'] as const) {
-      await page.locator('#language').selectOption(locale);
-      await expect(page.getByRole('dialog', { name: firewallMessages[locale].editor, exact: true })).toBeVisible();
+      await selectLocale(page, locale);
+      const copy = firewallMessages[locale];
+      await page.getByRole('button', { name: copy.add, exact: true }).click();
+      await expect(page.getByRole('dialog', { name: copy.editor, exact: true })).toBeVisible();
       expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+      await page.getByRole('button', { name: copy.cancel, exact: true }).last().click();
     }
   });
 }
@@ -545,7 +550,7 @@ for (const theme of ['light', 'dark'] as const) {
     mock.state().snapshot.startup = { hash: 'b'.repeat(64), config: { schema_version: 4, default_action: 'deny', rules: [sample[0]!] } };
     mock.state().effective.rules = sample.filter((rule) => rule.enabled).map((rule) => ({ id: rule.id, packets: 7, bytes: 256 }));
     await page.goto('/firewall#dashboard');
-    await page.locator('#theme').selectOption(theme);
+    await selectTheme(page, theme);
     await expect(page.locator('.console-kpis')).toContainText('14');
     await expect(page.locator('.console-geo')).toContainText('No geographic traffic observations');
     for (const view of ['dashboard', 'configuration', 'audit'] as const) {
@@ -561,7 +566,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.evaluate(() => window.scrollTo(0, 0));
       await expect(page).toHaveScreenshot(`console-${theme}-${view}.png`, { fullPage: true });
       for (const locale of ['es', 'pt', 'en'] as const) {
-        await page.locator('#language').selectOption(locale);
+        await selectLocale(page, locale);
         await expect(page.getByRole('heading', { name: consoleMessages[locale][view], level: 1, exact: true })).toBeVisible();
       }
     }
@@ -617,7 +622,7 @@ test('root opens the authenticated console and internal anchors preserve views a
   await expect(page.getByRole('heading', { name: 'Dashboard', level: 1, exact: true })).toBeVisible();
   await expect(page.locator('.fw-editor-notice')).toContainText(firewallMessages.en.editorOpen);
   for (const locale of ['es', 'pt', 'en'] as const) {
-    await page.locator('#language').selectOption(locale);
+    await selectLocale(page, locale);
     await expect(page.locator('.fw-editor-notice')).toContainText(firewallMessages[locale].editorOpen);
     await expect(page.getByRole('link', { name: firewallMessages[locale].returnToRules, exact: true })).toHaveAttribute('href', '#rules');
   }
@@ -693,7 +698,7 @@ test('console Back and Forward restore hashless Rules without losing a local dra
 for (const theme of ['light', 'dark'] as const) test(`rule editor ${theme}: identity field spans the layout independently of generated IDs`, async ({ page }, info) => {
   const mock = await fixture(page, 'admin', true);
   await page.goto('/firewall');
-  await page.locator('#theme').selectOption(theme);
+  await selectTheme(page, theme);
   await fillRule(page, 'layout-regression');
   const identity = page.getByLabel('Rule ID', { exact: true });
   const layout = await identity.evaluate((control) => {
@@ -718,7 +723,7 @@ for (const theme of ['light', 'dark'] as const) test(`rule editor ${theme}: iden
 for (const theme of ['light', 'dark'] as const) test(`floating rule editor ${theme}: wide centered window keeps the rule list available`, async ({ page }) => {
   const mock = await fixture(page, 'admin', true);
   await page.goto('/firewall');
-  await page.locator('#theme').selectOption(theme);
+  await selectTheme(page, theme);
   await fillRule(page, 'floating-draft');
   const editor = page.locator('.fw-rule-editor');
   expect(await editor.evaluate((element) => getComputedStyle(element).position)).toBe('fixed');
@@ -846,7 +851,7 @@ test('floating editor closes on logout or expiry without publishing its unsaved 
   const mock = await fixture(page, 'admin', true);
   await page.setViewportSize({ width: 1440, height: 1000 }); await page.goto('/firewall');
   await fillRule(page, 'logout-local-rule');
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await signOut(page);
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
   await expect(page.locator('.ds-floating-window')).toHaveCount(0);
   await login(page); await fillRule(page, 'expiry-local-rule');
@@ -861,7 +866,7 @@ test('floating controls and validation stay localized in EN ES PT', async ({ pag
   const mock = await fixture(page, 'admin', true);
   await page.setViewportSize({ width: 1440, height: 1000 }); await page.goto('/firewall');
   for (const locale of ['en', 'es', 'pt'] as const) {
-    await page.locator('#language').selectOption(locale);
+    await selectLocale(page, locale);
     const copy = firewallMessages[locale]; const windowCopy = floatingWindowMessages[locale];
     await page.getByRole('button', { name: copy.add, exact: true }).click();
     const editor = page.getByRole('dialog', { name: copy.editor, exact: true });
@@ -894,7 +899,7 @@ test('system information is queried only after login and clears on logout', asyn
   await page.getByRole('button', { name: 'Refresh information', exact: true }).click();
   await expect.poll(() => requests.length).toBe(2);
   await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await signOut(page);
   await expectAccessOnly(page);
   await expect(page.getByText('0.1.0~alpha16', { exact: true })).toHaveCount(0);
   expect(mock.transactions).toEqual([]);
@@ -953,7 +958,7 @@ test('system unauthorized response clears the session and delayed metadata canno
   await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.locator('.console-system-info').getByText('Reading product information…', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await signOut(page);
   release();
   await expectAccessOnly(page);
   await expect(page.getByText('0.1.0~alpha999', { exact: true })).toHaveCount(0);
@@ -978,10 +983,10 @@ for (const theme of ['light', 'dark'] as const) {
   test('system ' + theme + ' visual baseline, translations and authorized viewer', async ({ page }) => {
     const mock = await fixture(page, 'viewer', true);
     await page.goto('/firewall#system');
-    await page.locator('#theme').selectOption(theme);
+    await selectTheme(page, theme);
     await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toBeVisible();
     for (const locale of ['es', 'pt', 'en'] as const) {
-      await page.locator('#language').selectOption(locale);
+      await selectLocale(page, locale);
       await expect(page.getByRole('heading', { name: consoleMessages[locale].system, exact: true, level: 1 })).toBeVisible();
       await expect(page.getByRole('heading', { name: systemMessages[locale].about, exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: systemMessages[locale].refresh, exact: true })).toBeEnabled();
@@ -1020,7 +1025,7 @@ test('System navigation preserves the floating draft and an unauthorized metadat
   await page.evaluate(() => { location.hash = 'system'; });
   await expect(editor).toBeHidden();
   await expect(page.locator('.fw-editor-notice')).toContainText(firewallMessages.en.editorOpen);
-  await expect(page.getByRole('button', { name: 'Refresh status', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Refresh status', exact: true })).toHaveCount(0);
   await expect(page.locator('.console-transaction-bar')).toHaveCount(0);
   await expect(page.locator('.console-system-info')).toBeVisible();
   await page.getByRole('link', { name: firewallMessages.en.returnToRules, exact: true }).click();
@@ -1037,4 +1042,138 @@ test('System navigation preserves the floating draft and an unauthorized metadat
   await expectAccessOnly(page);
   expect(mock.state().snapshot.running.config.rules).toEqual([]);
   expect(mock.transactions).toEqual([]);
+});
+
+
+test('header anonymous preferences remain separate from account and configuration', async ({ page }) => {
+  const mock = await fixture(page);
+  const writes: string[] = [];
+  page.on('request', (request) => { if (request.method() !== 'GET') writes.push(request.url()); });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/firewall');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.getByTestId('account-trigger')).toHaveCount(0);
+  await expect(page.getByTestId('account-panel')).toHaveCount(0);
+  const trigger = page.getByTestId('preferences-trigger');
+  await expect(page.locator('#language')).toBeHidden();
+  await trigger.focus(); await trigger.press('Enter');
+  const preferences = page.getByTestId('preferences-panel');
+  await expect(preferences).toBeVisible();
+  await expect(page.locator('#language')).toBeFocused();
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await page.locator('#language').selectOption('es');
+  await expect(preferences).toHaveAccessibleName('Preferencias');
+  await page.locator('#theme').selectOption('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await preferences.press('Escape');
+  await expect(preferences).toBeHidden(); await expect(trigger).toBeFocused();
+  await expectAccessOnly(page);
+  await page.emulateMedia({ colorScheme: 'light' }); await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.getByTestId('account-trigger')).toHaveCount(0);
+  expect(writes).toEqual([]); expect(mock.transactions).toEqual([]);
+});
+
+test('header account is in the top bar, dismisses accessibly and logout clears protected content', async ({ page }) => {
+  const mock = await fixture(page, 'viewer', true);
+  await page.goto('/firewall#system');
+  const trigger = page.getByTestId('account-trigger'); const panel = page.getByTestId('account-panel');
+  await expect(page.locator('header').getByTestId('account-trigger')).toBeVisible();
+  await expect(page.locator('main').getByTestId('account-trigger')).toHaveCount(0);
+  await expect(page.locator('.fw-state')).toHaveCount(0);
+  await page.locator('.skip-link').focus();
+  expect(await page.locator('.skip-link').evaluate((element) => { const box = element.getBoundingClientRect(); return element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)); })).toBe(true);
+  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeHidden();
+  await trigger.focus(); await trigger.press('Enter'); await expect(panel).toBeVisible();
+  await expect(panel).toHaveAccessibleName('Account: lab-admin');
+  await expect(panel.getByText('Read only', { exact: true })).toBeVisible();
+  await expect(panel.locator('time')).toHaveAttribute('datetime', '2026-11-09T13:00:00Z');
+  await expect(panel).toBeFocused(); await page.keyboard.press('Tab');
+  await expect(panel.getByRole('button', { name: 'Sign out', exact: true })).toBeFocused();
+  await panel.press('Escape'); await expect(panel).toBeHidden(); await expect(trigger).toBeFocused();
+  await trigger.click(); await expect(panel).toBeVisible();
+  await page.mouse.click(4, page.viewportSize()!.height - 4);
+  await expect(panel).toBeHidden();
+  await trigger.click(); await page.getByTestId('preferences-trigger').click();
+  await expect(panel).toBeHidden(); await expect(page.getByTestId('preferences-panel')).toBeVisible();
+  await page.getByTestId('preferences-panel').press('Escape');
+  await signOut(page);
+  await expectAccessOnly(page); await expect(panel).toHaveCount(0);
+  await expect(page.getByText('lab-admin', { exact: true })).toHaveCount(0);
+  expect(mock.transactions).toEqual([]);
+});
+
+test('header account and preferences clear on expiry and leave local rule drafts untouched', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 1440, height: 1000 }); await page.goto('/firewall');
+  await fillRule(page, 'header-local-draft');
+  await selectLocale(page, 'es');
+  await expect(page.getByLabel(firewallMessages.es.id, { exact: true })).toHaveValue('header-local-draft');
+  await expect(page.getByLabel(firewallMessages.es.destination_ports, { exact: true })).toHaveValue('443-445');
+  await selectLocale(page, 'en');
+  await page.getByTestId('account-trigger').click();
+  await expect(page.getByTestId('account-panel')).toBeVisible();
+  expect(await page.getByTestId('account-panel').evaluate((element) => element.matches(':popover-open'))).toBe(true);
+  await page.clock.fastForward(3_601_000);
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expectAccessOnly(page);
+  await expect(page.locator('.ds-floating-window')).toHaveCount(0);
+  await expect(page.getByTestId('account-panel')).toHaveCount(0);
+  expect(mock.transactions).toEqual([]); expect(mock.state().snapshot.running.config.rules).toEqual([]);
+});
+
+for (const theme of ['light', 'dark'] as const) test('header ' + theme + ' preferences and account visual baseline', async ({ page }) => {
+  const mock = await fixture(page, 'admin', true);
+  await page.goto('/firewall#system');
+  await expect(page.locator('.console-system-info').getByText('0.1.0~alpha16', { exact: true })).toBeVisible();
+  await selectTheme(page, theme);
+  for (const locale of ['es', 'pt', 'en'] as const) {
+    await selectLocale(page, locale);
+    const names = { en: ['Preferences', 'Account', 'Role', 'Sign out'], es: ['Preferencias', 'Cuenta', 'Rol', 'Cerrar sesión'], pt: ['Preferências', 'Conta', 'Função', 'Sair'] }[locale];
+    await expect(page.getByTestId('preferences-trigger')).toHaveAccessibleName(names[0]!);
+    await expect(page.getByTestId('account-trigger')).toHaveAccessibleName(names[1]! + ': lab-admin');
+    await page.getByTestId('account-trigger').click();
+    const panel = page.getByTestId('account-panel');
+    await expect(panel.getByText(names[2]!, { exact: true })).toBeVisible();
+    await expect(panel.getByRole('button', { name: names[3]!, exact: true })).toBeEnabled();
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+    await panel.press('Escape');
+  }
+  await page.getByTestId('preferences-trigger').click();
+  const preferences = page.getByTestId('preferences-panel');
+  await expect(preferences).toBeVisible();
+  const bounds = await preferences.boundingBox(); const viewport = page.viewportSize()!;
+  expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+  await expect(page).toHaveScreenshot('header-' + theme + '-preferences.png');
+  await preferences.press('Escape'); await page.getByTestId('account-trigger').click();
+  await expect(page.getByTestId('account-panel')).toBeVisible();
+  await expect(page).toHaveScreenshot('header-' + theme + '-account.png');
+  expect(mock.transactions).toEqual([]);
+});
+
+
+test('header popovers fit a zoomed visual viewport and a short mobile resize', async ({ page }) => {
+  await fixture(page, 'admin', true);
+  await page.setViewportSize({ width: 390, height: 844 }); await page.goto('/firewall#system');
+  await page.getByTestId('preferences-trigger').click();
+  const panel = page.getByTestId('preferences-panel'); await expect(panel).toBeVisible();
+  const client = await page.context().newCDPSession(page);
+  await client.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
+  await expect.poll(() => page.evaluate(() => visualViewport!.width)).toBeLessThan(250);
+  const fit = async () => page.evaluate(() => {
+    const viewport = visualViewport!; const panel = document.querySelector<HTMLElement>('.ds-header-popover:popover-open')!; const bounds = panel.getBoundingClientRect();
+    return bounds.left >= viewport.offsetLeft && bounds.right <= viewport.offsetLeft + viewport.width + 1 && bounds.top >= viewport.offsetTop && bounds.bottom <= viewport.offsetTop + viewport.height + 1;
+  });
+  await expect.poll(fit).toBe(true);
+  await client.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+  await page.setViewportSize({ width: 320, height: 260 });
+  await expect.poll(fit).toBe(true);
+  await panel.press('Escape'); await page.getByTestId('account-trigger').click();
+  const account = page.getByTestId('account-panel'); await expect(account).toBeVisible();
+  await expect.poll(fit).toBe(true);
+  const logout = account.getByRole('button', { name: 'Sign out', exact: true });
+  await logout.scrollIntoViewIfNeeded(); await expect(logout).toBeInViewport();
+  await account.press('Escape'); await expect(page.getByTestId('account-trigger')).toBeFocused();
+  await client.detach();
 });

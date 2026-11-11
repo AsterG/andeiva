@@ -1,10 +1,26 @@
 # Console administrativa
 
-Antes da autenticação, apenas a tela de acesso, o logotipo original e os seletores
-de idioma e tema são apresentados. Os menus e as telas administrativas são
-montados após validar uma sessão vigente; são removidos ao sair, expirar ou
-receber uma rejeição da sessão. Este limite visual complementa a autorização no
-servidor e não substitui a autenticação nem o RBAC da API.
+Antes da autenticação, apenas a tela de acesso, o logotipo original e o controle
+Preferências são apresentados. Os menus e as telas administrativas são montados
+após validar uma sessão vigente; são removidos ao sair, expirar ou receber uma
+rejeição da sessão. Este limite visual complementa a autorização no servidor e
+não substitui a autenticação nem o RBAC da API.
+
+## Preferências e conta no cabeçalho
+
+Abra a engrenagem no canto superior direito para escolher Idioma ou Aparência.
+O tema inicial é Claro, independentemente do sistema operacional; o tema Escuro
+escolhido explicitamente fica salvo neste navegador. Essas preferências não
+preparam nem aplicam alterações de configuração.
+
+Após entrar, abra o controle com seu avatar/nome ao lado da engrenagem para
+consultar sua função, a expiração da sessão ou Sair. Esse controle é separado das
+ações Candidate, Running e Startup. Atualizar estado permanece na respectiva
+tela de configuração; Sistema tem sua própria ação Atualizar informações.
+
+Enter ou Espaço abre o controle de cabeçalho em foco. Escape fecha o painel e
+retorna o foco ao controle; clicar fora também o fecha. Os painéis usam semântica
+normal de formulários e diálogos, inclusive em telas menores.
 
 Abra o endereço HTTPS do appliance para entrar na console autenticada.
 `/firewall` continua disponível. A navegação usa `#dashboard`, `#rules`, `#audit`,
@@ -18,7 +34,7 @@ taxas RX/TX por interface, CPU e memória ficam indisponíveis quando a API não
 fornece essas observações. O mapa é geografia estática, sem fluxos ou classificação
 de países inventados.
 
-O editor lateral admite IPv4, TCP/UDP, intervalos inclusivos de portas de origem
+O editor de regras admite IPv4, TCP/UDP, intervalos inclusivos de portas de origem
 e destino, Permitir/Negar e habilitação conforme as capacidades anunciadas.
 Objetos reutilizáveis, grupos FQDN e identificação de aplicações continuam
 indisponíveis. Mudar de tela preserva formulário e rascunho local; sair ou expirar

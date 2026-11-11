@@ -2,6 +2,7 @@
 @import './design-system/components.css';
 @import './design-system/access.css';
 @import './design-system/floating-window.css';
+@import './design-system/header-actions.css';
 
 :root { font-family: var(--font-body); font-synthesis: none; text-rendering: optimizeLegibility; line-height: var(--line-body); color: var(--color-text); background: var(--color-background); }
 * { box-sizing: border-box; }

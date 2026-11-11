@@ -10,9 +10,10 @@ import { HistoryPanel } from '../firewall/HistoryPanel.js';
 import { localMessages } from './messages.js';
 import { capabilitiesResponse, draftConfig, effectiveMatchesSnapshot, effectiveResponse, historyResponse, newService, proofResponse, proofTokens, statusResponse } from './model.js';
 import type { Capabilities, Config, Effective, History, Proof, Request, Service, Status } from './model.js';
+import { HeaderAccount } from '../design-system/HeaderAccount.js';
 import { ServiceEditor } from './ServiceEditor.js';
 
-export function LocalServicesConsole({ locale, view, renderFrame }: { locale: Locale; view: 'services' | 'effective'; renderFrame: (content: ReactNode, authenticated: boolean) => ReactNode }) {
+export function LocalServicesConsole({ locale, view, renderFrame }: { locale: Locale; view: 'services' | 'effective'; renderFrame: (content: ReactNode, authenticated: boolean, account: ReactNode) => ReactNode }) {
   const copy = localMessages[locale]; const common = firewallMessages[locale];
   const [session, setSession] = useState<Session | null>(null);
   const [caps, setCaps] = useState<Capabilities | null>(null);
@@ -101,7 +102,7 @@ export function LocalServicesConsole({ locale, view, renderFrame }: { locale: Lo
   const content = <div className="fw-stack" aria-busy={busy || loading}>
     {error && <Notice title={common.error} live>{errorMessage(error.code, common, error.status)}</Notice>}
     {loading ? <Notice title={common.loading}>{common.https}</Notice> : !authenticated ? <Surface title={common.login} description={common.https} className="fw-login"><form ref={loginForm} onSubmit={(e) => void login(e)}><Field id="local-username" label={common.username}><TextInput id="local-username" name="username" required maxLength={64} autoComplete="username" disabled={busy} /></Field><Field id="local-credential" label={common.credential} hint={common.credentialHint}><TextInput id="local-credential" name="credential" type="password" required maxLength={256} autoComplete="off" disabled={busy} /></Field><Button type="submit" disabled={busy}>{common.login}</Button></form></Surface> : <>
-      <div className="fw-state"><div><strong>{common.identity}: {session.username}</strong><p className="fw-meta">{admin ? common.admin : common.viewer}</p></div><div className="fw-toolbar"><Button variant="secondary" disabled={busy} onClick={() => void task(async () => { setFresh(false); await load(session, !dirty); })}>{common.retry}</Button><Button variant="secondary" disabled={busy} onClick={() => void task(async () => { await request('auth/logout', {}, session.csrf); forget(); })}>{common.logout}</Button></div></div>
+      <div className="fw-status-tools"><Button variant="secondary" disabled={busy} onClick={() => void task(async () => { setFresh(false); await load(session, !dirty); })}>{common.retry}</Button></div>
       {!caps?.local_services ? <Notice title={copy.title}>{copy.unavailable}</Notice> : <>
         <Notice title={caps.recovery_endpoint ? copy.recovery : copy.managed}>{caps.recovery_endpoint ? copy.recoveryHint : copy.managedHint}</Notice>
         {!healthy && <Notice title={common.disconnected}>{copy.stale}</Notice>}
@@ -126,5 +127,5 @@ export function LocalServicesConsole({ locale, view, renderFrame }: { locale: Lo
     </>}
     <Dialog open={authenticated && !!review} title={common.review} closeLabel={common.cancel} onClose={() => setReview(null)}>{authenticated && review && <><p>{review.operation === 'save' ? common.saveWarning : copy.confirmWarning}</p><dl className="fw-review"><dt>{common.operation}</dt><dd>{common[review.operation]}</dd><dt>{copy.target}</dt><dd><code className="fw-hash">{review.target}</code></dd></dl><Button disabled={!healthy || busy} onClick={() => void transact(review.operation, review.target)}>{common.proceed}</Button></>}</Dialog>
   </div>;
-  return renderFrame(content, authenticated);
+  return renderFrame(content, authenticated, authenticated && session ? <HeaderAccount locale={locale} username={session.username} role={session.role} expiresAt={session.expires_at} busy={busy} logout={() => void task(async () => { await request('auth/logout', {}, session.csrf); forget(); })} /> : null);
 }
