@@ -1,0 +1,10 @@
+Package: andeiva-boot-branding
+Version: @VERSION@
+Architecture: all
+Maintainer: ASTERG
+Section: admin
+Priority: optional
+Description: Experimental ANDEIVA boot theme resources
+ GRUB and Plymouth theme data for a separately qualified Debian installation.
+ This package does not select a theme, install Plymouth, rebuild an initramfs,
+ update GRUB, change boot arguments, or configure services.
