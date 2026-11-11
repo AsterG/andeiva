@@ -231,6 +231,32 @@ green simulated-engine suite alone does not close that gate.
 
 ## Bounded transaction capacity (AND01: partial)
 
+Ordinary mutation admission also observes available filesystem bytes and inodes
+through an owned-directory descriptor on Linux. The budget includes the existing
+maximum record size, the operation's logical reserve, and staging metadata. Unknown
+metrics, a read-only filesystem or insufficient space return `ErrStorage` before
+activation authority or engine effects. Rejected-request audit uses the same
+ordinary headroom check. Transient pressure does not mark the journal corrupt,
+halt the service or cancel an outstanding confirmation timer; authorized reads
+and exact replay remain available.
+
+The four-block metadata allowance is exercised by the finite tmpfs tests; it is
+not a universal metadata bound for every filesystem. This observation does not
+allocate a physical reserve or enforce a filesystem quota. Other writers can
+consume space after admission, and per-identity quotas
+may fail despite free filesystem space. Actual write/fsync failures retain the
+existing compensation and recovery behavior. Required recovery and autonomous
+confirmation expiry retain their critical persistence path; a read-only or full
+filesystem may still prevent its durable outcome. No permanent forwarding or
+unlimited-write guarantee follows from this check.
+
+`TestStorageSpace*` covers deterministic admission and recovery behavior with
+simulated engines. `TestRealStoragePressure` is opt-in and requires the isolated,
+bounded tmpfs laboratory harness; normal tests skip it. It exercises real byte
+and inode exhaustion, read-only rejection, capacity release and reopen recovery.
+The read-only mode verifies the probe and an actual `EROFS`, not service bootstrap.
+None of these tests modifies host network rules.
+
 Confirmed commit and confirmed historical rollback require capacity for their two
 records, resolution (up to two records), and one subsequent recovery/reopen (two
 records) before activation. Pending transactions retain four records against

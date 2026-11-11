@@ -178,3 +178,27 @@ no Linux. O benchmark mede somente admissão em memória, não RAM do appliance 
 throughput. O teste de bytes injeta contabilidade de cota e grava registros reais
 de tamanho variável; não simula um disco fisicamente cheio. O benchmark de recursos
 no Debian e a validação de falhas físicas permanecem pendentes.
+
+## Admissão conforme o espaço do sistema de arquivos
+
+As mutações comuns e a auditoria de pedidos rejeitados verificam bytes e inodes
+disponíveis antes de executar efeitos nos motores ou na autoridade de ativação.
+No Linux, o armazenamento próprio é consultado por um descritor de diretório.
+Espaço insuficiente, volume somente leitura ou métricas desconhecidas retornam
+`ErrStorage`, sem marcar corrupção nem cancelar uma confirmação pendente.
+Estado, histórico e repetição exata autorizados continuam disponíveis.
+
+O cálculo inclui os limites atuais de registros e metadados temporários. A margem
+de quatro blocos é testada em tmpfs limitado, sem comprovar um limite universal
+de metadados. Não reserva espaço físico nem comprova cotas por usuário. Falhas posteriores de
+escrita/fsync mantêm a recuperação existente. O vencimento automático e a recuperação
+necessária preservam sua via crítica, embora um volume cheio ou somente leitura
+possa impedir a persistência do resultado. Compactação, retenção da auditoria
+protegida e continuidade do appliance com volume cheio continuam como requisitos
+de entrega separados.
+
+Testes determinísticos: `go test -race ./internal/configpoc -run TestStorageSpace`.
+`TestRealStoragePressure` exige habilitar o harness de laboratório com tmpfs limitado;
+o CI comum o ignora. Os cenários de bytes/inodes usam motores simulados e erros
+reais do sistema de arquivos. O caso somente leitura verifica a consulta e um
+`EROFS` real. Esses testes não alteram regras ou interfaces do host.
