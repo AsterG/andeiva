@@ -167,3 +167,25 @@ on Linux. The latter measures only in-memory admission cost, not appliance RAM o
 packet throughput. The byte-boundary test injects quota accounting and writes real
 variable-size records; it does not simulate a physically full disk. Debian
 resource benchmarking and physical-failure validation remain pending.
+
+## Filesystem headroom admission
+
+Ordinary mutations and rejected-request audit check available bytes and inodes
+before engine or activation-authority effects. Linux probes the owned store
+through a directory descriptor. Insufficient space, read-only storage and unknown
+metrics return `ErrStorage` without latching corruption or cancelling an existing
+confirmation timer. Authorized status/history and exact replay remain readable.
+
+The check budgets existing record limits and staging metadata. Its four-block
+metadata allowance is exercised on finite tmpfs, not proven for every filesystem.
+It does not reserve physical space or prove per-user quotas. Later write/fsync failures keep the
+existing recovery behavior. Critical timeout and required recovery retain their
+own path but may still fail to persist on genuinely full or read-only storage.
+Compaction, protected-audit retention and continuous appliance operation under
+full-volume failure remain separate release gates.
+
+Run deterministic coverage with `go test -race ./internal/configpoc -run TestStorageSpace`.
+`TestRealStoragePressure` is opt-in for the bounded tmpfs laboratory harness;
+ordinary CI skips it. Byte/inode scenarios use simulated engines with real
+filesystem errors; the read-only scenario checks the probe and actual `EROFS`.
+No network rules or host interfaces are changed by these tests.

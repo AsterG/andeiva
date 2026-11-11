@@ -39,7 +39,9 @@ jobs:
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./internal/localpolicy
           go test ./internal/localpolicy -run '^$' -fuzz FuzzDecode -fuzztime 10s -parallel 2
       - name: Configuration experiment platform source selection
-        run: bash scripts/check-config-platforms.sh
+        run: |
+          bash scripts/check-config-platforms.sh
+          bash -n packaging/preview/tests/storage-pressure.sh
       - name: Nftables POC unprivileged contracts and platform compilation
         run: bash scripts/check-nft-poc.sh
       - name: Administrative firewall platform compilation without privileges

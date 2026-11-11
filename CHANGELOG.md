@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — configuration storage admission
+
+- Check available filesystem bytes and inodes before ordinary configuration
+  mutations, without consuming the existing critical recovery path.
+- Add isolated finite-filesystem checks; this does not implement compaction,
+  protected audit retention or a physical recovery reserve.
+
 ## Unreleased — product version visibility
 
 - Show the authenticated appliance product version in System and the navigation
