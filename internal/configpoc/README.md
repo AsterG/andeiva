@@ -281,3 +281,36 @@ Compaction, retention, receipt lifetime and key-management policy require a
 separate reviewed ADR; this change neither deletes records nor increases quotas.
 The tests use simulated engines and bounded quota accounting, not a full-disk or
 Debian appliance benchmark. Native resource and physical-failure gates remain open.
+
+## Journal publication conflicts
+
+Linux journal append uses `renameat2(RENAME_NOREPLACE)` with verified source and
+destination directory descriptors. A competing destination is not overwritten;
+unsupported operations fail closed. Failed publication may remove its own staging
+payload only while its recorded identity still matches. A substituted payload is
+not removed by that failed append. Reopening retains the existing ownership rules
+for registered staging names; this is not isolation from an arbitrary same-UID or
+root writer. Unexpected records fail validation instead of being silently deleted.
+Formats, receipt replay, protected history and capacity limits are unchanged.
+
+Reproduce with `go test -race ./internal/configpoc -run '^TestJournal'`, then run
+`go test -race ./cmd/... ./internal/...` and `go vet ./cmd/... ./internal/...`.
+Process-exit recovery tests do not establish physical power-loss resilience.
+
+### ES
+
+La publicación del journal no reemplaza destinos existentes y rechaza sistemas sin
+soporte atómico. Una escritura fallida solo puede retirar su temporal si conserva
+la identidad registrada; no elimina un payload sustituido. La reapertura conserva
+el contrato de propiedad de temporales registrados: no aísla de un escritor con
+el mismo UID o root. Los formatos, reintentos y límites no cambian. Las pruebas de
+salida de procesos no demuestran resistencia a cortes eléctricos.
+
+### PT
+
+A publicação do journal não substitui destinos existentes e recusa sistemas sem
+suporte atômico. Uma gravação com falha só pode remover seu temporário se mantiver
+a identidade registrada; não remove um payload substituído. A reabertura mantém o
+contrato de propriedade dos temporários registrados: não isola um escritor com o
+mesmo UID ou root. Formatos, reenvios e limites permanecem iguais. Testes de saída
+de processos não comprovam resistência a cortes de energia.
