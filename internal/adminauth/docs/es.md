@@ -12,7 +12,10 @@ por origen. La tabla fija conserva hasta 128 orígenes, con caducidad perezosa d
 minuto. Los rechazos no prolongan la retención ni expulsan entradas activas. Las
 credenciales válidas usan otro cupo de cuatro por segundo y no dependen de la tabla
 anónima, incluso llena o detrás de la misma NAT. Se mantienen las 32 sesiones,
-caducidad, CSRF, RBAC y auditoría obligatoria. `Login` interno comparte el cupo anónimo.
+caducidad, CSRF, RBAC y auditoría obligatoria. Cada intento de `Login` interno
+comparte el cupo anónimo; si la credencial es válida, también consume el cupo
+verificado global. Las credenciales inválidas nunca lo consumen. Así no existe
+un cupo verificado adicional por esa entrada compatible. HTTP y SSH usan `LoginFrom`.
 
 La clasificación limita usuario a 64 bytes y credencial a 64 caracteres: son 32 bytes
 aleatorios, no contraseñas elegidas por el usuario. No reutilizar este almacenamiento
