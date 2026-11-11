@@ -3,6 +3,7 @@ Version: @VERSION@
 Section: admin
 Priority: optional
 Architecture: amd64
+X-Andeiva-Offline-Install-Guard: 1
 Depends: andeiva-boot-branding (= @VERSION@), plymouth (= 24.004.60-5), plymouth-themes (= 24.004.60-5), initramfs-tools (= 0.148.4), grub-pc
 Maintainer: ASTERG
 Homepage: https://github.com/AsterG/andeiva

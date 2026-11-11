@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -66,6 +67,149 @@ func TestCapacityUsesReportedFilesystemBlockSize(t *testing.T) {
 		if _, err := availableBytes(capacity); err == nil {
 			t.Fatal("invalid or overflowing filesystem capacity accepted")
 		}
+	}
+}
+
+func TestOfflineMarkerSurvivesLockOwnerExit(t *testing.T) {
+	s := fixtureWithLock(t, false)
+	if err := s.prepare(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.root.Mkdir("var/backups/andeiva-boot-offline", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestOfflineCrashHelper$")
+	command.Env = append(os.Environ(), "ANDEIVA_TEST_OFFLINE_CRASH=1", "ANDEIVA_TEST_OFFLINE_ROOT="+s.root.Name())
+	output, err := command.CombinedOutput()
+	var exited *exec.ExitError
+	if !errors.As(err, &exited) || exited.ExitCode() != 73 {
+		t.Fatalf("unexpected simulated installer exit: %v: %s", err, output)
+	}
+	lock, err := s.lock()
+	if err != nil {
+		t.Fatalf("dead installer retained live lock: %v", err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := s.apply(); err == nil || err.Error() != "ANDEIVA_BOOT_OFFLINE_INSTALL_PENDING" {
+		t.Fatalf("lost lock allowed activation while marker remains: %v", err)
+	}
+	if err := s.restore(); err == nil || err.Error() != "ANDEIVA_BOOT_OFFLINE_INSTALL_PENDING" {
+		t.Fatalf("lost lock allowed restoration while marker remains: %v", err)
+	}
+}
+
+func TestOfflineCrashHelper(t *testing.T) {
+	if os.Getenv("ANDEIVA_TEST_OFFLINE_CRASH") != "1" {
+		return
+	}
+	root, err := os.OpenRoot(os.Getenv("ANDEIVA_TEST_OFFLINE_ROOT"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &system{root: root, owner: uint32(os.Geteuid())}
+	lock, err := s.lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	marker, err := root.OpenFile("var/backups/andeiva-boot-offline/install-pending", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := marker.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err := marker.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.syncDir("var/backups/andeiva-boot-offline"); err != nil {
+		t.Fatal(err)
+	}
+	// Exit without deferred cleanup, as with a lost installer process. This is
+	// process-interruption evidence, not a physical power-loss test.
+	os.Exit(73)
+}
+
+func TestOfflinePendingInstallBlocksBootMutations(t *testing.T) {
+	for _, mutation := range []string{"prepare", "apply", "restore"} {
+		t.Run(mutation, func(t *testing.T) {
+			s := fixture(t)
+			if err := s.prepare(true); err != nil {
+				t.Fatal(err)
+			}
+			before, err := s.root.ReadFile(journal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const directory = "var/backups/andeiva-boot-offline"
+			if err := s.root.Mkdir(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			marker, err := s.root.Create(directory + "/install-pending")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := marker.Close(); err != nil {
+				t.Fatal(err)
+			}
+			switch mutation {
+			case "prepare":
+				err = s.prepare(true)
+			case "apply":
+				err = s.apply()
+			case "restore":
+				err = s.restore()
+			}
+			if err == nil || err.Error() != "ANDEIVA_BOOT_OFFLINE_INSTALL_PENDING" {
+				t.Fatalf("pending install did not block %s: %v", mutation, err)
+			}
+			after, err := s.root.ReadFile(journal)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("blocked mutation changed journal: %v", err)
+			}
+			st, err := s.load()
+			if err != nil {
+				t.Fatalf("read-only state unavailable: %v", err)
+			}
+			if err := s.verifyLive(st); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestOfflineGuardRejectsUnsafeAndAmbiguousPaths(t *testing.T) {
+	for _, name := range []string{"marker-link", "parent-link", "writable-directory", "marker-directory"} {
+		t.Run(name, func(t *testing.T) {
+			s := fixture(t)
+			const directory = "var/backups/andeiva-boot-offline"
+			if name == "parent-link" {
+				if err := s.root.Symlink(".", directory); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := s.root.Mkdir(directory, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				switch name {
+				case "marker-link":
+					if err := s.root.Symlink("absent", directory+"/install-pending"); err != nil {
+						t.Fatal(err)
+					}
+				case "writable-directory":
+					if err := s.root.Chmod(directory, 0o777); err != nil {
+						t.Fatal(err)
+					}
+				case "marker-directory":
+					if err := s.root.Mkdir(directory+"/install-pending", 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := s.checkOfflineInstallPending(); err == nil {
+				t.Fatal("unsafe or ambiguous install state accepted")
+			}
+		})
 	}
 }
 
@@ -237,6 +381,10 @@ func TestDiagnosticRuntimePathsRejectExistingAndUnsafeFiles(t *testing.T) {
 }
 
 func fixture(t *testing.T) *system {
+	return fixtureWithLock(t, true)
+}
+
+func fixtureWithLock(t *testing.T, retainLock bool) *system {
 	t.Helper()
 	dir := t.TempDir()
 	for _, name := range []string{"boot/grub", "etc/default/grub.d", "etc/plymouth", "var/backups", "usr/share/grub/themes/andeiva", "usr/share/plymouth/themes/andeiva"} {
@@ -291,7 +439,11 @@ func fixture(t *testing.T) *system {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = lock.Close() })
+	if retainLock {
+		t.Cleanup(func() { _ = lock.Close() })
+	} else if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
 	return s
 }
 

@@ -14,6 +14,7 @@ pkg="$stage/first/$name"
 [[ $(dpkg-deb -f "$pkg" Package) = andeiva-boot-activation ]]
 [[ $(dpkg-deb -f "$pkg" Architecture) = amd64 ]]
 [[ $(dpkg-deb -f "$pkg" Version) = "$version" ]]
+[[ $(dpkg-deb -f "$pkg" X-Andeiva-Offline-Install-Guard) = 1 ]]
 dpkg-deb --ctrl-tarfile "$pkg" | tar -tf - | LC_ALL=C sort > "$stage/control-files"
 printf '%s\n' ./ ./control ./md5sums > "$stage/expected-control-files"
 cmp "$stage/control-files" "$stage/expected-control-files"
