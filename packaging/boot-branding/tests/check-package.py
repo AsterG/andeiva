@@ -11,15 +11,18 @@ import subprocess
 import sys
 import tarfile
 import time
+sys.dont_write_bytecode = True
+from grub_layout import validate as validate_grub_layout
 
 APPROVED_LOGO = "1f79f5ec7f33327c9285c702b63fc5c5a618a28395b2161d594001fdb0199f81"
+GRUB_COPY = "44fcce594c0744ba51fd5792236bc4c775c63e8e4903f3fcaabbf0a74bf9cd50"
 MAX_TAR_BYTES = 3 * 1024 * 1024
 MAX_TAR_SECONDS = 10
 GRUB = "usr/share/grub/themes/andeiva/"
 PLYMOUTH = "usr/share/plymouth/themes/andeiva/"
 DOC = "usr/share/doc/andeiva-boot-branding/"
 EXPECTED = {
-    GRUB + name for name in ("andeiva-logo.png", "background.png", "theme.txt")
+    GRUB + name for name in ("andeiva-logo.png", "andeiva-grub-logo.png", "background.png", "theme.txt")
 } | {
     PLYMOUTH + name for name in ("andeiva-logo.png", "background.png", "activity-track.png",
                                 "activity-segment.png", "andeiva.plymouth", "andeiva.script")
@@ -146,6 +149,10 @@ def check(package):
             reject("ANDEIVA_BOOT_LOGO_DIMENSIONS")
     script = payload[PLYMOUTH + "andeiva.script"].decode()
     theme = payload[GRUB + "theme.txt"].decode()
+    copy = payload[GRUB + "andeiva-grub-logo.png"]
+    if hashlib.sha256(copy).hexdigest() != GRUB_COPY or copy[16:24] != (320).to_bytes(4, "big") + (160).to_bytes(4, "big"):
+        reject("ANDEIVA_BOOT_GRUB_COPY_INTEGRITY")
+    validate_grub_layout(theme)
     for forbidden in ("SetBootProgressFunction", "Image.Crop", "Image.Rotate", "GetEnvironment", "GetCommandLine", "%"):
         if forbidden in script:
             reject("ANDEIVA_BOOT_SPLASH_CONTRACT")
@@ -162,7 +169,7 @@ def check(package):
                      "SetDisplayMessageFunction", "SetHideMessageFunction", "SetRefreshFunction"):
         if callback not in script:
             reject("ANDEIVA_BOOT_SPLASH_CALLBACK")
-    if "width = 320\n  height = 160" not in theme or "andeiva-logo.png" not in theme:
+    if "width = 320\n  height = 160" not in theme or 'file = "andeiva-grub-logo.png"' not in theme:
         reject("ANDEIVA_BOOT_GRUB_LOGO_RATIO")
     inventory = set()
     for line in control["md5sums"].decode().splitlines():

@@ -2,7 +2,7 @@
 
 Status: experimental, inactive theme resources. Native boot, shutdown, recovery and performance qualification are pending. Installing this data package does **not** change the running or next boot configuration.
 
-The GRUB template and Plymouth script use the approved light identity independently of the web theme. The builder copies the complete official logo from `frontend/public/andeiva-logo.png` without modification and verifies SHA-256 `1f79f5ec7f33327c9285c702b63fc5c5a618a28395b2161d594001fdb0199f81`. Decorative backgrounds and activity assets are original generated resources. No fonts or third-party theme code are bundled.
+The GRUB template and Plymouth script use the approved light identity independently of the web theme. The builder copies the complete official logo from `frontend/public/andeiva-logo.png` without modification and verifies SHA-256 `1f79f5ec7f33327c9285c702b63fc5c5a618a28395b2161d594001fdb0199f81`. A separate deterministic 320×160 proportional copy is used by GRUB because its image widget treats the bitmap dimensions as a minimum. The full approved PNG remains unchanged in both theme directories. Decorative backgrounds and activity assets are original generated resources. No fonts or third-party theme code are bundled.
 
 The moving, fixed-width segment indicates activity, not percentage, service health or a successful boot. All theme-owned graphical text is English. External diagnostic messages and prompts remain visible verbatim; they are not rewritten for branding or language.
 
@@ -30,4 +30,4 @@ There are no maintainer scripts, triggers, dependency installation, services, ti
 - [Português](docs/pt.md)
 - [Design, threats and qualification gates](DESIGN.md)
 
-Activation, safe deactivation and bootloader changes are intentionally absent from this increment. Do not manually select the theme as a substitute for the pending recovery-gated integration procedure.
+This data package remains inactive. The separate `andeiva-boot-activation` package provides explicit recovery-gated activation and restoration; its local guides are installed under `/usr/share/doc/andeiva-boot-activation/docs/`. Do not substitute manual GRUB edits for those operations. Native visual, recovery and compatibility gates still apply.

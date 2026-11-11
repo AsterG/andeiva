@@ -12,35 +12,42 @@ terminal-font: "Unifont Regular 16"
   top = 4%
   width = 320
   height = 160
-  file = "andeiva-logo.png"
+  file = "andeiva-grub-logo.png"
 }
 + label {
   left = 10%
-  top = 38%
+  top = 4%+174
   width = 80%
-  height = 30
+  height = 24
   align = "center"
+  font = "Unifont Regular 16"
   text = "ANDEIVA OS"
   color = "#061B4B"
 }
 + boot_menu {
-  left = 12%
-  top = 47%
-  width = 76%
-  height = 35%
+  left = 6%
+  top = 4%+218
+  width = 88%
+  height = 88%-218
   item_color = "#061B4B"
   selected_item_color = "#087CF5"
   item_height = 32
   item_spacing = 8
   item_padding = 8
+  icon_width = 0
+  icon_height = 0
+  item_icon_space = 0
+  item_font = "Unifont Regular 16"
+  selected_item_font = "Unifont Regular 16"
   scrollbar = true
 }
 + label {
   left = 5%
-  top = 90%
+  top = 100%-24
   width = 90%
-  height = 32
+  height = 16
   align = "center"
+  font = "Unifont Regular 16"
   text = "Use arrow keys to select an entry. Press Enter to boot."
   color = "#061B4B"
 }

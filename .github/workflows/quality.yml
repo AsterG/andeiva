@@ -44,6 +44,12 @@ jobs:
           bash -n packaging/preview/tests/storage-pressure.sh
       - name: Inactive boot themes and reproducible data package
         run: bash packaging/boot-branding/tests/run.sh
+      - name: Boot activation unprivileged failure and recovery tests
+        run: |
+          go test -race ./packaging/boot-branding/activation
+          go vet ./packaging/boot-branding/activation
+          go build -o /tmp/andeiva-boot-activation ./packaging/boot-branding/activation
+          bash packaging/boot-branding/activation-package/test.sh
       - name: Nftables POC unprivileged contracts and platform compilation
         run: bash scripts/check-nft-poc.sh
       - name: Administrative firewall platform compilation without privileges

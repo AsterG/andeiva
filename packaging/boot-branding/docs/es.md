@@ -19,3 +19,5 @@ Esc, diagnóstico textual, mensajes extensos, solicitudes de cifrado y ausencia 
 Este incremento no implementa activación ni su reversión. No seleccionar manualmente los recursos antes de aprobar el procedimiento con recuperación. El paquete inactivo solo cambia sus recursos en `/usr/share`. Tras una futura activación, restaurar y verificar el tema/configuración de arranque anterior antes de retirar recursos referenciados por GRUB o initramfs. No eliminar kernels de recuperación ni reemplazar archivos generados.
 
 Consultar [diseño y comprobaciones pendientes](../DESIGN.md). Quedan pendientes renderizado nativo, arranque/reinicio/apagado, actualización del kernel, restauración y mediciones activas. La reversión de paquetes en Debian existente no equivale a recuperación A/B.
+
+GRUB usa una copia proporcional separada de 320×160; el PNG aprobado completo permanece intacto. El paquete independiente `andeiva-boot-activation` permite activar y restaurar con comprobación previa de recuperación. Consultar `/usr/share/doc/andeiva-boot-activation/docs/es.md`; este paquete de recursos no se activa por sí mismo.

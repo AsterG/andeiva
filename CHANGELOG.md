@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — recovery-gated boot activation
+
+- Add an explicit local experimental boot-theme activation and restoration tool,
+  with recovery preflight, protected backups, serialized changes and a retained
+  previous kernel. Native boot qualification remains separate from fixture tests.
+- Preserve the original logo while using a proportional GRUB display copy to
+  keep boot and recovery choices visible at low resolutions.
+- Show failed systemd units without printing successful boot-status lines.
+- Validate storage layout by capabilities instead of a device label, and provide
+  an explicit temporary diagnostic boot with private bounded traces in RAM.
+- Add an opt-in graphical redraw compatibility mode, without forcing a display
+  resolution or changing drivers; preserve the default and recovery configuration.
+
 ## Unreleased — inactive boot theme resources
 
 - Add GRUB and Plymouth theme resources with the original logo, English status

@@ -19,3 +19,5 @@ Esc/text diagnostics, long messages, encrypted prompts and absent graphics requi
 Activation and its rollback procedure are not implemented in this increment. Do not select these resources manually before the recovery-gated procedure is approved. An inactive package changes only its `/usr/share` resources. After any future activation, restore and verify the prior theme/boot configuration before removing resources referenced by GRUB or initramfs. Do not delete recovery kernels or replace generated files.
 
 See [design and remaining gates](../DESIGN.md). Native rendering, boot/restart/shutdown, kernel update, restoration and active resource measurements remain pending. Existing Debian package rollback is not A/B recovery.
+
+GRUB uses a separate proportional 320×160 display copy; the full approved PNG remains unchanged. The separate `andeiva-boot-activation` package provides recovery-gated activation and restoration. Read its installed guide at `/usr/share/doc/andeiva-boot-activation/docs/en.md`; this resource package does not activate itself.
