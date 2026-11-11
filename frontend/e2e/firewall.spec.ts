@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import type { Config, FirewallState, History, Session, Transaction } from '../src/firewall/model.js';
+import { firewallMessages } from '../src/firewall/messages.js';
 import { consoleMessages } from '../src/firewall/consoleMessages.js';
 
 // Explicit transport fixtures only. These tests do not prove authentication or packet enforcement.
@@ -66,6 +67,75 @@ async function fixture(page: Page, role: Session['role'] = 'admin', authenticate
   });
   return { transactions, history, disconnect: () => { disconnected = true; }, conflict: () => { conflict = true; }, state: () => status };
 }
+
+async function expectAccessOnly(page: Page) {
+  await expect(page.locator('aside, nav, .console-page-heading, .page-heading, .console-menu-button, .fw-state, .fw-transaction-controls')).toHaveCount(0);
+  await expect(page.getByRole('table')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+}
+
+test('anonymous direct routes never mount administrative navigation, including during session lookup', async ({ page }) => {
+  await fixture(page);
+  await page.addInitScript(() => {
+    const state = window as Window & { administrativeMounts: number };
+    state.administrativeMounts = 0;
+    new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) if (node instanceof Element && (node.matches('aside, nav, .console-page-heading, .fw-state') || node.querySelector('aside, nav, .console-page-heading, .fw-state'))) state.administrativeMounts++;
+    }).observe(document, { childList: true, subtree: true });
+  });
+  for (const path of ['/', '/#dashboard', '/firewall#audit', '/firewall#configuration', '/firewall#traffic', '/local-services']) {
+    let release!: () => void;
+    const held = new Promise<void>((done) => { release = done; });
+    await page.route('**/auth/session', async (route) => { await held; await route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_REQUIRED' } }); });
+    const destination = new URL(path, 'http://127.0.0.1:4173');
+    destination.searchParams.set('access-check', path);
+    await page.goto(destination.href);
+    await expect(page.locator('[aria-busy="true"]')).toBeVisible();
+    await expectAccessOnly(page);
+    release();
+    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+    await expectAccessOnly(page);
+    expect(await page.evaluate(() => (window as Window & { administrativeMounts: number }).administrativeMounts)).toBe(0);
+    await page.unroute('**/auth/session');
+  }
+});
+
+test('rejected login, logout, history navigation and server revocation preserve the access boundary', async ({ page }) => {
+  await fixture(page);
+  await page.route('**/auth/login', (route) => route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_DENIED' } }));
+  await page.goto('/firewall');
+  await page.getByLabel('Username', { exact: true }).fill('lab-admin');
+  await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('status')).toBeVisible();
+  await expect(page.getByLabel('Username', { exact: true })).toHaveValue('');
+  await expectAccessOnly(page);
+  await page.unroute('**/auth/login');
+  await page.getByLabel('Username', { exact: true }).fill('lab-admin');
+  await page.getByLabel('Provisioned access credential', { exact: true }).fill('test-only-fixture');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.locator('#console-navigation')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await page.evaluate(() => { location.hash = 'configuration'; });
+  await page.goBack();
+  await expectAccessOnly(page);
+  await login(page);
+  await page.route('**/api/v1/firewall', (route) => route.fulfill({ status: 401, json: { code: 'ANDEIVA_AUTH_REQUIRED' } }));
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expectAccessOnly(page);
+});
+
+test('an already expired session response cannot mount protected content', async ({ page }) => {
+  await fixture(page, 'admin', true);
+  await page.route('**/auth/session', (route) => route.fulfill({ json: { username: 'expired', role: 'admin', csrf: 'fixture-only', expires_at: now.toISOString() } }));
+  for (const path of ['/firewall#configuration', '/local-services']) {
+    await page.goto(path);
+    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+    await expectAccessOnly(page);
+  }
+});
 async function login(page: Page) {
   await page.goto('/firewall');
   await page.getByLabel('Username', { exact: true }).fill('lab-admin');
@@ -171,6 +241,7 @@ test('firewall removal stays local and session expiry removes sensitive views', 
   expect(mock.transactions).toEqual([]);
   await page.clock.fastForward(3_601_000);
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expectAccessOnly(page);
   await expect(page.getByRole('table')).toHaveCount(0);
 });
 
@@ -219,6 +290,13 @@ for (const theme of ['light', 'dark'] as const) {
     await page.goto('/firewall');
     await page.locator('#theme').selectOption(theme);
     await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+    for (const locale of ['es', 'pt', 'en'] as const) {
+      await page.locator('#language').selectOption(locale);
+      await expect(page.getByRole('heading', { name: firewallMessages[locale].login, exact: true })).toBeVisible();
+      await expectAccessOnly(page);
+    }
+    await expectAccessOnly(page);
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
     await expect(page).toHaveScreenshot(`firewall-${theme}-login.png`, { fullPage: true });
     const rules = ['lab-web', 'lab-dns', 'lab-maintenance'].map((id, index) => ({ id, enabled: index !== 2, action: index === 1 ? 'deny' as const : 'allow' as const, match: { source: '10.42.0.0/24', destination: '10.43.0.2/32', protocol: index === 1 ? 'udp' as const : 'tcp' as const, source_ports: { from: 1, to: 65535 }, destination_ports: { from: index === 1 ? 53 : 443, to: index === 1 ? 53 : 443 } } }));
     mock.state().snapshot.running.config = { schema_version: 4, default_action: 'deny', rules };

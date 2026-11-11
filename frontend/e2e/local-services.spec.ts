@@ -155,8 +155,10 @@ test('late endpoint proof cannot restore sensitive state after session expiry', 
   await expect.poll(() => requested).toBe(true);
   await page.clock.fastForward(3_600_001);
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.locator('aside, nav, .page-heading, .fw-state')).toHaveCount(0);
   release!();
   await expect(page.getByLabel('Temporary endpoint proof', { exact: true })).toHaveCount(0);
+  await expect(page.locator('aside, nav, .page-heading, .fw-state')).toHaveCount(0);
   expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain('e'.repeat(64));
 });
 for (const theme of ['light', 'dark']) test(`local services ${theme}: visual baseline and accessibility`, async ({ page }, info) => {

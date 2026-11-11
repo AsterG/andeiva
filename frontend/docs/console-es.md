@@ -1,5 +1,11 @@
 # Consola administrativa
 
+Antes de autenticarte solo se muestra la pantalla de acceso, el logotipo original
+y los selectores de idioma y tema. Los menús y las vistas administrativas se
+montan tras validar una sesión vigente; se retiran al cerrar sesión, caducar o
+recibir un rechazo de sesión. Este límite de presentación complementa la
+autorización del servidor y no sustituye la autenticación ni el RBAC de la API.
+
 Abre la dirección HTTPS del appliance para entrar en la consola autenticada.
 `/firewall` sigue disponible. La navegación usa `#dashboard`, `#rules`, `#audit`,
 `#configuration` y `#traffic`; cambiar de vista no crea otra sesión ni prepara

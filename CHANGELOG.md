@@ -2,6 +2,9 @@
 
 ## Unreleased — unified administration console
 
+- Isolate sign-in from administrative navigation during session lookup, rejected
+  access, logout and expiry, including direct firewall and local-service URLs.
+
 - Open the authenticated console at the management root address, with compact
   navigation for Dashboard, Rules, Audit, Configuration and Traffic records.
 - Preserve the shared session and local editor across views; add contextual

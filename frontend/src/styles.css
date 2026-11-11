@@ -1,5 +1,6 @@
 @import './design-system/tokens.css';
 @import './design-system/components.css';
+@import './design-system/access.css';
 
 :root { font-family: var(--font-body); font-synthesis: none; text-rendering: optimizeLegibility; line-height: var(--line-body); color: var(--color-text); background: var(--color-background); }
 * { box-sizing: border-box; }

@@ -1,5 +1,11 @@
 # Console administrativa
 
+Antes da autenticação, apenas a tela de acesso, o logotipo original e os seletores
+de idioma e tema são apresentados. Os menus e as telas administrativas são
+montados após validar uma sessão vigente; são removidos ao sair, expirar ou
+receber uma rejeição da sessão. Este limite visual complementa a autorização no
+servidor e não substitui a autenticação nem o RBAC da API.
+
 Abra o endereço HTTPS do appliance para entrar na console autenticada.
 `/firewall` continua disponível. A navegação usa `#dashboard`, `#rules`, `#audit`,
 `#configuration` e `#traffic`; mudar de tela não cria outra sessão nem prepara

@@ -1,5 +1,11 @@
 # Administration console
 
+Before authentication, only the access screen, original logo, language and theme
+selectors are rendered. Administrative menus and views are mounted only after a
+valid session is verified, and removed on logout, expiry or a rejected session.
+This presentation boundary complements server-side authorization; it does not
+replace API authentication or RBAC.
+
 Open the appliance HTTPS address to enter the authenticated console. `/firewall`
 remains supported. Navigation uses `#dashboard`, `#rules`, `#audit`,
 `#configuration` and `#traffic`; it does not create a second session or stage

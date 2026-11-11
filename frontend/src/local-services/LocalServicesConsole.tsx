@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Button, DataTable, Dialog, Field, FilterBar, Notice, StatusBadge, Surface, TextInput } from '../design-system/components.js';
 import type { Locale } from '../messages.js';
 import { ApiError, request } from '../firewall/api.js';
@@ -11,7 +12,7 @@ import { capabilitiesResponse, draftConfig, effectiveMatchesSnapshot, effectiveR
 import type { Capabilities, Config, Effective, History, Proof, Request, Service, Status } from './model.js';
 import { ServiceEditor } from './ServiceEditor.js';
 
-export function LocalServicesConsole({ locale, view }: { locale: Locale; view: 'services' | 'effective' }) {
+export function LocalServicesConsole({ locale, view, renderFrame }: { locale: Locale; view: 'services' | 'effective'; renderFrame: (content: ReactNode, authenticated: boolean) => ReactNode }) {
   const copy = localMessages[locale]; const common = firewallMessages[locale];
   const [session, setSession] = useState<Session | null>(null);
   const [caps, setCaps] = useState<Capabilities | null>(null);
@@ -42,6 +43,7 @@ export function LocalServicesConsole({ locale, view }: { locale: Locale; view: '
     if (reset) { setDraft(draftConfig(next.snapshot, capabilities.local_interfaces)); setDirty(false); setBase(next.snapshot.generation); setEditor(null); }
   }
   async function load(identity: Session, reset = true) {
+    if (Date.parse(identity.expires_at) <= Date.now()) throw new ApiError('ANDEIVA_SESSION_EXPIRED', 401);
     const epoch = version.current;
     const capabilities = capabilitiesResponse(await request('capabilities'));
     if (epoch !== version.current || !mounted.current) return;
@@ -95,9 +97,10 @@ export function LocalServicesConsole({ locale, view }: { locale: Locale; view: '
   const selected = snapshot && (revisionView === 'candidate' ? snapshot.candidate?.revision.config : revisionView === 'draft' ? draft : snapshot[revisionView].config);
   const services = selected?.local_services?.services ?? [];
   const effective = filtered ?? state?.effective;
-  return <div className="fw-stack" aria-busy={busy || loading}>
+  const authenticated = !loading && !!session && Date.parse(session.expires_at) > Date.now();
+  const content = <div className="fw-stack" aria-busy={busy || loading}>
     {error && <Notice title={common.error} live>{errorMessage(error.code, common, error.status)}</Notice>}
-    {loading ? <Notice title={common.loading}>{common.https}</Notice> : !session ? <Surface title={common.login} description={common.https} className="fw-login"><form ref={loginForm} onSubmit={(e) => void login(e)}><Field id="local-username" label={common.username}><TextInput id="local-username" name="username" required maxLength={64} autoComplete="username" disabled={busy} /></Field><Field id="local-credential" label={common.credential} hint={common.credentialHint}><TextInput id="local-credential" name="credential" type="password" required maxLength={256} autoComplete="off" disabled={busy} /></Field><Button type="submit" disabled={busy}>{common.login}</Button></form></Surface> : <>
+    {loading ? <Notice title={common.loading}>{common.https}</Notice> : !authenticated ? <Surface title={common.login} description={common.https} className="fw-login"><form ref={loginForm} onSubmit={(e) => void login(e)}><Field id="local-username" label={common.username}><TextInput id="local-username" name="username" required maxLength={64} autoComplete="username" disabled={busy} /></Field><Field id="local-credential" label={common.credential} hint={common.credentialHint}><TextInput id="local-credential" name="credential" type="password" required maxLength={256} autoComplete="off" disabled={busy} /></Field><Button type="submit" disabled={busy}>{common.login}</Button></form></Surface> : <>
       <div className="fw-state"><div><strong>{common.identity}: {session.username}</strong><p className="fw-meta">{admin ? common.admin : common.viewer}</p></div><div className="fw-toolbar"><Button variant="secondary" disabled={busy} onClick={() => void task(async () => { setFresh(false); await load(session, !dirty); })}>{common.retry}</Button><Button variant="secondary" disabled={busy} onClick={() => void task(async () => { await request('auth/logout', {}, session.csrf); forget(); })}>{common.logout}</Button></div></div>
       {!caps?.local_services ? <Notice title={copy.title}>{copy.unavailable}</Notice> : <>
         <Notice title={caps.recovery_endpoint ? copy.recovery : copy.managed}>{caps.recovery_endpoint ? copy.recoveryHint : copy.managedHint}</Notice>
@@ -121,7 +124,8 @@ export function LocalServicesConsole({ locale, view }: { locale: Locale; view: '
         </>}
       </>}
     </>}
-    <Dialog open={!!review} title={common.review} closeLabel={common.cancel} onClose={() => setReview(null)}>{review && <><p>{review.operation === 'save' ? common.saveWarning : copy.confirmWarning}</p><dl className="fw-review"><dt>{common.operation}</dt><dd>{common[review.operation]}</dd><dt>{copy.target}</dt><dd><code className="fw-hash">{review.target}</code></dd></dl><Button disabled={!healthy || busy} onClick={() => void transact(review.operation, review.target)}>{common.proceed}</Button></>}</Dialog>
-    <Notice title={copy.scope}>{copy.limitation}</Notice>
+    <Dialog open={authenticated && !!review} title={common.review} closeLabel={common.cancel} onClose={() => setReview(null)}>{authenticated && review && <><p>{review.operation === 'save' ? common.saveWarning : copy.confirmWarning}</p><dl className="fw-review"><dt>{common.operation}</dt><dd>{common[review.operation]}</dd><dt>{copy.target}</dt><dd><code className="fw-hash">{review.target}</code></dd></dl><Button disabled={!healthy || busy} onClick={() => void transact(review.operation, review.target)}>{common.proceed}</Button></>}</Dialog>
+    {authenticated && <Notice title={copy.scope}>{copy.limitation}</Notice>}
   </div>;
+  return renderFrame(content, authenticated);
 }

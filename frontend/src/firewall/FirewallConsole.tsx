@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Button, Dialog, Field, Notice, StatusBadge, Surface, TextInput } from '../design-system/components.js';
 import type { Locale } from '../messages.js';
 import { ApiError, request } from './api.js';
@@ -21,7 +22,7 @@ import type { ConsoleView } from './consoleMessages.js';
 type Review = { operation: Operation; target: string; confirm_for?: number } | { operation: 'remove'; index: number; target: string } | { operation: 'discard'; target: string };
 type RuleView = 'draft' | 'candidate' | 'running' | 'startup';
 
-export function FirewallConsole({ locale, page = 'rules', onLocalServices }: { locale: Locale; page?: ConsoleView; onLocalServices?: (available: boolean) => void }) {
+export function FirewallConsole({ locale, page = 'rules', onLocalServices, renderFrame }: { locale: Locale; page?: ConsoleView; onLocalServices?: (available: boolean) => void; renderFrame: (content: ReactNode, authenticated: boolean) => ReactNode }) {
   const copy = firewallMessages[locale];
   const tableCopy = ruleTableMessages[locale];
   const [session, setSession] = useState<Session | null>(null);
@@ -87,6 +88,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices }: { l
       const version = authVersion.current;
       try {
         const identity = sessionResponse(await request('auth/session'));
+        if (Date.parse(identity.expires_at) <= Date.now()) throw new ApiError('ANDEIVA_SESSION_EXPIRED', 401);
         if (!active) return;
         setSession(identity); setView(identity.role === 'admin' ? 'draft' : 'running');
         await readCapabilities(); const next = await request<FirewallState>('firewall');
@@ -124,6 +126,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices }: { l
     const version = authVersion.current;
     try {
       const identity = sessionResponse(await request('auth/login', { username, credential }));
+      if (Date.parse(identity.expires_at) <= Date.now()) throw new ApiError('ANDEIVA_SESSION_EXPIRED', 401);
       loginForm.current?.reset();
       setSession(identity); setView(identity.role === 'admin' ? 'draft' : 'running'); setHistoryDenied(false);
       await readCapabilities(); const next = await request<FirewallState>('firewall');
@@ -179,9 +182,10 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices }: { l
     if (rules !== draft.rules) { setDraft({ ...draft, rules }); setDirty(true); }
   }
 
-  return <div className="fw-stack" aria-busy={loading || busy}>
+  const authenticated = !loading && !!session && Date.parse(session.expires_at) > Date.now();
+  const content = <div className="fw-stack" aria-busy={loading || busy}>
     {error && <Notice title={copy.error} live>{errorMessage(error.code, copy, error.status)}</Notice>}
-    {loading ? <Notice title={copy.loading}>{copy.https}</Notice> : !session ? <Surface title={copy.login} description={copy.https} className="fw-login"><form ref={loginForm} onSubmit={(event) => void login(event)}>
+    {loading ? <Notice title={copy.loading}>{copy.https}</Notice> : !authenticated ? <Surface title={copy.login} description={copy.https} className="fw-login"><form ref={loginForm} onSubmit={(event) => void login(event)}>
       <Field id="login-username" label={copy.username}><TextInput id="login-username" name="username" autoComplete="username" maxLength={64} required disabled={busy} /></Field>
       <Field id="login-credential" label={copy.credential} hint={copy.credentialHint}><TextInput id="login-credential" name="credential" type="password" autoComplete="off" maxLength={256} required disabled={busy} aria-describedby="login-credential-hint" /></Field>
       <Button type="submit" disabled={busy}>{busy ? copy.loading : copy.login}</Button>
@@ -208,11 +212,12 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices }: { l
         {page === 'traffic' && admin && healthy && <TrafficPanel locale={locale} busy={busy} onFailure={fail} />}
       </>}
     </>}
-    <Dialog open={!!review} title={copy.review} closeLabel={copy.cancel} onClose={() => setReview(null)}>{review && <><p>{review.operation === 'remove' ? copy.removeWarning : review.operation === 'discard' ? copy.discardWarning : review.operation === 'save' ? copy.saveWarning : copy.commitWarning}</p><dl className="fw-review"><dt>{copy.operation}</dt><dd>{review.operation === 'discard' ? copy.discard : review.operation === 'commit' && review.confirm_for ? copy.commitConfirmed : copy[review.operation]}</dd><dt>{copy.target}</dt><dd><code className="fw-hash">{review.target}</code></dd></dl><Button disabled={busy || !fresh} onClick={() => {
+    <Dialog open={authenticated && !!review} title={copy.review} closeLabel={copy.cancel} onClose={() => setReview(null)}>{authenticated && review && <><p>{review.operation === 'remove' ? copy.removeWarning : review.operation === 'discard' ? copy.discardWarning : review.operation === 'save' ? copy.saveWarning : copy.commitWarning}</p><dl className="fw-review"><dt>{copy.operation}</dt><dd>{review.operation === 'discard' ? copy.discard : review.operation === 'commit' && review.confirm_for ? copy.commitConfirmed : copy[review.operation]}</dd><dt>{copy.target}</dt><dd><code className="fw-hash">{review.target}</code></dd></dl><Button disabled={busy || !fresh} onClick={() => {
       if (review.operation === 'remove' && draft && canEdit) { setDraft({ ...draft, rules: draft.rules.filter((_, index) => index !== review.index) }); setDirty(true); setEditor(null); setReview(null); }
       else if (review.operation === 'discard' && snapshot) { setDraft(draftConfig(snapshot)); setBaseGeneration(snapshot.generation); setDirty(false); setEditor(null); setReview(null); }
       else if (review.operation !== 'remove' && review.operation !== 'discard') void transact(review.operation, { ...(review.operation === 'confirm' || review.operation === 'rollback' ? { target: review.target } : {}), ...(review.confirm_for ? { confirm_for: review.confirm_for } : {}) });
     }}>{copy.proceed}</Button></>}</Dialog>
-    <Notice title={copy.scope}>{copy.limitation}</Notice>
+    {authenticated && <Notice title={copy.scope}>{copy.limitation}</Notice>}
   </div>;
+  return renderFrame(content, authenticated);
 }

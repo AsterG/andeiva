@@ -5,8 +5,17 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../.test-build/App.js';
+import { FirewallPage } from '../.test-build/firewall/FirewallPage.js';
 import { messages, parseLocale } from '../.test-build/messages.js';
 import { parseTheme, readTheme, saveTheme, themeKey } from '../.test-build/preferences.js';
+
+for (const locale of ['en', 'es', 'pt']) test(`administrative ${locale} bootstrap renders only the access frame`, () => {
+  const html = renderToStaticMarkup(createElement(FirewallPage, { initialLocale: locale }));
+  assert.match(html, /class="access-app"/);
+  assert.match(html, /aria-busy="true"/);
+  assert.doesNotMatch(html, /<aside|<nav|class="console-page-heading"|class="fw-state"/);
+  assert.match(html, /data-theme="light"/);
+});
 
 test('approved logo is preserved byte-for-byte and has an accessible product name', () => {
   const logo = readFileSync(new URL('../public/andeiva-logo.png', import.meta.url));
