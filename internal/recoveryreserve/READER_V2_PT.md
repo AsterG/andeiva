@@ -60,3 +60,22 @@ go test -race ./internal/recoveryreserve -count=1 -timeout=3m
 go vet ./internal/recoveryreserve
 go test ./internal/recoveryreserve -run '^$' -bench BenchmarkReadOnlyV2Snapshot -benchtime=10x
 ```
+
+A prova nativa Debian13 passou com identidades numéricas distintas de escritor,
+grupo leitor, helper e terceiro. O helper leu um plano com o lock do escritor
+ativo; não pôde escrever, criar, renomear, excluir ou ler dados privados do dono.
+O terceiro não leu o pool. Nenhuma conta ou configuração de rede foi alterada.
+Custo do teste: CPU0.025398s/pico cgroup20,119,552bytes com filhos; não representa
+dimensionamento do serviço. Não prova autoridade de seleção ou IPC agrupado.
+
+Somente em laboratório Linux isolado autorizado, como root para reduzir credenciais
+dos processos filhos (CI comum ignora este teste opt-in):
+
+```sh
+go test -c -o reserve.test ./internal/recoveryreserve
+ANDEIVA_READER_IDENTITY_LAB=1 ./reserve.test -test.run '^TestNativeReadOnlyV2ThreeIdentities$' -test.count=1 -test.v
+```
+
+O lançador limitado precisa de CAP_CHOWN, CAP_FOWNER, CAP_FSETID, CAP_SETUID,
+CAP_SETGID e CAP_DAC_OVERRIDE somente para criar/limpar a fixture; não são
+permissões dos serviços do appliance.

@@ -58,3 +58,23 @@ go test -race ./internal/recoveryreserve -count=1 -timeout=3m
 go vet ./internal/recoveryreserve
 go test ./internal/recoveryreserve -run '^$' -bench BenchmarkReadOnlyV2Snapshot -benchtime=10x
 ```
+
+Native Debian13 process-identity qualification passed with separate numeric writer,
+reader-group, helper and outsider identities. The helper read a bound plan while
+the writer held its lock; helper writes, creation, rename, unlink and access to
+private owner data were denied. The outsider could not read the pool. No accounts
+were created or network settings changed. Qualification cost: 0.025398s CPU and
+20,119,552-byte cgroup peak including children, not daemon sizing. This proves
+filesystem separation on test data, not selected-state or grouped IPC authority.
+
+Reproduce only in an authorized disposable Linux lab with root allowed to drop
+child credentials. Normal unprivileged/shared CI skips this opt-in qualification:
+
+```sh
+go test -c -o reserve.test ./internal/recoveryreserve
+ANDEIVA_READER_IDENTITY_LAB=1 ./reserve.test -test.run '^TestNativeReadOnlyV2ThreeIdentities$' -test.count=1 -test.v
+```
+
+A constrained launcher additionally needs CAP_CHOWN, CAP_FOWNER, CAP_FSETID,
+CAP_SETUID, CAP_SETGID and CAP_DAC_OVERRIDE for fixture creation and cleanup.
+These capabilities belong only to the test parent, not the appliance services.
