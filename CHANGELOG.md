@@ -1,14 +1,5 @@
 # Changelog
 
-## Unreleased — prepared local-service transactions
-
-- Coordinate local-service candidates, validation, confirmed commits, Save and
-  rollback through the composite transaction engine and fresh scoped evidence.
-- Keep metadata operations free of component application, preserve domain
-  separation during recovery and reject incompatible readers before effects.
-- Require explicit trusted assembly; deployed service and listener configuration
-  remains unchanged.
-
 ## Unreleased — read-only configuration reference inspection
 
 - Inspect typed configuration v2 object references with bounded I/O and existing-lock identity checks.
@@ -276,6 +267,15 @@
   before enabling the new rule-state contract in Web, CLI and API.
 - Record isolated Debian traffic and browser validation, resource observations
   and limits in [the validation report](frontend/docs/firewall-rule-validation.md).
+
+## Unreleased — prepared local-service transactions
+
+- Coordinate local-service candidates, validation, confirmed commits, Save and
+  rollback through the composite transaction engine and fresh scoped evidence.
+- Keep metadata operations free of component application, preserve domain
+  separation during recovery and reject incompatible readers before effects.
+- Require explicit trusted assembly; deployed service and listener configuration
+  remains unchanged.
 
 ## Unreleased — isolated local service administration
 
