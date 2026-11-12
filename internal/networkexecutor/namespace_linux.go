@@ -2,6 +2,7 @@ package networkexecutor
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -29,31 +30,54 @@ func New(lifetime context.Context, namespace *os.File) (*Executor, error) {
 	if err := lifetime.Err(); err != nil {
 		return nil, err
 	}
-	fd, err := unix.FcntlInt(namespace.Fd(), unix.F_DUPFD_CLOEXEC, 3)
+	host, err := os.Open("/proc/1/ns/net")
 	if err != nil {
 		return nil, ErrScope
 	}
-	pin := os.NewFile(uintptr(fd), "andeiva-isolated-network")
-	ok := false
-	defer func() {
-		if !ok {
-			_ = pin.Close()
-		}
-	}()
-	id, err := namespaceID(fd)
+	defer host.Close()
+	return NewWithHost(lifetime, namespace, host)
+}
+
+// NewWithHost accepts a host namespace capability opened by the trusted service
+// manager before privilege restriction. That provenance cannot be inferred from
+// an inode: callers must never accept this descriptor from HTTP or untrusted IPC.
+// Both caller descriptors are duplicated; closing them does not revoke the pins.
+// The host must equal this supervisor's current network namespace, and the target
+// must be distinct. No additional privilege or caller-controlled path is needed.
+func NewWithHost(lifetime context.Context, namespace, host *os.File) (*Executor, error) {
+	if lifetime == nil || namespace == nil || host == nil || os.Geteuid() != 0 {
+		return nil, ErrScope
+	}
+	if err := lifetime.Err(); err != nil {
+		return nil, err
+	}
+	pin, id, err := pinNamespace(namespace)
 	if err != nil {
 		return nil, err
 	}
-	for _, path := range []string{"/proc/self/ns/net", "/proc/1/ns/net"} {
-		host, err := os.Open(path) // #nosec G304 -- Only the two fixed procfs namespace anchors in this literal allowlist; no caller-supplied path.
-		if err != nil {
-			return nil, ErrScope
+	ok := false
+	var hostPin *os.File
+	defer func() {
+		if !ok {
+			_ = pin.Close()
+			if hostPin != nil {
+				_ = hostPin.Close()
+			}
 		}
-		hostID, err := namespaceID(int(host.Fd()))
-		_ = host.Close()
-		if err != nil || hostID == id {
-			return nil, ErrScope
-		}
+	}()
+	var hostID uint64
+	hostPin, hostID, err = pinNamespace(host)
+	if err != nil {
+		return nil, err
+	}
+	self, err := os.Open("/proc/self/ns/net")
+	if err != nil {
+		return nil, ErrScope
+	}
+	selfID, err := namespaceID(int(self.Fd()))
+	_ = self.Close()
+	if err != nil || !validNamespaceBinding(id, hostID, selfID) {
+		return nil, ErrScope
 	}
 	for _, path := range []string{"/usr/bin/nsenter", "/usr/bin/ip"} {
 		if !trustedExecutable(path) {
@@ -68,10 +92,20 @@ func New(lifetime context.Context, namespace *os.File) (*Executor, error) {
 	owners.ids[id] = true
 	owners.Unlock()
 	e := &Executor{lifetime: lifetime}
-	e.release = func() error { err := pin.Close(); owners.Lock(); delete(owners.ids, id); owners.Unlock(); return err }
+	e.release = func() error {
+		err := errors.Join(pin.Close(), hostPin.Close())
+		owners.Lock()
+		delete(owners.ids, id)
+		owners.Unlock()
+		return err
+	}
 	e.run = func(ctx context.Context, op operation) ([]byte, error) {
 		current, err := namespaceID(int(pin.Fd()))
 		if err != nil || current != id {
+			return nil, ErrScope
+		}
+		anchor, err := namespaceID(int(hostPin.Fd()))
+		if err != nil || anchor != hostID || current == anchor {
 			return nil, ErrScope
 		}
 		if !trustedExecutable("/usr/bin/nsenter") || !trustedExecutable("/usr/bin/ip") {
@@ -101,6 +135,27 @@ func New(lifetime context.Context, namespace *os.File) (*Executor, error) {
 	}
 	ok = true
 	return e, nil
+}
+
+func validNamespaceBinding(target, host, self uint64) bool {
+	return target != 0 && host != 0 && self == host && target != host
+}
+
+func pinNamespace(source *os.File) (*os.File, uint64, error) {
+	if source == nil {
+		return nil, 0, ErrScope
+	}
+	fd, err := unix.FcntlInt(source.Fd(), unix.F_DUPFD_CLOEXEC, 3)
+	if err != nil {
+		return nil, 0, ErrScope
+	}
+	pin := os.NewFile(uintptr(fd), "andeiva-network-namespace")
+	id, err := namespaceID(fd)
+	if err != nil {
+		_ = pin.Close()
+		return nil, 0, err
+	}
+	return pin, id, nil
 }
 
 // namespaceCommand only constructs the allowlisted invocation. The owner checks

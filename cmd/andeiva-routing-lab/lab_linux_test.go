@@ -78,6 +78,14 @@ func TestTypedNetworkPlanUsesCanonicalLabPolicyAndReadback(t *testing.T) {
 	}
 }
 
+func TestHostAnchorOverrideAcceptsNoArbitraryDescriptorOrPath(t *testing.T) {
+	for _, input := range []string{"1", "3", "00", " 0", "/proc/1/ns/net", "/proc/self/fd/0", "-1"} {
+		if executor, err := newLabNetworkExecutor(context.Background(), nil, input); err == nil || executor != nil {
+			t.Fatal("nonliteral host override accepted", input)
+		}
+	}
+}
+
 func TestTypedNetworkCleanupRestoresBeforeClosingAndRetainsBothErrors(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		f := &fakeNetworkExecutor{}

@@ -127,9 +127,25 @@ type networkPlanExecutor interface {
 
 func applyTypedNetworkPlan(ctx context.Context, executor networkPlanExecutor) error {
 	if err := executor.Apply(ctx, routednft.LabPolicy().Network); err != nil {
-		return err
+		return fmt.Errorf("network plan apply: %w", err)
 	}
-	return executor.Verify(ctx)
+	if err := executor.Verify(ctx); err != nil {
+		return fmt.Errorf("network plan verify: %w", err)
+	}
+	return nil
+}
+
+// The only override is an already-open FD 0 from the root-owned lab service
+// definition, never an arbitrary descriptor number or a path from a caller.
+func newLabNetworkExecutor(ctx context.Context, target *os.File, hostAnchorFD string) (*networkexecutor.Executor, error) {
+	switch hostAnchorFD {
+	case "":
+		return networkexecutor.New(ctx, target)
+	case "0":
+		return networkexecutor.NewWithHost(ctx, target, os.Stdin)
+	default:
+		return nil, networkexecutor.ErrScope
+	}
 }
 
 func closeTypedNetworkPlan(executor networkPlanExecutor) error {
@@ -498,10 +514,10 @@ func lab(ctx context.Context, withFlows bool) (result error) {
 	// runs after restoration, but before the earlier namespace cleanup defer.
 	supervisorCtx, stopSupervisor := context.WithCancel(context.Background())
 	defer stopSupervisor()
-	network, e := networkexecutor.New(supervisorCtx, pin)
+	network, e := newLabNetworkExecutor(supervisorCtx, pin, os.Getenv("ANDEIVA_LAB_HOST_ANCHOR_FD"))
 	closeErr := pin.Close() // New owns a duplicated descriptor, not this caller pin.
 	if e != nil {
-		return errors.Join(e, closeErr)
+		return fmt.Errorf("network executor constructor: %w", errors.Join(e, closeErr))
 	}
 	applied := false
 	defer func() {

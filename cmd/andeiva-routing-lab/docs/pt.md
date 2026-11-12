@@ -8,6 +8,14 @@ Veth, MAC, estado dos enlaces, rotas dos pares e IPv6 continuam como preparaçã
 do fixture. Mantém testes TCP/UDP, SNAT, negação, revogação, IPv6 e conntrack
 observado opcional. Nenhum namespace adicional é criado.
 
+A unidade do laboratório de root com capacidades mínimas aceita somente o opt-in
+literal `ANDEIVA_LAB_HOST_ANCHOR_FD=0`. O gestor fornece FD 0 por
+`StandardInput=file:/proc/1/ns/net` antes de reduzir privilégios; o runner usa
+`NewWithHost` com `os.Stdin`. Outros números ou caminhos são rejeitados. Sem opt-in
+mantém `New` e o controle de PID 1. Não adiciona SYS_PTRACE, aceita identidades de
+host do chamador ou reduz controles. Erros identificam constructor, apply e verify
+com etapas do laboratório em inglês.
+
 `Apply` e `Verify` devem passar antes do tráfego. Ao sair: parar processos filhos,
 `Restore` com verificação do snapshot IPv4 controlado, `Close` e por último limpar
 namespaces próprios. A restauração mantém a vida do supervisor mesmo quando a

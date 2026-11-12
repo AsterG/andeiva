@@ -12,6 +12,16 @@ until `Restore` completes. This authority must never come from an HTTP caller.
 The process permits one owner per namespace; external exclusivity remains the
 supervisor's responsibility. A process crash loses the in-memory recovery plan.
 
+`NewWithHost(supervisorLifetime, targetFD, trustedHostFD)` supports a service
+manager opening the host anchor before restricting privileges. Both descriptors
+are duplicated and validated as nsfs network namespaces; host must equal the
+supervisor's current namespace and target must differ. Closing caller descriptors
+does not invalidate the owned pins. Trusted service assembly must establish host
+provenance; an inode alone cannot prove it. Never obtain this capability from HTTP,
+untrusted IPC or arbitrary descriptor/path input. `New` retains the default
+`/proc/1/ns/net` anchor check and fails if that path is inaccessible; no additional
+capability or weakened host guard is introduced to bypass such failure.
+
 `Apply` accepts a canonical `networkplan.Revision` with static IPv4, DNS mode
 `none`, and ordinary subnets with prefix lengths 1–30. Every link must initially
 have zero IPv4 addresses and every IPv4 route table must be empty, including

@@ -12,6 +12,15 @@ recuperación hasta terminar `Restore`. Esta autoridad nunca procede de HTTP.
 Se admite un propietario por namespace dentro del proceso; el supervisor garantiza
 la exclusividad externa. Un cierre abrupto pierde el plan en memoria.
 
+`NewWithHost(supervisorLifetime, targetFD, trustedHostFD)` admite un descriptor de
+host abierto por el gestor de servicios antes de restringir privilegios. Duplica
+ambos y verifica nsfs/tipo de red, host igual al namespace actual del supervisor
+y destino distinto del host. Cerrar los descriptores del llamador no invalida los
+propios. El ensamblaje confiable establece la procedencia del host; un inodo no
+la demuestra. Nunca aceptar esta autoridad desde HTTP, IPC no confiable o rutas/
+descriptores arbitrarios. `New` conserva el control de `/proc/1/ns/net` y rechaza
+si es inaccesible; no se agregan capacidades ni se debilita el control del host.
+
 `Apply` requiere una revisión canónica `networkplan.Revision`, IPv4 estático,
 DNS `none` y prefijos 1–30. Ningún enlace puede tener direcciones IPv4 previas y
 todas las tablas de rutas IPv4 deben estar vacías, incluso loopback/local.

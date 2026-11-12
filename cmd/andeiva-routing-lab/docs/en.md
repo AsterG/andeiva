@@ -8,6 +8,14 @@ recovery lifetime. Veth creation, MAC/link state, peer routes and IPv6 setup rem
 fixture setup. Existing TCP/UDP, SNAT, deny, revocation, IPv6 and optional observed
 conntrack checks remain in place. No additional namespaces are created.
 
+For the root-owned laboratory unit with minimal capabilities, the only opt-in is
+the literal `ANDEIVA_LAB_HOST_ANCHOR_FD=0`. The service manager must supply FD 0
+from `StandardInput=file:/proc/1/ns/net` before dropping privileges; the runner then
+uses `NewWithHost` with `os.Stdin`. Arbitrary descriptor numbers and paths are
+rejected. The default still uses `New` and its PID 1 anchor check. This does not
+add SYS_PTRACE, accept a caller-supplied namespace identity or relax host checks.
+Constructor, apply and verify failures carry distinct English laboratory stages.
+
 `Apply` and `Verify` must succeed before traffic tests. On exit, child processes
 stop first; `Restore` verifies the original controlled IPv4 snapshot, `Close`
 releases the pin, and namespace cleanup runs last. Restoration uses the supervisor
