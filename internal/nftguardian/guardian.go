@@ -99,6 +99,10 @@ func (g *Guardian) expire() {
 func (g *Guardian) Apply(ctx context.Context, r configpoc.Revision) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.applyLocked(ctx, r)
+}
+
+func (g *Guardian) applyLocked(ctx context.Context, r configpoc.Revision) error {
 	if g.closed || !valid(r) {
 		return ErrLease
 	}
@@ -156,6 +160,10 @@ func (g *Guardian) Apply(ctx context.Context, r configpoc.Revision) error {
 func (g *Guardian) Confirm(id, hash string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.confirmLocked(id, hash)
+}
+
+func (g *Guardian) confirmLocked(id, hash string) error {
 	g.expire()
 	// Retain the exact confirmed lease for lost-ack reconciliation. An idle
 	// phase alone is not proof that this transaction was confirmed.
