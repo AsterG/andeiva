@@ -127,6 +127,10 @@ func v2AreaWithAccess(area *os.Root, budget v2Budget, beforeLock func() error, a
 	if area == nil || budget.Bytes < 4*v2OperationReserveBytes || budget.Bytes > 1<<40 || budget.Inodes < 256 || budget.Inodes > 1<<26 {
 		return nil, errV2Invalid
 	}
+	if access != nil {
+		pinned := *access
+		access = &pinned
+	}
 	s := &v2Store{root: area, budget: budget, access: access}
 	// This preflight prevents creating a lock in a foreign layout. Its counts
 	// are not authoritative: an active writer can change the store afterwards.

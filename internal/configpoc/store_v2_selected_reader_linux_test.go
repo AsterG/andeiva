@@ -210,3 +210,16 @@ func TestSelectedReaderV2RevalidationRejectsPoolAndSelectionChange(t *testing.T)
 		})
 	}
 }
+
+func TestSelectedReaderV2ResourceSample(t *testing.T) {
+	r, _, _ := selectedReaderFixtureV2(t)
+	result := testing.Benchmark(func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := r.Observe(context.Background()); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	t.Logf("selected reader temporary-store sample: %s; %s; allocation volume, not appliance RSS", result.String(), result.MemString())
+}

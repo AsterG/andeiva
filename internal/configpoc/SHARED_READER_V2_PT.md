@@ -33,3 +33,5 @@ go build ./cmd/... ./internal/...
 ```
 
 Os testes usam registros temporários reais, conversão explícita das permissões do fixture e intents publicados pelo coordenador; preparação/efeitos são doubles de teste. Não comprovam integração do appliance com três identidades, rede host, IPC completo ou instalação resistente a falhas de energia. Evidência nativa e medições de recursos são relatadas separadamente.
+
+Uma amostra de dez iterações em WSL/Go 1.27.4 de `Observe` sobre fixture temporário migrado mediu 20,737 ms/op, 7.885.193 B/op e 62.973 alocações/op, incluindo G1 e captura/revalidação de reservas. São volume de alocações e latência do fixture, não heap retido, RSS do appliance, capacidade ou meta de produção.

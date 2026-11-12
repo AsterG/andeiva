@@ -33,3 +33,5 @@ go build ./cmd/... ./internal/...
 ```
 
 Tests use actual temporary records, explicit fixture permission conversion and selected coordinator intents; preparation/effects are test doubles. They do not establish three-identity appliance integration, host networking, full IPC availability or crash-safe installation. Native integration and resource measurements must be reported separately.
+
+A ten-iteration WSL/Go 1.27.4 sample of `Observe` over a temporary migrated fixture measured 20.737 ms/op, 7,885,193 B/op and 62,973 allocations/op. This includes G1 and reserve capture/revalidation. These are allocation volume and fixture latency, not retained heap, appliance RSS, throughput or a production sizing target.

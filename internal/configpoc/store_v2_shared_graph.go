@@ -30,8 +30,8 @@ func (r *v2ReachabilityReader) sharedDirectoryV2() (*os.File, os.FileInfo, error
 }
 
 // Read the same typed G1 graph through the shared filesystem validator. Budgets
-// are charged before allocation; 64 reserves a conservative syscall envelope
-// for metadata, ACL, readback and close within the two bounded helper calls.
+// are charged before allocation; 64 charges the bounded profile validation,
+// metadata, ACL and readback operations. It is not kernel syscall telemetry.
 func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]byte, func(), error) {
 	noop := func() {}
 	if r.shared == nil || limit < 1 || limit > v2ObjectLimit || r.ctx.Err() != nil {

@@ -120,6 +120,11 @@ func (r *RoutedSelectionReaderV2) read(ctx context.Context) (*selectedViewV2, er
 		ref.WorkHash, ref.Mode = intent.RoutedWork, "intent"
 	} else if s.state.Configuration.Pending != nil {
 		ref.Mode = "pending"
+		_, pendingWork, err := selectedPendingReadbackV2(s)
+		if err != nil {
+			return nil, err
+		}
+		ref.WorkHash = pendingWork
 	} else if active := s.state.RoutedActive; active != nil {
 		ref.WorkHash, ref.Mode = active.Work, "active"
 	}
@@ -181,6 +186,11 @@ func (r *RoutedSelectionReaderV2) Resolve(ctx context.Context, reference Selecti
 	switch reference.Mode {
 	case "intent":
 		plan, err = selectedRoutedPlanFromStoreV2(s, r.options.Identity)
+	case "pending":
+		plan, _, err = selectedPendingReadbackV2(s)
+		if err == nil && plan.Scope().Identity != r.options.Identity {
+			return RoutedSelectedPlanV1{}, ErrRecovery
+		}
 	case "active":
 		if s.state.Configuration.RecoveryRequired {
 			return plan, ErrRecovery
@@ -214,7 +224,7 @@ func selectedPurposeV2(s *v2Store, plan RoutedSelectedPlanV1, purpose RoutedSele
 	cfg := s.state.Configuration
 	in := cfg.Intent
 	if purpose == SelectionMatchBeforeV2 || purpose == SelectionMatchTargetV2 {
-		return in != nil || cfg.Pending == nil && s.state.RoutedActive != nil
+		return in != nil || s.state.RoutedActive != nil || cfg.Pending != nil
 	}
 	if purpose == SelectionResumeV2 {
 		return in == nil && cfg.Pending == nil && !cfg.RecoveryRequired && s.state.RoutedActive != nil
@@ -249,6 +259,25 @@ func selectedPurposeV2(s *v2Store, plan RoutedSelectedPlanV1, purpose RoutedSele
 	default:
 		return false
 	}
+}
+
+// Pending work is readback-only. Its original selected plan is retained by the
+// pinned operation and reserve; a prior Active plan cannot stand in for it.
+func selectedPendingReadbackV2(s *v2Store) (RoutedSelectedPlanV1, string, error) {
+	p := s.state.Configuration.Pending
+	if p == nil || p.Domain != "routed" || s.state.Configuration.Intent != nil || s.state.Configuration.RecoveryRequired {
+		return RoutedSelectedPlanV1{}, "", ErrRecovery
+	}
+	op, err := s.lookupRetained(p.Owner, p.OriginCommit)
+	if err != nil || op.Domain != "routed" || op.State != "final" || !op.Pinned || op.Reserve == nil || op.Reserve.PlanIntent == nil {
+		return RoutedSelectedPlanV1{}, "", ErrRecovery
+	}
+	hash := op.Reserve.PlanIntent.RoutedWork
+	plan, err := loadRoutedWorkV2(hash, s.state.Lineage, s.readObject)
+	if err != nil || validateRoutedWorkIntentV2(op.Reserve.PlanIntent, plan, s.readObject) != nil || plan.work.Operation != p.OriginCommit || plan.work.Subject != p.Owner || plan.Lease() != p.Lease || !plan.Deadline().Equal(p.Deadline) || plan.work.Transition.Previous != p.Previous || plan.target.Composite.Hash != p.Target {
+		return RoutedSelectedPlanV1{}, "", ErrRecovery
+	}
+	return plan, hash, nil
 }
 
 // RoutedPrepareViewV2 is readonly input for physical preparation, never a
