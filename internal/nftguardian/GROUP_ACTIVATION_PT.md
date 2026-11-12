@@ -18,6 +18,13 @@ fica vazio no baseline físico frio; digest de artefato não substitui hash de
 configuração. Root deve selecionar plano real e recursos antes da chamada.
 Fences R2/legacy permanecem; bootstrap relativo não se torna compatível.
 
+`ArmUntilLease` separa ID da operação e ID da lease. O método frio confirmado
+`ArmBootstrapUntilLease` arma sem Apply nem configuração anterior inventada.
+ValidatePlan recebe previous nil e verifica a janela original de 30–120 segundos
+e o deadline do Pending selecionado. Consome somente o intervalo restante;
+não aplica a regra de dez segundos de Boot. ApplyLease continua separado e exige
+o receipt exato com seu ID de lease distinto.
+
 `ArmUntil` vincula before/target completo já verificado e seu escopo de artefatos.
 `ApplyLease`, `ConfirmLease`, `RecoverLease` e `MatchObserved` comparam transição
 armazenada e receipt exato. Um Confirm exige readback completo do target físico

@@ -324,6 +324,73 @@ func TestGroupZeroAndNilCloseReject(t *testing.T) {
 	}
 }
 
+func TestGroupColdConfirmedLeaseUsesOriginalPendingDeadlineAndDistinctID(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		g, e, target, plan, _ := coldGroup(t)
+		defer g.Close()
+		deadline := time.Now().UTC().Add(90 * time.Second)
+		e.selectPlan(plan, "", target.Composite.Hash, deadline, true)
+		time.Sleep(25 * time.Second)
+		if err := g.ArmBootstrapUntilLease(context.Background(), plan, "confirmed-lease", target, deadline); err != nil {
+			t.Fatal(err)
+		}
+		state, hash, err := g.SnapshotObserved()
+		if err != nil || hash != "" || state.ID != "confirmed-lease" || state.ID == plan.Operation || state.Previous != "" || !state.Deadline.Equal(deadline) || e.applyCount != 0 {
+			t.Fatal("cold confirmed arm invented previous or applied", state, hash, err)
+		}
+		bad := state
+		bad.ID = plan.Operation
+		if g.ApplyLease(context.Background(), plan, target, bad) == nil || e.applyCount != 0 {
+			t.Fatal("operation ID substituted for lease")
+		}
+		if g.ApplyLease(context.Background(), plan, target, state) != nil {
+			t.Fatal("apply")
+		}
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+		observed, current, err := g.SnapshotObserved()
+		if err != nil || observed.Phase != "pending" || current != target.Composite.Hash {
+			t.Fatal("boot ten-second timer replaced confirmed deadline")
+		}
+		time.Sleep(55 * time.Second)
+		synctest.Wait()
+		observed, current, err = g.SnapshotObserved()
+		owned, ownedErr := e.ObserveOwned(context.Background())
+		if err != nil || ownedErr != nil || observed.Phase != "expired" || current != "" || owned != plan.BeforeOwned {
+			t.Fatal("original confirmed expiry did not restore physical before")
+		}
+	})
+}
+
+func TestGroupColdConfirmedRejectsChangedScopeDeadlineAndExistingCurrent(t *testing.T) {
+	for _, kind := range []string{"deadline", "before", "current", "lease", "nonutc", "too-long"} {
+		synctest.Test(t, func(t *testing.T) {
+			g, e, target, plan, _ := coldGroup(t)
+			defer g.Close()
+			deadline := time.Now().UTC().Add(time.Minute)
+			e.selectPlan(plan, "", target.Composite.Hash, deadline, true)
+			lease := "lease"
+			switch kind {
+			case "deadline":
+				deadline = deadline.Add(time.Nanosecond)
+			case "before":
+				e.owned = strings.Repeat("f", 64)
+			case "current":
+				e.hash = target.Composite.Hash
+			case "lease":
+				lease = ""
+			case "nonutc":
+				deadline = deadline.In(time.FixedZone("offset", 3600))
+			case "too-long":
+				deadline = time.Now().UTC().Add(121 * time.Second)
+			}
+			if g.ArmBootstrapUntilLease(context.Background(), plan, lease, target, deadline) == nil || e.applyCount != 0 || g.state.Phase != "bootstrap" {
+				t.Fatal("invalid cold confirmed scope armed", kind)
+			}
+		})
+	}
+}
+
 func TestGroupSameHashStillOwnsOneReceipt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		g, e, previous := confirmedGroup(t)

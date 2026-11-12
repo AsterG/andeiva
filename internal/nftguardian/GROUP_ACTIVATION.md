@@ -19,6 +19,13 @@ stays separate from configuration hashes. The Root coordinator must select the
 real plan and resources before calling it. Existing R2/legacy bootstrap fences
 are untouched; the relative legacy bootstrap adapter is not made compatible.
 
+`ArmUntilLease` keeps operation and lease IDs distinct. The narrow cold-confirmed
+`ArmBootstrapUntilLease` arms without Apply or an invented previous configuration.
+ValidatePlan receives nil previous and must validate the selected Pending's
+original 30–120 second confirmation window/deadline. The timer consumes only the
+remaining interval; it never applies the boot ten-second rule. ApplyLease remains
+separate and requires the exact distinct lease receipt.
+
 `ArmUntil` binds an already verified complete previous/target pair and artifact
 scope. `ApplyLease`, `ConfirmLease`, `RecoverLease` and `MatchObserved` compare the
 stored transition and exact receipt. One Confirm requires full target-owned and

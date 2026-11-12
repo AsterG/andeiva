@@ -94,12 +94,17 @@ func (g *Group) BootstrapStartup(ctx context.Context, plan configpoc.RoutedTrans
 
 // ArmUntil binds a complete before/target pair to one exact absolute receipt.
 func (g *Group) ArmUntil(ctx context.Context, plan configpoc.RoutedTransitionV1, previous, target configpoc.RoutedActivationBundleV1, deadline time.Time) error {
+	return g.ArmUntilLease(ctx, plan, plan.Operation, previous, target, deadline)
+}
+
+// ArmUntilLease keeps the coordinator's lease ID distinct from its operation ID.
+func (g *Group) ArmUntilLease(ctx context.Context, plan configpoc.RoutedTransitionV1, leaseID string, previous, target configpoc.RoutedActivationBundleV1, deadline time.Time) error {
 	if g == nil || ctx == nil {
 		return ErrLease
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closed || g.engine == nil || g.state.Phase != "idle" || !plan.ValidShape() || deadline.IsZero() || deadline.Location() != time.UTC || deadline.Sub(time.Now()) > g.maxTTL {
+	if g.closed || g.engine == nil || g.state.Phase != "idle" || !plan.ValidShape() || len(leaseID) < 1 || len(leaseID) > 64 || deadline.IsZero() || deadline.Location() != time.UTC || deadline.Sub(time.Now()) > g.maxTTL {
 		return ErrLease
 	}
 	previous, err := configpoc.CanonicalRoutedActivationBundleV1(previous)
@@ -115,8 +120,35 @@ func (g *Group) ArmUntil(ctx context.Context, plan configpoc.RoutedTransitionV1,
 	if bounded.Err() != nil || g.engine.Current() != previous.Composite.Hash || g.engine.ValidatePlan(bounded, plan, &previous, target, deadline) != nil || !g.ownedMatches(bounded, plan.BeforeOwned) || bounded.Err() != nil {
 		return ErrLease
 	}
-	return g.armUntilLocked(plan.Operation, previous.Composite.Hash, target.Composite.Hash, deadline, func() {
+	return g.armUntilLocked(leaseID, previous.Composite.Hash, target.Composite.Hash, deadline, func() {
 		g.plan, g.previous, g.target, g.cold = plan, previous, target, false
+	}, g.expire)
+}
+
+// ArmBootstrapUntilLease arms a first confirmed activation without inventing an
+// effective previous bundle. ValidatePlan must prove the selected Pending's
+// original confirmed deadline/window; this method neither resets it nor applies
+// the ten-second boot window. ApplyLease remains a separate, exact-CAS operation.
+func (g *Group) ArmBootstrapUntilLease(ctx context.Context, plan configpoc.RoutedTransitionV1, leaseID string, target configpoc.RoutedActivationBundleV1, deadline time.Time) error {
+	if g == nil || ctx == nil {
+		return ErrLease
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed || g.engine == nil || g.state.Phase != "bootstrap" || !plan.ValidShape() || len(leaseID) < 1 || len(leaseID) > 64 || deadline.IsZero() || deadline.Location() != time.UTC || deadline.Sub(time.Now()) > g.maxTTL {
+		return ErrLease
+	}
+	target, err := configpoc.CanonicalRoutedActivationBundleV1(target)
+	if err != nil {
+		return ErrLease
+	}
+	bounded, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	if bounded.Err() != nil || g.engine.Current() != "" || g.engine.ValidatePlan(bounded, plan, nil, target, deadline) != nil || !g.ownedMatches(bounded, plan.BeforeOwned) || bounded.Err() != nil {
+		return ErrLease
+	}
+	return g.armUntilLocked(leaseID, "", target.Composite.Hash, deadline, func() {
+		g.plan, g.previous, g.target, g.cold = plan, configpoc.RoutedActivationBundleV1{}, target, true
 	}, g.expire)
 }
 
