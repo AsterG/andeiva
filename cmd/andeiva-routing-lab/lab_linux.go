@@ -21,8 +21,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AsterG/andeiva/internal/jsoncheck"
 	"github.com/AsterG/andeiva/internal/networkinventory"
 	"github.com/AsterG/andeiva/internal/networkplan"
+	"github.com/AsterG/andeiva/internal/routedflow"
 	"github.com/AsterG/andeiva/internal/routednft"
 )
 
@@ -167,6 +169,14 @@ func run(args []string) error {
 		return errLab
 	}
 	switch args[0] {
+	case "--observe-current-flows":
+		ctx, cancel := context.WithTimeout(context.Background(), routedflow.DumpTimeout)
+		defer cancel()
+		snapshot, e := routedflow.Collect(ctx)
+		if e != nil {
+			return e
+		}
+		return json.NewEncoder(os.Stdout).Encode(snapshot)
 	case "--binding-check":
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -204,7 +214,7 @@ func run(args []string) error {
 		return nil
 	case "--hold":
 		return hold()
-	case "--run-isolated-lab":
+	case "--run-isolated-lab", "--run-isolated-lab-with-flows":
 		release, e := os.ReadFile("/etc/os-release")
 		if e != nil || runtime.GOARCH != "amd64" || os.Geteuid() != 0 || !bytes.Contains(release, []byte("ID=debian\n")) || !bytes.Contains(release, []byte("VERSION_ID=\"13\"")) {
 			return errLab
@@ -213,7 +223,7 @@ func run(args []string) error {
 		defer stop()
 		ctx, cancel := context.WithTimeout(signalCtx, 55*time.Second)
 		defer cancel()
-		return lab(ctx)
+		return lab(ctx, args[0] == "--run-isolated-lab-with-flows")
 	default:
 		return errLab
 	}
@@ -359,7 +369,7 @@ func (c *child) line(want string) error {
 	return nil
 }
 
-func lab(ctx context.Context) (result error) {
+func lab(ctx context.Context, withFlows bool) (result error) {
 	hostNft, e := command(ctx, nil, nftPath, "-j", "-s", "list", "ruleset")
 	if e != nil {
 		return e
@@ -495,6 +505,23 @@ func lab(ctx context.Context) (result error) {
 		}
 		fmt.Printf("PASS %s SNAT peer=%s\n", mode, strings.TrimSpace(string(out)))
 	}
+	if withFlows {
+		if e = t.bindingCheck(ctx); e != nil {
+			return e
+		}
+		observed, e := gw.exec(ctx, nil, self, "--observe-current-flows")
+		if e != nil {
+			return e
+		}
+		if _, e = decodeSNATFlowSnapshot(observed); e != nil {
+			return e
+		}
+		if _, e = adapter.Inspect(ctx); e != nil {
+			return e
+		}
+		fmt.Printf("FLOW_OBSERVATION %s\n", bytes.TrimSpace(observed))
+		fmt.Println("PASS current-namespace TCP/UDP conntrack tuples prove observed SNAT")
+	}
 	if _, e = lan.exec(ctx, nil, self, "--probe-related"); e != nil {
 		return e
 	}
@@ -600,6 +627,58 @@ func lab(ctx context.Context) (result error) {
 	}
 	fmt.Println(string(encoded))
 	return nil
+}
+
+// The child is this reviewed executable in the owned gateway namespace. Treat
+// even that bounded output as an observation, never as permission to forward.
+func decodeSNATFlowSnapshot(data []byte) (routedflow.Snapshot, error) {
+	if len(data) == 0 || len(data) > routednft.MaxObservation || !jsoncheck.UniqueControlFields(data) {
+		return routedflow.Snapshot{}, errLab
+	}
+	var snapshot routedflow.Snapshot
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if d.Decode(&snapshot) != nil || d.Decode(new(any)) != io.EOF || snapshot.SchemaVersion != 1 || snapshot.Flows == nil || len(snapshot.Flows) > routedflow.MaxFlows || snapshot.SkippedOtherProtocols < 0 || snapshot.SkippedOtherProtocols > routedflow.MaxMessages || snapshot.StartedAt.IsZero() || snapshot.FinishedAt.Before(snapshot.StartedAt) {
+		return routedflow.Snapshot{}, errLab
+	}
+	seenTCP, seenUDP := false, false
+	for _, flow := range snapshot.Flows {
+		if !coherentFlow(flow) {
+			return routedflow.Snapshot{}, errLab
+		}
+		port := uint16(18080)
+		if flow.Original.Protocol == "udp" {
+			port = 18081
+		}
+		if flow.Original.Source.Address.String() != "198.18.0.2" || flow.Original.Source.Port < 1024 || flow.Original.Destination.Address.String() != "198.19.0.2" || flow.Original.Destination.Port != port {
+			continue
+		}
+		if flow.Reply.Source.Address.String() != "198.19.0.2" || flow.Reply.Source.Port != port || flow.Reply.Destination.Address.String() != "198.19.0.1" || flow.Reply.Destination.Port == 0 || !flow.SourceChanged || flow.DestinationChanged {
+			return routedflow.Snapshot{}, errLab
+		}
+		if flow.Original.Protocol == "tcp" {
+			seenTCP = true
+		} else {
+			seenUDP = true
+		}
+	}
+	if !seenTCP || !seenUDP {
+		return routedflow.Snapshot{}, errLab
+	}
+	return snapshot, nil
+}
+
+func coherentFlow(flow routedflow.Flow) bool {
+	protocol := flow.Original.Protocol
+	if protocol != "tcp" && protocol != "udp" {
+		return false
+	}
+	for _, tuple := range []routedflow.Tuple{flow.Original, flow.Reply, flow.ForwardTranslated, flow.ReplyTranslated} {
+		if tuple.Protocol != protocol || !tuple.Source.Address.Is4() || !tuple.Destination.Address.Is4() {
+			return false
+		}
+	}
+	return flow.ForwardTranslated.Source == flow.Reply.Destination && flow.ForwardTranslated.Destination == flow.Reply.Source && flow.ReplyTranslated.Source == flow.Original.Destination && flow.ReplyTranslated.Destination == flow.Original.Source && flow.SourceChanged == (flow.Original.Source != flow.ForwardTranslated.Source) && flow.DestinationChanged == (flow.Original.Destination != flow.ForwardTranslated.Destination)
 }
 
 // Both the namespace launcher and its inner executable use this fixed allowlist.
