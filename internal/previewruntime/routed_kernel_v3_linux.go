@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/AsterG/andeiva/internal/firewallnft"
@@ -22,11 +23,13 @@ func newRoutedKernelV3(m Metadata) (*routedKernelV3, error) {
 	if m.Validate() != nil {
 		return nil, ErrIdentity
 	}
-	current, err := namespaceID("/proc/self/ns/net")
-	if err != nil || current != m.GatewayNamespace || current == m.HostNamespace {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	k := &routedKernelV3{namespace: m.GatewayNamespace, host: m.HostNamespace}
+	if !k.bound() {
 		return nil, ErrIdentity
 	}
-	return &routedKernelV3{namespace: current, host: m.HostNamespace}, nil
+	return k, nil
 }
 
 func routedKernelCommandV3(ctx context.Context, operation string, table routedactivation.Table) (*exec.Cmd, error) {
@@ -57,12 +60,26 @@ func (k *routedKernelV3) bound() bool {
 	if k == nil || k.namespace == 0 || k.host == 0 || k.namespace == k.host {
 		return false
 	}
-	actual, err := namespaceID("/proc/self/ns/net")
-	return err == nil && actual == k.namespace
+	leader, err := namespaceID("/proc/self/ns/net")
+	if err != nil {
+		return false
+	}
+	thread, err := namespaceID("/proc/thread-self/ns/net")
+	return err == nil && k.matchesNamespaces(leader, thread)
+}
+
+func (k *routedKernelV3) matchesNamespaces(leader, thread uint64) bool {
+	return k != nil && k.namespace != 0 && k.host != 0 && k.namespace != k.host && leader == k.namespace && thread == k.namespace
 }
 
 func (k *routedKernelV3) execute(parent context.Context, operation string, table routedactivation.Table, input []byte) ([]byte, error) {
-	if parent == nil || parent.Err() != nil || !k.bound() || len(input) > routedactivation.MaxBatch || ((operation == "check" || operation == "apply") && len(input) == 0) || (operation != "check" && operation != "apply" && len(input) != 0) {
+	if parent == nil || parent.Err() != nil || len(input) > routedactivation.MaxBatch || ((operation == "check" || operation == "apply") && len(input) == 0) || (operation != "check" && operation != "apply" && len(input) != 0) {
+		return nil, ErrUnavailable
+	}
+	// exec inherits the launching thread's namespace, not necessarily the leader's.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if !k.bound() {
 		return nil, ErrUnavailable
 	}
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)

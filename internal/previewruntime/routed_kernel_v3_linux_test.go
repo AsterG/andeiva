@@ -53,3 +53,19 @@ func TestRoutedKernelV3RejectsHostOrUnboundExecution(t *testing.T) {
 		t.Fatal("untrusted namespace metadata accepted")
 	}
 }
+
+func TestRoutedKernelV3RequiresBothLeaderAndLaunchingThread(t *testing.T) {
+	k := &routedKernelV3{namespace: 42, host: 11}
+	for _, observed := range [][2]uint64{{42, 11}, {11, 42}, {42, 0}, {0, 42}, {11, 11}, {43, 43}} {
+		if k.matchesNamespaces(observed[0], observed[1]) {
+			t.Fatal("different launching or leader namespace accepted", observed)
+		}
+	}
+	if !k.matchesNamespaces(42, 42) {
+		t.Fatal("exact namespace pair rejected")
+	}
+	k.host = k.namespace
+	if k.matchesNamespaces(42, 42) {
+		t.Fatal("host namespace accepted")
+	}
+}
