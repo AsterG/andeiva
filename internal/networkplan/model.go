@@ -101,11 +101,20 @@ func validRole(role Role) bool { return role == WAN || role == LAN || role == Ma
 // validates only static facts. It does not establish DHCP, free addresses,
 // listeners, reachability or permission to change a live management interface.
 func Canonical(input Config) (Revision, error) {
-	if input.SchemaVersion != SchemaVersion || input.IPv6Forwarding != "deny" {
-		return Revision{}, invalid("SCHEMA", "schema_version/ipv6_forwarding")
+	if input.SchemaVersion != SchemaVersion {
+		return Revision{}, invalid("SCHEMA", "schema_version")
 	}
-	if len(input.Interfaces) < 2 || len(input.Interfaces) > MaxInterfaces || len(input.Zones) < 2 || len(input.Zones) > MaxZones || len(input.DNS.Servers) > 4 {
-		return Revision{}, invalid("LIMIT", "interfaces/zones")
+	if input.IPv6Forwarding != "deny" {
+		return Revision{}, invalid("SCHEMA", "ipv6_forwarding")
+	}
+	if len(input.Interfaces) < 2 || len(input.Interfaces) > MaxInterfaces {
+		return Revision{}, invalid("LIMIT", "interfaces")
+	}
+	if len(input.Zones) < 2 || len(input.Zones) > MaxZones {
+		return Revision{}, invalid("LIMIT", "zones")
+	}
+	if len(input.DNS.Servers) > 4 {
+		return Revision{}, invalid("LIMIT", "dns.servers")
 	}
 	config := input
 	config.Interfaces = slices.Clone(input.Interfaces)
@@ -131,8 +140,14 @@ func Canonical(input Config) (Revision, error) {
 		if !identifier.MatchString(iface.ID) || !validRole(iface.Role) || zones[iface.Zone] != iface.Role {
 			return Revision{}, invalid("INTERFACE", field)
 		}
-		if len(iface.Binding.HardwareAddress) > 64 || len(iface.IPv4.Address) > 18 || len(iface.IPv4.Gateway) > 15 {
-			return Revision{}, invalid("LIMIT", field)
+		if len(iface.Binding.HardwareAddress) > 64 {
+			return Revision{}, invalid("LIMIT", field+".binding.hardware_address")
+		}
+		if len(iface.IPv4.Address) > 18 {
+			return Revision{}, invalid("LIMIT", field+".ipv4.address")
+		}
+		if len(iface.IPv4.Gateway) > 15 {
+			return Revision{}, invalid("LIMIT", field+".ipv4.gateway")
 		}
 		if !interfaceName.MatchString(iface.Binding.Name) || iface.Binding.Name == "lo" {
 			return Revision{}, invalid("BINDING", field+".binding")
