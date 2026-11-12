@@ -25,7 +25,7 @@ var configurationText = map[string][3]string{
 
 func configurationCommand(input string) (string, bool) {
 	match := ""
-	for _, command := range []string{"status", "stage", "validate", "commit", "confirm", "save", "rollback", "operation", "execute", "audit", "help"} {
+	for _, command := range []string{"status", "stage", "replace-candidate", "discard-candidate", "validate", "commit", "confirm", "save", "rollback", "operation", "execute", "audit", "help"} {
 		if command == input {
 			return command, true
 		}
@@ -37,6 +37,40 @@ func configurationCommand(input string) (string, bool) {
 		}
 	}
 	return match, match != ""
+}
+
+func configurationOperationIDV2(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalConfigurationRequestV2(input configpoc.Config) (configpoc.Revision, error) {
+	switch input.SchemaVersion {
+	case 4:
+		// Policy-only configuration has no desired network plan.
+		return configpoc.Canonical(input)
+	case 6:
+		if input.Routed == nil {
+			return configpoc.Revision{}, adminclient.ErrConfiguration
+		}
+		policy := *input.Routed
+		input.Routed = &policy
+		network, err := networkplan.Canonical(input.Routed.Network.Config)
+		if err != nil {
+			return configpoc.Revision{}, adminclient.ErrConfiguration
+		}
+		input.Routed.Network = network
+		return configpoc.CanonicalRouted(input)
+	default:
+		return configpoc.Revision{}, adminclient.ErrConfiguration
+	}
 }
 
 func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -59,9 +93,10 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 	}
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] != "" && strings.HasPrefix("help", args[0])) {
 		fmt.Fprintln(stdout, copy[0])
-		fmt.Fprintln(stdout, "andeiva configuration <status|stage|validate|commit|confirm|save|rollback|operation|execute|audit>")
+		fmt.Fprintln(stdout, "andeiva configuration <status|stage|replace-candidate|discard-candidate|validate|commit|confirm|save|rollback|operation|execute|audit>")
 		fmt.Fprintln(stdout, "  --url https://HOST:PORT --ca-file FILE --credentials-file FILE")
 		fmt.Fprintln(stdout, "  stage --request-file - | commit [--confirm-seconds 30..120]")
+		fmt.Fprintln(stdout, "  replace-candidate --expected-candidate-stage ID --request-file - | discard-candidate --expected-candidate-stage ID")
 		fmt.Fprintln(stdout, "  confirm --origin OPERATION --target REVISION | rollback --target REVISION [--confirm-seconds 30..120]")
 		fmt.Fprintln(stdout, "  operation --operation-id ID | execute --operation-id ID")
 		fmt.Fprintln(stdout, "  audit [--before SEQUENCE] [--limit 1..100]")
@@ -79,7 +114,7 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 		}
 		key := args[i]
 		switch key {
-		case "--url", "--ca-file", "--credentials-file", "--request-file", "--confirm-seconds", "--target", "--origin", "--operation-id", "--before", "--limit":
+		case "--url", "--ca-file", "--credentials-file", "--request-file", "--expected-candidate-stage", "--confirm-seconds", "--target", "--origin", "--operation-id", "--before", "--limit":
 		default:
 			return fail(nil)
 		}
@@ -92,8 +127,9 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 		return fail(nil)
 	}
 	for flag, allowed := range map[string]bool{
-		"--request-file": command == "stage", "--confirm-seconds": command == "commit" || command == "rollback",
-		"--target": command == "confirm" || command == "rollback", "--origin": command == "confirm",
+		"--request-file": command == "stage" || command == "replace-candidate", "--confirm-seconds": command == "commit" || command == "rollback",
+		"--expected-candidate-stage": command == "replace-candidate" || command == "discard-candidate",
+		"--target":                   command == "confirm" || command == "rollback", "--origin": command == "confirm",
 		"--operation-id": command == "operation" || command == "execute",
 		"--before":       command == "audit", "--limit": command == "audit",
 	} {
@@ -117,28 +153,33 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 		}
 		limit = value
 	}
-	request := adminapi.OperationRequestV2{Operation: command}
-	if command == "stage" {
+	operationKind := command
+	if command == "replace-candidate" {
+		operationKind = configpoc.OpReplaceCandidate
+	}
+	if command == "discard-candidate" {
+		operationKind = configpoc.OpDiscardCandidate
+	}
+	request := adminapi.OperationRequestV2{Operation: operationKind}
+	if command == "stage" || command == "replace-candidate" {
 		if options["--request-file"] != "-" || stdin == nil {
 			return fail(nil)
 		}
 		data, err := io.ReadAll(io.LimitReader(stdin, 65537))
-		if err != nil || len(data) > 65536 || firewallipc.Decode(data, &request) != nil || request.Operation != command || request.Config == nil || request.ConfirmSeconds != nil || request.Target != "" || request.Origin != "" || request.Subject != "" {
+		if err != nil || len(data) > 65536 || firewallipc.Decode(data, &request) != nil || request.Operation != operationKind || request.Config == nil || request.ConfirmSeconds != nil || request.Target != "" || request.Origin != "" || request.Subject != "" || (command == "stage" && request.ExpectedCandidateStage != "") || (command == "replace-candidate" && (request.LocalServicesConfig != nil || request.ExpectedCandidateStage != "" && request.ExpectedCandidateStage != options["--expected-candidate-stage"])) {
 			return fail(nil)
 		}
-		if request.Config.Routed == nil {
-			return fail(adminclient.ErrConfiguration)
-		}
-		network, err := networkplan.Canonical(request.Config.Routed.Network.Config)
-		if err != nil {
-			return fail(adminclient.ErrConfiguration)
-		}
-		request.Config.Routed.Network = network
-		canonical, err := configpoc.CanonicalRouted(*request.Config)
+		canonical, err := canonicalConfigurationRequestV2(*request.Config)
 		if err != nil {
 			return fail(adminclient.ErrConfiguration)
 		}
 		request.Config = &canonical.Config
+	}
+	if command == "replace-candidate" || command == "discard-candidate" {
+		request.ExpectedCandidateStage = options["--expected-candidate-stage"]
+		if !configurationOperationIDV2(request.ExpectedCandidateStage) {
+			return fail(nil)
+		}
 	}
 	if command == "commit" || command == "rollback" {
 		seconds := uint64(60)

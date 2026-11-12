@@ -163,6 +163,24 @@ func TestRoutedCurrentPreservesReadableHistoricalCandidate(t *testing.T) {
 	if current.Snapshot.Candidate.Base != oldFirewall.Hash || current.Routed.CandidateGroup.Base != old.Composite.Hash {
 		t.Fatal("reader rebased Candidate")
 	}
+	t.Run("policy4_candidate_has_no_network_plan", func(t *testing.T) {
+		data, _ := json.Marshal(current)
+		var policyOnly adminapi.CurrentV2
+		if json.Unmarshal(data, &policyOnly) != nil {
+			t.Fatal("fixture")
+		}
+		policyOnly.Snapshot.Candidate.Revision = base.Current.Snapshot.Running
+		policyOnly.Snapshot.Candidate.Base = base.Current.Snapshot.Running.Hash
+		policyOnly.Routed.Candidate = &boot.Composite
+		policyOnly.Routed.CandidateGroup.Base = boot.Composite.Hash
+		if !validCurrentV2(policyOnly) || policyOnly.Routed.Candidate.Config.Domains.Network != nil {
+			t.Fatal("valid policy4 candidate rejected or acquired a network plan")
+		}
+		policyOnly.Snapshot.Candidate.Revision.Config.SchemaVersion = 3
+		if validCurrentV2(policyOnly) {
+			t.Fatal("wrong candidate domain accepted")
+		}
+	})
 	for _, mutate := range []func(*adminapi.CurrentV2){
 		func(c *adminapi.CurrentV2) { c.Snapshot.Candidate.Base = "../../invalid" },
 		func(c *adminapi.CurrentV2) { c.Routed.CandidateGroup.Base = "invalid" },

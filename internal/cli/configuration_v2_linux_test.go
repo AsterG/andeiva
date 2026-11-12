@@ -42,13 +42,22 @@ func TestConfigurationCLIUsesDurableIDsWithoutRetryingUncertainExecution(t *test
 		Snapshot:          adminapi.SnapshotV2{Generation: 2, Running: firewall, Startup: firewall, LastGood: firewall, Revoked: []string{}},
 		Routed:            &adminapi.RoutedCurrentV2{SchemaVersion: 7, Running: bundle.Composite, Startup: bundle.Composite, LastGood: bundle.Composite, LocalServices: adminapi.SnapshotV2{Generation: 3, Running: local, Startup: local, LastGood: local, Revoked: []string{}}},
 	}
-	for _, scenario := range []string{"status", "stage", "validate", "commit", "operation", "uncertain", "audit"} {
+	for _, scenario := range []string{"status", "stage", "stage4", "replace-candidate", "replace-routed", "discard-candidate", "validate", "commit", "operation", "uncertain", "audit"} {
 		t.Run(scenario, func(t *testing.T) {
 			secret, token := strings.Repeat("b", 64), strings.Repeat("a", 64)
 			now := time.Now().UTC()
 			kind := scenario
 			if scenario == "uncertain" || scenario == "operation" {
 				kind = "validate"
+			}
+			if scenario == "stage4" {
+				kind = "stage"
+			}
+			if scenario == "replace-candidate" || scenario == "replace-routed" {
+				kind = configpoc.OpReplaceCandidate
+			}
+			if scenario == "discard-candidate" {
+				kind = configpoc.OpDiscardCandidate
 			}
 			response := adminapi.OperationResponseV2{SchemaVersion: 2, Current: current, Operation: adminapi.OperationV2{ID: "v2.op.1.accepted", Namespace: "v2.ns.1.accepted", Domain: "routed", Kind: kind, State: "accepted", Expected: current.Global.Generation, Fingerprint: strings.Repeat("c", 64), Accepted: now, ExecuteBefore: now.Add(time.Minute)}}
 			var paths []string
@@ -96,7 +105,17 @@ func TestConfigurationCLIUsesDurableIDsWithoutRetryingUncertainExecution(t *test
 					if kind == "commit" && (body.Request.ConfirmSeconds == nil || *body.Request.ConfirmSeconds != 60) {
 						t.Error("commit confirmation missing")
 					}
-					if kind == "stage" {
+					if kind == configpoc.OpReplaceCandidate || kind == configpoc.OpDiscardCandidate {
+						if body.Request.ExpectedCandidateStage != "v2.op.1.stage" {
+							t.Error("explicit candidate identity lost")
+						}
+					}
+					if scenario == "stage4" || scenario == "replace-candidate" {
+						if body.Request.Config == nil || body.Request.Config.SchemaVersion != 4 || body.Request.Config.Routed != nil {
+							t.Error("policy4 acquired a fabricated network plan")
+						}
+					}
+					if scenario == "stage" || scenario == "replace-routed" {
 						if body.Request.Config == nil || body.Request.Config.Routed == nil {
 							t.Error("routed payload missing")
 						} else {
@@ -137,16 +156,29 @@ func TestConfigurationCLIUsesDurableIDsWithoutRetryingUncertainExecution(t *test
 			if scenario == "uncertain" {
 				command = "validate"
 			}
+			if scenario == "stage4" {
+				command = "stage"
+			}
+			if scenario == "replace-routed" {
+				command = "replace-candidate"
+			}
 			args := []string{"configuration", command, "--url", server.URL, "--ca-file", ca, "--credentials-file", credentials}
 			if command == "operation" {
 				args = append(args, "--operation-id", response.Operation.ID)
 			}
 			var out, errOut bytes.Buffer
 			var input *strings.Reader
-			if command == "stage" {
+			if command == "replace-candidate" || command == "discard-candidate" {
+				args = append(args, "--expected-candidate-stage", "v2.op.1.stage")
+			}
+			if command == "stage" || command == "replace-candidate" {
 				policy := routednft.LabPolicy()
 				policy.Network.Hash = strings.Repeat("0", 64)
-				data, err := json.Marshal(adminapi.OperationRequestV2{Operation: "stage", Config: &configpoc.Config{SchemaVersion: 6, DefaultAction: "deny", Routed: &policy}})
+				config := &configpoc.Config{SchemaVersion: 6, DefaultAction: "deny", Routed: &policy}
+				if scenario == "stage4" || scenario == "replace-candidate" {
+					config = &configpoc.Config{SchemaVersion: 4, DefaultAction: "deny"}
+				}
+				data, err := json.Marshal(adminapi.OperationRequestV2{Operation: kind, Config: config})
 				if err != nil {
 					t.Fatal(err)
 				}

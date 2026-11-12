@@ -121,7 +121,7 @@ func validCurrentV2(current adminapi.CurrentV2) bool {
 		return routed.CandidateGroup == nil && current.Snapshot.Candidate == nil && routed.LocalServices.Candidate == nil
 	}
 	firewall, local, group := current.Snapshot.Candidate, routed.LocalServices.Candidate, routed.CandidateGroup
-	if firewall == nil || local == nil || group == nil || firewall.Revision.Config.SchemaVersion != 6 || !clientIDv2(group.Operation) || group.Owner != firewall.Owner || group.Owner != local.Owner || !clientHashV2(group.Base) || len(group.Domains) != 2 || group.Domains[0] != "firewall" || group.Domains[1] != "local_services" {
+	if firewall == nil || local == nil || group == nil || (firewall.Revision.Config.SchemaVersion != 4 && firewall.Revision.Config.SchemaVersion != 6) || !clientIDv2(group.Operation) || group.Owner != firewall.Owner || group.Owner != local.Owner || !clientHashV2(group.Base) || len(group.Domains) != 2 || group.Domains[0] != "firewall" || group.Domains[1] != "local_services" {
 		return false
 	}
 	bundle, err := configpoc.NewRoutedActivationBundleV1(firewall.Revision, local.Revision)
@@ -184,6 +184,10 @@ func validOperationV2(op adminapi.OperationV2) bool {
 		return false
 	}
 	switch op.Kind {
+	case configpoc.OpReplaceCandidate, configpoc.OpDiscardCandidate:
+		if op.Domain != "routed" {
+			return false
+		}
 	case configpoc.OpStage, configpoc.OpValidate, configpoc.OpCommit, configpoc.OpConfirm, configpoc.OpSave, configpoc.OpRollback, configpoc.OpRecover, configpoc.OpRevoke:
 	default:
 		return false
