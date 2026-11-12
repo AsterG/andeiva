@@ -37,7 +37,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 			release()
 			return errV2Unavailable
 		}
-		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !preservesFeaturesV2(state, previousState) || !preservesReclamationV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
+		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !preservesFeaturesV2(state, previousState) || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
 			release()
 			return errV2Unavailable
 		}
@@ -58,7 +58,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		previousSelection = selection
 		// Only the preceding feature set is needed by the selection edge. Do not
 		// retain every decoded state while traversing historical selections.
-		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion}
+		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion}
 		hash = selection.Previous
 	}
 	return errV2InspectionBudget
