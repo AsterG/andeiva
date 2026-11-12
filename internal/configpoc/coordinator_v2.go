@@ -622,7 +622,7 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 		}
 		return routedTargetV2(c.store, op, state, now, lease)
 	}
-	if state.CandidateGroup != nil || state.Firewall.Running.Config.SchemaVersion == 6 {
+	if state.CandidateGroup != nil || state.Firewall.Running.Config.SchemaVersion == 6 || c.options.Routed != nil && hasFeatureV2(c.store.state, v2RoutedFeature) {
 		return state, false, ErrConflict
 	}
 	target := clone(state)

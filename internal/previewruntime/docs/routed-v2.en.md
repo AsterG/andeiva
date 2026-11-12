@@ -46,3 +46,10 @@ preserved without silently rebasing it when Startup changes Running.
 This test uses simulated kernel/network transports. Initial Startup4 without an
 L3 plan remains refused until the explicit no-network boot profile is integrated;
 no default network plan is fabricated to bypass that boundary.
+
+The no-network artifact profile now distinguishes observed links from a desired
+network plan. Its feature-gated schema4 candidate captures both policy domains;
+the group owner rejects independent firewall/local-service writes. Core boot
+validation requires the saved revision's protected witness, an exact observed
+baseline and a separately identified prospective legacy policy. These checks do
+not implement the physical no-network adapter or activate an installer option.

@@ -18,6 +18,7 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 	projected := reserveProjectedEnvelopeV2(s.state, target, "firewall")
 	if target.Running.Config.SchemaVersion == 7 {
 		addFeatureV2(&projected, v2RoutedBootFeature)
+		if target.Firewall.Running.Config.SchemaVersion==4{addFeatureV2(&projected,v2RoutedNoNetworkFeature)}
 	}
 	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited

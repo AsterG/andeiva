@@ -21,7 +21,10 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 		if state.CandidateGroup != nil || state.Firewall.Candidate != nil || state.LocalServices.Candidate != nil || state.Pending != nil || state.Intent != nil || state.RecoveryRequired {
 			return target, false, ErrConflict
 		}
-		firewall, err := CanonicalRouted(*op.Request.Config)
+		if op.Request.Config.SchemaVersion == 4 && (!hasFeatureV2(s.state, v2RoutedNoNetworkFeature) || state.Firewall.Running.Config.SchemaVersion != 4) {
+			return target, false, ErrDenied
+		}
+		firewall, err := canonicalDomainRevisionV2(*op.Request.Config, true)
 		if err != nil {
 			return target, false, err
 		}

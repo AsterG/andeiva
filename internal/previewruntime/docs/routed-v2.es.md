@@ -42,3 +42,11 @@ La candidata se conserva sin rebase silencioso si Startup cambia Running.
 El transporte kernel/red está simulado. Startup4 inicial sin plan L3 sigue
 rechazado hasta integrar el perfil explícito sin red; no se inventa un plan
 predeterminado para eludir esa limitación.
+
+El perfil de artefactos sin red distingue los enlaces observados de un plan de
+red deseado. La candidata schema4, habilitada por capacidad, captura ambos
+dominios; el propietario del grupo rechaza escrituras independientes de firewall
+y servicios locales. La validación del arranque exige el testigo protegido de la
+revisión guardada, una observación exacta y la política heredada prospectiva
+identificada por separado. No implementa el adaptador físico sin red ni activa
+una opción del instalador.

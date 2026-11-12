@@ -1,6 +1,7 @@
 package configpoc
 
 const v2RoutedFeature = "configuration.routed-composite.v1"
+const v2RoutedNoNetworkFeature = "configuration.routed-no-network.v1"
 
 type v2CandidateGroup struct {
 	Operation string   `json:"stage_operation_id"`
@@ -63,15 +64,15 @@ func validCandidateGroupV2(state *v2Configuration, routed bool) bool {
 			return false
 		}
 	}
-	return state.Firewall.Candidate.Revision.Config.SchemaVersion == 6
+	return state.Firewall.Candidate.Revision.Config.SchemaVersion == 6 || state.Firewall.Candidate.Revision.Config.SchemaVersion == 4
 }
 
 func routedRequestValidV2(r v2Request) bool {
 	if r.Kind == OpStage {
-		if r.Config == nil || r.Config.SchemaVersion != 6 || r.ConfirmSeconds != nil || r.Target != "" || r.Origin != "" || r.Subject != "" {
+		if r.Config == nil || (r.Config.SchemaVersion != 6 && r.Config.SchemaVersion != 4) || r.ConfirmSeconds != nil || r.Target != "" || r.Origin != "" || r.Subject != "" {
 			return false
 		}
-		if _, err := CanonicalRouted(*r.Config); err != nil {
+		if _, err := canonicalDomainRevisionV2(*r.Config, true); err != nil {
 			return false
 		}
 		if r.LocalServicesConfig != nil {

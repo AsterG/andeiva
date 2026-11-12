@@ -242,3 +242,30 @@ func DependenciesBytes(input DependenciesV1) ([]byte, error) {
 	}
 	return json.Marshal(canonical)
 }
+
+// RoutedOwnershipMatchesDependencies checks complete physical baseline data.
+// It confers no resource ownership or permission to apply a desired plan.
+func RoutedOwnershipMatchesDependencies(input OwnedV1, dependencies DependenciesV1) bool {
+	owned, e1 := CanonicalOwned(input)
+	deps, e2 := CanonicalDependencies(dependencies)
+	if e1 != nil || e2 != nil {
+		return false
+	}
+	if deps.Version == 2 {
+		return owned.Version == 2 && owned.Observed.Hash == deps.Observed.Hash
+	}
+	if owned.Version == 2 {
+		return networkexecutor.ObservedMatchesPrepared(*owned.Observed, deps.Prepared)
+	}
+	return owned.Network.Hash == deps.Prepared.Hash
+}
+
+func routedBaselineDependenciesMatchV2(actual, baseline DependenciesV1) bool {
+	if baseline.Version == 2 {
+		if actual.Version == 2 {
+			return baseline.Observed.Hash == actual.Observed.Hash
+		}
+		return networkexecutor.ObservedMatchesPrepared(*baseline.Observed, actual.Prepared)
+	}
+	return actual.Version == 1 && actual.Prepared.Hash == baseline.Prepared.Hash && actual.Network.Hash == baseline.Network.Hash
+}

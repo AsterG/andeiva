@@ -9,6 +9,9 @@ import (
 const v2RoutedBootFeature = "configuration.routed-boot.v1"
 
 func routedBootPreparationV2(input RoutedPreparationV1, baseline RoutedBaselineV1, target RoutedActivationBundleV1, previous v2Configuration, load func(string, any) error) (RoutedPreparationV1, error) {
+	if target.Firewall.Config.SchemaVersion == 4 {
+		return routedNoNetworkBootPreparationV2(input, baseline, target, previous, load)
+	}
 	before, e1 := CanonicalOwned(input.Before)
 	after, e2 := CanonicalOwned(input.Target)
 	deps, e3 := CanonicalDependencies(input.Dependencies)
@@ -44,9 +47,43 @@ func routedBootPreparationV2(input RoutedPreparationV1, baseline RoutedBaselineV
 	return RoutedPreparationV1{Before: before, Target: after, Dependencies: deps}, nil
 }
 
+func routedNoNetworkBootPreparationV2(input RoutedPreparationV1, baseline RoutedBaselineV1, target RoutedActivationBundleV1, previous v2Configuration, load func(string, any) error) (RoutedPreparationV1, error) {
+	before, e1 := CanonicalOwned(input.Before)
+	after, e2 := CanonicalOwned(input.Target)
+	deps, e3 := CanonicalDependencies(input.Dependencies)
+	planned, e4 := CanonicalOwned(baseline.Owned)
+	saved, e5 := CanonicalRoutedActivationBundleV1(baseline.Saved)
+	baseDeps, e6 := CanonicalDependencies(baseline.Dependencies)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil || e6 != nil || deps.Version != 2 || before.Version != 2 || after.Version != 2 || before.LegacyFirewall.Presence != Absent || after.LegacyFirewall.Revision == nil || after.LegacyFirewall.Revision.Hash != target.Firewall.Hash || saved.Composite.Hash != target.Composite.Hash || !RoutedOwnershipMatchesDependencies(before, deps) || !RoutedOwnershipMatchesDependencies(after, deps) {
+		return RoutedPreparationV1{}, ErrRecovery
+	}
+	for _, service := range target.LocalServices.Config.LocalServices.Services {
+		if service.Enabled {
+			return RoutedPreparationV1{}, ErrRecovery
+		}
+	}
+	_, a, _ := v2Canonical(after)
+	_, b, _ := v2Canonical(planned)
+	_, d1, _ := v2Canonical(deps)
+	_, d2, _ := v2Canonical(baseDeps)
+	if a != b || d1 != d2 || routedHistoricalWitnessV2(previous, saved.Composite.Hash, load) != nil {
+		return RoutedPreparationV1{}, ErrRecovery
+	}
+	return RoutedPreparationV1{Before: before, Target: after, Dependencies: deps}, nil
+}
+
 func routedHistoricalWitnessV2(state v2Configuration, hash string, load func(string, any) error) error {
 	if !validHash(hash) || load == nil {
 		return errV2Unavailable
+	}
+	if hash == state.Startup.Hash {
+		// Saved Startup is authoritative even when imported Running differs.
+		// This proves saved provenance, not that Startup was already effective.
+		var audit v2CoordinatorAudit
+		if load(state.AuditTip, &audit) != nil || audit.Format != v2Format || audit.Sequence != state.AuditSequence || audit.Startup != hash || audit.Running != state.Running.Hash {
+			return errV2Unavailable
+		}
+		return nil
 	}
 	root := state.VerifiedIndex
 	for depth := 0; root != "" && depth <= v2VerifiedDepthLimit; depth++ {
@@ -116,7 +153,9 @@ func (c *v2Coordinator) publishRoutedBootWorkV2(ctx context.Context, record v2Re
 		return err
 	}
 	var saved RoutedActivationBundleV1
-	if previous.Firewall.Running.Config.SchemaVersion == 4 {
+	if applied.Firewall.Config.SchemaVersion == 4 {
+		saved = applied
+	} else if previous.Firewall.Running.Config.SchemaVersion == 4 {
 		saved, err = bundleFromConfigurationV2(previous)
 	} else if active := c.store.state.RoutedActive; active != nil {
 		var original RoutedSelectedPlanV1
