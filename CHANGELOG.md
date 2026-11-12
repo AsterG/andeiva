@@ -7,6 +7,7 @@
 - Expose bounded administrator-only v2 audit history and retain unbound reserve claims during reachability inspection without treating them as written plans.
 - Preserve historical candidates without automatic rebasing, and add explicit owner-checked replacement/discard with exact stage and generation guards.
 - Retain schema4 rule editing without fabricating routed network configuration.
+- Label startup recovery audit events in English, Spanish and Portuguese, and keep long revision details within the responsive audit panel.
 - Keep runtime migration, privileged helper activation and native appliance qualification independently gated.
 
 ## Unreleased — prepared routed composite references

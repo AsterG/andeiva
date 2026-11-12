@@ -13,6 +13,8 @@ export function ConfigurationAudit({ locale, admin, onFailure }: { locale: Local
   const [page, setPage] = useState<AuditPage | null>(null), [before, setBefore] = useState('0'), [refresh, setRefresh] = useState(0), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [actor, setActor] = useState(''), [operation, setOperation] = useState(''), [result, setResult] = useState(''), [revision, setRevision] = useState(''), [since, setSince] = useState(''), [until, setUntil] = useState('');
   const [selected, setSelected] = useState<AuditEvent | null>(null);
+  const operationLabel = (value: string) => value === 'boot_boundary' ? work.auditBootRecovery : value === 'boot_startup' ? work.auditStartupLoad : value;
+  const resultLabel = (value: string) => value === 'superseded_by_boot' ? work.auditSuperseded : value;
   useEffect(() => {
     if (!admin) return;
     let active = true;
@@ -31,18 +33,18 @@ export function ConfigurationAudit({ locale, admin, onFailure }: { locale: Local
     return (!actor || `${event.actor_name ?? ''} ${event.actor_id}`.toLowerCase().includes(actor.toLowerCase())) && (!operation || event.operation === operation) && (!result || event.result === result) && (!revision || event.running_revision.includes(revision.toLowerCase()) || event.startup_revision.includes(revision.toLowerCase())) && (!start || at >= start) && (!end || at <= end);
   }) ?? [];
   return <Surface title={common.audit}>
-    <div aria-busy={busy} className="fw-stack">
+    <div aria-busy={busy} className="fw-stack console-configuration-audit">
       {error && <Notice title={copy.error} live><code>{error}</code></Notice>}
       <p>{common.loadedOnly} {work.auditIdentityHint}</p>
       <div className="ds-actions">
         {([{ key: 'actor', label: copy.actor, value: actor, set: setActor, type: 'search' }, { key: 'revision', label: copy.target, value: revision, set: setRevision, type: 'search' }, { key: 'since', label: common.since, value: since, set: setSince, type: 'date' }, { key: 'until', label: common.until, value: until, set: setUntil, type: 'date' }]).map((field) => <Field key={field.key} id={`${prefix}-${field.key}`} label={field.label}><TextInput id={`${prefix}-${field.key}`} type={field.type} maxLength={128} value={field.value} onChange={(event) => field.set(event.target.value)} /></Field>)}
-        {([{ key: 'operation', label: copy.operation, value: operation, set: setOperation }, { key: 'result', label: copy.result, value: result, set: setResult }]).map((field) => <Field key={field.key} id={`${prefix}-${field.key}`} label={field.label}><select className="ds-select" id={`${prefix}-${field.key}`} value={field.value} onChange={(event) => field.set(event.target.value)}><option value="">{copy.all}</option>{[...new Set([...(field.value ? [field.value] : []), ...(page?.events.map((event) => event[field.key as 'operation' | 'result']) ?? [])])].map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>)}
+        {([{ key: 'operation', label: copy.operation, value: operation, set: setOperation }, { key: 'result', label: copy.result, value: result, set: setResult }]).map((field) => <Field key={field.key} id={`${prefix}-${field.key}`} label={field.label}><select className="ds-select" id={`${prefix}-${field.key}`} value={field.value} onChange={(event) => field.set(event.target.value)}><option value="">{copy.all}</option>{[...new Set([...(field.value ? [field.value] : []), ...(page?.events.map((event) => event[field.key as 'operation' | 'result']) ?? [])])].map((value) => <option key={value} value={value}>{field.key === 'operation' ? operationLabel(value) : resultLabel(value)}</option>)}</select></Field>)}
       </div>
       {page?.truncated && <Notice title={work.auditBoundedTitle}>{work.auditBounded}</Notice>}
-      <DataTable caption={copy.audit}><thead><tr>{[copy.time, copy.actor, copy.operation, copy.result, copy.target, common.detail].map((label) => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{rows.map((event) => <tr key={event.sequence}><td><time dateTime={event.at}>{new Date(event.at).toLocaleString(locale)}</time></td><td>{event.actor_name ?? event.actor_id}</td><td>{event.operation}</td><td>{event.result}</td><td>{event.running_revision.slice(0,12)}</td><td><Button variant="secondary" onClick={() => setSelected(event)}>{common.inspect}</Button></td></tr>)}</tbody></DataTable>
+      <DataTable caption={copy.audit}><thead><tr>{[copy.time, copy.actor, copy.operation, copy.result, copy.target, common.detail].map((label) => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{rows.map((event) => <tr key={event.sequence}><td><time dateTime={event.at}>{new Date(event.at).toLocaleString(locale)}</time></td><td>{event.actor_name ?? event.actor_id}</td><td>{operationLabel(event.operation)}</td><td>{resultLabel(event.result)}</td><td>{event.running_revision.slice(0,12)}</td><td><Button variant="secondary" onClick={() => setSelected(event)}>{common.inspect}</Button></td></tr>)}</tbody></DataTable>
       {page && !rows.length && <p>{copy.emptyHistory}</p>}
       <div className="ds-actions"><Button variant="secondary" disabled={busy} onClick={() => { setBefore('0'); setRefresh((value) => value + 1); }}>{copy.newest}</Button><Button variant="secondary" disabled={busy || !page || page.next_before === '0'} onClick={() => setBefore(page!.next_before)}>{copy.older}</Button></div>
-      {selected && <details open><summary>{common.detail}</summary><dl>{Object.entries(selected).map(([key,value]) => <div key={key}><dt>{key}</dt><dd><code>{value}</code></dd></div>)}</dl></details>}
+      {selected && <details open className="console-audit-detail"><summary>{common.detail}</summary><dl>{Object.entries(selected).map(([key,value]) => <div key={key}><dt>{key}</dt><dd><code>{value}</code></dd></div>)}</dl></details>}
     </div>
   </Surface>;
 }
