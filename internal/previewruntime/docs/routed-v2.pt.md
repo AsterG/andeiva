@@ -29,3 +29,16 @@ estas provas não demonstram capacidade do appliance.
 
 Teste Linux: `go test -race ./internal/configpoc ./internal/previewruntime
 ./internal/localnft ./internal/routedactivation`.
+
+O teste Startup6 cria outra instância autenticada de namespace com as três
+tabelas administradas ausentes. Uma preparação somente leitura captura esse
+estado real; Intent e reserva de sistema são selecionados antes dos efeitos.
+O prazo é exatamente Started original mais dez segundos. Só a leitura
+confirmada publica a nova propriedade ativa. Duas regras schema4 importadas e
+sua revisão salva são preservadas. A base prospectiva separada só é aplicada por
+Rollback explícito posterior; não é apresentada como ruleset anterior real.
+A candidata é preservada sem rebase silencioso se Startup mudar Running.
+
+O transporte kernel/rede é simulado. Startup4 inicial sem plano L3 continua
+recusado até integrar o perfil explícito sem rede; nenhum plano padrão é
+inventado para contornar essa limitação.

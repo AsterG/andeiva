@@ -14,7 +14,7 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 	incFirewall, incLocal := false, false
 	group := state.CandidateGroup
 	matchingGroup := func() bool {
-		return group != nil && group.Owner == op.Subject && validCandidateGroupV2(&state, true)
+		return group != nil && group.Owner == op.Subject && validCandidateGroupV2(&state, true) && group.Base == state.Running.Hash && state.Firewall.Candidate.Base == state.Firewall.Running.Hash && state.LocalServices.Candidate.Base == state.LocalServices.Running.Hash
 	}
 	switch op.Request.Kind {
 	case OpStage:

@@ -266,7 +266,7 @@ func (c *v2Coordinator) readback(state v2Configuration) bool {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		if in := c.store.state.Configuration.Intent; in != nil && in.Domain == "routed" && in.Recovery && in.RoutedWork != "" {
+		if in := c.store.state.Configuration.Intent; in != nil && in.Domain == "routed" && in.Recovery && in.Kind != v2BootKind && in.RoutedWork != "" {
 			plan, err := c.selectedRoutedPlanV2()
 			return err == nil && plan.previous.Composite.Hash == state.Running.Hash && c.options.Routed.Match(ctx, plan, "before") == nil
 		}

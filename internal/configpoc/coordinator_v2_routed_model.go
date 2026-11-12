@@ -55,11 +55,11 @@ func validCandidateGroupV2(state *v2Configuration, routed bool) bool {
 	if group == nil {
 		return true
 	}
-	if !routed || group.Operation == "" || len(group.Operation) > 128 || group.Owner == "" || len(group.Owner) > 128 || !validHash(group.Base) || len(group.Domains) != 2 || group.Domains[0] != "firewall" || group.Domains[1] != "local_services" || group.Base != state.Running.Hash {
+	if !routed || group.Operation == "" || len(group.Operation) > 128 || group.Owner == "" || len(group.Owner) > 128 || !validHash(group.Base) || len(group.Domains) != 2 || group.Domains[0] != "firewall" || group.Domains[1] != "local_services" {
 		return false
 	}
 	for _, domain := range []v2DomainSnapshot{state.Firewall, state.LocalServices} {
-		if domain.Candidate == nil || domain.Candidate.Owner != group.Owner || domain.Candidate.Base != domain.Running.Hash {
+		if domain.Candidate == nil || domain.Candidate.Owner != group.Owner || !validHash(domain.Candidate.Base) {
 			return false
 		}
 	}
@@ -142,6 +142,10 @@ func validateCandidateGroupEvidenceV2(state v2Configuration, load func(string, a
 		return nil
 	}
 	if load == nil || !validCandidateGroupV2(&state, true) {
+		return errV2Unavailable
+	}
+	var base v2CompositeConfig
+	if load(group.Base, &base) != nil || base.SchemaVersion != 7 || base.Domains.Firewall.Revision != state.Firewall.Candidate.Base || base.Domains.LocalServices.Revision != state.LocalServices.Candidate.Base {
 		return errV2Unavailable
 	}
 	hash, sequence := state.AuditTip, state.AuditSequence
