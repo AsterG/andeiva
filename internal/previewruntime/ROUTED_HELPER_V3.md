@@ -1,0 +1,36 @@
+# Read-only selected helper assembly
+
+OpenRoutedHelperV3 is trusted supervisor assembly, not an administrative endpoint
+or service activation. It borrows four pinned directory roots and opens only
+read-only reserve descriptors. Expected pool identities, roles, 18-slot layouts
+and capacities come from the supervisor; store/pool roots cannot alias.
+
+The real process must have the exact helper UID and IPC primary group, only the
+IPC/reader supplementary groups, NoNewPrivs, and exactly CAP_NET_ADMIN in all
+five capability masks. The dedicated reader group must differ from the API
+primary group and agree across all roots. Actual OS boot identity and network
+namespace must match trusted metadata, with gateway distinct from host. Existing
+v1/v2 process validators are unchanged.
+
+The factory composes the existing selected reader, store source and v3 session.
+It does not require a complete selected activation before the initial handshake:
+a new writer may need that fencing handshake before publishing its authorized
+boot-boundary intent. Every later effect still independently resolves selected
+work, G1, reserves, scope and action. Merely opening this helper grants no plan.
+
+Serve accepts only a supervisor-pinned inherited Unix channel and API PID and
+reuses kernel peer credential validation. Controller disconnect leaves reader
+and guardian lifetimes intact. Closing this runtime cancels channels and closes
+its read-only pool descriptors, never the authority, namespace, listeners or
+rules. Borrowed roots remain caller-owned. A compatibility v2 server in grouped
+mode must separately be restricted to readback for its whole lifetime.
+
+Tests use actual temporary shared-format files and verify newly opened pool FDs
+are O_RDONLY, reject aliases/profile/identity/capability substitutions, and check
+partial-open cleanup. Pure readiness fixtures do not impersonate the actual
+helper process. A simulated engine/guardian proves disconnect/reader closure
+does not replace its independent expiry; this is not native nftables evidence.
+Full supervisor launch, three-process permissions, complete selected-store
+transport and deployed units remain separate integration gates.
+
+Linux: go test -race ./internal/previewruntime -run TestRoutedHelperV3 -count=1
