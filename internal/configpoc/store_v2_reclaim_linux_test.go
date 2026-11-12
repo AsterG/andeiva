@@ -491,3 +491,94 @@ func TestV2ReclaimMigrationPreservesOriginals(t *testing.T) {
 		t.Fatal("legacy sources modified")
 	}
 }
+
+func TestV2ReclaimCombinedLocalCandidateBootAndReplay(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, pending := range []bool{false, true} {
+			t.Run(fmt.Sprintf("enabled-%t/pending-%t", enabled, pending), func(t *testing.T) {
+				c, area, engines, p := bootFixtureV2(t)
+				c.options.LocalPolicy = localFaultPolicyV2{}
+				if enabled {
+					if err := c.store.enableIndexReclamation(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				config := localSample(t, 18443)
+				op, staged, err := localFaultRequestV2(t, c, p, v2Request{Kind: OpStage, Config: &config})
+				if err != nil {
+					t.Fatal(err)
+				}
+				candidate := clone(c.store.state.Configuration.LocalServices.Candidate)
+				reclaimOrphanV2(t, c.store, "combined-held-or-eligible")
+				id := v2BootID(testBootIDV2)
+				c.options.BootID = &id
+				if pending {
+					c.options.Hook = func(point string) error {
+						if point == "after_boot_intent" {
+							return ErrInterrupted
+						}
+						return nil
+					}
+				}
+				c.store.mu.Lock()
+				err = c.bootStartupLocked(context.Background(), id)
+				c.store.mu.Unlock()
+				if pending && !errors.Is(err, ErrInterrupted) || !pending && err != nil {
+					t.Fatal(err)
+				}
+				wantMarker := uint8(0)
+				if enabled {
+					wantMarker = 1
+				}
+				if c.store.state.ReclamationVersion != wantMarker || !hasFeatureV2(c.store.state, v2BootFeature) || !hasFeatureV2(c.store.state, v2LocalFeature) || !reflect.DeepEqual(candidate, c.store.state.Configuration.LocalServices.Candidate) {
+					t.Fatal("combined marker/features/candidate changed")
+				}
+				before := clone(c.store.state)
+				report, err := c.store.reclaimIndexPages(context.Background(), reachabilityBudgetV2())
+				if enabled && !pending {
+					if err != nil || !report.Complete || report.Removed == 0 {
+						t.Fatal(report, err)
+					}
+				} else if err == nil || report.Removed != 0 {
+					t.Fatal("disabled/pending maintenance admitted", report, err)
+				}
+				if !reflect.DeepEqual(before, c.store.state) {
+					t.Fatal("maintenance changed state")
+				}
+				retained, err := c.store.lookup(p.Subject, op.ID)
+				if err != nil || !reflect.DeepEqual(retained, staged.Operation) {
+					t.Fatal("local replay changed", err)
+				}
+				c.close()
+				if err = c.store.close(); err != nil {
+					t.Fatal(err)
+				}
+				files := journalFiles(t, area.Name())
+				for _, engine := range engines {
+					engine.reset()
+				}
+				closure, err := inspectReachabilityV2(context.Background(), area, reachabilityBudgetV2())
+				if err != nil || !closure.Complete || !reflect.DeepEqual(files, journalFiles(t, area.Name())) {
+					t.Fatal("combined closure failed", closure, err)
+				}
+				for _, engine := range engines {
+					if engine.applies.Load() != 0 {
+						t.Fatal("inspection applied engine")
+					}
+				}
+				reopened, err := openV2(area, c.store.budget)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer reopened.close()
+				if reopened.state.ReclamationVersion != wantMarker || reopened.reclaim != nil || !reflect.DeepEqual(before, reopened.state) {
+					t.Fatal("combined reopen changed state/authority")
+				}
+				retained, err = reopened.lookup(p.Subject, op.ID)
+				if err != nil || !reflect.DeepEqual(retained, staged.Operation) {
+					t.Fatal("cold local replay changed", err)
+				}
+			})
+		}
+	}
+}
