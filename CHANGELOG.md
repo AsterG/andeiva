@@ -42,6 +42,16 @@
   nonblocking, no-follow opener. Keep verified system-trust HTTPS available.
 - Test Linux FIFO/symlink substitutions and non-Linux refusal.
 
+## Unreleased — configuration v2 physical admission accounting
+
+- Measure allocated file/directory blocks and owned inodes through validated
+  descriptors; retain both selector allocations until durable replacement.
+- Check filesystem headroom before admission without consuming an operation slot
+  or another operation's allowance; preserve verified reads and uncertainty fences.
+- Add bounded fault/accounting tests and EN/ES/PT reproduction notes. Physical
+  reservations, collection, full-volume continuity and runtime activation remain
+  outside this change.
+
 ## Unreleased — inactive configuration storage v2 foundations
 
 
@@ -75,6 +85,12 @@
   verified directory descriptors; refuse unsupported operations without fallback.
 - Preserve competing destinations and reject changed staging identity before
   publication. Cover publication races, process exits and v1 reopening.
+
+## Unreleased — bounded conntrack laboratory observation
+
+- Observe current-namespace IPv4 TCP/UDP original, reply and translated tuples through bounded read-only netlink dumps.
+- Preserve unavailable counters and encode present 64-bit counters as exact decimal strings.
+- Qualify observed SNAT tuples with the isolated routing runner, without enabling an administrative endpoint or changing host policies.
 
 ## Unreleased — bounded client traffic observations
 

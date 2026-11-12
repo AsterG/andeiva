@@ -14,23 +14,33 @@ capture_test_output() {
 die() { printf 'ANDEIVA_STORAGE_LAB: %s\n' "$1" >&2; exit 1; }
 verify_test_log() {
   local task_log=$1 task_test=$2 task_case=${3:-}
-  [[ $task_test = TestNativeVolumePressure || $task_test = TestRealStoragePressure ]] || return 1
+  [[ $task_test = TestNativeVolumePressure || $task_test = TestNativeV2VolumePressure || $task_test = TestRealStoragePressure ]] || return 1
   grep -Fqx -- "=== RUN   $task_test" "$task_log" || return 1
   grep -Eq -- "^--- PASS: $task_test \(([0-9]+h)?([0-9]+m)?[0-9]+([.][0-9]+)?s\)$" "$task_log" || return 1
   if [[ $task_test = TestNativeVolumePressure ]]; then
     [[ $task_case = bytes || $task_case = inodes || $task_case = readonly || $task_case = open-deleted ]] || return 1
     grep -Fqx -- "ANDEIVA_NATIVE_VOLUME_CASE_PASS=$task_case" "$task_log" || return 1
   fi
+  if [[ $task_test = TestNativeV2VolumePressure ]]; then
+    [[ $task_case = bytes || $task_case = inodes || $task_case = open-deleted ]] || return 1
+    grep -Fqx -- "ANDEIVA_NATIVE_V2_CASE_PASS=$task_case" "$task_log" || return 1
+  fi
 }
+verify_v2_sentinel_snapshot() {
+  [[ $# = 6 && $1 =~ ^[a-f0-9]{64}$ && $2 =~ ^[0-9]+:[0-9]+:[0-9]+$ && $3 = 0:0:700 && $4 = 0:0:600:1 && $5 = "$1" && $6 = "$2" ]]
+}
+
 # The copied-volume mode is carried by explicit arguments across unshare,
 # never by inherited environment variables.
 parse_volume_arguments() {
   unset ANDEIVA_STORAGE_VOLUME_ID ANDEIVA_STORAGE_INSPECTOR ANDEIVA_STORAGE_INSPECTOR_SHA
   task_volume_id= task_inspector_input= task_inspector_sha=
+  task_v2=0
   task_volume_arguments=("$@")
-  if [[ $# = 7 && ( $1 = --authorized-debian-volumes || $1 = --inside-volumes ) ]]; then
+  if [[ $# = 7 && ( $1 = --authorized-debian-volumes || $1 = --inside-volumes || $1 = --authorized-debian-v2-volumes || $1 = --inside-v2-volumes ) ]]; then
     task_volume_id=$7 task_inspector_input=$5 task_inspector_sha=$6
-    if [[ $1 = --authorized-debian-volumes ]]; then
+    if [[ $1 = --authorized-debian-v2-volumes || $1 = --inside-v2-volumes ]]; then task_v2=1; fi
+    if [[ $1 = --authorized-debian-volumes || $1 = --authorized-debian-v2-volumes ]]; then
       task_volume_arguments=(--authorized-debian-lab "$2" "$3" "$4")
     else
       task_volume_arguments=(--inside "$2" "$3" "$4")
@@ -101,6 +111,9 @@ if [[ $task_mode = --authorized-debian-lab ]]; then
   exec 10</proc/self/ns/net
   export ANDEIVA_STORAGE_PARENT_NETWORK="$task_parent_network"
   if [[ -n $task_volume_id ]]; then
+    if [[ $task_v2 = 1 ]]; then
+      exec unshare --mount --net --propagation private -- /bin/bash "$task_script" --inside-v2-volumes "$task_binary" "$task_sha" "$task_parent_namespace" "$task_inspector" "$task_inspector_sha" "$task_volume_id"
+    fi
     exec unshare --mount --net --propagation private -- /bin/bash "$task_script" --inside-volumes "$task_binary" "$task_sha" "$task_parent_namespace" "$task_inspector" "$task_inspector_sha" "$task_volume_id"
   fi
   exec unshare --mount --net --propagation private -- /bin/bash "$task_script" --inside "$task_binary" "$task_sha" "$task_parent_namespace"
@@ -125,6 +138,12 @@ if [[ -n $task_volume_id ]]; then
     (( (8#$task_permissions & 022) == 0 )) || die 'fixed laboratory tool writable by others'
     trusted_ancestors "$task_tool"
   done
+  if [[ $task_v2 = 1 ]]; then
+    [[ -f /usr/bin/setpriv && -x /usr/bin/setpriv && $(stat -c '%u' /usr/bin/setpriv) = 0 ]] || die 'fixed identity tool absent'
+    task_permissions=$(stat -c '%a' /usr/bin/setpriv)
+    (( (8#$task_permissions & 022) == 0 )) || die 'identity tool writable by others'
+    trusted_ancestors /usr/bin/setpriv
+  fi
   task_pressure_base=/var/lib/andeiva-storage-pressure
   if [[ ! -e $task_pressure_base ]]; then mkdir -m 0700 -- "$task_pressure_base"; fi
   [[ ! -L $task_pressure_base && $(stat -c '%u:%g:%a' "$task_pressure_base") = 0:0:700 ]] || die 'unsafe pressure base'
@@ -203,6 +222,40 @@ if [[ -n $task_volume_id ]]; then
     /usr/bin/mount -t ext4 -o nosuid,nodev,noexec -- "$task_loop" "$task_mount"
     chmod 0700 "$task_mount"
   done
+  if [[ $task_v2 = 1 ]]; then
+    # These domains stay root0700. Worker access is exclusively its retained FD3.
+    declare -a task_sentinel_hashes=() task_sentinel_space=()
+    for task_domain in audit observations recovery; do
+      printf 'ANDEIVA copied-volume sentinel\n' > "$task_base/$task_domain/v2-sentinel"
+      chmod 0600 "$task_base/$task_domain/v2-sentinel"
+      /usr/bin/sync -f "$task_base/$task_domain/v2-sentinel"
+      task_sentinel_hashes+=("$(sha256sum "$task_base/$task_domain/v2-sentinel" | cut -d ' ' -f1)")
+      task_sentinel_space+=("$(stat -f -c '%a:%f:%d' "$task_base/$task_domain")")
+    done
+    for task_case in bytes inodes open-deleted; do
+      printf 'ANDEIVA_STORAGE_V2_CASE=%s\n' "$task_case"
+      task_log=$task_base/v2-$task_case.log
+      [[ ! -e $task_log && ! -e $task_base/config/v2-$task_case ]] || die 'v2 case already exists'
+      : > "$task_log"; chmod 0600 "$task_log"; task_logs+=("$task_log")
+      install -d -o andeiva -g andeiva -m 0700 "$task_base/config/v2-$task_case"
+      # FD4 avoids exposing root-only ancestor traversal just to execute the
+      # verified copy. Neither descriptor is reopened by a child-supplied path.
+      capture_test_output "$task_log" /usr/bin/timeout --kill-after=5 180 \
+        /usr/bin/setpriv --reuid=1000 --regid=1000 --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs \
+        /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent \
+        /proc/self/fd/4 -test.run '^TestNativeV2VolumePressure$' -test.v -test.timeout 150s \
+        -andeiva-v2-volume-case "$task_case" -andeiva-v2-parent-mnt "$task_namespace" -andeiva-v2-parent-net "$ANDEIVA_STORAGE_PARENT_NETWORK" \
+        3<"$task_base/config/v2-$task_case" 4<"$task_base/runner.test"
+      verify_test_log "$task_log" TestNativeV2VolumePressure "$task_case" || die 'v2 test did not prove completion'
+      task_index=0
+      for task_domain in audit observations recovery; do
+        verify_v2_sentinel_snapshot "${task_sentinel_hashes[task_index]}" "${task_sentinel_space[task_index]}" \
+          "$(stat -c '%u:%g:%a' "$task_base/$task_domain")" "$(stat -c '%u:%g:%a:%h' "$task_base/$task_domain/v2-sentinel")" \
+          "$(sha256sum "$task_base/$task_domain/v2-sentinel" | cut -d ' ' -f1)" "$(stat -f -c '%a:%f:%d' "$task_base/$task_domain")" || die 'v2 pressure changed another domain'
+        task_index=$((task_index+1))
+      done
+    done
+  else
   for task_case in bytes inodes readonly open-deleted; do
     printf 'ANDEIVA_STORAGE_VOLUME_CASE=%s\n' "$task_case"
     task_log=$task_base/$task_case.log
@@ -216,6 +269,7 @@ if [[ -n $task_volume_id ]]; then
     verify_test_log "$task_log" TestNativeVolumePressure "$task_case" || die 'native test did not prove execution and completion'
     if [[ $task_case = readonly ]]; then /usr/bin/mount -o remount,rw -- "$task_base/observations"; fi
   done
+  fi
   [[ $("$task_inspector" --authorized-debian-lab --operation harness-plan --id "$task_volume_id") = "$task_plan" ]] || die 'original preparation changed'
   exit 0
 fi
