@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — preallocated recovery storage primitive
+
+- Add fixed, checksummed recovery banks with exclusive locking and exact transaction bindings.
+- Preserve reservations on ambiguous writes and refuse stale bindings instead of treating fallback data as completion.
+- Add isolated byte/inode exhaustion tests and operator guides; coordinator integration and authorized retirement remain separate.
+
 ## Unreleased — isolated storage volume qualification
 
 - Inspect inactive volumes through read-only lock descriptors while retaining exclusive locking and identity checks.
