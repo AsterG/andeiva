@@ -1,5 +1,15 @@
 # Executor IPv4 estático em namespace — NET-EXECUTOR-001
 
+`ObservedSnapshot` captura inventário IPv4 vazio real sem plano desejado ou PlanHash.
+PrepareObserved recebe somente bindings físicos autenticados pelo supervisor; não
+escreve endereços/rotas nem cria transações. VerifyObserved verifica baseline real.
+RecoverObserved também exige identidade imutável original retida somente por
+NewInOwnedNamespace; não concede propriedade L3. ObservedMatchesPrepared compara
+todos os fatos físicos quando um plano desejado real for fornecido depois.
+Igualdade não é autorização. O perfil inicial aceita dois enlaces próprios e
+loopback opcional, sem endereços/rotas IPv4. Interfaces já configuradas e leases
+DHCP continuam fora deste perfil.
+
 Responsável: executor de rede. Estado: qualificação isolada verificada;
 PR/integração pendentes. O laboratório isolado de routing utiliza o pacote; sem
 ligação com API, CLI, runtime ou helper privilegiado do appliance.
