@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — prepared local-service transactions
+
+- Coordinate local-service candidates, validation, confirmed commits, Save and
+  rollback through the composite transaction engine and fresh scoped evidence.
+- Keep metadata operations free of component application, preserve domain
+  separation during recovery and reject incompatible readers before effects.
+- Require explicit trusted assembly; deployed service and listener configuration
+  remains unchanged.
+
 ## Unreleased — isolated storage volume qualification
 
 - Inspect inactive volumes through read-only lock descriptors while retaining exclusive locking and identity checks.
