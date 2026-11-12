@@ -258,7 +258,7 @@ func TestLoginFromMalformedCredentialsRemainAudited(t *testing.T) {
 	}
 	upper := strings.Repeat("AB", 32)
 	digest := sha256.Sum256([]byte(upper))
-	m, err := New([]Account{{"alice", "admin", hex.EncodeToString(digest[:])}}, func(Event) error { return nil })
+	m, err := New([]Account{{Username: "alice", Role: "admin", CredentialSHA256: hex.EncodeToString(digest[:])}}, func(Event) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestConcurrentOriginsAndCredentialChecks(t *testing.T) {
 func BenchmarkLoginAdmissionRejected(b *testing.B) {
 	for name, credential := range map[string]string{"malformed": "invalid", "canonical": strings.Repeat("0", 64)} {
 		b.Run(name, func(b *testing.B) {
-			m, err := New([]Account{{"alice", "admin", strings.Repeat("0", 64)}}, func(Event) error { return nil })
+			m, err := New([]Account{{Username: "alice", Role: "admin", CredentialSHA256: strings.Repeat("0", 64)}}, func(Event) error { return nil })
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -398,7 +398,7 @@ func BenchmarkLoginAdmissionOriginTable(b *testing.B) {
 func BenchmarkLoginAdmissionVerifiedWithLogout(b *testing.B) {
 	secret := strings.Repeat("ab", 32)
 	digest := sha256.Sum256([]byte(secret))
-	m, err := New([]Account{{"alice", "admin", hex.EncodeToString(digest[:])}}, func(Event) error { return nil })
+	m, err := New([]Account{{Username: "alice", Role: "admin", CredentialSHA256: hex.EncodeToString(digest[:])}}, func(Event) error { return nil })
 	if err != nil {
 		b.Fatal(err)
 	}

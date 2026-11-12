@@ -21,15 +21,18 @@ var (
 )
 
 type Account struct {
-	Username         string `json:"username"`
-	Role             string `json:"role"`
-	CredentialSHA256 string `json:"credential_sha256"`
+	Username           string `json:"username"`
+	Role               string `json:"role"`
+	CredentialSHA256   string `json:"credential_sha256"`
+	SubjectID          string `json:"subject_id,omitempty"`
+	CredentialRevision string `json:"credential_revision,omitempty"`
 }
 type Identity struct {
 	Username  string    `json:"username"`
 	Role      string    `json:"role"`
 	CSRF      string    `json:"csrf"`
 	ExpiresAt time.Time `json:"expires_at"`
+	SubjectID string    `json:"subject_id,omitempty"`
 }
 type Event struct {
 	At     time.Time `json:"at"`
@@ -38,12 +41,15 @@ type Event struct {
 	Result string    `json:"result"`
 }
 type session struct {
-	identity Identity
-	last     time.Time
+	identity           Identity
+	last               time.Time
+	credentialRevision string
 }
 type account struct {
-	role   string
-	digest [32]byte
+	role               string
+	digest             [32]byte
+	subjectID          string
+	credentialRevision string
 }
 type Manager struct {
 	mu           sync.Mutex
@@ -66,6 +72,7 @@ func New(accounts []Account, audit func(Event) error) (*Manager, error) {
 		return nil, ErrUnavailable
 	}
 	m := &Manager{accounts: map[string]account{}, sessions: map[[32]byte]session{}, audit: audit, now: time.Now}
+	subjects := make(map[string]bool)
 	for _, a := range accounts {
 		d, err := hex.DecodeString(a.CredentialSHA256)
 		if err != nil || len(d) != 32 || !username.MatchString(a.Username) || a.Username == "system" || (a.Role != "admin" && a.Role != "viewer") {
@@ -76,7 +83,16 @@ func New(accounts []Account, audit func(Event) error) (*Manager, error) {
 		}
 		var hash [32]byte
 		copy(hash[:], d)
-		m.accounts[a.Username] = account{a.Role, hash}
+		if !validSubjectBinding(a.SubjectID, a.CredentialRevision) {
+			return nil, ErrDenied
+		}
+		if a.SubjectID != "" {
+			if subjects[a.SubjectID] {
+				return nil, ErrDenied
+			}
+			subjects[a.SubjectID] = true
+		}
+		m.accounts[a.Username] = account{role: a.Role, digest: hash, subjectID: a.SubjectID, credentialRevision: a.CredentialRevision}
 	}
 	return m, nil
 }
@@ -155,11 +171,11 @@ func (m *Manager) login(source netip.Addr, name, credential string, legacy bool)
 	if err != nil {
 		return Identity{}, "", ErrUnavailable
 	}
-	id := Identity{name, known.role, csrf, now.Add(30 * time.Minute).UTC()}
+	id := Identity{Username: name, Role: known.role, CSRF: csrf, ExpiresAt: now.Add(30 * time.Minute).UTC(), SubjectID: known.subjectID}
 	if err = m.record(name, "login", "ok"); err != nil {
 		return Identity{}, "", err
 	}
-	m.sessions[sha256.Sum256([]byte(token))] = session{id, now}
+	m.sessions[sha256.Sum256([]byte(token))] = session{identity: id, last: now, credentialRevision: known.credentialRevision}
 	return id, token, nil
 }
 

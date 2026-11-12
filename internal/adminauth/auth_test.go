@@ -16,7 +16,7 @@ func fixture(t *testing.T) (*Manager, string, *[]Event) {
 	}
 	sum := sha256.Sum256([]byte(secret))
 	events := []Event{}
-	m, err := New([]Account{{"alice", "admin", hex.EncodeToString(sum[:])}}, func(e Event) error { events = append(events, e); return nil })
+	m, err := New([]Account{{Username: "alice", Role: "admin", CredentialSHA256: hex.EncodeToString(sum[:])}}, func(e Event) error { events = append(events, e); return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

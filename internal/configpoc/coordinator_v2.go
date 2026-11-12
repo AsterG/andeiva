@@ -239,7 +239,7 @@ func (c *v2Coordinator) status(principal v2TrustedPrincipal) (v2Configuration, u
 	if c.closed || c.store.blocked {
 		return v2Configuration{}, 0, errV2Unavailable
 	}
-	if !c.store.subject(principal.Subject) || (principal.Role != RoleAdmin && principal.Role != RoleViewer) {
+	if !c.store.principalV2Locked(principal) || (principal.Role != RoleAdmin && principal.Role != RoleViewer) {
 		return v2Configuration{}, 0, ErrDenied
 	}
 	return clone(*c.store.state.Configuration), c.store.state.Generation, nil
@@ -255,7 +255,7 @@ func (c *v2Coordinator) execute(ctx context.Context, principal v2TrustedPrincipa
 	if c.closed || s.blocked {
 		return v2CoordinatorResult{}, errV2Unavailable
 	}
-	if principal.Role != RoleAdmin || !s.subject(principal.Subject) {
+	if principal.Role != RoleAdmin || !s.principalV2Locked(principal) {
 		return v2CoordinatorResult{}, ErrDenied
 	}
 	op, err := s.lookupLocked(principal.Subject, id)
