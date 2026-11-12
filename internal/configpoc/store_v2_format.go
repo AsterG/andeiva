@@ -52,12 +52,13 @@ type v2Namespace struct {
 	Open          []string        `json:"open"`
 }
 type v2Request struct {
-	Kind           string  `json:"kind"`
-	Config         *Config `json:"config,omitempty"`
-	ConfirmSeconds *uint64 `json:"confirm_seconds,omitempty"`
-	Target         string  `json:"target_revision,omitempty"`
-	Origin         string  `json:"origin_commit_operation_id,omitempty"`
-	Subject        string  `json:"target_subject_id,omitempty"`
+	LocalServicesConfig *Config `json:"local_services_config,omitempty"`
+	Kind                string  `json:"kind"`
+	Config              *Config `json:"config,omitempty"`
+	ConfirmSeconds      *uint64 `json:"confirm_seconds,omitempty"`
+	Target              string  `json:"target_revision,omitempty"`
+	Origin              string  `json:"origin_commit_operation_id,omitempty"`
+	Subject             string  `json:"target_subject_id,omitempty"`
 }
 type v2Outcome struct {
 	Code                 string     `json:"code"`
@@ -152,6 +153,12 @@ func v2Canonical(value any) ([]byte, string, error) {
 	return data, checkpointDigest(data), nil
 }
 func v2RequestValid(domain string, r v2Request) bool {
+	if domain == "routed" {
+		return routedRequestValidV2(r)
+	}
+	if r.LocalServicesConfig != nil {
+		return false
+	}
 	if domain != "firewall" && domain != "local_services" {
 		return false
 	}

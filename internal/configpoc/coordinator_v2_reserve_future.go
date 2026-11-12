@@ -32,6 +32,9 @@ func reserveMetadataFutureFitsV2(state v2State, load func(string, any) error) er
 	confirmed := clone(*current)
 	own := domainSnapshotV2(&confirmed, pending.Domain)
 	own.LastGood = own.Running
+	if pending.Domain == "routed" {
+		confirmed.LocalServices.LastGood = confirmed.LocalServices.Running
+	}
 	confirmed.Pending = nil
 	confirmed.Intent = nil
 	if err = confirmed.refresh(); err != nil {
@@ -48,6 +51,12 @@ func reserveMetadataFutureFitsV2(state v2State, load func(string, any) error) er
 	own.Running = prior.Running
 	own.LastGood = prior.LastGood
 	own.Candidate = nil
+	if pending.Domain == "routed" {
+		expired.LocalServices.Running = previous.LocalServices.Running
+		expired.LocalServices.LastGood = previous.LocalServices.LastGood
+		expired.LocalServices.Candidate = nil
+		expired.CandidateGroup = nil
+	}
 	expired.Pending = nil
 	expired.Intent = nil
 	expired.RecoveryRequired = false

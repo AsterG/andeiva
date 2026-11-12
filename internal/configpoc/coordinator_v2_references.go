@@ -6,6 +6,9 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 	if state == nil || !validV2Configuration(state) {
 		return errV2Unavailable
 	}
+	if validateCandidateGroupEvidenceV2(*state, s.readObject) != nil {
+		return errV2Unavailable
+	}
 	if err := c.pendingReferencesLocked(state); err != nil {
 		return err
 	}

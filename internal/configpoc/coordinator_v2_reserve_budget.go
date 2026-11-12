@@ -118,6 +118,17 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 }
 
 func reserveTargetEnvelopeV2(s *v2Store, op v2Operation) (v2Configuration, error) {
+	if op.Domain == "routed" {
+		now := op.Accepted
+		if now.IsZero() {
+			now = s.state.Clock
+		}
+		target, _, err := routedTargetV2(s, op, *s.state.Configuration, now, "reserve-forecast")
+		if target.Pending != nil && target.Pending.OriginCommit == op.ID {
+			target.Pending.Deadline = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+		}
+		return target, err
+	}
 	target := clone(*s.state.Configuration)
 	target.Intent = nil
 	domain := domainSnapshotV2(&target, op.Domain)

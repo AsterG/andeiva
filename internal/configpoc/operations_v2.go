@@ -100,7 +100,7 @@ func (s *v2Store) namespaceLocked(subject, domain string, now time.Time, lifetim
 	if s.blocked {
 		return v2Namespace{}, errV2Unavailable
 	}
-	if !s.subject(subject) || (domain != "firewall" && domain != "local_services") || lifetime <= 0 || lifetime > 24*time.Hour || now.Before(s.state.Clock) {
+	if !s.subject(subject) || !configurationDomainV2(domain, hasFeatureV2(s.state, v2RoutedFeature)) || lifetime <= 0 || lifetime > 24*time.Hour || now.Before(s.state.Clock) {
 		return v2Namespace{}, errV2Invalid
 	}
 	for _, ns := range s.state.Namespaces {
@@ -156,6 +156,9 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 		return v2Operation{}, errV2NotFound
 	}
 	ns := s.state.Namespaces[i]
+	if hasFeatureV2(s.state, v2RoutedFeature) && s.state.Configuration != nil && s.state.Configuration.Firewall.Running.Config.SchemaVersion == 6 && ns.Domain != "routed" {
+		return v2Operation{}, ErrDenied
+	}
 	if ns.Closed {
 		return v2Operation{}, errV2Closed
 	}
@@ -169,11 +172,18 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 		return v2Operation{}, errV2Invalid
 	}
 	if request.Config != nil {
-		canonical, e := Canonical(*request.Config)
+		canonical, e := canonicalDomainRevisionV2(*request.Config, ns.Domain == "routed")
 		if e != nil {
 			return v2Operation{}, errV2Invalid
 		}
 		request.Config = &canonical.Config
+	}
+	if request.LocalServicesConfig != nil {
+		canonical, e := Canonical(*request.LocalServicesConfig)
+		if e != nil {
+			return v2Operation{}, errV2Invalid
+		}
+		request.LocalServicesConfig = &canonical.Config
 	}
 	data, _, err := v2Canonical(request)
 	if err != nil || len(data) > 8192 {

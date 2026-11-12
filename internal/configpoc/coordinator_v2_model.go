@@ -68,6 +68,7 @@ type v2CoordinatorIntent struct {
 	Lease            string     `json:"lease,omitempty"`
 }
 type v2Configuration struct {
+	CandidateGroup    *v2CandidateGroup    `json:"candidate_group,omitempty"`
 	LastCompletedBoot string               `json:"last_completed_boot,omitempty"`
 	Firewall          v2DomainSnapshot     `json:"firewall"`
 	LocalServices     v2DomainSnapshot     `json:"local_services"`
@@ -139,15 +140,19 @@ func v2CompositeFromDomains(firewall, local Revision) (v2CompositeRevision, erro
 
 func (state *v2Configuration) refresh() error {
 	var err error
-	state.Running, err = v2CompositeFromDomains(state.Firewall.Running, state.LocalServices.Running)
+	compose := v2CompositeFromDomains
+	if state.Running.Config.SchemaVersion == 7 {
+		compose = routedCompositeFromDomainsV2
+	}
+	state.Running, err = compose(state.Firewall.Running, state.LocalServices.Running)
 	if err != nil {
 		return err
 	}
-	state.Startup, err = v2CompositeFromDomains(state.Firewall.Startup, state.LocalServices.Startup)
+	state.Startup, err = compose(state.Firewall.Startup, state.LocalServices.Startup)
 	if err != nil {
 		return err
 	}
-	state.LastGood, err = v2CompositeFromDomains(state.Firewall.LastGood, state.LocalServices.LastGood)
+	state.LastGood, err = compose(state.Firewall.LastGood, state.LocalServices.LastGood)
 	if err != nil {
 		return err
 	}
@@ -160,7 +165,7 @@ func (state *v2Configuration) refresh() error {
 		if state.LocalServices.Candidate != nil {
 			local = state.LocalServices.Candidate.Revision
 		}
-		revision, e := v2CompositeFromDomains(firewall, local)
+		revision, e := compose(firewall, local)
 		if e != nil {
 			return e
 		}
@@ -171,6 +176,10 @@ func (state *v2Configuration) refresh() error {
 
 func validV2Configuration(state *v2Configuration) bool {
 	if state == nil {
+		return false
+	}
+	routed := state.Running.Config.SchemaVersion == 7
+	if !validCandidateGroupV2(state, routed) {
 		return false
 	}
 	for index, domain := range []v2DomainSnapshot{state.Firewall, state.LocalServices} {
@@ -189,8 +198,8 @@ func validV2Configuration(state *v2Configuration) bool {
 			revisions = append(revisions, domain.Candidate.Revision)
 		}
 		for _, revision := range revisions {
-			canonical, err := Canonical(revision.Config)
-			if err != nil || revision.Config.SchemaVersion != schema || revision.Hash != canonical.Hash {
+			canonical, err := canonicalDomainRevisionV2(revision.Config, routed && index == 0)
+			if err != nil || (revision.Config.SchemaVersion != schema && !(routed && index == 0 && revision.Config.SchemaVersion == 6)) || revision.Hash != canonical.Hash {
 				return false
 			}
 		}
@@ -206,13 +215,13 @@ func validV2Configuration(state *v2Configuration) bool {
 		return false
 	}
 	if state.Candidate != nil {
-		canonical, err := CanonicalComposite(state.Candidate.Config)
+		canonical, err := compositeFromConfigurationV2(state.Candidate.Config, state)
 		if err != nil || canonical.Hash != state.Candidate.Hash {
 			return false
 		}
 	}
 	for _, revision := range []v2CompositeRevision{state.Running, state.Startup, state.LastGood} {
-		canonical, err := CanonicalComposite(revision.Config)
+		canonical, err := compositeFromConfigurationV2(revision.Config, state)
 		if err != nil || canonical.Hash != revision.Hash {
 			return false
 		}
@@ -236,7 +245,7 @@ func validV2Configuration(state *v2Configuration) bool {
 		return false
 	}
 	if pending := state.Pending; pending != nil {
-		if (pending.Domain != "firewall" && pending.Domain != "local_services") || pending.Owner == "" || pending.OriginCommit == "" || pending.Lease == "" || !validHash(pending.Previous) || pending.Target != state.Running.Hash || pending.Deadline.IsZero() {
+		if !configurationDomainV2(pending.Domain, routed) || pending.Owner == "" || pending.OriginCommit == "" || pending.Lease == "" || !validHash(pending.Previous) || pending.Target != state.Running.Hash || pending.Deadline.IsZero() {
 			return false
 		}
 	}
@@ -244,7 +253,7 @@ func validV2Configuration(state *v2Configuration) bool {
 		if !validGuardDeadlineShapeV2(intent) {
 			return false
 		}
-		if intent.Operation == "" || (intent.Domain != "firewall" && intent.Domain != "local_services") || !validHash(intent.Previous) || !validHash(intent.Target) || intent.TargetGeneration == 0 {
+		if intent.Operation == "" || !configurationDomainV2(intent.Domain, routed) || !validHash(intent.Previous) || !validHash(intent.Target) || intent.TargetGeneration == 0 {
 			return false
 		}
 		if intent.Kind == v2BootKind {

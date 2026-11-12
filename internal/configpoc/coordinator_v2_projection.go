@@ -24,7 +24,7 @@ func (s *v2Store) currentLegacyProjectionV2(domain string, imported Snapshot) (S
 	if current.Candidate != nil {
 		view.Candidate = &Candidate{Owner: current.Candidate.Owner, Base: current.Candidate.Base, Revision: clone(current.Candidate.Revision)}
 	}
-	if pending := state.Pending; pending != nil && pending.Domain == domain {
+	if pending := state.Pending; pending != nil && (pending.Domain == domain || pending.Domain == "routed" && hasFeatureV2(s.state, v2RoutedFeature)) {
 		var previous v2Configuration
 		if s.readObject(pending.Previous, &previous) != nil || !validV2Configuration(&previous) {
 			return Snapshot{}, errV2Unavailable

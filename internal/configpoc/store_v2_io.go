@@ -254,7 +254,7 @@ func v2ValidState(st v2State) bool {
 	names := map[string]bool{}
 	var reserved uint64
 	for _, ns := range st.Namespaces {
-		if ns.ID == "" || len(ns.ID) > 128 || names[ns.ID] || !ids[ns.Subject] || (ns.Domain != "firewall" && ns.Domain != "local_services") || ns.AdmitUntil.IsZero() || len(ns.Open) > v2MaximumOpen {
+		if ns.ID == "" || len(ns.ID) > 128 || names[ns.ID] || !ids[ns.Subject] || !configurationDomainV2(ns.Domain, hasFeatureV2(st, v2RoutedFeature)) || ns.AdmitUntil.IsZero() || len(ns.Open) > v2MaximumOpen {
 			return false
 		}
 		names[ns.ID] = true

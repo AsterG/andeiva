@@ -457,7 +457,7 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	op.State = "pending"
 	op.Pinned = true
 	st := clone(s.state)
-	if op.Domain == "local_services" {
+	if op.Domain == "local_services" || op.Domain == "routed" {
 		addFeatureV2(&st, v2LocalFeature)
 	}
 	st.Clock = now
@@ -547,6 +547,17 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 }
 
 func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now time.Time) (v2Configuration, bool, error) {
+	if op.Domain == "routed" {
+		// Joint effects require the separately assembled group authority. Never
+		// fall through to the independent legacy component guard loops.
+		if op.Request.Kind == OpCommit || op.Request.Kind == OpRollback || op.Request.Kind == OpConfirm {
+			return state, false, ErrRecovery
+		}
+		return routedTargetV2(c.store, op, state, now, "")
+	}
+	if state.CandidateGroup != nil || state.Firewall.Running.Config.SchemaVersion == 6 {
+		return state, false, ErrConflict
+	}
 	target := clone(state)
 	target.Intent = nil
 	domain := domainSnapshotV2(&target, op.Domain)
