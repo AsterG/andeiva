@@ -8,8 +8,9 @@ import (
 )
 
 type v2CoordinatorOptions struct {
-	Now  func() time.Time
-	Hook func(string) error
+	BootID *v2BootID
+	Now    func() time.Time
+	Hook   func(string) error
 	// Tests may drive deadlines explicitly; appliance integration must not opt
 	// out of the independent timeout worker. There is no runtime caller yet.
 	ManualTimeout bool
@@ -26,6 +27,9 @@ type v2Coordinator struct {
 }
 
 func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []Engine, options v2CoordinatorOptions) (*v2Coordinator, error) {
+	if options.BootID != nil && !validBootIDV2(*options.BootID) {
+		return nil, ErrInvalid
+	}
 	if store == nil || len(firewall) == 0 || len(local) == 0 || len(firewall) > 8 || len(local) > 8 {
 		return nil, ErrInvalid
 	}
@@ -63,6 +67,11 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	}
 	if store.state.Configuration.Pending != nil {
 		if err := c.revertLocked(ctx, "restart"); err != nil {
+			return c, err
+		}
+	}
+	if options.BootID != nil {
+		if err := c.bootStartupLocked(ctx, *options.BootID); err != nil {
 			return c, err
 		}
 	}

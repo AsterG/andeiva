@@ -193,6 +193,9 @@ func (s *v2Store) close() error {
 }
 
 func v2ValidState(st v2State) bool {
+	if !validFeaturesV2(st) {
+		return false
+	}
 	if st.Format != v2Format || st.Lineage == "" || len(st.Lineage) > 128 || st.Generation == 0 || (st.LiveSlots != 64 && st.LiveSlots != 4096 && st.LiveSlots != v2MaximumOperations) || st.SubjectSlots == 0 || st.SubjectSlots > v2MaximumSubjects || st.NamespaceSlots == 0 || st.NamespaceSlots > v2MaximumNamespaces || uint64(len(st.Subjects)) > st.SubjectSlots || uint64(len(st.Namespaces)) > st.NamespaceSlots || st.Clock.IsZero() || st.Clock.Location().String() != "UTC" || st.Operational {
 		return false
 	}
@@ -230,6 +233,9 @@ func v2ValidState(st v2State) bool {
 			seen[id] = true
 			reserved++
 		}
+	}
+	if st.Configuration != nil && st.Configuration.Intent != nil && st.Configuration.Intent.Kind == v2BootKind {
+		reserved++
 	}
 	return st.ReservedBytes == reserved*v2OperationReserveBytes && st.ReservedInodes == reserved*v2OperationReserveInodes
 }
@@ -394,7 +400,7 @@ func v2ValidSelection(selection v2Selection) bool {
 }
 
 func (s *v2Store) publish(state v2State) (result error) {
-	if s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) {
+	if s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) {
 		return errV2Unavailable
 	}
 	defer func() {
