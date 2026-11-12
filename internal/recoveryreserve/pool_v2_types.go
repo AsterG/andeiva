@@ -10,6 +10,14 @@ const headerV2 = 4096
 
 type RoleV2 string
 
+type ClassV2 string
+
+const (
+	OrdinaryV2 ClassV2 = "ordinary"
+	ClosingV2  ClassV2 = "closing"
+	SystemV2   ClassV2 = "system"
+)
+
 const (
 	AdmissionV2 RoleV2 = "admission"
 	PlanV2      RoleV2 = "plan"

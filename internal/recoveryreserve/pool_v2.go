@@ -52,6 +52,19 @@ func (p *PoolV2) writePair(index int, r recordV2, phase string) error {
 }
 
 func (p *PoolV2) Claim(owner string) (SlotClaimV2, error) {
+	return p.claim(owner, "")
+}
+
+// ClaimClass enforces the approved 18-slot profile without caller-provided
+// ranges: 8 ordinary, 8 closing, 2 autonomous. It never borrows another class.
+func (p *PoolV2) ClaimClass(owner string, class ClassV2) (SlotClaimV2, error) {
+	if class != OrdinaryV2 && class != ClosingV2 && class != SystemV2 {
+		return SlotClaimV2{}, ErrInvalid
+	}
+	return p.claim(owner, class)
+}
+
+func (p *PoolV2) claim(owner string, class ClassV2) (SlotClaimV2, error) {
 	if p == nil || owner == "" || !validOwner(owner) {
 		return SlotClaimV2{}, ErrInvalid
 	}
@@ -59,6 +72,20 @@ func (p *PoolV2) Claim(owner string) (SlotClaimV2, error) {
 	defer p.mu.Unlock()
 	if p.ready() != nil {
 		return SlotClaimV2{}, ErrUnavailable
+	}
+	low, high := 0, len(p.slots)
+	if class != "" {
+		if len(p.slots) != 18 {
+			return SlotClaimV2{}, ErrInvalid
+		}
+		switch class {
+		case OrdinaryV2:
+			low, high = 0, 8
+		case ClosingV2:
+			low, high = 8, 16
+		case SystemV2:
+			low, high = 16, 18
+		}
 	}
 	readyIndex := -1
 	var ready recordV2
@@ -69,6 +96,9 @@ func (p *PoolV2) Claim(owner string) (SlotClaimV2, error) {
 		}
 		r := observed.record
 		if r.Owner == owner {
+			if i < low || i >= high {
+				return SlotClaimV2{}, ErrConflict
+			}
 			if r.State == "written" || (r.State == "claimed" && observed.identical) {
 				if p.slots[i].file.Sync() != nil || p.identity() != nil {
 					p.blocked = true
@@ -78,10 +108,7 @@ func (p *PoolV2) Claim(owner string) (SlotClaimV2, error) {
 			}
 			return SlotClaimV2{}, ErrUnavailable
 		}
-		if r.State == "retired_held" || r.State == "free_prepared" || (r.State != "written" && !observed.identical) {
-			return SlotClaimV2{}, ErrUnavailable
-		}
-		if r.State == "ready" && readyIndex < 0 {
+		if i >= low && i < high && r.State == "ready" && observed.identical && readyIndex < 0 {
 			readyIndex = i
 			ready = r
 		}
