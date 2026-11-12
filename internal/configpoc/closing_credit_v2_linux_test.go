@@ -187,6 +187,25 @@ func TestV2ClosingProfileRefusesInsufficientBudget(t *testing.T) {
 	}
 }
 
+func TestV2ClosingEnableRejectsPreexistingAcceptedWork(t *testing.T) {
+	s, _, now, subject := v2Fixture(t, 64)
+	ns, err := s.namespace(subject, "firewall", now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seconds := uint64(90)
+	if _, err = s.admit(subject, ns.ID, 1, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds}, now); err != nil {
+		t.Fatal(err)
+	}
+	before := clone(s.state)
+	s.mu.Lock()
+	err = s.enableClosingCreditsLocked()
+	s.mu.Unlock()
+	if !errors.Is(err, errV2Uncertain) || !reflect.DeepEqual(before, s.state) {
+		t.Fatalf("preexisting work adopted without closing reserve: %v", err)
+	}
+}
+
 func TestV2ClosingPublicationFailurePreservesSelectedOwnership(t *testing.T) {
 	s, now, subject, ns, origin := closingFixtureV2(t)
 	area := s.root

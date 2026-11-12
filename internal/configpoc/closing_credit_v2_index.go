@@ -102,6 +102,10 @@ func (s *v2Store) catalogueHashV2(sequence uint64) (string, error) {
 	if s.state.RecoveryReserveVersion == 1 {
 		hash, err := s.closingIndexGet(s.state.ClosingIndexRoot, sequence)
 		if err == nil {
+			var op v2Operation
+			if s.readObject(hash, &op) != nil || op.Sequence != sequence || op.ClosingCredit == "" || !s.validOperation(op) {
+				return "", errV2Unavailable
+			}
 			return hash, nil
 		}
 		if err != errV2NotFound {
