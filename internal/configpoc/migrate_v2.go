@@ -310,8 +310,15 @@ func (s *v2Store) legacyReplay(subject, domain, actor, key, fingerprint string) 
 }
 
 func (s *v2Store) validateMigration() error {
+	return validateMigrationReadV2(s.state, s.readObject)
+}
+
+func validateMigrationReadV2(state v2State, read func(string, any) error) error {
+	if read == nil {
+		return errV2Unavailable
+	}
 	var migration v2Migration
-	if s.readObject(s.state.Migration, &migration) != nil || migration.Format != v2Format || migration.Status != "prepared_requires_global_readback" || migration.Running.Schema != 5 || migration.Startup.Schema != 5 || migration.Running.Network != nil || migration.Startup.Network != nil || migration.Firewall.Source == migration.LocalServices.Source || !v2BindingsValid(migration.Firewall, migration.LocalServices, s.state.Subjects, migration.Bindings) {
+	if read(state.Migration, &migration) != nil || migration.Format != v2Format || migration.Status != "prepared_requires_global_readback" || migration.Running.Schema != 5 || migration.Startup.Schema != 5 || migration.Running.Network != nil || migration.Startup.Network != nil || migration.Firewall.Source == migration.LocalServices.Source || !v2BindingsValid(migration.Firewall, migration.LocalServices, state.Subjects, migration.Bindings) {
 		return errV2Unavailable
 	}
 	for _, image := range []v2LegacyImage{migration.Firewall, migration.LocalServices} {
@@ -325,7 +332,7 @@ func (s *v2Store) validateMigration() error {
 				Format string `json:"format"`
 				Bytes  []byte `json:"bytes"`
 			}
-			if s.readObject(hash, &record) != nil || record.Format != v2Format {
+			if read(hash, &record) != nil || record.Format != v2Format {
 				return errV2Unavailable
 			}
 			decoded, err := decodeRecord(record.Bytes, uint64(i+1), previous, "")

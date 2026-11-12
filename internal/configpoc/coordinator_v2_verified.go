@@ -41,43 +41,53 @@ func (c *v2Coordinator) verifiedNode(hash string, depth int, prefix string) (nod
 	if depth < 0 || depth > v2VerifiedDepthLimit || len(prefix) != depth || c.store.readObject(hash, &node) != nil || node.Format != v2Format || node.Depth != depth {
 		return node, errV2Unavailable
 	}
+	if !validVerifiedNodeV2(node, depth, prefix) {
+		return node, errV2Unavailable
+	}
+	return node, nil
+}
+
+func validVerifiedNodeV2(node v2VerifiedNode, depth int, prefix string) bool {
+	if depth < 0 || depth > v2VerifiedDepthLimit || len(prefix) != depth || node.Format != v2Format || node.Depth != depth {
+		return false
+	}
 	switch node.Kind {
 	case "leaf":
 		if len(node.Entries) == 0 || len(node.Entries) > v2VerifiedLeafLimit {
-			return node, errV2Unavailable
+			return false
 		}
 		for _, child := range node.Children {
 			if child != "" {
-				return node, errV2Unavailable
+				return false
 			}
 		}
 		previous := ""
 		for _, entry := range node.Entries {
 			if !validHash(entry.Revision) || !validHash(entry.Audit) || entry.Operation == "" || len(entry.Operation) > 128 || !strings.HasPrefix(entry.Revision, prefix) || entry.Revision <= previous {
-				return node, errV2Unavailable
+				return false
 			}
 			previous = entry.Revision
 		}
 	case "branch":
 		if depth >= v2VerifiedDepthLimit || len(node.Entries) != 0 {
-			return node, errV2Unavailable
+			return false
 		}
 		count := 0
 		for _, child := range node.Children {
 			if child != "" {
 				if !validHash(child) {
-					return node, errV2Unavailable
+					return false
 				}
 				count++
 			}
 		}
 		if count == 0 {
-			return node, errV2Unavailable
+			return false
 		}
 	default:
-		return node, errV2Unavailable
+		return false
 	}
-	return node, nil
+	return true
 }
 
 func (c *v2Coordinator) verifiedLookup(root, hash string) (v2VerifiedEntry, bool, error) {
