@@ -415,6 +415,32 @@ type v2PhysicalInfo struct {
 	stat *syscall.Stat_t
 }
 
+type v2PhysicalSizedInfo struct {
+	os.FileInfo
+	size int64
+}
+
+func (i v2PhysicalSizedInfo) Size() int64 { return i.size }
+
+func TestV2PhysicalNegativeSizeDoesNotChangeCounters(t *testing.T) {
+	s, area, _, _ := v2Fixture(t, 64)
+	info, err := area.Lstat("selected.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []os.FileInfo{nil, v2PhysicalSizedInfo{info, -1}, v2PhysicalSizedInfo{info, math.MinInt64}} {
+		for _, apply := range []func(os.FileInfo) error{s.physicalPendingSelector, s.physicalSelected, s.physicalAddFile} {
+			used, physical := s.used, s.physical
+			if err := apply(bad); !errors.Is(err, errV2Unavailable) {
+				t.Fatal("invalid size accepted", err)
+			}
+			if s.used != used || !reflect.DeepEqual(s.physical, physical) {
+				t.Fatal("invalid size changed counters")
+			}
+		}
+	}
+}
+
 func (i v2PhysicalInfo) Sys() any { return i.stat }
 
 func TestV2PhysicalOverflowAndDeviceValidation(t *testing.T) {

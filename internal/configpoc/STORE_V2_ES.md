@@ -72,3 +72,35 @@ Las pruebas de fallo/proceso no equivalen a pérdida eléctrica. La recuperació
 preparado debe conservar fuentes e historial: no borrar archivos desconocidos ni
 seleccionar manualmente una revisión. El cutover, downgrade guard, readback global,
 paridad administrativa y continuidad con disco lleno siguen pendientes.
+
+
+### Presión v2 sobre copias
+
+Sólo en Debian 13 de laboratorio autorizado, compilar `go test -c ./internal/configpoc`
+y el inspector `andeiva-storage-lab`; preparar el perfil inactivo según su guía.
+Como root, usar binarios verificados y propiedad de root:
+
+```sh
+bash packaging/preview/tests/storage-pressure.sh --authorized-debian-v2-volumes \
+  "$TEST_BINARY" "$TEST_SHA256" --isolated-storage-only \
+  "$INSPECTOR" "$INSPECTOR_SHA256" "$VOLUME_ID"
+```
+
+El modo admite exclusivamente bytes, inodos y archivos borrados aún abiertos.
+Verifica originales y copias; el worker recibe el alcance config y el ejecutable
+por descriptores, con UID/GID 1000, sin grupos adicionales/capacidades y con NNP.
+Los demás dominios permanecen root-only. ENOSPC real debe rechazar la admisión sin
+Apply ni cambio de selección; lookup/replay y Save/reapertura posteriores pasan.
+Los motores son simulados. Los tres casos pasaron en Debian: disponibilidad de
+bytes/inodos cero y bloques retenidos hasta cerrar. Originales, sentinelas y
+limpieza verificados. Total 2,952 s / CPU 2,236 s / pico cgroup 553.398.272 bytes,
+incluida caché. No prueba v2 sólo lectura, cuotas/reserva física, reclamación de
+auditoría, continuidad del dataplane real ni cortes eléctricos; AND-01/02 siguen
+abiertos. El caso readonly del fixture de volúmenes anterior no pertenece a v2.
+
+La presión por bytes dejó disponibilidad cero; tras liberar el archivo de relleno
+quedaron 112.132.096 bytes. La presión por inodos alcanzó cero inodos libres con
+111.476.736 bytes todavía disponibles. El archivo borrado pero abierto mantuvo
+disponibilidad cero hasta cerrarlo; después se observaron 111.075.328 bytes.
+Son medidas del filesystem de esta corrida sobre copias. El pico cgroup incluye
+caché; no es RSS del proceso, heap de la aplicación ni dimensionamiento productivo.

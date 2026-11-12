@@ -170,18 +170,18 @@ func (s *v2Store) scanV2Area() error {
 				return errV2Unavailable
 			}
 			info, statErr = s.physicalRecord(name, info)
-			if statErr != nil || s.physicalAddFile(info) != nil {
+			if statErr != nil {
+				_ = dir.Close()
+				return errV2Unavailable
+			}
+			size := info.Size()
+			if size < 0 || s.physicalAddFile(info) != nil {
 				_ = dir.Close()
 				return errV2Unavailable
 			}
 			if name == "selected.json" {
 				s.physical.selector, _ = v2Allocated(info)
-				s.physical.selectorSize = uint64(info.Size())
-			}
-			size := info.Size()
-			if size < 0 {
-				_ = dir.Close()
-				return errV2Unavailable
+				s.physical.selectorSize = uint64(size)
 			}
 			s.used.Bytes += uint64(size)
 			s.used.Inodes++

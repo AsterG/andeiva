@@ -184,3 +184,40 @@ fault hooks qualify the tested filesystem protocol, not resistance to power loss
 Multiplatform compilation does not imply supported non-Linux durability/runtime.
 
 Localized guides: [Spanish](STORE_V2_ES.md), [Portuguese](STORE_V2_PT.md).
+
+
+### Copied-volume v2 pressure qualification
+
+Only in the authorized Debian 13 laboratory, build `go test -c ./internal/configpoc`
+and the `andeiva-storage-lab` inspector. Prepare the inactive fixed image profile
+using the storage laboratory guide. As root, with verified root-owned binaries:
+
+```sh
+bash packaging/preview/tests/storage-pressure.sh --authorized-debian-v2-volumes \
+  "$TEST_BINARY" "$TEST_SHA256" --isolated-storage-only \
+  "$INSPECTOR" "$INSPECTOR_SHA256" "$VOLUME_ID"
+```
+
+This mode admits bytes, inodes and open-deleted cases only. It copies and verifies
+original images, passes only the config-copy scope and pinned executable through
+inherited descriptors, then drops the worker to UID/GID 1000, no supplementary
+groups, no capabilities and no-new-privileges. Protected sibling domains remain
+root-only. Actual ENOSPC and held-unlinked allocation must reject admission without
+engine calls or selected-state changes; retained lookup/replay and later Save/cold
+reopen must pass. Engines in this fixture are simulated.
+
+Native qualification passed all three cases: bytes exhausted with availability
+zero, inode availability zero, and open-deleted blocks remained charged until
+close. Original image checks, other-domain sentinels and cleanup passed. Combined
+fixture elapsed 2.952 s / CPU 2.236 s / cgroup peak 553,398,272 bytes including
+cache. These observations do not prove v2 read-only recovery, quotas, physical
+reservations, protected-audit reclamation, real dataplane continuity or power-loss
+resistance. AND-01/02 remain open. The separate legacy volume fixture's read-only
+case must not be attributed to this v2 mode.
+
+The byte-pressure case observed zero available bytes, then 112,132,096 after
+releasing its filler. Inode pressure reached zero free inodes while 111,476,736
+bytes remained available. The open-deleted case retained zero available bytes
+until close, then reported 111,075,328. These are filesystem observations for this
+copied-volume run. The cgroup peak includes filesystem cache; it is not process
+RSS, application heap or a production memory-sizing result.

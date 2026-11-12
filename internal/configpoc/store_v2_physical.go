@@ -138,15 +138,29 @@ func (s *v2Store) physicalCapacity(payload, inodes uint64) (result error) {
 // is durable. Available-space probes, not this name-based deduction, account for
 // an old selector still held open by another reader.
 func (s *v2Store) physicalPendingSelector(info os.FileInfo) error {
+	if info == nil {
+		return errV2Unavailable
+	}
+	size := info.Size()
+	if size < 0 {
+		return errV2Unavailable
+	}
 	if err := s.physicalAddFile(info); err != nil {
 		return err
 	}
-	s.used.Bytes += uint64(info.Size())
+	s.used.Bytes += uint64(size)
 	s.used.Inodes++
 	return s.physicalRefreshDirectory()
 }
 
 func (s *v2Store) physicalSelected(info os.FileInfo) error {
+	if info == nil {
+		return errV2Unavailable
+	}
+	size := info.Size()
+	if size < 0 {
+		return errV2Unavailable
+	}
 	allocated, err := v2Allocated(info)
 	if err != nil || s.physical.files < s.physical.selector || s.used.Bytes < s.physical.selectorSize {
 		return errV2Unavailable
@@ -160,7 +174,7 @@ func (s *v2Store) physicalSelected(info os.FileInfo) error {
 	}
 	s.physical.files -= s.physical.selector
 	s.used.Bytes -= s.physical.selectorSize
-	s.physical.selector, s.physical.selectorSize = allocated, uint64(info.Size())
+	s.physical.selector, s.physical.selectorSize = allocated, uint64(size)
 	return s.physicalRefreshDirectory()
 }
 

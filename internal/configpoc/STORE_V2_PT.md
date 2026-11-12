@@ -72,3 +72,35 @@ Testes de falha/processo não equivalem à perda de energia. Recuperar o prepara
 exige preservar fontes e histórico: não apagar arquivos desconhecidos nem selecionar
 revisões manualmente. Cutover, downgrade guard, readback global, paridade administrativa
 e continuidade com disco cheio permanecem pendentes.
+
+
+### Pressão v2 em cópias
+
+Somente no laboratório Debian 13 autorizado, compilar `go test -c ./internal/configpoc`
+e o inspector `andeiva-storage-lab`; preparar o perfil inativo conforme seu guia.
+Como root, usar binários verificados e pertencentes a root:
+
+```sh
+bash packaging/preview/tests/storage-pressure.sh --authorized-debian-v2-volumes \
+  "$TEST_BINARY" "$TEST_SHA256" --isolated-storage-only \
+  "$INSPECTOR" "$INSPECTOR_SHA256" "$VOLUME_ID"
+```
+
+O modo admite somente bytes, inodes e arquivos removidos ainda abertos. Valida
+originais/cópias e passa o escopo config e executável por descritores; worker
+UID/GID 1000, sem grupos adicionais/capacidades e com NNP. Outros domínios ficam
+root-only. ENOSPC real rejeita admissão sem Apply ou mudança de seleção;
+lookup/replay e Save/reabertura posteriores passam. Motores são simulados.
+Os três casos passaram em Debian: disponibilidade de bytes/inodes zero e blocos
+retidos até fechar. Originais, sentinelas e limpeza verificados. Total 2,952 s /
+CPU 2,236 s / pico cgroup 553.398.272 bytes incluindo cache. Não prova v2 somente
+leitura, quotas/reserva física, recuperação de espaço de auditoria, continuidade
+do dataplane real ou corte de energia; AND-01/02 continuam abertos. O readonly do
+fixture anterior de volumes não pertence ao modo v2.
+
+A pressão de bytes deixou disponibilidade zero; após liberar o arquivo de
+preenchimento ficaram 112.132.096 bytes. A pressão de inodes atingiu zero inodes
+livres com 111.476.736 bytes ainda disponíveis. O arquivo removido, mas aberto,
+manteve disponibilidade zero até ser fechado; depois foram observados 111.075.328
+bytes. São medidas do filesystem desta execução em cópias. O pico cgroup inclui
+cache; não é RSS do processo, heap da aplicação ou dimensionamento de produção.
