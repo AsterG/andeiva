@@ -589,3 +589,88 @@ func TestPreparedLocalProofV2DeadlineAndReceiverNegatives(t *testing.T) {
 		t.Fatal("zero scope")
 	}
 }
+
+func TestPreparedLocalProofV2TimeRepresentations(t *testing.T) {
+	for _, representation := range []string{"location", "monotonic"} {
+		t.Run(representation, func(t *testing.T) {
+			f := newProofFixtureV2(t, true, true)
+			deadline := time.Now().Add(time.Minute)
+			executeBefore := deadline.Add(time.Minute)
+			f.input.Confirmation.Deadline = deadline
+			f.input.Origin.Outcome.ConfirmationDeadline = &deadline
+			f.input.Operation.ExecuteBefore = executeBefore
+			var err error
+			f.scope, err = configpoc.ResolveLocalProofV2(f.input, f.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if representation == "location" {
+				zone := time.FixedZone("proof-test", -3*60*60)
+				deadline, executeBefore = deadline.In(zone), executeBefore.In(zone)
+			}
+			binding := f.scope.Binding()
+			if deadline == binding.Deadline || executeBefore == binding.ExecuteBefore || !deadline.Equal(binding.Deadline) || !executeBefore.Equal(binding.ExecuteBefore) {
+				t.Fatal("fixture must differ in representation, not instant")
+			}
+			if err := f.book.Publish(f.scope, []ProofReceiverV2{f.receiver}); err != nil {
+				t.Fatal(err)
+			}
+			endpoint := f.issue(t, f.receiver, f.session)
+			recovery := f.issue(t, f.book.recovery, f.session)
+			// Model an equivalent trusted in-memory representation, independently
+			// of the resolver's current UTC normalization.
+			f.book.mu.Lock()
+			f.book.active.deadline = deadline
+			for key, entry := range f.book.entries {
+				entry.scope.Deadline, entry.scope.ExecuteBefore = deadline, executeBefore
+				f.book.entries[key] = entry
+			}
+			receiverValid := f.book.receiverValid(f.receiver, binding)
+			f.book.mu.Unlock()
+			if !receiverValid {
+				t.Fatal("equivalent deadline rejected receiver")
+			}
+			if err := f.book.Publish(f.scope, []ProofReceiverV2{f.receiver}); err != nil {
+				t.Fatal(err)
+			}
+			evidence := ProofEvidenceV2{Recovery: recovery.Token, Endpoints: []string{endpoint.Token}}
+			reservation, err := f.book.Reserve(f.identity(t, f.session), f.scope, evidence)
+			if err != nil {
+				t.Fatal("equivalent timestamps invalidated published evidence", err)
+			}
+			reservation.Finish(false)
+			for _, field := range []string{"deadline", "execute-before"} {
+				f.book.mu.Lock()
+				for key, entry := range f.book.entries {
+					entry.scope = binding
+					if field == "deadline" {
+						entry.scope.Deadline = binding.Deadline.Add(time.Nanosecond)
+					} else {
+						entry.scope.ExecuteBefore = binding.ExecuteBefore.Add(time.Nanosecond)
+					}
+					f.book.entries[key] = entry
+				}
+				f.book.mu.Unlock()
+				if _, err := f.book.Reserve(f.identity(t, f.session), f.scope, evidence); err == nil {
+					t.Fatal("different instant accepted", field)
+				}
+			}
+			f.book.mu.Lock()
+			f.book.active.deadline = binding.Deadline.Add(time.Nanosecond)
+			receiverValid = f.book.receiverValid(f.receiver, binding)
+			f.book.mu.Unlock()
+			if receiverValid {
+				t.Fatal("different deadline accepted receiver")
+			}
+			if err := f.book.Publish(f.scope, []ProofReceiverV2{f.receiver}); err != nil {
+				t.Fatal(err)
+			}
+			f.book.mu.Lock()
+			_, retained := f.book.entries[sha256.Sum256([]byte(endpoint.Token))]
+			f.book.mu.Unlock()
+			if retained {
+				t.Fatal("changed deadline retained endpoint evidence")
+			}
+		})
+	}
+}

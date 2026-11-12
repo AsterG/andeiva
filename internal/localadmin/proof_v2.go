@@ -131,6 +131,20 @@ func activeScopeV2(scope configpoc.LocalProofBindingV2) activeProofV2 {
 	return activeProofV2{scope.Lineage, scope.Origin, scope.Lease, scope.Target, scope.LocalTarget, scope.Subject, scope.CredentialRevision, scope.Generation, scope.Deadline}
 }
 
+func sameActiveProofV2(a, b activeProofV2) bool {
+	equal := a.deadline.Equal(b.deadline)
+	a.deadline, b.deadline = time.Time{}, time.Time{}
+	return equal && a == b
+}
+
+func sameProofBindingV2(a, b configpoc.LocalProofBindingV2) bool {
+	equal := a.Deadline.Equal(b.Deadline) && a.ExecuteBefore.Equal(b.ExecuteBefore)
+	// Preserve exact comparison of every other field, including future fields.
+	a.Deadline, b.Deadline = time.Time{}, time.Time{}
+	a.ExecuteBefore, b.ExecuteBefore = time.Time{}, time.Time{}
+	return equal && a == b
+}
+
 // Publish accepts only a verified pending projection and its actual receiver
 // instances from the trusted caller. It does not itself prove kernel/listener
 // state. No production caller exists until F2 supplies that barrier under lock.
@@ -169,7 +183,7 @@ func (b *PreparedProofBookV2) Publish(scope configpoc.LocalProofScopeV2, receive
 	}
 	active := activeScopeV2(scope.Binding())
 	for key, entry := range b.entries {
-		if !sameProofReceiverV2(entry.receiver, b.recovery) && (b.active != active || !sameProofReceiverV2(next[entry.receiver.Endpoint], entry.receiver)) {
+		if !sameProofReceiverV2(entry.receiver, b.recovery) && (!sameActiveProofV2(b.active, active) || !sameProofReceiverV2(next[entry.receiver.Endpoint], entry.receiver)) {
 			delete(b.entries, key)
 		}
 	}
@@ -184,7 +198,7 @@ func (b *PreparedProofBookV2) receiverValid(r ProofReceiverV2, scope configpoc.L
 	if sameProofReceiverV2(r, b.recovery) {
 		return true
 	}
-	return scope.Purpose == "confirm" && b.active == activeScopeV2(scope) && sameProofReceiverV2(b.receivers[r.Endpoint], r) && r.Run == b.run && r.ActivationHash == scope.LocalTarget && validBindingID(r.Endpoint)
+	return scope.Purpose == "confirm" && sameActiveProofV2(b.active, activeScopeV2(scope)) && sameProofReceiverV2(b.receivers[r.Endpoint], r) && r.Run == b.run && r.ActivationHash == scope.LocalTarget && validBindingID(r.Endpoint)
 }
 
 // Issue requires a freshly authenticated identity and the current locked scope.
@@ -284,7 +298,7 @@ func (b *PreparedProofBookV2) Reserve(identity ProofIdentityV2, scope configpoc.
 		}
 		key := sha256.Sum256([]byte(token))
 		entry, ok := b.entries[key]
-		if !ok || entry.reserved || !now.Before(entry.expires) || entry.scope != s || !needs[entry.receiver.Endpoint] || !b.receiverValid(entry.receiver, s) ||
+		if !ok || entry.reserved || !now.Before(entry.expires) || !sameProofBindingV2(entry.scope, s) || !needs[entry.receiver.Endpoint] || !b.receiverValid(entry.receiver, s) ||
 			(i == 0 && (!sameProofReceiverV2(entry.receiver, b.recovery) || entry.session != identity.session)) || (i > 0 && sameProofReceiverV2(entry.receiver, b.recovery)) {
 			return nil, configpoc.ErrDenied
 		}
