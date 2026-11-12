@@ -91,12 +91,14 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 		c.armLocked()
 		return op, ErrRecovery
 	}
+	if s.reserves!=nil {if err=s.reserves.maintain(s);err!=nil{return op,err}}
 	return op, nil
 }
 
 func (c *v2Coordinator) uncertainLocked(op v2Operation, cause error) (v2CoordinatorResult, error) {
 	c.invalidateLocalLocked()
 	s := c.store
+	if s.reserves!=nil{s.reserves.emergencyCandidate(s,op.Reserve,"recovery_uncertain")}
 	st := clone(s.state)
 	state := st.Configuration
 	state.RecoveryRequired = true
@@ -257,6 +259,7 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 		return err
 	}
 	record := v2RecoveryRecord{Format: v2Format, ID: id, Origin: origin.ID, Lease: pending.Lease, Kind: kind, State: "pending", Previous: previousHash, Target: targetHash, Subject: origin.Subject, Lineage: s.state.Lineage, Started: c.recoveryNow(), Pinned: true}
+	record.Reserve=clone(origin.Reserve)
 	recordHash, err := s.object(record)
 	if err != nil {
 		s.blocked = true
@@ -291,6 +294,7 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 	if err != nil || origin.Domain != intent.Domain || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.ConfirmationLease != intent.Lease {
 		return ErrRecovery
 	}
+	if s.reserves!=nil&&s.reserves.verifyBundle(s,origin.Reserve)!=nil{return ErrRecovery}
 	var previous, target v2Configuration
 	if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validV2Configuration(&previous) || !validV2Configuration(&target) || target.Intent != nil {
 		return errV2Unavailable
@@ -360,6 +364,7 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 	if err = c.publishLocalLocked(); err != nil {
 		return err
 	}
+	if s.reserves!=nil {if err=s.reserves.maintain(s);err!=nil{return err}}
 	c.armLocked()
 	return nil
 }
@@ -417,6 +422,10 @@ func (c *v2Coordinator) reconcileLocked(ctx context.Context, reason string) erro
 	if err != nil || (op.State != "pending" && op.State != "uncertain") {
 		return ErrRecovery
 	}
+	closingRestore,err:=s.closingOperationAllowanceLocked(op)
+	if err!=nil{return err}
+	defer closingRestore()
+	if s.reserves!=nil&&s.reserves.verifyBundle(s,op.Reserve)!=nil{return ErrRecovery}
 	var previous v2Configuration
 	if s.readObject(intent.Previous, &previous) != nil || !validV2Configuration(&previous) || previous.Intent != nil {
 		return errV2Unavailable

@@ -84,6 +84,11 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 			return c, err
 		}
 	}
+	if store.reserves != nil {
+		if err := store.reserves.maintain(store); err != nil {
+			return c, err
+		}
+	}
 	if options.BootID != nil {
 		if err := c.bootStartupLocked(ctx, *options.BootID); err != nil {
 			return c, err
@@ -293,12 +298,25 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	if principal.Role != RoleAdmin || !s.principalV2Locked(principal) {
 		return v2CoordinatorResult{}, ErrDenied
 	}
+	if s.reserves != nil {
+		if err := s.reserves.maintain(s); err != nil {
+			return v2CoordinatorResult{}, err
+		}
+	}
 	op, err := s.lookupLocked(principal.Subject, id)
 	if err != nil {
 		return v2CoordinatorResult{}, err
 	}
 	if op.State != "accepted" {
 		return result(op), nil
+	}
+	if s.reserves != nil && op.ClosingCredit == "" {
+		if err = s.reserveMaintenanceReadyV2(""); err != nil {
+			return result(op), err
+		}
+	}
+	if s.reserves != nil && s.reserves.verifyBundle(s, op.Reserve) != nil {
+		return result(op), ErrRecovery
 	}
 	if ctx.Err() != nil {
 		return result(op), ErrInterrupted
@@ -374,6 +392,11 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	s.allowance = v2Budget{Bytes: v2OperationReserveBytes, Inodes: v2OperationReserveInodes}
 	defer func() { s.allowance = v2Budget{} }()
+	closingRestore, err := s.closingOperationAllowanceLocked(op)
+	if err != nil {
+		return result(op), err
+	}
+	defer closingRestore()
 	target, changed, err := c.targetLocked(op, state, now)
 	if err != nil {
 		return result(op), err
@@ -407,12 +430,20 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	st.Clock = now
 	st.Configuration.Intent = &v2CoordinatorIntent{Operation: op.ID, Subject: op.Subject, Domain: op.Domain, Kind: op.Request.Kind, Previous: previousHash, Target: targetHash, TargetGeneration: generation}
+	if s.reserves != nil {
+		if err = s.reserves.selectedPlan(s, &op, &st, *st.Configuration.Intent, target); err != nil {
+			return result(op), err
+		}
+	}
 	if err = s.putOperation(&st, op); err != nil {
 		s.blocked = true
 		return result(op), err
 	}
 	consume = true
 	if err = s.publish(st); err != nil {
+		if s.reserves != nil {
+			s.reserves.emergencyCandidate(s, op.Reserve, "storage_uncertain")
+		}
 		return result(op), err
 	}
 	if localReservation != nil {
@@ -464,6 +495,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	final, err := c.completeLocked(op, target, generation, code, "", pin, c.now())
 	if err != nil {
+		if s.reserves != nil {
+			s.reserves.emergencyCandidate(s, op.Reserve, "storage_uncertain")
+		}
 		_ = c.reconcileStorageFailureLocked(ctx, state, op)
 		return result(op), err
 	}

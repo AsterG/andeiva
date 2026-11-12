@@ -148,9 +148,6 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 	if s.blocked {
 		return v2Operation{}, errV2Unavailable
 	}
-	if err := s.reserveBeforeAdmissionV2(); err != nil {
-		return v2Operation{}, err
-	}
 	i := s.namespaceIndex(subject, namespace)
 	if i < 0 || !s.subject(subject) {
 		return v2Operation{}, errV2NotFound
@@ -178,6 +175,9 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 	data, _, err := v2Canonical(request)
 	if err != nil || len(data) > 8192 {
 		return v2Operation{}, errV2Invalid
+	}
+	if err := s.reserveBeforeAdmissionV2(); err != nil {
+		return v2Operation{}, err
 	}
 	if s.state.RecoveryReserveVersion == 1 && request.Kind == OpConfirm {
 		return s.admitClosingLocked(subject, namespace, expected, request, now)

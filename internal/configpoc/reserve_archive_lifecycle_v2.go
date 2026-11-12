@@ -1,10 +1,357 @@
 package configpoc
 
-// Admission never races past unresolved terminal maintenance. The complete
-// lifecycle replaces this readiness gate only after exact archival proof.
+import (
+	"errors"
+	"reflect"
+	"sort"
+
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
+)
+
+// Maintenance is serialized with admission and application under the store
+// writer lease. A terminal bundle cannot be reused until both actual selected
+// anchors preserve its exact bytes and every physical CAS has completed.
 func (m *v2ReserveManager) maintain(s *v2Store) error {
-	if m == nil || s == nil {
+	if m == nil || s == nil || s.blocked {
 		return ErrRecovery
 	}
-	return s.reserveMaintenanceReadyV2("")
+	// A live lease owns the only application lane. Unrelated expired work
+	// keeps its own canonical/physical reserves; it cannot starve Confirm.
+	if cfg := s.state.Configuration; cfg != nil && cfg.Pending != nil {
+		return nil
+	}
+	for {
+		var work *v2ActiveReserve
+		for _, active := range s.state.ActiveReserves {
+			if active.CanonicalHeld {
+				value := active
+				work = &value
+				break
+			}
+		}
+		if work == nil && s.state.SystemBundle != nil && s.state.SystemBundle.CanonicalHeld {
+			work = clone(s.state.SystemBundle)
+		}
+		if work == nil {
+			return nil
+		}
+		if err := m.archiveTerminal(s, *work); err != nil {
+			return err
+		}
+	}
+}
+
+func sortReserveClaimsV2(claims []recoveryreserve.SlotClaimV2) {
+	sort.Slice(claims, func(i, j int) bool {
+		a, _ := reserveClaimKeyV2(claims[i])
+		b, _ := reserveClaimKeyV2(claims[j])
+		return a < b
+	})
+}
+
+func (m *v2ReserveManager) archiveTerminal(s *v2Store, active v2ActiveReserve) error {
+	previousAllowance := s.allowance
+	s.allowance = v2Budget{Bytes: v2OperationReserveBytes, Inodes: v2OperationReserveInodes}
+	defer func() { s.allowance = previousAllowance }()
+	if active.Bundle.ClosingEscrow != nil {
+		s.allowance = v2Budget{Bytes: v2ClosingReserveBytes, Inodes: v2ClosingReserveInodes}
+	}
+	first := v2ReserveArchiveEntry{Claim: active.Bundle.Claims.Admission}
+	archive, known, err := s.reserveArchiveLookupV2(s.state.ReserveArchiveRoot, first, "claim")
+	if err != nil {
+		return err
+	}
+	if !known {
+		archive, err = m.buildTerminalArchive(s, active)
+		if err != nil {
+			return err
+		}
+		hash, err := s.object(archive)
+		if err != nil {
+			return err
+		}
+		root := s.state.ReserveArchiveRoot
+		for _, entry := range reserveArchiveIdentitiesV2(archive) {
+			key, e := reserveIdentityKeyV2(entry.entry, entry.kind)
+			if e != nil {
+				return e
+			}
+			root, e = s.reserveArchiveInsertV2(root, 0, "", v2ReserveArchiveRef{Key: key, Archive: hash, Owner: entry.entry.Claim.Owner, Role: entry.entry.Claim.Role, Kind: entry.kind})
+			if e != nil {
+				return e
+			}
+		}
+		st := clone(s.state)
+		st.ReserveArchiveRoot = root
+		if err = s.publish(st); err != nil {
+			return err
+		}
+		if err = s.point("reserve_archive_selected"); err != nil {
+			return err
+		}
+	}
+	if validateArchiveFinalityV2(archive, s.state, s.readObject) != nil {
+		return ErrRecovery
+	}
+	// A replay after a partial retirement must retain the same pair: changing
+	// either selector would change the physical CAS proof digest.
+	current, prior, err := s.closedReserveSelectionsV2(archive)
+	if err != nil {
+		if !errors.Is(err, errReserveAnchorV2) {
+			return err
+		}
+		if err = s.publish(clone(s.state)); err != nil {
+			return err
+		}
+		current, prior, err = s.closedReserveSelectionsV2(archive)
+		if err != nil {
+			return err
+		}
+	}
+	if err = s.point("reserve_archive_anchored"); err != nil {
+		return err
+	}
+	hash, err := reserveArchiveHashV2(archive)
+	if err != nil {
+		return err
+	}
+	for _, entry := range archive.Entries {
+		scope := active.Bundle.Scope
+		if entry.Scope != nil {
+			scope = *entry.Scope
+		} else if entry.Claim.Owner != scope.Bundle {
+			scope = m.archiveOwnerScope(archive, entry.Claim.Owner)
+		}
+		scope.Bundle = entry.Claim.Owner
+		proof := reserveRetirementProofV2(scope, hash, archive, current, prior)
+		if err = m.pool(entry.Claim.Role).RetireCAS(recoveryreserve.ExpectedV2{Claim: entry.Claim, Written: entry.Binding}, proof); err != nil {
+			return ErrRecovery
+		}
+		if err = s.point("reserve_role_retired"); err != nil {
+			return err
+		}
+	}
+	for _, claim := range archive.UnusedEscrow {
+		scope := active.Bundle.Scope
+		scope.Bundle = claim.Owner
+		if active.Bundle.PlanScope != nil {
+			scope = *active.Bundle.PlanScope
+			scope.Bundle = claim.Owner
+		}
+		if err = m.pool(claim.Role).RetireCAS(recoveryreserve.ExpectedV2{Claim: claim}, reserveRetirementProofV2(scope, hash, archive, current, prior)); err != nil {
+			return ErrRecovery
+		}
+		if err = s.point("reserve_escrow_retired"); err != nil {
+			return err
+		}
+	}
+	if err = s.point("reserve_physical_retired"); err != nil {
+		return err
+	}
+	return s.releaseArchivedReserveV2(archive)
+}
+
+func reserveArchiveHashV2(archive v2ReserveArchive) (string, error) {
+	_, hash, err := v2Canonical(archive)
+	return hash, err
+}
+
+type reserveArchiveIdentityV2 struct {
+	entry v2ReserveArchiveEntry
+	kind  string
+}
+
+func reserveArchiveIdentitiesV2(archive v2ReserveArchive) []reserveArchiveIdentityV2 {
+	result := []reserveArchiveIdentityV2{}
+	for _, entry := range archive.Entries {
+		result = append(result, reserveArchiveIdentityV2{entry, "claim"})
+		if entry.Binding != nil {
+			result = append(result, reserveArchiveIdentityV2{entry, "binding"})
+		}
+	}
+	for _, claim := range archive.UnusedEscrow {
+		result = append(result, reserveArchiveIdentityV2{v2ReserveArchiveEntry{Claim: claim}, "claim"})
+	}
+	return result
+}
+
+func (m *v2ReserveManager) archiveOwnerScope(archive v2ReserveArchive, owner string) recoveryreserve.ScopeV2 {
+	for _, entry := range archive.Entries {
+		if entry.Claim.Owner == owner && entry.Scope != nil {
+			return *entry.Scope
+		}
+	}
+	return recoveryreserve.ScopeV2{}
+}
+
+func reserveRetirementProofV2(scope recoveryreserve.ScopeV2, hash string, archive v2ReserveArchive, current, prior recoveryreserve.SelectionProofV2) recoveryreserve.RetirementProofV2 {
+	work := scope.Operation
+	finality := "operation_final"
+	resolution := ""
+	if scope.Kind != "operation" {
+		work = scope.Recovery
+		finality = "recovery_final"
+	}
+	if scope.Lease != "" {
+		finality = "lease_resolved"
+		resolution = archive.LeaseResolution
+	}
+	return recoveryreserve.RetirementProofV2{Scope: scope, Archive: hash, FinalAudit: archive.Audit, FinalWork: work, Finality: finality, LeaseResolution: resolution, Current: current, Previous: prior}
+}
+
+func (m *v2ReserveManager) archiveBundle(s *v2Store, bundle *v2ReserveBundle) ([]v2ReserveArchiveEntry, error) {
+	if m.verifyBundle(s, bundle) != nil {
+		return nil, ErrRecovery
+	}
+	entries := []v2ReserveArchiveEntry{}
+	for _, claim := range bundle.Claims.all() {
+		entry := v2ReserveArchiveEntry{Claim: claim}
+		candidate, err := m.pool(claim.Role).InspectClaimed(claim)
+		if err != nil {
+			if !errors.Is(err, recoveryreserve.ErrConflict) || claim.Role == recoveryreserve.AdmissionV2 || (claim.Role == recoveryreserve.PlanV2 && bundle.Plan != nil) {
+				return nil, ErrRecovery
+			}
+		} else {
+			entry.Binding = &candidate.Binding
+			entry.Raw = append([]byte{}, candidate.Bytes...)
+			switch claim.Role {
+			case recoveryreserve.AdmissionV2:
+				entry.Scope = clone(&bundle.Scope)
+			case recoveryreserve.PlanV2:
+				var plan v2ReservePlan
+				if checkpointDecode(entry.Raw, &plan) != nil {
+					return nil, ErrRecovery
+				}
+				entry.Scope = &plan.Scope
+			case recoveryreserve.EmergencyV2:
+				var emergency v2ReserveEmergency
+				if checkpointDecode(entry.Raw, &emergency) != nil {
+					return nil, ErrRecovery
+				}
+				entry.Scope = &emergency.Scope
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+func (m *v2ReserveManager) buildTerminalArchive(s *v2Store, active v2ActiveReserve) (v2ReserveArchive, error) {
+	archive := v2ReserveArchive{Format: v2Format, Version: 1, Lineage: s.state.Lineage, Origin: active.Work, Dependencies: []string{}}
+	facts := v2ReserveFinality{Format: v2Format, Version: 1, Lineage: s.state.Lineage, Origin: v2ReserveWorkRef{ID: active.Work}}
+	bundles := []*v2ReserveBundle{active.Bundle}
+	if active.Bundle.Scope.Kind == "boot" {
+		facts.Kind = "system"
+		record, err := (&v2Coordinator{store: s}).recoveryLookupLocked(active.Work)
+		if err != nil || record.State != "final" || record.Pinned || !reflect.DeepEqual(record.Reserve, active.Bundle) {
+			return archive, ErrRecovery
+		}
+		facts.Origin.Object, err = s.object(record)
+		if err != nil {
+			return archive, err
+		}
+		archive.Audit = record.Audit
+	} else {
+		facts.Kind = "operation"
+		origin, err := s.lookupRetained(active.Bundle.Scope.Subject, active.Work)
+		if err != nil || !terminalReserveOperationV2(origin, s.state) {
+			return archive, ErrRecovery
+		}
+		facts.Origin.Object, err = s.object(origin)
+		if err != nil {
+			return archive, err
+		}
+		archive.Audit = origin.Outcome.AuditHash
+		creditIndex := closingCreditIndexV2(&s.state, origin.ID)
+		if creditIndex >= 0 {
+			credit := s.state.ClosingCredits[creditIndex]
+			if credit.Child != "" {
+				child, e := s.lookupRetained(origin.Subject, credit.Child)
+				if e != nil {
+					return archive, e
+				}
+				if child.State == "accepted" {
+					st := clone(s.state)
+					if e = s.withoutEffects(&st, child, "ANDEIVA_CONFIRMATION_RESOLVED", s.state.Clock); e != nil {
+						return archive, e
+					}
+					if e = s.publish(st); e != nil {
+						return archive, e
+					}
+					child, e = s.lookupRetained(origin.Subject, credit.Child)
+					if e != nil {
+						return archive, e
+					}
+				}
+				if !terminalReserveOperationV2(child, s.state) || child.Reserve == nil {
+					return archive, ErrRecovery
+				}
+				hash, e := s.object(child)
+				if e != nil {
+					return archive, e
+				}
+				facts.Child = &v2ReserveWorkRef{ID: child.ID, Object: hash}
+				archive.Child = child.ID
+				archive.Audit = child.Outcome.AuditHash
+				bundles = append(bundles, child.Reserve)
+			} else if origin.Reserve.ClosingEscrow != nil {
+				archive.UnusedEscrow = origin.Reserve.ClosingEscrow.all()
+			}
+		}
+		if origin.Outcome.ConfirmationLease != "" {
+			resolution := v2ReserveLeaseResolution{Format: v2Format, Version: 1, Origin: origin.ID, Lease: origin.Outcome.ConfirmationLease, Deadline: *origin.Outcome.ConfirmationDeadline, Child: archive.Child}
+			if cfg := s.state.Configuration; cfg != nil && cfg.LastRecovery != "" {
+				var record v2RecoveryRecord
+				if s.readObject(cfg.LastRecovery, &record) != nil {
+					return archive, ErrRecovery
+				}
+				if record.Origin == origin.ID && record.Lease == resolution.Lease && record.State == "final" {
+					hash, e := s.object(record)
+					if e != nil {
+						return archive, e
+					}
+					facts.Recovery = &v2ReserveWorkRef{ID: record.ID, Object: hash}
+					resolution.Recovery = record.ID
+					archive.Audit = record.Audit
+				}
+			}
+			hash, e := s.object(resolution)
+			if e != nil {
+				return archive, e
+			}
+			facts.Resolution = hash
+			archive.LeaseResolution = hash
+		}
+	}
+	for _, bundle := range bundles {
+		entries, e := m.archiveBundle(s, bundle)
+		if e != nil {
+			return archive, e
+		}
+		archive.Entries = append(archive.Entries, entries...)
+	}
+	dependencies := map[string]bool{}
+	for _, entry := range archive.Entries {
+		if entry.Binding != nil && entry.Claim.Role == recoveryreserve.PlanV2 {
+			var plan v2ReservePlan
+			if checkpointDecode(entry.Raw, &plan) != nil {
+				return archive, ErrRecovery
+			}
+			dependencies[plan.Intent.Previous] = true
+			dependencies[plan.Intent.Target] = true
+		}
+	}
+	for hash := range dependencies {
+		archive.Dependencies = append(archive.Dependencies, hash)
+	}
+	hash, err := s.object(facts)
+	if err != nil {
+		return archive, err
+	}
+	archive.FinalWork = hash
+	sortReserveArchiveV2(&archive)
+	if validateArchiveFinalityV2(archive, s.state, s.readObject) != nil {
+		return archive, ErrRecovery
+	}
+	return archive, nil
 }

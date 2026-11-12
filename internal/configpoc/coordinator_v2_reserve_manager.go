@@ -164,11 +164,12 @@ func (m *v2ReserveManager) prepareAdmission(s *v2Store, st *v2State, op *v2Opera
 }
 
 func (s *v2Store) reserveMaintenanceReadyV2(exceptOrigin string) error {
+	closing := exceptOrigin != "" && s.state.Configuration != nil && s.state.Configuration.Pending != nil && s.state.Configuration.Pending.OriginCommit == exceptOrigin
 	for _, active := range s.state.ActiveReserves {
 		if active.Work == exceptOrigin {
 			continue
 		}
-		if active.CanonicalHeld {
+		if active.CanonicalHeld && !closing {
 			return ErrRecovery
 		}
 	}

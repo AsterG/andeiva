@@ -1,6 +1,9 @@
 package configpoc
 
-import "time"
+import (
+	"reflect"
+	"time"
+)
 
 type v2ReserveWorkRef struct {
 	ID     string `json:"id"`
@@ -40,12 +43,15 @@ func terminalReserveOperationV2(op v2Operation, state v2State) bool {
 // the live selected closure and the exact physical binding before retirement.
 func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load func(string, any) error) error {
 	var facts v2ReserveFinality
-	if load == nil || load(archive.FinalWork, &facts) != nil || facts.Format != v2Format || facts.Version != 1 || facts.Lineage != state.Lineage || archive.Lineage != state.Lineage || !validReserveWorkRefV2(facts.Origin) || facts.Origin.ID != archive.Origin || facts.Resolution != archive.LeaseResolution {
+	if validateArchiveCapsulesV2(archive) != nil || load == nil || load(archive.FinalWork, &facts) != nil || facts.Format != v2Format || facts.Version != 1 || facts.Lineage != state.Lineage || archive.Lineage != state.Lineage || !validReserveWorkRefV2(facts.Origin) || facts.Origin.ID != archive.Origin || facts.Resolution != archive.LeaseResolution {
 		return errV2Unavailable
 	}
 	if facts.Kind == "system" {
 		var record v2RecoveryRecord
 		if facts.Child != nil || facts.Recovery != nil || facts.Resolution != "" || archive.Child != "" || load(facts.Origin.Object, &record) != nil || !validRecoveryRecordV2(record, state.Lineage) || record.ID != facts.Origin.ID || record.State != "final" || record.Pinned || record.Audit != archive.Audit {
+			return errV2Unavailable
+		}
+		if !archiveMatchesBundleV2(archive, record.Reserve, false) || len(archive.UnusedEscrow) != 0 {
 			return errV2Unavailable
 		}
 		return nil
@@ -77,6 +83,22 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 	if audit != archive.Audit {
 		return errV2Unavailable
 	}
+	if !archiveMatchesBundleV2(archive, origin.Reserve, reserveNeverAppliedV2(origin)) {
+		return errV2Unavailable
+	}
+	if facts.Child != nil {
+		if origin.Reserve == nil || origin.Reserve.ClosingEscrow == nil || child.Reserve == nil || !reflect.DeepEqual(child.Reserve.Claims, *origin.Reserve.ClosingEscrow) || !archiveMatchesBundleV2(archive, child.Reserve, reserveNeverAppliedV2(child)) || len(archive.UnusedEscrow) != 0 {
+			return errV2Unavailable
+		}
+	} else if origin.Reserve != nil && origin.Reserve.ClosingEscrow != nil {
+		expected := origin.Reserve.ClosingEscrow.all()
+		sortReserveClaimsV2(expected)
+		if !reflect.DeepEqual(expected, archive.UnusedEscrow) {
+			return errV2Unavailable
+		}
+	} else if len(archive.UnusedEscrow) != 0 {
+		return errV2Unavailable
+	}
 	if origin.Outcome.ConfirmationLease == "" {
 		if facts.Resolution != "" || facts.Child != nil || facts.Recovery != nil {
 			return errV2Unavailable
@@ -105,4 +127,8 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 		return errV2Unavailable
 	}
 	return nil
+}
+
+func reserveNeverAppliedV2(op v2Operation) bool {
+	return op.Reserve != nil && op.Reserve.Plan == nil && op.State == "final" && op.Outcome != nil && (op.Outcome.Code == "expired_without_effects" || (op.Outcome.Code == "rejected" && op.Outcome.ErrorCode == "ANDEIVA_NAMESPACE_CLOSED") || (op.Outcome.Code == "confirmation_resolved_without_effects" && op.Outcome.ErrorCode == "ANDEIVA_CONFIRMATION_RESOLVED"))
 }

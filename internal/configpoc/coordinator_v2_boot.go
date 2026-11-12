@@ -127,18 +127,20 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 		return err
 	}
 	record := v2RecoveryRecord{Format: v2Format, ID: issued, BootID: &id, Kind: v2BootKind, State: "pending", Previous: previousHash, Target: targetHash, Lineage: s.state.Lineage, Started: c.recoveryNow(), Pinned: true}
+	st := clone(s.state)
+	bootIntent:=v2CoordinatorIntent{Operation:issued,Domain:"firewall",Kind:v2BootKind,Previous:previousHash,Target:targetHash,TargetGeneration:st.Generation+1,Recovery:true,BootID:&id}
+	if s.reserves!=nil {if err=s.reserves.prepareBoot(s,&st,&record,bootIntent);err!=nil{return err}}
 	hash, err := s.object(record)
 	if err != nil {
 		return err
 	}
-	st := clone(s.state)
 	addFeatureV2(&st, v2BootFeature)
 	st.Configuration.LastRecovery = hash
 	st.Configuration.RecoveryIndex, err = c.recoveryIndexPut(st.Configuration.RecoveryIndex, record, hash)
 	if err != nil {
 		return err
 	}
-	st.Configuration.Intent = &v2CoordinatorIntent{Operation: issued, Domain: "firewall", Kind: v2BootKind, Previous: previousHash, Target: targetHash, TargetGeneration: st.Generation + 1, Recovery: true, BootID: &id}
+	st.Configuration.Intent = &bootIntent
 	st.ReservedBytes += v2OperationReserveBytes
 	st.ReservedInodes += v2OperationReserveInodes
 	st.Clock = c.recoveryNow()
@@ -154,8 +156,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	return c.finishBootLocked(ctx)
 }
 
-func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
+func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	s := c.store
+	defer func(){if result!=nil&&s.reserves!=nil&&s.state.SystemBundle!=nil{s.reserves.emergencyCandidate(s,s.state.SystemBundle.Bundle,"recovery_uncertain")}}()
 	intent := s.state.Configuration.Intent
 	if !validBootIntentV2(intent) || c.options.BootID == nil || *intent.BootID != *c.options.BootID || s.state.ReservedBytes < v2OperationReserveBytes || s.state.ReservedInodes < v2OperationReserveInodes {
 		return ErrRecovery
@@ -167,6 +170,7 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 	if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validBootTargetV2(previous, target) || s.readObject(s.state.Configuration.LastRecovery, &record) != nil || !validRecoveryRecordV2(record, s.state.Lineage) || record.ID != intent.Operation || record.Kind != v2BootKind || record.State != "pending" || *record.BootID != *intent.BootID || record.Previous != intent.Previous || record.Target != intent.Target || intent.TargetGeneration != s.state.Generation+1 {
 		return ErrRecovery
 	}
+	if s.reserves!=nil&&s.reserves.verifyBundle(s,record.Reserve)!=nil{return ErrRecovery}
 	if !c.localReadback(target) {
 		return ErrRecovery
 	}
@@ -250,8 +254,7 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 	st := clone(s.state)
 	st.Configuration = &target
 	st.Generation = intent.TargetGeneration
-	st.ReservedBytes -= v2OperationReserveBytes
-	st.ReservedInodes -= v2OperationReserveInodes
+	if st.SystemBundle!=nil {st.SystemBundle.CanonicalHeld=true} else {st.ReservedBytes-=v2OperationReserveBytes;st.ReservedInodes-=v2OperationReserveInodes}
 	st.Clock = completed
 	if err := c.point("before_boot_completion"); err != nil {
 		return err
@@ -259,6 +262,7 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 	if err := s.publish(st); err != nil {
 		return err
 	}
+	if s.reserves!=nil {if err=s.reserves.maintain(s);err!=nil{return err}}
 	return c.point("after_boot_completion")
 }
 

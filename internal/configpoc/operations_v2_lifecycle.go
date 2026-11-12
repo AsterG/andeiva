@@ -135,6 +135,7 @@ func (s *v2Store) withoutEffects(st *v2State, op v2Operation, code string, now t
 	if code == "ANDEIVA_NAMESPACE_CLOSED" {
 		result = "rejected"
 	}
+	if code=="ANDEIVA_CONFIRMATION_RESOLVED" {result="confirmation_resolved_without_effects"}
 	op.Outcome = &v2Outcome{Code: result, ErrorCode: code, Generation: st.Generation, AuditHash: audit}
 	return s.putOperation(st, op)
 }
