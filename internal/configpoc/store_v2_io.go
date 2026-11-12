@@ -482,6 +482,14 @@ func (s *v2Store) publish(state v2State) (result error) {
 	if s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) {
 		return errV2Unavailable
 	}
+	// Registry growth must leave room for both outcomes of an outstanding
+	// confirmation. Reject pressure before writes without fencing the store.
+	if err := reserveMetadataFutureFitsV2(state, s.readObject); err != nil {
+		if err != errV2Limited {
+			s.blocked = true
+		}
+		return err
+	}
 	defer func() {
 		if result != nil {
 			s.blocked = true

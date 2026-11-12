@@ -16,12 +16,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"golang.org/x/sys/unix"
 )
 
 var nativeV2Case = flag.String("andeiva-v2-volume-case", "", "authorized copied config volume case")
 var nativeV2ParentMount = flag.String("andeiva-v2-parent-mnt", "", "harness parent mount namespace")
 var nativeV2ParentNetwork = flag.String("andeiva-v2-parent-net", "", "harness parent network namespace")
+var nativeV2RecoveryReserves = flag.Bool("andeiva-v2-recovery-reserves", false, "qualify prepared recovery reserves on the copied volume")
 
 func nativeV2CaseValid(name string) bool {
 	return name == "bytes" || name == "inodes" || name == "open-deleted"
@@ -159,7 +161,12 @@ func nativeV2Coordinator(t *testing.T, scope *os.Root) (*v2Coordinator, *os.Root
 	}
 	now := time.Now().UTC()
 	st := v2State{Format: v2Format, Lineage: lineage, Generation: 1, LiveSlots: 64, Clock: now, Subjects: []v2Subject{{ID: subject, Login: "native-fixture", CredentialRevision: checkpointDigest([]byte("test fixture revision"))}}, Namespaces: []v2Namespace{}}
-	s, err := createV2(area, v2Budget{Bytes: 64 << 20, Inodes: 4096}, st)
+	budget := v2Budget{Bytes: 64 << 20, Inodes: 4096}
+	if *nativeV2RecoveryReserves {
+		// Explicit test profile; the finite filesystem remains the physical limit.
+		budget = v2Budget{Bytes: 1 << 30, Inodes: 32768}
+	}
+	s, err := createV2(area, budget, st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +219,43 @@ func nativeV2Coordinator(t *testing.T, scope *os.Root) (*v2Coordinator, *os.Root
 		t.Fatal(err)
 	}
 	t.Cleanup(c.close)
+	if *nativeV2RecoveryReserves {
+		nativeV2AttachRecoveryReserves(t, c, scope)
+	}
 	return c, area, engines, v2TrustedPrincipal{Subject: subject, Role: RoleAdmin}, now
+}
+
+func nativeV2AttachRecoveryReserves(t *testing.T, c *v2Coordinator, scope *os.Root) {
+	t.Helper()
+	var pools []*recoveryreserve.PoolV2
+	for _, spec := range []struct {
+		name     string
+		role     recoveryreserve.RoleV2
+		capacity int
+	}{{"admission", recoveryreserve.AdmissionV2, 4096}, {"plan", recoveryreserve.PlanV2, 16384}, {"emergency", recoveryreserve.EmergencyV2, 8192}} {
+		if err := scope.Mkdir(spec.name, 0700); err != nil {
+			t.Fatal(err)
+		}
+		area, err := scope.OpenRoot(spec.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = area.Close() })
+		pool, err := recoveryreserve.PrepareV2(area, 18, spec.capacity, spec.role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = pool.Close() })
+		pools = append(pools, pool)
+	}
+	manager, err := newReserveManagerV2(pools[0], pools[1], pools[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.store.enableClosingCreditsLocked(); err != nil {
+		t.Fatal(err)
+	}
+	c.store.reserves, c.options.Reserves = manager, manager
 }
 
 func nativeV2Stat(t *testing.T, scope *os.Root) unix.Statfs_t {
@@ -247,8 +290,36 @@ func TestNativeV2VolumePressure(t *testing.T) {
 		t.Fatal(err)
 	}
 	retained := committed.Operation
+	if *nativeV2RecoveryReserves {
+		coordinatorV2Stage(t, c, p, "native-confirmation-capacity")
+		ns, err := s.namespace(p.Subject, "firewall", now, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.reserveBeforeAdmissionV2(); err != nil {
+			t.Fatal(err)
+		}
+		before := clone(s.state)
+		selected, used := s.selector, s.used
+		seconds := uint64(30)
+		for _, engine := range engines {
+			engine.reset()
+		}
+		_, err = s.admit(p.Subject, ns.ID, before.Generation, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds}, now)
+		if !errors.Is(err, errV2Limited) || !reserveJSONEqualV2(before, s.state) || selected != s.selector || used != s.used || s.blocked {
+			t.Fatalf("finite closing refusal: error=%v state_equal=%t selector_equal=%t used_equal=%t blocked=%t used_before=%+v used_after=%+v", err, reserveJSONEqualV2(before, s.state), selected == s.selector, used == s.used, s.blocked, used, s.used)
+		}
+		for _, engine := range engines {
+			if engine.applies.Load() != 0 || engine.reads.Load() != 0 || engine.validations.Load() != 0 {
+				t.Fatal("confirmation capacity refusal touched an engine")
+			}
+		}
+	}
 	ns, err := s.namespace(p.Subject, "firewall", now, time.Hour)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.reserveBeforeAdmissionV2(); err != nil {
 		t.Fatal(err)
 	}
 	before, selected, used := clone(s.state), s.selector, s.used
@@ -339,7 +410,7 @@ func TestNativeV2VolumePressure(t *testing.T) {
 	if _, err = s.admit(p.Subject, ns.ID, before.Generation, v2Request{Kind: OpSave}, now); !errors.Is(err, errV2Limited) {
 		t.Fatal("pressure admission", err)
 	}
-	if !reflect.DeepEqual(before, s.state) || selected != s.selector || used != s.used || s.blocked {
+	if !reserveJSONEqualV2(before, s.state) || selected != s.selector || used != s.used || s.blocked {
 		t.Fatal("pressure changed selected state/reservations")
 	}
 	for _, e := range engines {
@@ -392,6 +463,9 @@ func TestNativeV2VolumePressure(t *testing.T) {
 	checkV2Physical(t, reopened)
 	t.Logf("case=%s logical=%d files_allocated=%d directory_allocated=%d owned_inodes=%d available_before=%d available_pressure=%d available_after=%d free_inodes_pressure=%d; SIM engines", *nativeV2Case, reopened.used.Bytes, reopened.physical.files, reopened.physical.directory, reopened.physical.inodes, initial.Bavail*4096, pressured.Bavail*4096, released.Bavail*4096, pressured.Ffree)
 	fmt.Printf("ANDEIVA_NATIVE_V2_CASE_PASS=%s\n", *nativeV2Case)
+	if *nativeV2RecoveryReserves {
+		fmt.Printf("ANDEIVA_NATIVE_R2_CASE_PASS=%s\n", *nativeV2Case)
+	}
 }
 
 func TestNativeV2PressureGuards(t *testing.T) {
@@ -460,5 +534,31 @@ func TestNativeV2PressureBootstrapUsesRealCoordinator(t *testing.T) {
 	defer reopened.close()
 	if !reflect.DeepEqual(before, reopened.state) {
 		t.Fatal("native fixture changed on reopen")
+	}
+}
+
+func TestNativeV2ReserveClosingRefusalPreservesCanonicalState(t *testing.T) {
+	c, _, _, p, now := coordinatorV2Fixture(t, false)
+	attachReserveManagerV2(t, c)
+	coordinatorV2Stage(t, c, p, "finite-space-refusal")
+	s := c.store
+	ns, err := s.namespace(p.Subject, "firewall", *now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.reserveBeforeAdmissionV2(); err != nil {
+		t.Fatal(err)
+	}
+	s.spaceProbe = func(*os.File) (storageSpace, error) {
+		return storageSpace{AvailableBytes: 128 << 20, AvailableInodes: 8192, BlockSize: 4096}, nil
+	}
+	before := clone(s.state)
+	selected, used := s.selector, s.used
+	// Empty optional reserve slices round-trip as nil. Compare the canonical
+	// state bytes, together with the exact selector and allocation counters.
+	seconds := uint64(30)
+	_, err = s.admit(p.Subject, ns.ID, before.Generation, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds}, *now)
+	if !errors.Is(err, errV2Limited) || !reserveJSONEqualV2(before, s.state) || selected != s.selector || used != s.used || s.blocked {
+		t.Fatalf("physical refusal changed canonical state: error=%v state=%t selector=%t used=%t blocked=%t", err, reserveJSONEqualV2(before, s.state), selected == s.selector, used == s.used, s.blocked)
 	}
 }

@@ -58,3 +58,14 @@ or foreign audit edges. Process-exit tests are not physical power-loss tests.
 Native finite-filesystem pressure and real-engine runtime acceptance must be
 reported separately. No production availability, HA or arbitrary hardware-failure
 guarantee is established by these tests.
+
+The authorized copied-volume harness also accepts
+`--authorized-debian-v2-reserve-volumes`, with the same seven arguments as
+`--authorized-debian-v2-volumes` in the [storage guide](../storagevol/README.md).
+Build the test executable with `go test -c ./internal/configpoc`. This explicit
+mode prepares recovery pools inside the copied configuration volume and requires
+both the normal RUN/PASS evidence and `ANDEIVA_NATIVE_R2_CASE_PASS` per case.
+It tests ordinary admission, reads/replay and release after byte/inode exhaustion
+or an open deleted filler. Its 128 MiB filesystem must reject a confirmed commit
+whose separate closing capacity cannot fit. This is not qualification of lease
+closing under exhaustion, a complete coordinator restart, or real traffic engines.

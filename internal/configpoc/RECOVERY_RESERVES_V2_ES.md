@@ -41,3 +41,14 @@ ajenas. Los cierres de proceso no prueban cortes eléctricos. Las pruebas nativa
 de espacio finito y motores reales se documentan por separado; no existe una
 garantía de producción, HA ni de resistencia a cualquier fallo físico.
 
+El harness de volúmenes copiados admite `--authorized-debian-v2-reserve-volumes`
+con los mismos siete argumentos que `--authorized-debian-v2-volumes` de la
+[guía de almacenamiento](../storagevol/docs/es.md). Compilar el ejecutable con
+`go test -c ./internal/configpoc`. Este modo explícito prepara los pools dentro
+del volumen copiado y exige RUN/PASS y `ANDEIVA_NATIVE_R2_CASE_PASS` por caso.
+Comprueba admisión ordinaria, lectura/reintento y recuperación de capacidad tras
+agotar bytes/inodos o mantener abierto un archivo eliminado. El filesystem de
+128 MiB debe rechazar Commit Confirmed sin capacidad física para su cierre.
+No demuestra cierre de leases bajo agotamiento, reinicio completo del coordinador
+ni motores reales de tráfico.
+

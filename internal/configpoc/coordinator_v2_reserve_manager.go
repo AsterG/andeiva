@@ -272,6 +272,9 @@ func (m *v2ReserveManager) verifySelected(s *v2Store) error {
 	if m.validateProfiles() != nil || len(s.state.ActiveReserves) > 16 {
 		return ErrRecovery
 	}
+	if err := reserveMetadataFutureFitsV2(s.state, s.readObject); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	for _, active := range s.state.ActiveReserves {
 		if active.Work == "" || seen[active.Work] || reserveWorkV2(active.Bundle) != active.Work || m.verifyBundle(s, active.Bundle) != nil {

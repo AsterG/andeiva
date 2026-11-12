@@ -42,3 +42,14 @@ Qualificação nativa com espaço finito e motores reais deve ser relatada
 separadamente; não há garantia de produção, HA ou resistência a qualquer falha
 física.
 
+O harness de volumes copiados aceita `--authorized-debian-v2-reserve-volumes`
+com os mesmos sete argumentos de `--authorized-debian-v2-volumes` no
+[guia de armazenamento](../storagevol/docs/pt.md). Compile o executável com
+`go test -c ./internal/configpoc`. Esse modo explícito prepara os pools dentro
+do volume copiado e exige RUN/PASS e `ANDEIVA_NATIVE_R2_CASE_PASS` por caso.
+Verifica admissão comum, leitura/repetição e recuperação de capacidade após
+esgotar bytes/inodes ou manter aberto um arquivo removido. O filesystem de
+128 MiB deve rejeitar Commit Confirmed sem capacidade física para sua conclusão.
+Não demonstra conclusão de leases sob esgotamento, reinício completo do
+coordenador ou motores reais de tráfego.
+

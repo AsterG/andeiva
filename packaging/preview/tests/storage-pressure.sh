@@ -36,11 +36,13 @@ parse_volume_arguments() {
   unset ANDEIVA_STORAGE_VOLUME_ID ANDEIVA_STORAGE_INSPECTOR ANDEIVA_STORAGE_INSPECTOR_SHA
   task_volume_id= task_inspector_input= task_inspector_sha=
   task_v2=0
+  task_reserves=0
   task_volume_arguments=("$@")
-  if [[ $# = 7 && ( $1 = --authorized-debian-volumes || $1 = --inside-volumes || $1 = --authorized-debian-v2-volumes || $1 = --inside-v2-volumes ) ]]; then
+  if [[ $# = 7 && ( $1 = --authorized-debian-volumes || $1 = --inside-volumes || $1 = --authorized-debian-v2-volumes || $1 = --inside-v2-volumes || $1 = --authorized-debian-v2-reserve-volumes || $1 = --inside-v2-reserve-volumes ) ]]; then
     task_volume_id=$7 task_inspector_input=$5 task_inspector_sha=$6
     if [[ $1 = --authorized-debian-v2-volumes || $1 = --inside-v2-volumes ]]; then task_v2=1; fi
-    if [[ $1 = --authorized-debian-volumes || $1 = --authorized-debian-v2-volumes ]]; then
+    if [[ $1 = --authorized-debian-v2-reserve-volumes || $1 = --inside-v2-reserve-volumes ]]; then task_v2=1; task_reserves=1; fi
+    if [[ $1 = --authorized-debian-volumes || $1 = --authorized-debian-v2-volumes || $1 = --authorized-debian-v2-reserve-volumes ]]; then
       task_volume_arguments=(--authorized-debian-lab "$2" "$3" "$4")
     else
       task_volume_arguments=(--inside "$2" "$3" "$4")
@@ -111,6 +113,9 @@ if [[ $task_mode = --authorized-debian-lab ]]; then
   exec 10</proc/self/ns/net
   export ANDEIVA_STORAGE_PARENT_NETWORK="$task_parent_network"
   if [[ -n $task_volume_id ]]; then
+    if [[ $task_reserves = 1 ]]; then
+      exec unshare --mount --net --propagation private -- /bin/bash "$task_script" --inside-v2-reserve-volumes "$task_binary" "$task_sha" "$task_parent_namespace" "$task_inspector" "$task_inspector_sha" "$task_volume_id"
+    fi
     if [[ $task_v2 = 1 ]]; then
       exec unshare --mount --net --propagation private -- /bin/bash "$task_script" --inside-v2-volumes "$task_binary" "$task_sha" "$task_parent_namespace" "$task_inspector" "$task_inspector_sha" "$task_volume_id"
     fi
@@ -238,15 +243,25 @@ if [[ -n $task_volume_id ]]; then
       [[ ! -e $task_log && ! -e $task_base/config/v2-$task_case ]] || die 'v2 case already exists'
       : > "$task_log"; chmod 0600 "$task_log"; task_logs+=("$task_log")
       install -d -o andeiva -g andeiva -m 0700 "$task_base/config/v2-$task_case"
+      task_reserve_arguments=()
+      if [[ $task_reserves = 1 ]]; then task_reserve_arguments=(-andeiva-v2-recovery-reserves); fi
       # FD4 avoids exposing root-only ancestor traversal just to execute the
       # verified copy. Neither descriptor is reopened by a child-supplied path.
-      capture_test_output "$task_log" /usr/bin/timeout --kill-after=5 180 \
+      # Handle failure after the function returns: its scoped FD3/FD4 must be
+      # restored before EXIT cleanup attempts to unmount the copied volume.
+      if ! capture_test_output "$task_log" /usr/bin/timeout --kill-after=5 180 \
         /usr/bin/setpriv --reuid=1000 --regid=1000 --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs \
         /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent \
         /proc/self/fd/4 -test.run '^TestNativeV2VolumePressure$' -test.v -test.timeout 150s \
         -andeiva-v2-volume-case "$task_case" -andeiva-v2-parent-mnt "$task_namespace" -andeiva-v2-parent-net "$ANDEIVA_STORAGE_PARENT_NETWORK" \
-        3<"$task_base/config/v2-$task_case" 4<"$task_base/runner.test"
+        "${task_reserve_arguments[@]}" \
+        3<"$task_base/config/v2-$task_case" 4<"$task_base/runner.test"; then
+        die 'v2 worker failed; retained evidence requires recovery'
+      fi
       verify_test_log "$task_log" TestNativeV2VolumePressure "$task_case" || die 'v2 test did not prove completion'
+      if [[ $task_reserves = 1 ]]; then
+        grep -Fqx -- "ANDEIVA_NATIVE_R2_CASE_PASS=$task_case" "$task_log" || die 'reserve test did not prove completion'
+      fi
       task_index=0
       for task_domain in audit observations recovery; do
         verify_v2_sentinel_snapshot "${task_sentinel_hashes[task_index]}" "${task_sentinel_space[task_index]}" \

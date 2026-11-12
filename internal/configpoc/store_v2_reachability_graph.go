@@ -65,6 +65,9 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 }
 
 func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error {
+	if err := reserveMetadataFutureFitsV2(state, r.object); err != nil {
+		return err
+	}
 	if state.Migration != "" {
 		var held []func()
 		var readErr error

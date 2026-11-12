@@ -36,6 +36,23 @@ capture_test_output "$task_base/output.log" /bin/bash -c 'set -euo pipefail; dd 
 rm -- "$task_base/runner-write.bin"
 printf 'ANDEIVA_STORAGE_RUNNER_LIMIT_SCOPE_RESULT=pass\n'
 
+# A failed worker must return from its FD-scoped function before EXIT cleanup.
+# Otherwise Bash retains the directory capability while the trap unmounts it.
+task_capture_source=$(declare -f capture_test_output)
+if /bin/bash -c '
+ set -Eeuo pipefail
+ exec 3<&- 4<&-
+ eval "$3"
+ trap '\''if [[ -e /proc/self/fd/3 || -e /proc/self/fd/4 ]]; then exit 91; fi'\'' EXIT
+ if ! capture_test_output "$2" /bin/false 3<"$1" 4<"$2"; then exit 7; fi
+ exit 92
+' _ "$task_base" "$task_base/output.log" "$task_capture_source"; then
+ exit 1
+else
+ [[ $? = 7 ]]
+fi
+printf 'ANDEIVA_STORAGE_WORKER_FD_CLEANUP_GATE_RESULT=pass\n'
+
 # Pinned Go emits seconds; accept anchored composite durations for compatible producers.
 for task_duration in 0.12s 120.00s 1m2.34s 1h2m3.4s; do
  printf '=== RUN   TestNativeVolumePressure\n--- PASS: TestNativeVolumePressure (%s)\nANDEIVA_NATIVE_VOLUME_CASE_PASS=bytes\n' "$task_duration" > "$task_base/output.log"
@@ -93,6 +110,20 @@ for task_volume_mode in --authorized-debian-v2-volumes --inside-v2-volumes; do
 done
 parse_volume_arguments --authorized-debian-v2-volumes /trusted/test.test expected namespace /trusted/inspector digest
 [[ $task_v2 = 0 && -z $task_volume_id && ${#task_volume_arguments[@]} = 6 ]]
+for task_volume_mode in --authorized-debian-v2-reserve-volumes --inside-v2-reserve-volumes; do
+ parse_volume_arguments "$task_volume_mode" /trusted/test.test expected namespace /trusted/inspector digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ [[ $task_v2 = 1 && $task_reserves = 1 && $task_volume_id = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && ${#task_volume_arguments[@]} = 4 ]]
+ if [[ $task_volume_mode = --inside-v2-reserve-volumes ]]; then
+  [[ ${task_volume_arguments[0]} = --inside ]]
+ else
+  [[ ${task_volume_arguments[0]} = --authorized-debian-lab ]]
+ fi
+done
+export task_reserves=1
+parse_volume_arguments --authorized-debian-v2-volumes /trusted/test.test expected namespace /trusted/inspector digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[[ $task_v2 = 1 && $task_reserves = 0 ]]
+parse_volume_arguments --authorized-debian-v2-reserve-volumes /trusted/test.test expected namespace /trusted/inspector digest
+[[ $task_v2 = 0 && $task_reserves = 0 && -z $task_volume_id && ${#task_volume_arguments[@]} = 6 ]]
 for task_case in bytes inodes open-deleted; do
  printf '=== RUN   TestNativeV2VolumePressure\n--- PASS: TestNativeV2VolumePressure (1.01s)\nANDEIVA_NATIVE_V2_CASE_PASS=%s\n' "$task_case" > "$task_base/output.log"
  verify_test_log "$task_base/output.log" TestNativeV2VolumePressure "$task_case"
