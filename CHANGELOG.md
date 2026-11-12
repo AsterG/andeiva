@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — isolated storage volume qualification
+
+- Inspect inactive volumes through read-only lock descriptors while retaining exclusive locking and identity checks.
+
+- Select copied-volume qualification only through explicit arguments, clearing inherited mode variables before both launcher phases.
+
+- Accept anchored composite test durations and preserve failures during idempotent log-test cleanup.
+
+- Prepare inactive, preallocated filesystem images through a fixed descriptor-only
+  formatter and a bounded laboratory profile; never mount or activate live data.
+- Extend the existing opt-in harness to test copied volumes for byte/inode
+  exhaustion, read-only failures and open-deleted files without changing originals.
+- Require actual test execution/completion evidence and preserve failure logs.
+
 ## Unreleased — internal composite transaction coordinator
 
 - Coordinate firewall changes against durable operations with atomic outcome/state/audit selection and verified component readback.
@@ -15,6 +29,12 @@
   revisions; never infer DHCP leases from observed addresses.
 - Add strict JSON control-field validation and reuse exact JSON checks for nft
   observations. No interface, route, DNS or forwarding changes are activated.
+
+## Unreleased — isolated stateful routing and SNAT
+
+- Compile typed ordered TCP/UDP forwarding and masquerade policies with strict effective-state readback.
+- Exercise isolated IPv4 routing/SNAT, stateful revocation, related ICMP and IPv6 denial without changing host networking.
+- Preserve disabled rules in configuration and keep administrative/runtime integration separate.
 
 ## Unreleased — custom CA platform safety
 

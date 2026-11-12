@@ -48,8 +48,28 @@ func TestSubjectBindingProvisioningAndLegacy(t *testing.T) {
 	if _, err := m.ResolveSession(token); !errors.Is(err, ErrDenied) {
 		t.Fatal("legacy session became v2 authority")
 	}
+	if _, err := m.Authenticate(token); err != nil {
+		t.Fatal("rejected v2 binding revoked legacy authentication", err)
+	}
 	if _, err := (SessionBinding{}).Verify(); !errors.Is(err, ErrDenied) {
 		t.Fatal("zero binding accepted")
+	}
+}
+
+func TestSubjectBindingLegacyRejectionDoesNotExtendSession(t *testing.T) {
+	m, token := subjectFixture(t, "", "")
+	key := sha256.Sum256([]byte(token))
+	last := m.sessions[key].last
+	m.now = func() time.Time { return last.Add(4 * time.Minute) }
+	if _, err := m.ResolveSession(token); !errors.Is(err, ErrDenied) {
+		t.Fatal("legacy session acquired v2 authority")
+	}
+	if s, exists := m.sessions[key]; !exists || !s.last.Equal(last) {
+		t.Fatal("rejected binding changed legacy session lifetime")
+	}
+	m.now = func() time.Time { return last.Add(5 * time.Minute) }
+	if _, err := m.Authenticate(token); !errors.Is(err, ErrDenied) {
+		t.Fatal("rejected v2 binding extended idle lifetime")
 	}
 }
 
