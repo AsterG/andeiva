@@ -1,7 +1,8 @@
 # Static IPv4 namespace executor — NET-EXECUTOR-001
 
 Owner: network executor. Status: implementation for review; isolated qualification
-only. No API, CLI, runtime or privileged helper consumes this package.
+only. The isolated routing laboratory consumes this package; appliance API, CLI,
+runtime and privileged helpers do not.
 
 `New(supervisorLifetime, trustedNamespaceFD)` duplicates and pins a Linux network
 namespace descriptor, checks namespace type and rejects the current and PID 1

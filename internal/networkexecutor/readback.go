@@ -3,6 +3,7 @@ package networkexecutor
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/netip"
@@ -194,7 +195,8 @@ func (o observation) matches(rev networkplan.Revision, baseline observation) boo
 		hostBits := uint32(1) << (32 - p.Bits())
 		v := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
 		v += hostBits - 1
-		broadcast := netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}).String()
+		binary.BigEndian.PutUint32(b[:], v)
+		broadcast := netip.AddrFrom4(b).String()
 		expected = append(expected, route{Destination: network, Device: i.Binding.Name, Protocol: "kernel", Scope: "link", Source: ip, Table: "main", Type: "unicast"}, route{Destination: ip, Device: i.Binding.Name, Protocol: "kernel", Scope: "host", Source: ip, Table: "local", Type: "local"})
 		// ip address add without an explicit broadcast does not request broadcast
 		// routes; accept them only as the exact kernel-derived subnet endpoints.

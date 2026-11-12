@@ -45,7 +45,7 @@ func New(lifetime context.Context, namespace *os.File) (*Executor, error) {
 		return nil, err
 	}
 	for _, path := range []string{"/proc/self/ns/net", "/proc/1/ns/net"} {
-		host, err := os.Open(path)
+		host, err := os.Open(path) // #nosec G304 -- Only the two fixed procfs namespace anchors in this literal allowlist; no caller-supplied path.
 		if err != nil {
 			return nil, ErrScope
 		}

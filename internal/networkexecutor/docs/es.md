@@ -1,7 +1,8 @@
 # Ejecutor IPv4 estático en namespace — NET-EXECUTOR-001
 
 Responsable: ejecutor de red. Estado: implementación para revisión, sólo
-cualificación aislada. Sin conexión a API, CLI, runtime o helper privilegiado.
+cualificación aislada. Lo consume el laboratorio aislado de routing; sin conexión
+a API, CLI, runtime o helper privilegiado del appliance.
 
 `New(supervisorLifetime, trustedNamespaceFD)` duplica y fija un descriptor de
 namespace de red Linux. Verifica el tipo y rechaza los namespaces actual y de

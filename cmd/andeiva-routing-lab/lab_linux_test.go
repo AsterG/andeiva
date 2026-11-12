@@ -4,13 +4,20 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/AsterG/andeiva/internal/networkplan"
 	"github.com/AsterG/andeiva/internal/routedflow"
+	"github.com/AsterG/andeiva/internal/routednft"
 )
 
 func TestExecutableAllowlist(t *testing.T) {
@@ -27,6 +34,117 @@ func TestExecutableAllowlist(t *testing.T) {
 	}
 	if allowedExecutable("", "") {
 		t.Fatal("empty self authorizes an executable")
+	}
+}
+
+type fakeNetworkExecutor struct {
+	calls                                     []string
+	applyErr, verifyErr, restoreErr, closeErr error
+	plan                                      networkplan.Revision
+}
+
+func (e *fakeNetworkExecutor) Apply(_ context.Context, plan networkplan.Revision) error {
+	e.calls = append(e.calls, "apply")
+	e.plan = plan
+	return e.applyErr
+}
+func (e *fakeNetworkExecutor) Verify(context.Context) error {
+	e.calls = append(e.calls, "verify")
+	return e.verifyErr
+}
+func (e *fakeNetworkExecutor) Restore() error {
+	e.calls = append(e.calls, "restore")
+	return e.restoreErr
+}
+func (e *fakeNetworkExecutor) Close() error { e.calls = append(e.calls, "close"); return e.closeErr }
+
+func TestTypedNetworkPlanUsesCanonicalLabPolicyAndReadback(t *testing.T) {
+	f := &fakeNetworkExecutor{}
+	if err := applyTypedNetworkPlan(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(f.calls, []string{"apply", "verify"}) || !reflect.DeepEqual(f.plan, routednft.LabPolicy().Network) {
+		t.Fatal("typed plan or readback missing")
+	}
+	applyFailure := errors.New("apply failure")
+	verifyFailure := errors.New("verify failure")
+	f = &fakeNetworkExecutor{applyErr: applyFailure}
+	if err := applyTypedNetworkPlan(context.Background(), f); !errors.Is(err, applyFailure) || !reflect.DeepEqual(f.calls, []string{"apply"}) {
+		t.Fatal("failed apply passed to verification", err)
+	}
+	f = &fakeNetworkExecutor{verifyErr: verifyFailure}
+	if err := applyTypedNetworkPlan(context.Background(), f); !errors.Is(err, verifyFailure) {
+		t.Fatal("failed readback hidden", err)
+	}
+}
+
+func TestTypedNetworkCleanupRestoresBeforeClosingAndRetainsBothErrors(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		f := &fakeNetworkExecutor{}
+		if fail {
+			f.restoreErr = errors.New("uncertain restoration")
+			f.closeErr = errors.New("close failure")
+		}
+		err := closeTypedNetworkPlan(f)
+		if !reflect.DeepEqual(f.calls, []string{"restore", "close"}) {
+			t.Fatal("cleanup order changed", f.calls)
+		}
+		if fail {
+			if !errors.Is(err, f.restoreErr) || !errors.Is(err, f.closeErr) {
+				t.Fatal("cleanup failure hidden", err)
+			}
+		} else if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestNamespacePinIdentityRejectsReplacementAndSymlink(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first")
+	second := filepath.Join(dir, "second")
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, err := os.Lstat(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.Lstat(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin, err := os.Open(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pin.Close()
+	opened, err := pin.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameNamespacePin(a, opened) || sameNamespacePin(a, b) || sameNamespacePin(nil, a) || sameNamespacePin(a, nil) {
+		t.Fatal("pin inode guard failed")
+	}
+	alias := filepath.Join(dir, "alias")
+	if err := os.Symlink(first, alias); err != nil {
+		t.Fatal(err)
+	}
+	symlink, err := os.Lstat(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameNamespacePin(a, symlink) {
+		t.Fatal("symlink accepted as namespace pin")
+	}
+	n := &namespace{name: "andeiva-uncreated-test-pin"}
+	if f, err := n.open(); err == nil || f != nil {
+		if f != nil {
+			_ = f.Close()
+		}
+		t.Fatal("uncreated namespace opened")
 	}
 }
 
