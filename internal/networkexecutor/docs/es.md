@@ -1,7 +1,7 @@
 # Ejecutor IPv4 estático en namespace — NET-EXECUTOR-001
 
-Responsable: ejecutor de red. Estado: implementación para revisión, sólo
-cualificación aislada. Lo consume el laboratorio aislado de routing; sin conexión
+Responsable: ejecutor de red. Estado: cualificación aislada verificada;
+PR/integración pendientes. Lo consume el laboratorio aislado de routing; sin conexión
 a API, CLI, runtime o helper privilegiado del appliance.
 
 `New(supervisorLifetime, trustedNamespaceFD)` duplica y fija un descriptor de
@@ -71,7 +71,22 @@ GOOS=windows GOARCH=amd64 go build ./internal/networkexecutor
 GOOS=darwin GOARCH=arm64 go build ./internal/networkexecutor
 ```
 
-Comandos simulados y rechazos read-only de namespaces. Pendientes: ejecución real
-privilegiada, Debian, revisión independiente, ejecución en contenedor y mediciones
-CPU/RAM del appliance. Sin integración Docker/EKS/Helm ni declaración de release
-o cierre del hito.
+Pruebas con comandos simulados y controles read-only de namespaces. Revisión
+independiente de root y arquitectura sobre `460fece`: sin hallazgos críticos,
+altos o moderados. Repetición independiente de race (`-count=3`): PASS en 1.647 s.
+
+Cualificación Debian 13 amd64 de `460fece` (prefijo SHA-256 del binario `590a4005`):
+PASS en los tres namespaces para apply/readback/restauración tipados, TCP/UDP SNAT
+con tuplas conntrack reales, ICMP relacionado, denegación IPv6 y reversa no
+solicitada, revocación TCP existente, routing sin NAT y NAT sin autorización de
+forwarding. Limpieza e invariantes externos del host PASS. Helper limitado a
+SYS_ADMIN/NET_ADMIN con FD 0 de host entregado por el supervisor; el supervisor
+root cargó aparte el módulo conntrack requerido.
+Una ejecución: 4.408428 s transcurridos, CPU 1.116154 s, pico 32,321,536 bytes.
+No representa un benchmark de capacidad o rendimiento del appliance.
+
+Siguen sin soporte: migración de LAN administrativa existente, DHCP, activación
+runtime del appliance y recuperación durable tras crash. Ejecución en contenedor
+y presupuesto de recursos del appliance sin cualificar. Sin integración
+Docker/EKS/Helm ni declaración de release o cierre del hito. Requisitos en las
+guías EN/ES/PT del runner.

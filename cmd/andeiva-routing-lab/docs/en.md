@@ -16,6 +16,22 @@ rejected. The default still uses `New` and its PID 1 anchor check. This does not
 add SYS_PTRACE, accept a caller-supplied namespace identity or relax host checks.
 Constructor, apply and verify failures carry distinct English laboratory stages.
 
+Tested unit excerpt for a reviewed root-owned laboratory harness, not a complete
+service definition; the supervisor remains in the host network namespace:
+
+```ini
+[Service]
+StandardInput=file:/proc/1/ns/net
+Environment=ANDEIVA_LAB_HOST_ANCHOR_FD=0
+```
+
+The flow-observation mode requires `nf_conntrack_netlink` to be loaded before
+starting the runner. Check `test -d /sys/module/nf_conntrack_netlink`. If absent,
+only the explicitly authorized root supervisor may run
+`sudo modprobe nf_conntrack_netlink` as a laboratory prerequisite. The helper does
+not load modules and must not receive SYS_MODULE; do not add SYS_PTRACE for PID 1
+access. No tools or packages are installed by this runner.
+
 `Apply` and `Verify` must succeed before traffic tests. On exit, child processes
 stop first; `Restore` verifies the original controlled IPv4 snapshot, `Close`
 releases the pin, and namespace cleanup runs last. Restoration uses the supervisor
@@ -29,8 +45,15 @@ PASS typed network plan applied/readback/restored
 PASS namespaces cleaned; host routes and nftables unchanged
 ```
 
-This integration is prepared for review; no privileged qualification is claimed.
-First run unit checks without privileges:
+Source `460fece`, binary SHA-256 prefix `590a4005`, passed native Debian 13 amd64
+qualification with only SYS_ADMIN/NET_ADMIN and the supplied host FD 0. All typed
+plan, TCP/UDP SNAT, real conntrack, related ICMP, IPv6/reverse denial, TCP
+revocation, routing without NAT, NAT authorization-boundary and cleanup/outer host
+invariant checks passed. Root and architecture reviews found no critical/high/
+moderate findings. Elapsed 4.408428 s, CPU 1.116154 s, peak 32,321,536 bytes;
+single fixture measurement, not an appliance capacity benchmark.
+
+Before reproduction, run unit checks without privileges:
 
 ```sh
 go test -race ./internal/networkexecutor ./cmd/andeiva-routing-lab ./internal/routednft
@@ -50,4 +73,5 @@ The executor requires an empty IPv4 baseline; existing management LAN migration,
 DHCP and durable recovery are unsupported. Recovery state remains in memory.
 No host routing, NAT, firewall or sysctl is changed. The fixture does not establish
 production readiness, mandatory traffic inspection, Docker/EKS integration or the
-full Firewall & Routing Alpha milestone. CPU/RAM measurements remain pending.
+full Firewall & Routing Alpha milestone. Container execution and appliance
+resource budgets remain unqualified.

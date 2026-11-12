@@ -1,7 +1,7 @@
 # Executor IPv4 estático em namespace — NET-EXECUTOR-001
 
-Responsável: executor de rede. Estado: implementação para revisão, somente
-qualificação isolada. O laboratório isolado de routing utiliza o pacote; sem
+Responsável: executor de rede. Estado: qualificação isolada verificada;
+PR/integração pendentes. O laboratório isolado de routing utiliza o pacote; sem
 ligação com API, CLI, runtime ou helper privilegiado do appliance.
 
 `New(supervisorLifetime, trustedNamespaceFD)` duplica e fixa um descritor de
@@ -71,7 +71,22 @@ GOOS=windows GOARCH=amd64 go build ./internal/networkexecutor
 GOOS=darwin GOARCH=arm64 go build ./internal/networkexecutor
 ```
 
-Comandos simulados e rejeições read-only de namespaces. Pendentes: execução real
-privilegiada, Debian, revisão independente, execução em contêiner e medições de
-CPU/RAM do appliance. Sem integração Docker/EKS/Helm ou declaração de release
-ou conclusão do marco.
+Testes com comandos simulados e controles read-only de namespaces. Revisão
+independente de root e arquitetura sobre `460fece`: sem achados críticos, altos
+ou moderados. Repetição independente de race (`-count=3`): PASS em 1.647 s.
+
+Qualificação Debian 13 amd64 de `460fece` (prefixo SHA-256 do binário `590a4005`):
+PASS nos três namespaces para apply/readback/restauração tipados, TCP/UDP SNAT
+com tuplas conntrack reais, ICMP relacionado, negação IPv6 e reversa não
+solicitada, revogação TCP existente, routing sem NAT e NAT sem autorização de
+encaminhamento. Limpeza e invariantes externos do host PASS. Helper limitado a
+SYS_ADMIN/NET_ADMIN com FD 0 do host fornecido pelo supervisor; o supervisor root
+carregou separadamente o módulo conntrack necessário.
+Uma execução: 4.408428 s decorridos, CPU 1.116154 s, pico 32,321,536 bytes.
+Não representa benchmark de capacidade ou desempenho do appliance.
+
+Continuam sem suporte: migração da LAN administrativa existente, DHCP, ativação
+runtime do appliance e recuperação durável após crash. Execução em contêiner e
+orçamento de recursos do appliance não qualificados. Sem integração Docker/EKS/Helm
+ou declaração de release ou conclusão do marco. Requisitos nos guias EN/ES/PT
+do runner.

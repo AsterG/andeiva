@@ -1,7 +1,7 @@
 # Static IPv4 namespace executor — NET-EXECUTOR-001
 
-Owner: network executor. Status: implementation for review; isolated qualification
-only. The isolated routing laboratory consumes this package; appliance API, CLI,
+Owner: network executor. Status: isolated qualification verified; PR/integration
+pending. The isolated routing laboratory consumes this package; appliance API, CLI,
 runtime and privileged helpers do not.
 
 `New(supervisorLifetime, trustedNamespaceFD)` duplicates and pins a Linux network
@@ -74,7 +74,21 @@ GOOS=windows GOARCH=amd64 go build ./internal/networkexecutor
 GOOS=darwin GOARCH=arm64 go build ./internal/networkexecutor
 ```
 
-Tests use simulated command results plus read-only namespace rejection checks.
-Real privileged fixture execution, Debian qualification, independent review,
-container execution and appliance CPU/RAM measurements remain pending. No Docker,
-EKS or Helm integration is introduced. No release or milestone completion claimed.
+Tests use simulated command results plus read-only namespace checks. Independent
+root and architecture review of source `460fece` found no critical/high/moderate
+findings; the independent race repeat (`-count=3`) passed in 1.647 s.
+
+Debian 13 amd64 qualification of source `460fece` (binary SHA-256 prefix
+`590a4005`) passed the three-namespace runner: typed apply/readback/restoration,
+TCP/UDP SNAT with real conntrack tuples, related ICMP, IPv6 denial, unsolicited
+reverse denial, existing TCP revocation, routing without NAT, and proof that NAT
+does not authorize forwarding. Namespace cleanup and outer host invariants passed.
+The helper had only SYS_ADMIN/NET_ADMIN and a supervisor-provided host FD 0;
+the root supervisor loaded the prerequisite conntrack module separately.
+Measured elapsed 4.408428 s, CPU 1.116154 s, peak 32,321,536 bytes for this single
+fixture run. These are not appliance throughput/capacity benchmarks.
+
+Existing management LAN migration, DHCP, appliance runtime activation and durable
+crash recovery remain unsupported. Container execution and appliance resource
+budgets remain unqualified. No Docker/EKS/Helm integration or release/milestone
+completion is claimed. See the routing runner's EN/ES/PT guides for prerequisites.
