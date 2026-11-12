@@ -165,6 +165,27 @@ func TestV2BootWrongIdentityAndUnavailableDomain(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("process-context-cannot-resume-boot", func(t *testing.T) {
+		c, area, engines, _ := bootFixtureV2(t)
+		interrupted, _ := reopenBootV2(t, c, area, ptrBootV2(testBootIDV2), func(point string) error {
+			if point == "after_boot_intent" {
+				return ErrInterrupted
+			}
+			return nil
+		})
+		blocked, err := reopenBootV2(t, interrupted, area, nil, nil)
+		if !errors.Is(err, ErrRecovery) {
+			t.Fatal("process context resumed boot", err)
+		}
+		for _, engine := range engines {
+			if engine.applies.Load() != 0 {
+				t.Fatal("process context applied Startup")
+			}
+		}
+		if _, err := reopenBootV2(t, blocked, area, ptrBootV2(testBootIDV2), nil); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("local-mapper-unavailable", func(t *testing.T) {
 		c, area, engines, _, _ := coordinatorV2Fixture(t, false)
 		for _, engine := range engines {
@@ -183,6 +204,118 @@ func TestV2BootWrongIdentityAndUnavailableDomain(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestV2BootPartialFailureKeepsSelectedRunning(t *testing.T) {
+	c, area, engines, _ := bootFixtureV2(t)
+	old := clone(c.store.state)
+	engines[1].base.SetFailure(old.Configuration.Firewall.Startup.Hash, "before")
+	failed, err := reopenBootV2(t, c, area, ptrBootV2(testBootIDV2), nil)
+	if !errors.Is(err, ErrEngine) || failed.store.state.Generation != old.Generation || failed.store.state.Configuration.Running.Hash != old.Configuration.Running.Hash || failed.store.state.Configuration.LastCompletedBoot != "" || failed.store.state.Configuration.Intent == nil {
+		t.Fatal("partial boot published Running", err)
+	}
+	if engines[0].Current() != old.Configuration.Firewall.Startup.Hash || engines[1].Current() != old.Configuration.Firewall.Running.Hash {
+		t.Fatal("partial failure not exercised")
+	}
+	engines[1].base.ClearFailure()
+	resumed, err := reopenBootV2(t, failed, area, ptrBootV2(testBootIDV2), nil)
+	if err != nil || !resumed.readback(*resumed.store.state.Configuration) || resumed.store.state.Generation != old.Generation+1 {
+		t.Fatal("partial recovery failed", err)
+	}
+	if engines[0].applies.Load() != 1 {
+		t.Fatal("already verified component reapplied")
+	}
+}
+
+func TestV2BootKeepsInactiveStagedCandidate(t *testing.T) {
+	c, area, engines, p := bootFixtureV2(t)
+	config := coordinatorV2Rule("staged-not-applied")
+	coordinatorV2Run(t, c, p, v2Request{Kind: OpStage, Config: &config})
+	before := clone(c.store.state.Configuration.Firewall.Candidate)
+	startup := c.store.state.Configuration.Startup.Hash
+	booted, err := reopenBootV2(t, c, area, ptrBootV2(testBootIDV2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, booted.store.state.Configuration.Firewall.Candidate) || booted.store.state.Configuration.Running.Hash != startup || booted.store.state.Configuration.Firewall.Running.Hash == before.Revision.Hash {
+		t.Fatal("boot discarded or committed Candidate")
+	}
+	for _, engine := range engines[:2] {
+		if engine.Current() == before.Revision.Hash {
+			t.Fatal("staged candidate reached engine")
+		}
+	}
+	same, err := reopenBootV2(t, booted, area, ptrBootV2(testBootIDV2), nil)
+	if err != nil || !reflect.DeepEqual(before, same.store.state.Configuration.Firewall.Candidate) {
+		t.Fatal("same boot changed Candidate", err)
+	}
+	zero := uint64(0)
+	_, _, err = coordinatorV2Request(t, same, p, v2Request{Kind: OpCommit, ConfirmSeconds: &zero})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatal("boot implicitly rebased staged Candidate", err)
+	}
+}
+
+func TestV2BootRecoversPendingByItsOriginalLease(t *testing.T) {
+	c, area, _, p := bootFixtureV2(t)
+	startup := c.store.state.Configuration.Startup.Hash
+	config := coordinatorV2Rule("unconfirmed-at-reboot")
+	coordinatorV2Run(t, c, p, v2Request{Kind: OpStage, Config: &config})
+	window := uint64(30)
+	commit := coordinatorV2Run(t, c, p, v2Request{Kind: OpCommit, ConfirmSeconds: &window})
+	original := clone(commit.Operation.Outcome)
+	before := c.store.state.Generation
+	booted, err := reopenBootV2(t, c, area, ptrBootV2(testBootIDV2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := booted.store.lookup(p.Subject, commit.Operation.ID)
+	if err != nil || stored.Pinned || !reflect.DeepEqual(original, stored.Outcome) || booted.store.state.Configuration.Pending != nil || booted.store.state.Configuration.Running.Hash != startup || booted.store.state.Generation != before+2 {
+		t.Fatal("boot lost original confirmation semantics", err)
+	}
+}
+
+func TestV2BootLogicalBudgetRejectsBeforeIntent(t *testing.T) {
+	c, _, engines, _ := bootFixtureV2(t)
+	before := clone(c.store.state)
+	c.store.budget.Bytes = c.store.used.Bytes + c.store.state.ReservedBytes + v2OperationReserveBytes
+	c.options.BootID = ptrBootV2(testBootIDV2)
+	c.store.mu.Lock()
+	err := c.bootStartupLocked(context.Background(), testBootIDV2)
+	c.store.mu.Unlock()
+	if !errors.Is(err, errV2Limited) || !reflect.DeepEqual(before, c.store.state) {
+		t.Fatal("budget rejection changed selected state", err)
+	}
+	for _, engine := range engines {
+		if engine.applies.Load() != 0 {
+			t.Fatal("effect before recovery budget")
+		}
+	}
+}
+
+func TestV2BootMissingCompletedReferenceFailsClosed(t *testing.T) {
+	c, area, engines, _ := bootFixtureV2(t)
+	booted, err := reopenBootV2(t, c, area, ptrBootV2(testBootIDV2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := clone(booted.store.state)
+	st.Configuration.LastCompletedBoot = checkpointDigest([]byte("missing boot object"))
+	if err := booted.store.publish(st); err != nil {
+		t.Fatal(err)
+	}
+	for _, engine := range engines {
+		engine.reset()
+	}
+	_, err = reopenBootV2(t, booted, area, ptrBootV2(testBootIDV2), nil)
+	if !errors.Is(err, errV2Unavailable) {
+		t.Fatal("missing completion reference accepted", err)
+	}
+	for _, engine := range engines {
+		if engine.applies.Load() != 0 {
+			t.Fatal("effect from corrupt completion")
+		}
+	}
 }
 
 func oldStateDecoderV2(data []byte) error {

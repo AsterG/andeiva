@@ -27,8 +27,12 @@ type v2Coordinator struct {
 }
 
 func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []Engine, options v2CoordinatorOptions) (*v2Coordinator, error) {
-	if options.BootID != nil && !validBootIDV2(*options.BootID) {
-		return nil, ErrInvalid
+	if options.BootID != nil {
+		boot := *options.BootID
+		if !validBootIDV2(boot) {
+			return nil, ErrInvalid
+		}
+		options.BootID = &boot
 	}
 	if store == nil || len(firewall) == 0 || len(local) == 0 || len(firewall) > 8 || len(local) > 8 {
 		return nil, ErrInvalid

@@ -1,7 +1,9 @@
 package configpoc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"regexp"
 	"time"
 )
@@ -58,17 +60,14 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 			return nil
 		}
 	}
-	if current.Intent != nil || current.Pending != nil || current.Candidate != nil || current.RecoveryRequired || current.LocalServices.Running.Hash != current.LocalServices.Startup.Hash || !c.localReadback(current) {
+	if current.Intent != nil || current.Pending != nil || current.RecoveryRequired || current.LocalServices.Running.Hash != current.LocalServices.Startup.Hash || !c.localReadback(current) {
 		return ErrRecovery
 	}
 	if s.state.Generation == ^uint64(0) || current.Firewall.Generation == ^uint64(0) || s.used.Bytes+s.state.ReservedBytes+2*v2OperationReserveBytes > s.budget.Bytes || s.used.Inodes+s.state.ReservedInodes+2*v2OperationReserveInodes > s.budget.Inodes {
 		return errV2Limited
 	}
-	target := clone(current)
-	target.Firewall.Running = target.Firewall.Startup
-	target.Firewall.LastGood = target.Firewall.Startup
-	target.Firewall.Generation++
-	if target.refresh() != nil {
+	target, err := bootTargetV2(current)
+	if err != nil {
 		return ErrInvalid
 	}
 	for _, engine := range c.firewall {
@@ -126,7 +125,7 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 	defer func() { s.allowance = v2Budget{} }()
 	var previous, target v2Configuration
 	var record v2RecoveryRecord
-	if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validV2Configuration(&previous) || !validV2Configuration(&target) || previous.Intent != nil || previous.Pending != nil || target.Intent != nil || target.Pending != nil || target.Candidate != nil || target.Firewall.Running.Hash != previous.Firewall.Startup.Hash || target.Firewall.Startup.Hash != previous.Firewall.Startup.Hash || target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash || target.LocalServices.Startup.Hash != previous.LocalServices.Startup.Hash || target.Firewall.Generation != previous.Firewall.Generation+1 || target.LocalServices.Generation != previous.LocalServices.Generation || s.readObject(s.state.Configuration.LastRecovery, &record) != nil || !validRecoveryRecordV2(record, s.state.Lineage) || record.ID != intent.Operation || record.Kind != v2BootKind || record.State != "pending" || *record.BootID != *intent.BootID || record.Previous != intent.Previous || record.Target != intent.Target || intent.TargetGeneration != s.state.Generation+1 {
+	if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validBootTargetV2(previous, target) || s.readObject(s.state.Configuration.LastRecovery, &record) != nil || !validRecoveryRecordV2(record, s.state.Lineage) || record.ID != intent.Operation || record.Kind != v2BootKind || record.State != "pending" || *record.BootID != *intent.BootID || record.Previous != intent.Previous || record.Target != intent.Target || intent.TargetGeneration != s.state.Generation+1 {
 		return ErrRecovery
 	}
 	if !c.localReadback(target) {
@@ -183,7 +182,8 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 	if err := c.point("after_boot_readback"); err != nil {
 		return err
 	}
-	audit, err := c.appendAuditLocked(&target, record.ID, "", "", "system", v2BootKind, "verified", intent.TargetGeneration, c.recoveryNow())
+	completed := c.recoveryNow()
+	audit, err := c.appendAuditLocked(&target, record.ID, "", "", "system", v2BootKind, "verified", intent.TargetGeneration, completed)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,6 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	completed := c.recoveryNow()
 	until := completed.Add(30 * 24 * time.Hour)
 	record.State, record.Audit, record.Pinned = "final", audit, false
 	record.Completed, record.RetainUntil = &completed, &until
@@ -217,4 +216,30 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 		return err
 	}
 	return c.point("after_boot_completion")
+}
+
+func bootTargetV2(previous v2Configuration) (v2Configuration, error) {
+	if !validV2Configuration(&previous) || previous.Intent != nil || previous.Pending != nil || previous.RecoveryRequired || previous.Firewall.Generation == ^uint64(0) || previous.LocalServices.Running.Hash != previous.LocalServices.Startup.Hash {
+		return v2Configuration{}, ErrRecovery
+	}
+	target := clone(previous)
+	target.Firewall.Running = target.Firewall.Startup
+	target.Firewall.LastGood = target.Firewall.Startup
+	target.Firewall.Generation++
+	if err := target.refresh(); err != nil {
+		return v2Configuration{}, err
+	}
+	return target, nil
+}
+
+func validBootTargetV2(previous, target v2Configuration) bool {
+	expected, err := bootTargetV2(previous)
+	if err != nil || !validV2Configuration(&target) {
+		return false
+	}
+	// The bounded canonical snapshot must preserve Candidate, Startup and all
+	// other domain/history references, not just a matching Running hash.
+	want, wantErr := json.Marshal(expected)
+	got, gotErr := json.Marshal(target)
+	return wantErr == nil && gotErr == nil && bytes.Equal(want, got)
 }

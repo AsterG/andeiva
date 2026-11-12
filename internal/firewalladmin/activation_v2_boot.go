@@ -14,11 +14,11 @@ type PreparedStartupEngine struct {
 	bootstrap func(context.Context, configpoc.Revision) error
 }
 
-func NewPreparedStartupEngine(engine configpoc.Engine, authority LeaseAuthority, recovered func(context.Context) error, bootstrap func(context.Context, configpoc.Revision) error) (*PreparedStartupEngine, error) {
+func NewPreparedStartupEngine(engine configpoc.Engine, authority LeaseAuthority, recoverLease func(context.Context, LeaseState) error, bootstrap func(context.Context, configpoc.Revision) error) (*PreparedStartupEngine, error) {
 	if bootstrap == nil {
 		return nil, configpoc.ErrInvalid
 	}
-	guard, err := NewPreparedGuardedEngine(engine, authority, recovered)
+	guard, err := NewPreparedGuardedEngine(engine, authority, recoverLease)
 	if err != nil {
 		return nil, err
 	}
