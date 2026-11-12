@@ -110,10 +110,14 @@ func (m *v2ReserveManager) prepareAdmission(s *v2Store, st *v2State, op *v2Opera
 	if err := s.reserveMaintenanceReadyV2(op.Request.Origin); err != nil {
 		return err
 	}
+	if !reserveMetadataStateFitsV2(*st) {
+		return errV2Limited
+	}
 	class := recoveryreserve.OrdinaryV2
 	var claims v2ReserveClaims
 	var escrow *v2ReserveClaims
 	var err error
+	var scope recoveryreserve.ScopeV2
 	if op.ClosingCredit != "" {
 		class = recoveryreserve.ClosingV2
 		origin, e := s.lookupRetained(op.Subject, op.Request.Origin)
@@ -124,8 +128,16 @@ func (m *v2ReserveManager) prepareAdmission(s *v2Store, st *v2State, op *v2Opera
 		if m.validateClaims(claims, class) != nil {
 			return ErrRecovery
 		}
+		scope, err = reserveAdmissionScopeV2(s, *st, *op, claims.Admission.Owner)
+		if err != nil {
+			return err
+		}
 	} else {
 		owner, e := v2ID("reserve", op.Sequence)
+		if e != nil {
+			return e
+		}
+		scope, e = reserveAdmissionScopeV2(s, *st, *op, owner)
 		if e != nil {
 			return e
 		}
@@ -144,18 +156,6 @@ func (m *v2ReserveManager) prepareAdmission(s *v2Store, st *v2State, op *v2Opera
 			escrow = &value
 		}
 	}
-	generation := uint64(1)
-	if st.Configuration != nil {
-		generation = domainSnapshotV2(st.Configuration, op.Domain).Generation
-	}
-	scope := recoveryreserve.ScopeV2{Kind: "operation", Lineage: st.Lineage, Bundle: claims.Admission.Owner, Operation: op.ID, Namespace: op.Namespace, Subject: op.Subject, Domain: op.Domain, Fingerprint: op.Fingerprint, Global: op.Expected, Generation: generation}
-	if op.ClosingCredit != "" {
-		origin, e := s.lookupRetained(op.Subject, op.Request.Origin)
-		if e != nil || origin.Outcome == nil || origin.Outcome.ConfirmationDeadline == nil {
-			return ErrRecovery
-		}
-		scope.Origin, scope.Lease, scope.Deadline = origin.ID, origin.Outcome.ConfirmationLease, *origin.Outcome.ConfirmationDeadline
-	}
 	capsule := v2ReserveAdmission{Format: v2Format, Version: 1, Scope: scope, Claims: claims, ClosingEscrow: escrow}
 	data, _, err := v2Canonical(capsule)
 	if err != nil || len(data) > claims.Admission.Capacity {
@@ -172,6 +172,25 @@ func (m *v2ReserveManager) prepareAdmission(s *v2Store, st *v2State, op *v2Opera
 	op.Reserve = clone(bundle)
 	st.ActiveReserves = append(st.ActiveReserves, v2ActiveReserve{Work: op.ID, Bundle: clone(bundle)})
 	return s.point("reserve_admission_verified")
+}
+
+func reserveAdmissionScopeV2(s *v2Store, st v2State, op v2Operation, owner string) (recoveryreserve.ScopeV2, error) {
+	generation := uint64(1)
+	if st.Configuration != nil {
+		generation = domainSnapshotV2(st.Configuration, op.Domain).Generation
+	}
+	scope := recoveryreserve.ScopeV2{Kind: "operation", Lineage: st.Lineage, Bundle: owner, Operation: op.ID, Namespace: op.Namespace, Subject: op.Subject, Domain: op.Domain, Fingerprint: op.Fingerprint, Global: op.Expected, Generation: generation}
+	if op.ClosingCredit != "" {
+		origin, e := s.lookupRetained(op.Subject, op.Request.Origin)
+		if e != nil || origin.Outcome == nil || origin.Outcome.ConfirmationDeadline == nil {
+			return scope, ErrRecovery
+		}
+		scope.Origin, scope.Lease, scope.Deadline = origin.ID, origin.Outcome.ConfirmationLease, *origin.Outcome.ConfirmationDeadline
+	}
+	if scope.Validate() != nil {
+		return scope, ErrInvalid
+	}
+	return scope, nil
 }
 
 func (s *v2Store) reserveMaintenanceReadyV2(exceptOrigin string) error {

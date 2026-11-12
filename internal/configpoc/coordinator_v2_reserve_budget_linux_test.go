@@ -22,7 +22,7 @@ func growReserveMetadataFixtureV2(t *testing.T, s *v2Store, subject string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(raw) > 129*1024 {
+		if len(raw) > 128*1024+512 {
 			break
 		}
 		st.Namespaces = append(st.Namespaces, v2Namespace{ID: fmt.Sprintf("v2.ns.%d.%s", i, strings.Repeat("a", 90)), Subject: subject, Domain: "firewall", AdmitUntil: st.Clock.Add(time.Hour), Closed: true, Open: []string{}})
@@ -33,7 +33,7 @@ func growReserveMetadataFixtureV2(t *testing.T, s *v2Store, subject string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(raw) > 129*1024 {
+		if len(raw) > 128*1024+512 {
 			break
 		}
 		if i >= int(st.SubjectSlots) {
@@ -43,7 +43,9 @@ func growReserveMetadataFixtureV2(t *testing.T, s *v2Store, subject string) {
 		st.SubjectSequence++
 	}
 	if err := s.publish(st); err != nil {
-		t.Fatal(err)
+		data, _, _ := v2Canonical(st)
+		core, _, _ := v2Canonical(reserveMetadataCoreV2(st))
+		t.Fatalf("fixture publication: %v; state=%d core=%d valid=%v subjects=%d namespaces=%d", err, len(data), len(core), v2ValidState(st), len(st.Subjects), len(st.Namespaces))
 	}
 }
 
@@ -52,6 +54,13 @@ func TestReserveProfileRefusalPrecedesPhysicalClaim(t *testing.T) {
 	m := attachReserveManagerV2(t, c)
 	ns, err := c.store.namespace(p.Subject, "firewall", *now, time.Hour)
 	if err != nil {
+		t.Fatal(err)
+	}
+	first := coordinatorV2Rule("already-accepted")
+	if _, err = c.store.admit(p.Subject, ns.ID, c.store.state.Generation, v2Request{Kind: OpStage, Config: &first}, *now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.store.admit(p.Subject, ns.ID, c.store.state.Generation, v2Request{Kind: OpStage, Config: &first}, *now); err != nil {
 		t.Fatal(err)
 	}
 	growReserveMetadataFixtureV2(t, c.store, p.Subject)
@@ -64,7 +73,7 @@ func TestReserveProfileRefusalPrecedesPhysicalClaim(t *testing.T) {
 		t.Fatal("oversized profile admitted", err)
 	}
 	claim, err := m.admission.ClaimClass("profile-refusal-probe", recoveryreserve.OrdinaryV2)
-	if err != nil || claim.Slot != 0 || claim.Epoch != 1 {
+	if err != nil || claim.Slot != 2 || claim.Epoch != 1 {
 		t.Fatal("profile refusal consumed a physical claim", err)
 	}
 	for _, engine := range engines {
@@ -86,18 +95,30 @@ func TestReserveProfileGrowthAfterACKFinalizesWithoutEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = c.store.admit(p.Subject, ns.ID, c.store.state.Generation, v2Request{Kind: OpStage, Config: &config}, *now); err != nil {
+		t.Fatal(err)
+	}
 	growReserveMetadataFixtureV2(t, c.store, p.Subject)
 	for _, engine := range engines {
 		engine.reset()
 	}
 	result, err := c.execute(context.Background(), p, op.ID)
-	if !errors.Is(err, errV2Limited) || result.Operation.State != "final" || result.Operation.Outcome.Code != "profile_changed_without_effects" || result.Operation.Reserve.Plan != nil || len(c.store.state.ActiveReserves) != 0 {
+	if !errors.Is(err, errV2Limited) || result.Operation.State != "final" || result.Operation.Outcome.Code != "profile_changed_without_effects" || result.Operation.Reserve.Plan != nil || len(c.store.state.ActiveReserves) != 1 {
 		t.Fatal("changed profile was applied or left ambiguous", err)
 	}
 	for _, engine := range engines {
 		if engine.applies.Load() != 0 || engine.reads.Load() != 0 || engine.validations.Load() != 0 {
 			t.Fatal("profile rejection reached an engine")
 		}
+	}
+	if err = c.store.closeNamespace(p.Subject, ns.ID, *now); err != nil {
+		t.Fatal(err)
+	}
+	c.store.mu.Lock()
+	err = c.store.reserves.maintain(c.store)
+	c.store.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
 	}
 	c.close()
 	_ = c.store.close()

@@ -78,8 +78,25 @@ type startupBootstrapV2 interface {
 	ConfirmStartup(context.Context, string, Revision, Revision) error
 }
 
+// Marker 1 requires an original absolute deadline. Current real helpers stay
+// gated until this trusted contract is implemented; legacy assembly is intact.
+type startupDeadlineGuardV2 interface {
+	ArmUntil(context.Context, string, Revision, Revision, time.Time) error
+}
+
 func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) error {
 	s := c.store
+	if s.reserves != nil {
+		for _, engine := range c.firewall {
+			if guard, ok := engine.(ActivationGuard); ok {
+				if _, absolute := guard.(startupDeadlineGuardV2); !absolute {
+					return ErrRecovery
+				}
+			} else if _, bootstrap := engine.(startupBootstrapV2); bootstrap {
+				return ErrRecovery
+			}
+		}
+	}
 	current := clone(*s.state.Configuration)
 	if current.LastCompletedBoot != "" {
 		var completed v2RecoveryRecord
@@ -181,14 +198,8 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	if s.reserves != nil && s.reserves.verifyBundle(s, record.Reserve) != nil {
 		return ErrRecovery
 	}
-	remaining := 10 * time.Second
-	if s.reserves != nil {
-		now := c.recoveryNow()
-		deadline := record.Started.Add(10 * time.Second)
-		if now.Before(record.Started) || !now.Before(deadline) {
-			return ErrRecovery
-		}
-		remaining = deadline.Sub(now)
+	if _, err := c.bootRemainingV2(record); err != nil {
+		return err
 	}
 	if !c.localReadback(target) {
 		return ErrRecovery
@@ -199,26 +210,50 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 		return err
 	}
 	for _, engine := range c.firewall {
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
 		if engine.Validate(target.Firewall.Running.Config) != nil {
 			return ErrEngine
 		}
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
 	}
 	for _, engine := range c.firewall {
-		if engine.Current() == target.Firewall.Running.Hash {
+		current := engine.Current()
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
+		if current == target.Firewall.Running.Hash {
 			continue
 		}
-		if engine.Current() == previous.Firewall.Running.Hash {
+		if current == previous.Firewall.Running.Hash {
 			if guard, ok := engine.(ActivationGuard); ok {
-				if guard.Arm(ctx, record.ID, previous.Firewall.Running, target.Firewall.Running, remaining) != nil {
+				if c.armBootGuardV2(ctx, guard, record, previous.Firewall.Running, target.Firewall.Running) != nil {
 					return ErrRecovery
+				}
+				if _, err := c.bootRemainingV2(record); err != nil {
+					return err
 				}
 				if engine.Apply(ctx, target.Firewall.Running) != nil || engine.Current() != target.Firewall.Running.Hash {
 					return ErrRecovery
 				}
-			} else if engine.Apply(ctx, target.Firewall.Running) != nil {
-				return ErrEngine
+			} else {
+				if _, err := c.bootRemainingV2(record); err != nil {
+					return err
+				}
+				if engine.Apply(ctx, target.Firewall.Running) != nil {
+					return ErrEngine
+				}
 			}
 		} else if bootstrap, ok := engine.(startupBootstrapV2); ok {
+			if s.reserves != nil {
+				return ErrRecovery
+			}
+			if _, err := c.bootRemainingV2(record); err != nil {
+				return err
+			}
 			if bootstrap.BootstrapStartup(ctx, record.ID, target.Firewall.Running) != nil {
 				return ErrRecovery
 			}
@@ -228,17 +263,29 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 		if err := c.point("after_boot_engine"); err != nil {
 			return err
 		}
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
 	}
 	if !c.readback(target) {
 		return ErrRecovery
 	}
 	for _, engine := range c.firewall {
-		if bootstrap, ok := engine.(startupBootstrapV2); ok {
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
+		if bootstrap, ok := engine.(startupBootstrapV2); ok && s.reserves == nil {
 			if bootstrap.ConfirmStartup(ctx, record.ID, previous.Firewall.Running, target.Firewall.Running) != nil {
 				return ErrRecovery
 			}
 		} else if guard, ok := engine.(ActivationGuard); ok {
-			if guard.Arm(ctx, record.ID, previous.Firewall.Running, target.Firewall.Running, remaining) != nil || guard.Confirm(ctx, record.ID, target.Firewall.Running.Hash) != nil {
+			if c.armBootGuardV2(ctx, guard, record, previous.Firewall.Running, target.Firewall.Running) != nil {
+				return ErrRecovery
+			}
+			if _, err := c.bootRemainingV2(record); err != nil {
+				return err
+			}
+			if guard.Confirm(ctx, record.ID, target.Firewall.Running.Hash) != nil {
 				return ErrRecovery
 			}
 		}
@@ -247,6 +294,9 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 		return ErrRecovery
 	}
 	if err := c.point("after_boot_readback"); err != nil {
+		return err
+	}
+	if _, err := c.bootRemainingV2(record); err != nil {
 		return err
 	}
 	completed := c.recoveryNow()
@@ -283,6 +333,9 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	if err := c.point("before_boot_completion"); err != nil {
 		return err
 	}
+	if _, err := c.bootRemainingV2(record); err != nil {
+		return err
+	}
 	if err := s.publish(st); err != nil {
 		return err
 	}
@@ -292,6 +345,38 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 		}
 	}
 	return c.point("after_boot_completion")
+}
+
+func (c *v2Coordinator) bootRemainingV2(record v2RecoveryRecord) (time.Duration, error) {
+	if c.store.reserves == nil {
+		return 10 * time.Second, nil
+	}
+	now := c.now()
+	deadline := record.Started.Add(10 * time.Second)
+	if now.Before(record.Started) || now.Before(c.store.state.Clock) || !now.Before(deadline) {
+		return 0, ErrRecovery
+	}
+	return deadline.Sub(now), nil
+}
+
+func (c *v2Coordinator) armBootGuardV2(ctx context.Context, guard ActivationGuard, record v2RecoveryRecord, previous, target Revision) error {
+	remaining, err := c.bootRemainingV2(record)
+	if err != nil {
+		return err
+	}
+	if c.store.reserves != nil {
+		absolute, ok := guard.(startupDeadlineGuardV2)
+		if !ok {
+			return ErrRecovery
+		}
+		if err = absolute.ArmUntil(ctx, record.ID, previous, target, record.Started.Add(10*time.Second)); err != nil {
+			return ErrRecovery
+		}
+	} else if err = guard.Arm(ctx, record.ID, previous, target, remaining); err != nil {
+		return ErrRecovery
+	}
+	_, err = c.bootRemainingV2(record)
+	return err
 }
 
 func bootTargetV2(previous v2Configuration) (v2Configuration, error) {

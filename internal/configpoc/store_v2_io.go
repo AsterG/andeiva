@@ -219,11 +219,8 @@ func (s *v2Store) close() error {
 }
 
 func v2ValidState(st v2State) bool {
-	if st.RecoveryReserveVersion == 1 {
-		data, _, err := v2Canonical(st)
-		if err != nil || len(data) > reserveMetadataObjectLimitV2 {
-			return false
-		}
+	if st.RecoveryReserveVersion == 1 && !reserveMetadataStateFitsV2(st) {
+		return false
 	}
 	if st.ReclamationVersion > 1 {
 		return false

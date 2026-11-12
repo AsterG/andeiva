@@ -132,6 +132,9 @@ func (s *v2Store) namespaceLocked(subject, domain string, now time.Time, lifetim
 	st.NamespaceSequence++
 	st.Clock = now.UTC()
 	st.Namespaces = append(st.Namespaces, ns)
+	if st.RecoveryReserveVersion == 1 && !reserveMetadataStateFitsV2(st) {
+		return v2Namespace{}, errV2Limited
+	}
 	if err = s.publish(st); err != nil {
 		return v2Namespace{}, err
 	}

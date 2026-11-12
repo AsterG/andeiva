@@ -53,6 +53,9 @@ func (s *v2Store) changeSubject(id, login, credentialRevision string, retire boo
 		}
 	}
 	st.Clock = now.UTC()
+	if st.RecoveryReserveVersion == 1 && !reserveMetadataStateFitsV2(st) {
+		return v2Subject{}, errV2Limited
+	}
 	if err := s.publish(st); err != nil {
 		return v2Subject{}, err
 	}

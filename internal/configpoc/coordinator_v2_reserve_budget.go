@@ -48,13 +48,42 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 	if s.state.Configuration == nil {
 		return ErrRecovery
 	}
+	if op.ClosingCredit != "" {
+		target, err := reserveTargetEnvelopeV2(s, op)
+		if err != nil {
+			return err
+		}
+		projected := reserveProjectedEnvelopeV2(s.state, target, op.Domain)
+		if !reserveMetadataStateFitsV2(projected) {
+			return errV2Limited
+		}
+		return nil
+	}
 	if raw, _, err := v2Canonical(s.state); err != nil || len(raw) > 128*1024 {
 		return errV2Limited
 	}
 	if raw, _, err := v2Canonical(*s.state.Configuration); err != nil || len(raw) > 128*1024 {
 		return errV2Limited
 	}
-	if op.ClosingCredit != "" || closingPotentialV2(op.Request) {
+	target, err := reserveTargetEnvelopeV2(s, op)
+	if err != nil {
+		return err
+	}
+	if data, _, e := v2Canonical(target); e != nil || len(data) > 128*1024 {
+		return errV2Limited
+	}
+	projected := reserveProjectedEnvelopeV2(s.state, target, op.Domain)
+	if !reserveMetadataStateFitsV2(projected) {
+		return errV2Limited
+	}
+	if closingPotentialV2(op.Request) {
+		confirmed := clone(target)
+		domain := domainSnapshotV2(&confirmed, op.Domain)
+		domain.LastGood = domain.Running
+		confirmed.Pending = nil
+		if confirmed.refresh() != nil || !reserveMetadataStateFitsV2(reserveProjectedEnvelopeV2(s.state, confirmed, op.Domain)) {
+			return errV2Limited
+		}
 		return nil
 	}
 	key, err := reserveBundleKeyV2(s.state.Lineage, owner)
@@ -65,10 +94,7 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 	if err != nil {
 		return err
 	}
-	running, err := reserveTargetRunningV2(s, op)
-	if err != nil {
-		return err
-	}
+	running := target.Running.Hash
 	verified, err := reserveIndexCostV2(s, s.state.Configuration.VerifiedIndex, running, "verified", false)
 	if err != nil {
 		return err
@@ -86,31 +112,64 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 	return nil
 }
 
-func reserveTargetRunningV2(s *v2Store, op v2Operation) (string, error) {
+func reserveTargetEnvelopeV2(s *v2Store, op v2Operation) (v2Configuration, error) {
 	target := clone(*s.state.Configuration)
 	domain := domainSnapshotV2(&target, op.Domain)
+	changed := true
 	switch op.Request.Kind {
 	case OpCommit:
 		if domain.Candidate == nil || domain.Candidate.Owner != op.Subject {
-			return "", ErrConflict
+			return target, ErrConflict
 		}
 		domain.Running = domain.Candidate.Revision
+		domain.Candidate = nil
 	case OpRollback:
 		revision, err := (&v2Coordinator{store: s}).loadDomainRevision(op.Request.Target, op.Domain)
 		if err != nil {
-			return "", err
+			return target, err
 		}
 		domain.Running = revision
+		domain.Candidate = nil
 	case OpRecover:
 		domain.Running = domain.LastGood
-	case OpStage, OpValidate, OpSave:
+		domain.Candidate = nil
+	case OpConfirm:
+		domain.LastGood = domain.Running
+		target.Pending = nil
+	case OpStage:
+		revision, err := Canonical(*op.Request.Config)
+		if err != nil {
+			return target, err
+		}
+		domain.Candidate = &v2DomainCandidate{Owner: op.Subject, Base: domain.Running.Hash, Revision: revision}
+	case OpValidate:
+		changed = false
+	case OpSave:
+		changed = domain.Startup.Hash != domain.Running.Hash
+		domain.Startup = domain.Running
 	default:
-		return "", ErrInvalid
+		return target, ErrInvalid
+	}
+	if changed {
+		if domain.Generation == ^uint64(0) {
+			return target, errV2Limited
+		}
+		domain.Generation++
 	}
 	if err := target.refresh(); err != nil {
-		return "", err
+		return target, err
 	}
-	return target.Running.Hash, nil
+	return target, nil
+}
+
+// Used for size bounds only, never persisted or presented as an applied
+// configuration. Scalar maxima cover digit growth; placeholders account for
+// newly populated fixed-width hash references.
+func reserveProjectedEnvelopeV2(st v2State, target v2Configuration, _ string) v2State {
+	projected := st
+	projected.Configuration = &target
+	reserveNormalizeEnvelopeScalarsV2(&projected)
+	return projected
 }
 
 // Exact COW shape estimation creates no object, claim or capability. Repeat
