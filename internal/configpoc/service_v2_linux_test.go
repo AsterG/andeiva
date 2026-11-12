@@ -39,6 +39,28 @@ func serviceV2Auth(t *testing.T, subject, login, role, revision string) (*admina
 	}
 	return m, b, token
 }
+
+func TestServiceV2IncompleteStoreDeniesOperations(t *testing.T) {
+	auth, binding, _ := serviceV2Auth(t, "subject", "alice", "admin", strings.Repeat("a", 64))
+	s := &ServiceV2{auth: auth, coordinator: &v2Coordinator{}}
+	checks := map[string]func() error{
+		"namespace":       func() error { _, err := s.Namespace(binding, "firewall", time.Minute); return err },
+		"admit":           func() error { _, err := s.Admit(binding, "namespace", 1, OperationRequestV2{Kind: OpSave}); return err },
+		"execute":         func() error { _, err := s.Execute(context.Background(), binding, "operation"); return err },
+		"query":           func() error { _, err := s.Query(binding, "operation"); return err },
+		"list":            func() error { _, _, err := s.List(binding, "namespace", 0, 10); return err },
+		"close-namespace": func() error { return s.CloseNamespace(binding, "namespace") },
+		"status":          func() error { _, err := s.Status(binding); return err },
+		"projection":      func() error { _, err := s.Projection(binding, "firewall"); return err },
+	}
+	for name, check := range checks {
+		t.Run(name, func(t *testing.T) {
+			if err := check(); !errors.Is(err, ErrDenied) {
+				t.Fatalf("incomplete service did not deny operation: %v", err)
+			}
+		})
+	}
+}
 func serviceV2Fixture(t *testing.T, role string) (*ServiceV2, adminauth.SessionBinding, string, []*countedCoordinatorV2Engine) {
 	t.Helper()
 	c, _, engines, p, _ := coordinatorV2Fixture(t, false)
