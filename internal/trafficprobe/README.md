@@ -35,7 +35,7 @@ certificates, without symlink ancestors or group/other write permissions. Identi
 checks surround the bounded read. The explicit file replaces system roots for
 that probe. Never obtain the trust anchor by trusting the first unknown TLS
 server; there is no insecure verification switch. Linux rejects symlink/special
-files without blocking on a substituted FIFO; other platforms are compile-tested
+files without blocking on a substituted FIFO; other platforms refuse custom CA files and remain compile-tested
 only and need native filesystem qualification.
 
 DNS uses a fresh standard-library resolver, an explicit server endpoint and source
@@ -102,3 +102,5 @@ Tests use temporary loopback listeners, controlled DNS UDP/TCP replies and trust
 test certificates. They do not contact Internet services or prove routed/NAT
 operation. Actual client/Internet evidence remains a separate authorized lab gate.
 See [Spanish](docs/es.md) and [Portuguese](docs/pt.md).
+
+Custom CA files are supported only on Linux. Other platforms reject `--ca-file` before filesystem access with `invalid_ca_file`; system-trust HTTPS remains available with certificate verification. Native platform qualification is required before adding another safe opener.
