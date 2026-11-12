@@ -161,7 +161,7 @@ func openBase(create bool) (*os.Root, *os.File, error) {
 		_ = root.Close()
 		return nil, nil, ErrUnsafe
 	}
-	flags := os.O_RDWR | unix.O_NOFOLLOW | unix.O_NONBLOCK
+	flags := preparationLockFlags(create)
 	if len(names) == 0 {
 		if !create {
 			_ = root.Close()
@@ -435,4 +435,13 @@ func openArea(base *os.Root, name string, uid, gid uint32) (*os.Root, error) {
 		return nil, ErrUnsafe
 	}
 	return root, nil
+}
+
+// Inspection needs an exclusive lock, but never write access to its inode.
+func preparationLockFlags(create bool) int {
+	flags := os.O_RDONLY | unix.O_NOFOLLOW | unix.O_NONBLOCK
+	if create {
+		flags = os.O_RDWR | unix.O_NOFOLLOW | unix.O_NONBLOCK
+	}
+	return flags
 }

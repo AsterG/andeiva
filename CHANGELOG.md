@@ -2,6 +2,8 @@
 
 ## Unreleased — isolated storage volume qualification
 
+- Inspect inactive volumes through read-only lock descriptors while retaining exclusive locking and identity checks.
+
 - Select copied-volume qualification only through explicit arguments, clearing inherited mode variables before both launcher phases.
 
 - Accept anchored composite test durations and preserve failures during idempotent log-test cleanup.
