@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — bounded anonymous authentication observations
+
+- Separate explicitly selected new anonymous login failures from protected administrative audit.
+- Aggregate bounded peer/minute observations with visible uncertainty and degraded collection; preserve historic protected records.
+- Keep verified authentication audited when only the observation area is unavailable; runtime selection and physical isolation remain explicit integration gates.
+
 ## Unreleased — isolated storage volume qualification
 
 - Inspect inactive volumes through read-only lock descriptors while retaining exclusive locking and identity checks.
