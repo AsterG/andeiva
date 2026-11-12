@@ -355,6 +355,11 @@ func (s *v2Store) objectClass(value any, indexPage bool) (string, error) {
 	} else if !os.IsNotExist(err) {
 		return "", errV2Unavailable
 	}
+	// Historical immutable objects retain their existing read/dedup contract.
+	// New reserve-profile writes must fit the per-object lifecycle envelope.
+	if s.state.RecoveryReserveVersion == 1 && len(data) > reserveMetadataObjectLimitV2 {
+		return "", errV2Limited
+	}
 	reservedBytes := s.state.ReservedBytes - s.allowance.Bytes
 	reservedInodes := s.state.ReservedInodes - s.allowance.Inodes
 	if s.used.Bytes+reservedBytes+uint64(len(data)) > s.budget.Bytes || s.used.Inodes+reservedInodes+1 > s.budget.Inodes {
