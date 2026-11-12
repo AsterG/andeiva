@@ -82,29 +82,50 @@ func (s PreparedSnapshot) observation() observation {
 // CanonicalPreparedSnapshot validates, detaches and orders a bounded snapshot.
 // Only initially empty IPv4 state is supported; no foreign route is adopted.
 func CanonicalPreparedSnapshot(input PreparedSnapshot) (PreparedSnapshot, error) {
-	if len(input.Links) < 2 || len(input.Links) > 3 || len(input.Routes) != 0 || len(input.PlanHash) != 64 || len(input.Hash) != 64 {
+	if input.Version != 1 || len(input.PlanHash) != 64 || input.PlanHash != strings.ToLower(input.PlanHash) || len(input.Hash) != 64 {
 		return PreparedSnapshot{}, ErrScope
+	}
+	if _, err := hex.DecodeString(input.PlanHash); err != nil {
+		return PreparedSnapshot{}, ErrScope
+	}
+	observed, err := canonicalEmptyObservation(input.observation())
+	if err != nil {
+		return PreparedSnapshot{}, err
+	}
+	s := PreparedSnapshot{Version: 1, PlanHash: input.PlanHash, Links: observed.Links, Routes: observed.Routes}
+	data, err := json.Marshal(s)
+	if err != nil || len(data) > MaxPreparedSnapshot {
+		return PreparedSnapshot{}, ErrScope
+	}
+	digest := sha256.Sum256(data)
+	s.Hash = hex.EncodeToString(digest[:])
+	if input.Hash != s.Hash {
+		return PreparedSnapshot{}, ErrScope
+	}
+	return s, nil
+}
+
+func canonicalEmptyObservation(input observation) (observation, error) {
+	if len(input.Links) < 2 || len(input.Links) > 3 || len(input.Routes) != 0 {
+		return observation{}, ErrScope
 	}
 	for _, l := range input.Links {
 		if len(l.Name) > 15 || len(l.MAC) != 17 || len(l.Flags) > 8 || len(l.Addresses) != 0 {
-			return PreparedSnapshot{}, ErrScope
+			return observation{}, ErrScope
 		}
 		for _, flag := range l.Flags {
 			if len(flag) > 16 {
-				return PreparedSnapshot{}, ErrScope
+				return observation{}, ErrScope
 			}
 		}
 	}
 	data, err := json.Marshal(input)
 	if err != nil || len(data) > MaxPreparedSnapshot {
-		return PreparedSnapshot{}, ErrScope
+		return observation{}, ErrScope
 	}
-	var s PreparedSnapshot
-	if json.Unmarshal(data, &s) != nil || s.Version != 1 || len(s.PlanHash) != 64 || s.PlanHash != strings.ToLower(s.PlanHash) || len(s.Links) < 2 || len(s.Links) > 3 || len(s.Routes) != 0 {
-		return PreparedSnapshot{}, ErrScope
-	}
-	if _, err := hex.DecodeString(s.PlanHash); err != nil {
-		return PreparedSnapshot{}, ErrScope
+	var s observation
+	if json.Unmarshal(data, &s) != nil {
+		return observation{}, ErrScope
 	}
 	names, indexes := map[string]bool{}, map[int]bool{}
 	managed := 0
@@ -116,24 +137,24 @@ func CanonicalPreparedSnapshot(input PreparedSnapshot) (PreparedSnapshot, error)
 			maxMTU = 65536
 		}
 		if !linkName.MatchString(l.Name) || l.Index <= 0 || l.MTU < 68 || l.MTU > maxMTU || names[l.Name] || indexes[l.Index] || err != nil || len(mac) != 6 || mac.String() != l.MAC || len(l.Addresses) != 0 || len(l.Flags) > 8 {
-			return PreparedSnapshot{}, ErrScope
+			return observation{}, ErrScope
 		}
 		names[l.Name], indexes[l.Index] = true, true
 		flags := map[string]bool{}
 		for _, flag := range l.Flags {
 			if flags[flag] || (flag != "UP" && flag != "LOWER_UP" && flag != "BROADCAST" && flag != "MULTICAST" && flag != "LOOPBACK") {
-				return PreparedSnapshot{}, ErrUnsupported
+				return observation{}, ErrUnsupported
 			}
 			flags[flag] = true
 		}
 		if l.Name == "lo" {
 			if !flags["LOOPBACK"] || l.MAC != "00:00:00:00:00:00" {
-				return PreparedSnapshot{}, ErrScope
+				return observation{}, ErrScope
 			}
 		} else {
 			managed++
 			if flags["LOOPBACK"] || l.MAC == "00:00:00:00:00:00" || !flags["UP"] {
-				return PreparedSnapshot{}, ErrUnsupported
+				return observation{}, ErrUnsupported
 			}
 		}
 		slices.Sort(l.Flags)
@@ -141,21 +162,10 @@ func CanonicalPreparedSnapshot(input PreparedSnapshot) (PreparedSnapshot, error)
 		l.Addresses = []address{}
 	}
 	if managed != 2 {
-		return PreparedSnapshot{}, ErrUnsupported
+		return observation{}, ErrUnsupported
 	}
 	slices.SortFunc(s.Links, func(a, b link) int { return strings.Compare(a.Name, b.Name) })
 	s.Routes = []route{}
-	want := s.Hash
-	s.Hash = ""
-	data, err = json.Marshal(s)
-	if err != nil || len(data) > MaxPreparedSnapshot {
-		return PreparedSnapshot{}, ErrScope
-	}
-	digest := sha256.Sum256(data)
-	s.Hash = hex.EncodeToString(digest[:])
-	if want != s.Hash {
-		return PreparedSnapshot{}, ErrScope
-	}
 	return s, nil
 }
 

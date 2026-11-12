@@ -8,11 +8,15 @@ autorização do proprietário. Usa Engine/Group reais de routedactivation, snap
 exato, transporte nft de tabelas fixas e resolver efêmero explicitamente confiável.
 Esse registro é um fixture, não um coordenador durável de produção.
 
-Verifica TCP/UDP SNAT pendente e recuperação fria exata; depois cria outra operação
+Começa com schema 4 realmente instalado e suas duas regras salvas. Verifica TCP/UDP
+SNAT pendente e recuperação fria exata; depois cria outra operação
 do fixture e confirma uma lease distinta de trinta segundos. Todas as mudanças
 seguintes usam Group e mantêm testes NAT/conntrack/deny/revogação. A última mudança
-expira no deadline original de trinta segundos e deve restaurar a política anterior
-real. Somente consulta completa bem-sucedida demonstra ausência de tabela.
+restaura schema 4 exato, confirma e reativa schema 6. A última inversão 6→4 expira
+no deadline original de trinta segundos e deve repor rede/regras schema-6 anteriores
+reais. Somente consulta completa bem-sucedida demonstra ausência. Provisionamento
+do baseline do fixture não qualifica publicação Boot/SystemBundle de produção;
+PrepareColdBoot é verificado separadamente.
 
 O perfil local não inicia processos/listeners de serviços no gateway e verifica
 suas tabelas TCP/UDP reais. Nunca enumera ou encerra SSH/HTTPS do host. Um vizinho
@@ -22,12 +26,19 @@ allow. Forwarding é habilitado após estabelecer deny/target real.
 Marcadores adicionais aparecem somente após verificações bem-sucedidas:
 
 ```text
+PASS typed group initial schema4 has exact two saved rules
 PASS typed group TCP/UDP SNAT and exact cold recovery
 PASS typed group distinct confirmed lease and exact lost-confirm reconciliation
-PASS typed group original confirmed deadline expired and exact previous policy recovered
+PASS typed group saved schema4 restores exact two-rule legacy and empty network
+PASS typed group confirmed schema4 reactivates owned schema6
+PASS typed group inverse saved schema4 deadline expired and exact schema6 recovered
 ```
 
-Mantém limite de 55 segundos e limpeza independente limitada. Não qualifica
+Group tem limite de 80 segundos e limpeza independente limitada; o modo anterior
+sem Group mantém 55 segundos. Deadlines do produto não mudam. A fonte `3918ad8`
+passou o cenário Group anterior nativo em 46.166222 s (CPU 13.259767 s, pico
+31,281,152 bytes); a evidência não qualifica este novo runner inverse/duas regras.
+Não qualifica
 reinício do helper, migração LAN existente, continuidade de endpoints ou recuperação
 durável de produção. RecoverPrepared possui testes unitários separados e exige
 WorkScope original autenticado e a mesma encarnação retida; NewWithHost não concede
