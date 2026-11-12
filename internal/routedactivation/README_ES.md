@@ -28,7 +28,7 @@ valida deadline original, referencias contextuales y reservas. La forma o un
 resolver que siempre acepta no bastan. `ObserveOwned` y `MatchOwned` sólo devuelven
 o verifican referencias seleccionadas después del readback semántico físico.
 
-El arranque exige tabla schema-4 deny vacía realmente conocida, tabla routed
+El arranque exige tabla schema-4 canónica default-deny realmente conocida, tabla routed
 ausente, IPv4 vacío y tabla local ausente o vacía conocida. Una transacción nft
 instala deny routed/local y retira legacy antes de configurar rutas. El target
 sustituye deny después de verificar red y listeners propios. La recuperación
@@ -37,6 +37,21 @@ restablece tablas previas atómicamente, incluida ausencia comprobada. Estado aj
 o desconocido bloquea en vez de borrarse a ciegas. Se exigen escritores exclusivos;
 no hay atomicidad frente a CAP_NET_ADMIN ajeno. Ediciones posteriores exigen el
 mismo plan de red.
+
+El supervisor provisiona la revisión schema-4 seleccionada exacta, incluidas sus
+reglas, exclusivamente dentro del namespace nuevo propio con IPv4 vacío. Readback
+semántico rechaza reglas omitidas aunque el comentario anuncie el hash esperado.
+No se resetea a política vacía ni se adopta una tabla encontrada.
+
+La inversión 6→4 exige Options.ResolveBaseline desde el Work frío original:
+bundle guardado, BeforeOwned físico y dependencias. La referencia durable de un
+salto conserva lineage y encarnación del manager. Se comparan revisiones exactas
+firewall/local y snapshot completo; ausencia local no sustituye listeners guardados
+habilitados. Una lease confirmada mantiene deny durante retiro de listeners/red;
+legacy sustituye routed atómicamente. Expiry repone red/listeners/reglas schema-6
+anteriores bajo deny. El baseline confirmado puede activar nuevamente el mismo
+plan. Prepare usa el lado físico before/target real tras recover, sin selector
+optimista del último target.
 
 `RecoverPlan`, exclusivo del arranque confiable del helper, resuelve el Work
 original autenticado y llama RecoverPrepared con UID/GID/boot/run/namespace
@@ -52,8 +67,10 @@ durable o adopción del manager del host. El ensamblaje autentica metadata y FDs
 Reiniciar el helper no reconstruye propiedad del ejecutor desde el snapshot.
 No se agregan base de datos, workers ni procesos: se usa una lease Group, hasta
 tres estados por tabla y batches nft de 512 KiB. Las pruebas controladas ejercitan
-compiladores y fallos. Helper/tráfico nativos, recuperación tras crash, continuidad
-de endpoints y mediciones de recursos siguen pendientes.
+compiladores y fallos. La fuente exacta `3918ad8` pasó tráfico/Confirm/expiry/recovery
+nativos en tres namespaces: wall 46.166222 s, CPU 13.259767 s y pico 31,281,152 bytes.
+No atribuir esa medición a la extensión posterior inverse/reglas legacy, reinicio
+de helper, recuperación tras crash o continuidad de endpoints, aún sin cualificar.
 
 ```sh
 go test -race ./internal/networkexecutor ./internal/routedactivation -count=3

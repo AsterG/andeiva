@@ -28,7 +28,7 @@ referências contextuais e reservas. Forma ou resolver que sempre aceita não ba
 `ObserveOwned` e `MatchOwned` retornam/verificam apenas referências selecionadas
 após readback semântico físico.
 
-A ativação inicial exige tabela schema-4 deny vazia realmente conhecida, tabela
+A ativação inicial exige tabela schema-4 canônica default-deny realmente conhecida, tabela
 routed ausente, IPv4 vazio e tabela local ausente ou vazia conhecida. Uma transação
 nft instala deny routed/local e remove legacy antes de configurar rotas. Target
 substitui deny após verificar rede e listeners próprios. A recuperação instala
@@ -37,6 +37,20 @@ as tabelas anteriores atomicamente, incluindo ausência comprovada. Estado alhei
 ou desconhecido bloqueia em vez de exclusão cega. Escritores exclusivos são
 obrigatórios; não há atomicidade contra CAP_NET_ADMIN alheio. Edições posteriores
 exigem o mesmo plano de rede.
+
+O supervisor provisiona a revisão schema-4 selecionada exata, incluindo suas regras,
+somente no novo namespace próprio com IPv4 vazio. Readback semântico recusa regras
+omitidas mesmo com comentário anunciando o hash esperado. Não redefine política
+vazia nem adota tabela encontrada.
+
+A inversão 6→4 exige Options.ResolveBaseline a partir do Work frio original:
+bundle salvo, BeforeOwned físico e dependências. A referência durável de um salto
+preserva lineage e encarnação do manager. Verifica revisões firewall/local exatas
+e snapshot completo; ausência local não substitui listeners salvos habilitados.
+Uma lease confirmada mantém deny durante retirada de listeners/rede; legacy
+substitui routed atomicamente. Expiry repõe rede/listeners/regras schema-6 anteriores
+sob deny. Baseline confirmado pode ativar novamente o mesmo plano. Prepare usa o
+lado físico before/target real após recover, sem seletor otimista do último target.
 
 `RecoverPlan`, exclusivo da inicialização confiável do helper, resolve o Work
 original autenticado e chama RecoverPrepared com UID/GID/boot/run/namespace
@@ -52,8 +66,10 @@ manager do host. A montagem autentica metadata e FDs. Reiniciar o helper não
 reconstrói propriedade do executor a partir do snapshot. Não há novo banco,
 workers ou processos: usa-se uma lease Group, até três estados por tabela e
 batches nft de 512 KiB. Testes controlados exercitam compiladores e falhas.
-Helper/tráfego nativos, recuperação após crash, continuidade de endpoints e
-medições de recursos permanecem pendentes.
+A fonte exata `3918ad8` passou tráfego/Confirm/expiry/recovery nativos em três
+namespaces: wall 46.166222 s, CPU 13.259767 s e pico 31,281,152 bytes. A medição não
+qualifica a extensão posterior inverse/regras legacy, reinício do helper,
+recuperação após crash ou continuidade de endpoints, ainda pendentes.
 
 ```sh
 go test -race ./internal/networkexecutor ./internal/routedactivation -count=3

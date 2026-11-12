@@ -1,5 +1,44 @@
 # Typed network plan qualification
 
+## Group mode awaiting native qualification
+
+`--run-isolated-group-lab-with-flows` reuses these three namespaces and the
+reviewed host-anchor mechanism. Source/unit checks pass; native Debian execution
+remains pending owner review/authorization. The mode uses the real
+routedactivation Engine/Group, exact prepared snapshot, fixed-table nft transport
+and an explicitly trusted ephemeral artifact resolver. The resolver is a fixture
+record, not a durable production coordinator.
+
+It proves pending TCP/UDP SNAT and exact cold recovery, then creates a new fixture
+operation and confirms a distinct thirty-second lease. Every later policy change
+uses Group; existing NAT/conntrack/deny/revocation checks remain. A final changed
+policy expires at its original thirty-second deadline and must restore the actual
+previous policy. Only a successful complete table query proves absence.
+
+The local profile starts no gateway service processes/listeners and checks actual
+isolated gateway TCP/UDP socket tables. Host SSH/HTTPS are never enumerated or
+stopped. A permanent IPv6 neighbor on the owned LAN peer lets the IPv6 test reach
+the forward drop without adding an allow. Forwarding is enabled only after real
+owned deny/target rules exist.
+
+Additional markers are emitted only after successful checks:
+
+```text
+PASS typed group TCP/UDP SNAT and exact cold recovery
+PASS typed group distinct confirmed lease and exact lost-confirm reconciliation
+PASS typed group original confirmed deadline expired and exact previous policy recovered
+```
+
+Execution remains bounded to 55 seconds plus independent bounded cleanup. This
+mode does not qualify helper restart, existing management LAN migration, endpoint
+continuity or durable production recovery. RecoverPrepared has separate unit
+coverage and requires authenticated original WorkScope and the same retained
+namespace incarnation; NewWithHost is not a reconstruction capability.
+
+```sh
+go test -race ./cmd/andeiva-routing-lab ./internal/routedactivation ./internal/nftguardian ./internal/networkexecutor -count=3
+```
+
 The existing three-namespace Debian 13 laboratory now applies the gateway's two
 static IPv4 addresses and default route through `internal/networkexecutor`.
 The runner verifies the namespace it created, opens and checks the mount inode,

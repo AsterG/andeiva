@@ -53,6 +53,15 @@ type PreparationV1 struct {
 	Dependencies DependenciesV1 `json:"dependencies"`
 }
 
+// BaselineV1 is resolved only from the original authenticated cold Work closure.
+// Saved is its saved configuration, distinct from the actually owned memento.
+// The resolver must bind lineage, manager incarnation and the one-hop Work ref.
+type BaselineV1 struct {
+	Saved        configpoc.RoutedActivationBundleV1 `json:"saved"`
+	Owned        OwnedV1                            `json:"owned"`
+	Dependencies DependenciesV1                     `json:"dependencies"`
+}
+
 // ResolvePlan must resolve these exact typed artifacts from selected durable
 // intent, preserving lineage, original deadline and owned reservations. It also
 // validates contextual object refs; payload shape is never authorization.
@@ -61,10 +70,11 @@ type ResolvePlan func(context.Context, configpoc.RoutedTransitionV1, *configpoc.
 type Options struct {
 	// These initial revisions are known by trusted supervisor assembly before
 	// constructing the helper. New never discovers authority from a table comment.
-	Legacy      configpoc.Revision
-	Local       *configpoc.Revision
-	Neighbors   []localnft.NeighborLink
-	ResolvePlan ResolvePlan
+	Legacy          configpoc.Revision
+	Local           *configpoc.Revision
+	Neighbors       []localnft.NeighborLink
+	ResolvePlan     ResolvePlan
+	ResolveBaseline func(context.Context, configpoc.RoutedActivationBundleV1) (BaselineV1, error)
 }
 
 type Engine struct {
@@ -90,13 +100,16 @@ func New(kernel Kernel, network Network, listeners localengine.Listeners, option
 	if kernel == nil || network == nil || listeners == nil || options.ResolvePlan == nil {
 		return nil, ErrState
 	}
-	legacy, err := canonicalTable(TableStateV1{Present, &options.Legacy}, 4)
-	if err != nil || legacy.Revision.Config.DefaultAction != "deny" || len(legacy.Revision.Config.Rules) != 0 {
+	legacy, err := canonicalTable(TableStateV1{Presence: Present, Revision: &options.Legacy}, 4)
+	if err != nil || legacy.Revision.Config.DefaultAction != "deny" {
+		return nil, ErrState
+	}
+	if _, err := firewallnft.Compile(legacy.Revision.Config); err != nil {
 		return nil, ErrState
 	}
 	local := TableStateV1{Presence: Absent}
 	if options.Local != nil {
-		local, err = canonicalTable(TableStateV1{Present, options.Local}, 3)
+		local, err = canonicalTable(TableStateV1{Presence: Present, Revision: options.Local}, 3)
 		if err != nil || local.Revision.Config.LocalServices == nil || len(local.Revision.Config.LocalServices.Services) != 0 {
 			return nil, ErrState
 		}
@@ -206,6 +219,106 @@ func (e *Engine) matches(ctx context.Context, owned OwnedV1, deps DependenciesV1
 	return e.listenersMatch(ctx, owned.LocalServices, deps)
 }
 
+func sameArtifact(a, b any) bool {
+	x, xerr := json.Marshal(a)
+	y, yerr := json.Marshal(b)
+	return xerr == nil && yerr == nil && bytes.Equal(x, y)
+}
+
+func (e *Engine) currentOwned(ctx context.Context) (OwnedV1, *configpoc.RoutedActivationBundleV1, error) {
+	if !e.selected {
+		return OwnedV1{}, nil, ErrState
+	}
+	if e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
+		return e.prepared.Target, &e.target, nil
+	}
+	if e.matches(ctx, e.prepared.Before, e.prepared.Dependencies) {
+		return e.prepared.Before, e.previous, nil
+	}
+	return OwnedV1{}, nil, ErrState
+}
+
+func (e *Engine) resolveBaseline(ctx context.Context, target configpoc.RoutedActivationBundleV1) (BaselineV1, error) {
+	if e.options.ResolveBaseline == nil || target.Firewall.Config.SchemaVersion != 4 {
+		return BaselineV1{}, ErrState
+	}
+	resolved, err := e.options.ResolveBaseline(ctx, target)
+	if err != nil {
+		return BaselineV1{}, ErrState
+	}
+	saved, err := configpoc.CanonicalRoutedActivationBundleV1(resolved.Saved)
+	if err != nil || saved.Composite.Hash != target.Composite.Hash {
+		return BaselineV1{}, ErrState
+	}
+	owned, err := CanonicalOwned(resolved.Owned)
+	if err != nil || owned.NetworkState != Baseline || owned.LegacyFirewall.Revision == nil || owned.LegacyFirewall.Revision.Hash != saved.Firewall.Hash || owned.RoutedFirewall.Presence != Absent {
+		return BaselineV1{}, ErrState
+	}
+	if owned.LocalServices.Presence == Present {
+		if owned.LocalServices.Revision == nil || owned.LocalServices.Revision.Config.LocalServices == nil || owned.LocalServices.Revision.Hash != saved.LocalServices.Hash {
+			return BaselineV1{}, ErrState
+		}
+	} else if local := saved.LocalServices.Config.LocalServices; local != nil {
+		for _, service := range local.Services {
+			if service.Enabled {
+				return BaselineV1{}, ErrState
+			}
+		}
+	}
+	deps, err := CanonicalDependencies(resolved.Dependencies)
+	if err != nil || !sameArtifact(owned.Network, deps.Prepared) {
+		return BaselineV1{}, ErrState
+	}
+	return BaselineV1{Saved: saved, Owned: owned, Dependencies: deps}, nil
+}
+
+func (e *Engine) prepareBaseline(ctx context.Context, target configpoc.RoutedActivationBundleV1) (PreparationV1, error) {
+	current, effective, err := e.currentOwned(ctx)
+	if err != nil || effective == nil {
+		return PreparationV1{}, ErrState
+	}
+	baseline, err := e.resolveBaseline(ctx, target)
+	if err != nil || !sameArtifact(baseline.Dependencies, e.prepared.Dependencies) {
+		return PreparationV1{}, ErrState
+	}
+	before, err := CanonicalOwned(current)
+	if err != nil {
+		return PreparationV1{}, err
+	}
+	prepared := PreparationV1{before, baseline.Owned, baseline.Dependencies}
+	deny, err := denyTablesFor(target, prepared.Dependencies)
+	if err != nil {
+		return PreparationV1{}, err
+	}
+	for _, change := range [][2][3]TableStateV1{{tables(before), deny}, {deny, tables(prepared.Target)}, {deny, tables(before)}} {
+		if _, err := e.compileChange(change[0], change[1], prepared.Dependencies); err != nil {
+			return PreparationV1{}, err
+		}
+	}
+	data, err := json.Marshal(prepared)
+	if err != nil {
+		return PreparationV1{}, err
+	}
+	var detached PreparationV1
+	if json.Unmarshal(data, &detached) != nil {
+		return PreparationV1{}, ErrState
+	}
+	e.preview = &detached
+	return prepared, nil
+}
+
+func (e *Engine) bundleOwned(ctx context.Context, bundle configpoc.RoutedActivationBundleV1, owned OwnedV1, deps DependenciesV1) bool {
+	if bundle.Firewall.Config.SchemaVersion == 4 {
+		baseline, err := e.resolveBaseline(ctx, bundle)
+		return err == nil && sameArtifact(owned, baseline.Owned) && sameArtifact(deps, baseline.Dependencies)
+	}
+	return bundle.Firewall.Config.SchemaVersion == 6 && bundle.Firewall.Config.Routed != nil &&
+		owned.NetworkState == Configured && owned.LegacyFirewall.Presence == Absent &&
+		owned.RoutedFirewall.Revision != nil && owned.RoutedFirewall.Revision.Hash == bundle.Firewall.Hash &&
+		owned.LocalServices.Revision != nil && owned.LocalServices.Revision.Hash == bundle.LocalServices.Hash &&
+		bundle.Firewall.Config.Routed.Network.Hash == deps.Network.Hash
+}
+
 func (e *Engine) Prepare(ctx context.Context, target configpoc.RoutedActivationBundleV1) (PreparationV1, error) {
 	if e == nil || ctx == nil {
 		return PreparationV1{}, ErrState
@@ -216,13 +329,21 @@ func (e *Engine) Prepare(ctx context.Context, target configpoc.RoutedActivationB
 		return PreparationV1{}, ErrState
 	}
 	bundle, err := configpoc.CanonicalRoutedActivationBundleV1(target)
-	if err != nil || bundle.Firewall.Config.SchemaVersion != 6 || bundle.LocalServices.Config.LocalServices == nil {
+	if err != nil {
+		return PreparationV1{}, ErrState
+	}
+	if bundle.Firewall.Config.SchemaVersion == 4 {
+		return e.prepareBaseline(ctx, bundle)
+	}
+	if bundle.Firewall.Config.SchemaVersion != 6 || bundle.LocalServices.Config.LocalServices == nil {
 		return PreparationV1{}, ErrState
 	}
 	plan := bundle.Firewall.Config.Routed.Network
 	var snapshot networkexecutor.PreparedSnapshot
+	var current OwnedV1
 	if e.selected {
-		if plan.Hash != e.prepared.Dependencies.Network.Hash || !e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
+		current, _, err = e.currentOwned(ctx)
+		if err != nil || plan.Hash != e.prepared.Dependencies.Network.Hash {
 			return PreparationV1{}, ErrState
 		}
 		snapshot = e.prepared.Dependencies.Prepared
@@ -232,19 +353,19 @@ func (e *Engine) Prepare(ctx context.Context, target configpoc.RoutedActivationB
 			return PreparationV1{}, err
 		}
 	}
-	deps, err := CanonicalDependencies(DependenciesV1{1, plan, snapshot, bundle.LocalServices.Config.LocalServices.Interfaces, e.options.Neighbors})
+	deps, err := CanonicalDependencies(DependenciesV1{Version: 1, Network: plan, Prepared: snapshot, LocalInterfaces: bundle.LocalServices.Config.LocalServices.Interfaces, Neighbors: e.options.Neighbors})
 	if err != nil || localnft.ValidateManaged(*bundle.LocalServices.Config.LocalServices) != nil {
 		return PreparationV1{}, ErrState
 	}
-	before := OwnedV1{1, snapshot, Baseline, e.initial[0], e.initial[1], e.initial[2]}
+	before := OwnedV1{Version: 1, Network: snapshot, NetworkState: Baseline, LegacyFirewall: e.initial[0], RoutedFirewall: e.initial[1], LocalServices: e.initial[2]}
 	if e.selected {
-		before = e.prepared.Target
+		before = current
 	}
 	before, err = CanonicalOwned(before)
 	if err != nil || !e.matches(ctx, before, deps) {
 		return PreparationV1{}, ErrState
 	}
-	after, err := CanonicalOwned(OwnedV1{1, snapshot, Configured, TableStateV1{Presence: Absent}, TableStateV1{Present, &bundle.Firewall}, TableStateV1{Present, &bundle.LocalServices}})
+	after, err := CanonicalOwned(OwnedV1{Version: 1, Network: snapshot, NetworkState: Configured, LegacyFirewall: TableStateV1{Presence: Absent}, RoutedFirewall: TableStateV1{Presence: Present, Revision: &bundle.Firewall}, LocalServices: TableStateV1{Presence: Present, Revision: &bundle.LocalServices}})
 	if err != nil {
 		return PreparationV1{}, err
 	}
@@ -279,6 +400,14 @@ func (e *Engine) ValidatePlan(ctx context.Context, plan configpoc.RoutedTransiti
 	if e.fenced || !plan.ValidShape() || ctx == nil || ctx.Err() != nil || e.preview == nil {
 		return ErrState
 	}
+	var effective *configpoc.RoutedActivationBundleV1
+	if e.selected {
+		_, current, err := e.currentOwned(ctx)
+		if err != nil {
+			return ErrState
+		}
+		effective = current
+	}
 	resolved, err := e.options.ResolvePlan(ctx, plan, previous, target, deadline)
 	if err != nil {
 		return ErrState
@@ -301,10 +430,10 @@ func (e *Engine) ValidatePlan(ctx context.Context, plan configpoc.RoutedTransiti
 	if !bytes.Equal(actual, want) || !e.matches(ctx, before, deps) {
 		return ErrState
 	}
-	if (previous == nil) != (before.NetworkState == Baseline) || (previous != nil && (!e.selected || previous.Composite.Hash != e.target.Composite.Hash)) {
+	if (previous == nil && (before.NetworkState != Baseline || effective != nil)) || (previous != nil && (effective == nil || previous.Composite.Hash != effective.Composite.Hash)) {
 		return ErrState
 	}
-	if after.RoutedFirewall.Revision == nil || after.RoutedFirewall.Revision.Hash != target.Firewall.Hash || after.LocalServices.Revision == nil || after.LocalServices.Revision.Hash != target.LocalServices.Hash {
+	if !e.bundleOwned(ctx, target, after, deps) {
 		return ErrState
 	}
 	target, err = configpoc.CanonicalRoutedActivationBundleV1(target)
@@ -357,7 +486,7 @@ func (e *Engine) RecoverPlan(ctx context.Context, plan configpoc.RoutedTransitio
 		return ErrState
 	}
 	target, err = configpoc.CanonicalRoutedActivationBundleV1(target)
-	if err != nil || after.NetworkState != Configured || after.LegacyFirewall.Presence != Absent || after.RoutedFirewall.Revision == nil || after.LocalServices.Revision == nil || after.RoutedFirewall.Revision.Hash != target.Firewall.Hash || after.LocalServices.Revision.Hash != target.LocalServices.Hash {
+	if err != nil || !e.bundleOwned(ctx, target, after, deps) {
 		return ErrState
 	}
 	want, err := networkexecutor.PreparedSnapshotBytes(deps.Prepared)
@@ -381,7 +510,7 @@ func (e *Engine) RecoverPlan(ctx context.Context, plan configpoc.RoutedTransitio
 		}
 	} else {
 		detached, err := configpoc.CanonicalRoutedActivationBundleV1(*previous)
-		if err != nil || before.NetworkState != Configured || before.LegacyFirewall.Presence != Absent || before.RoutedFirewall.Revision == nil || before.LocalServices.Revision == nil || before.RoutedFirewall.Revision.Hash != detached.Firewall.Hash || before.LocalServices.Revision.Hash != detached.LocalServices.Hash {
+		if err != nil || !e.bundleOwned(ctx, detached, before, deps) {
 			return ErrState
 		}
 		previous = &detached
@@ -551,7 +680,10 @@ func (e *Engine) applyTables(ctx context.Context, desired [3]TableStateV1) error
 }
 
 func denyTablesFor(target configpoc.RoutedActivationBundleV1, dependencies DependenciesV1) ([3]TableStateV1, error) {
-	policy := *target.Firewall.Config.Routed
+	policy := routednft.Policy{SchemaVersion: 1, LabOnly: true, Network: dependencies.Network}
+	if target.Firewall.Config.Routed != nil {
+		policy = *target.Firewall.Config.Routed
+	}
 	policy.Rules, policy.NAT = []routednft.Rule{}, []routednft.Masquerade{}
 	fw, err := configpoc.CanonicalRouted(configpoc.Config{SchemaVersion: 6, DefaultAction: "deny", Routed: &policy})
 	if err != nil {
@@ -562,7 +694,7 @@ func denyTablesFor(target configpoc.RoutedActivationBundleV1, dependencies Depen
 	if err != nil {
 		return [3]TableStateV1{}, ErrState
 	}
-	return [3]TableStateV1{{Presence: Absent}, {Present, &fw}, {Present, &localRevision}}, nil
+	return [3]TableStateV1{{Presence: Absent}, {Presence: Present, Revision: &fw}, {Presence: Present, Revision: &localRevision}}, nil
 }
 
 func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBundleV1) error {
@@ -588,6 +720,19 @@ func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBun
 	// routed drop policy replaces the legacy drop chain before routes can exist.
 	if e.applyTables(ctx, deny) != nil {
 		return ErrState
+	}
+	if e.prepared.Target.NetworkState == Baseline {
+		local := e.prepared.Target.LocalServices.Revision
+		if local == nil {
+			local = deny[2].Revision
+		}
+		if e.listeners.Apply(ctx, *local) != nil || !e.listenersMatch(ctx, e.prepared.Target.LocalServices, e.prepared.Dependencies) || e.network.RestorePrepared(ctx, e.prepared.Dependencies.Prepared) != nil {
+			return ErrState
+		}
+		if e.applyTables(ctx, tables(e.prepared.Target)) != nil || !e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
+			return ErrState
+		}
+		return nil
 	}
 	if e.prepared.Before.NetworkState == Baseline {
 		if err := e.network.ApplyPrepared(ctx, e.prepared.Dependencies.Network, e.prepared.Dependencies.Prepared); err != nil {
@@ -703,6 +848,14 @@ func (e *Engine) RestoreOwned(ctx context.Context, digest string) error {
 	if e.applyTables(ctx, deny) != nil {
 		e.fenced = true
 		return ErrState
+	}
+	if e.prepared.Before.NetworkState == Configured && e.network.Verify(ctx) != nil {
+		// An inverse transition may have removed the original owned addresses.
+		// Re-add only from the exact retained baseline under verified deny.
+		if e.network.VerifyPrepared(ctx, e.prepared.Dependencies.Prepared) != nil || e.network.ApplyPrepared(ctx, e.prepared.Dependencies.Network, e.prepared.Dependencies.Prepared) != nil {
+			e.fenced = true
+			return ErrState
+		}
 	}
 	local := e.prepared.Before.LocalServices.Revision
 	if local == nil {
