@@ -48,7 +48,7 @@ func (r *v2ReachabilityReader) reserveArchiveObject(ref v2ReserveArchiveRef, key
 		if err != nil || archive.Lineage != state.Lineage {
 			return errV2Unavailable
 		}
-		found := false
+		found := reserveArchiveHasBundleV2(archive, ref)
 		for _, entry := range archive.Entries {
 			actual, err := reserveIdentityKeyV2(entry, ref.Kind)
 			if err == nil && actual == ref.Key && entry.Claim.Owner == ref.Owner && entry.Claim.Role == ref.Role {

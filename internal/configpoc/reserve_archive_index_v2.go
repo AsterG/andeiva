@@ -11,8 +11,9 @@ type v2ReserveArchiveRef struct {
 	Key     string                 `json:"key"`
 	Archive string                 `json:"archive"`
 	Owner   string                 `json:"owner"`
-	Role    recoveryreserve.RoleV2 `json:"role"`
+	Role    recoveryreserve.RoleV2 `json:"role,omitempty"`
 	Kind    string                 `json:"kind"`
+	Lineage string                 `json:"lineage,omitempty"`
 }
 
 type v2ReserveArchiveNode struct {
@@ -64,7 +65,18 @@ func validReserveArchiveNodeV2(node v2ReserveArchiveNode, depth int, prefix stri
 		}
 		previous := ""
 		for _, entry := range node.Entries {
-			if !validHash(entry.Key) || !strings.HasPrefix(entry.Key, prefix) || entry.Key <= previous || !validHash(entry.Archive) || entry.Owner == "" || len(entry.Owner) > 128 || (entry.Kind != "claim" && entry.Kind != "binding") {
+			if !validHash(entry.Key) || !strings.HasPrefix(entry.Key, prefix) || entry.Key <= previous || !validHash(entry.Archive) || entry.Owner == "" || len(entry.Owner) > 128 || (entry.Kind != "claim" && entry.Kind != "binding" && entry.Kind != "bundle") {
+				return false
+			}
+			if entry.Kind == "bundle" {
+				expected, err := reserveBundleKeyV2(entry.Lineage, entry.Owner)
+				if err != nil || entry.Role != "" || entry.Key != expected {
+					return false
+				}
+				previous = entry.Key
+				continue
+			}
+			if entry.Lineage != "" {
 				return false
 			}
 			switch entry.Role {
