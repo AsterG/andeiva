@@ -54,17 +54,18 @@ type v2Confirmation struct {
 	Deadline     time.Time `json:"deadline"`
 }
 type v2CoordinatorIntent struct {
-	BootID           *v2BootID `json:"boot_id,omitempty"`
-	Operation        string    `json:"operation_id"`
-	Subject          string    `json:"subject"`
-	Domain           string    `json:"domain"`
-	Kind             string    `json:"kind"`
-	Previous         string    `json:"previous_snapshot"`
-	Target           string    `json:"target_snapshot"`
-	TargetGeneration uint64    `json:"target_generation,string"`
-	Recovery         bool      `json:"recovery"`
-	OriginCommit     string    `json:"origin_commit_operation_id,omitempty"`
-	Lease            string    `json:"lease,omitempty"`
+	GuardDeadline    *time.Time `json:"guard_deadline,omitempty"`
+	BootID           *v2BootID  `json:"boot_id,omitempty"`
+	Operation        string     `json:"operation_id"`
+	Subject          string     `json:"subject"`
+	Domain           string     `json:"domain"`
+	Kind             string     `json:"kind"`
+	Previous         string     `json:"previous_snapshot"`
+	Target           string     `json:"target_snapshot"`
+	TargetGeneration uint64     `json:"target_generation,string"`
+	Recovery         bool       `json:"recovery"`
+	OriginCommit     string     `json:"origin_commit_operation_id,omitempty"`
+	Lease            string     `json:"lease,omitempty"`
 }
 type v2Configuration struct {
 	LastCompletedBoot string               `json:"last_completed_boot,omitempty"`
@@ -240,6 +241,9 @@ func validV2Configuration(state *v2Configuration) bool {
 		}
 	}
 	if intent := state.Intent; intent != nil {
+		if !validGuardDeadlineShapeV2(intent) {
+			return false
+		}
 		if intent.Operation == "" || (intent.Domain != "firewall" && intent.Domain != "local_services") || !validHash(intent.Previous) || !validHash(intent.Target) || intent.TargetGeneration == 0 {
 			return false
 		}

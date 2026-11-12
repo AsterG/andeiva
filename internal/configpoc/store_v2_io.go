@@ -10,21 +10,22 @@ import (
 )
 
 type v2Store struct {
-	reserves   *v2ReserveManager
-	mu         sync.Mutex
-	root       *os.Root
-	lock       *os.File
-	state      v2State
-	selection  v2Selection
-	selector   v2Selector
-	budget     v2Budget
-	used       v2Budget
-	blocked    bool
-	hook       func(string) error
-	allowance  v2Budget
-	physical   v2PhysicalUsage
-	spaceProbe func(*os.File) (storageSpace, error)
-	reclaim    *v2ReclaimSession
+	guardDeadlines bool // Trusted opt-in assembly only; never persisted authority.
+	reserves       *v2ReserveManager
+	mu             sync.Mutex
+	root           *os.Root
+	lock           *os.File
+	state          v2State
+	selection      v2Selection
+	selector       v2Selector
+	budget         v2Budget
+	used           v2Budget
+	blocked        bool
+	hook           func(string) error
+	allowance      v2Budget
+	physical       v2PhysicalUsage
+	spaceProbe     func(*os.File) (storageSpace, error)
+	reclaim        *v2ReclaimSession
 }
 
 // The caller owns the directory lifetime. No directory, legacy layout or engine

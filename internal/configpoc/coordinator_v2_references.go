@@ -40,6 +40,9 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 				return errV2Unavailable
 			}
 		}
+		if validateGuardDeadlineContextV2(intent, previous, target, hasFeatureV2(s.state, v2GuardDeadlineFeature), true) != nil {
+			return errV2Unavailable
+		}
 	}
 	if state.Pending != nil {
 		pending := state.Pending

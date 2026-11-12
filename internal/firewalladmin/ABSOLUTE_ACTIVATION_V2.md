@@ -26,12 +26,32 @@ engines. They do not qualify real nftables, power loss, boot integration or
 production deployment. Integration with the prepared storage v2 Boot deadline
 gate remains separate.
 
-The coordinator passes the selected `Pending.Deadline` directly for Commit
-Confirmed, Confirm and scoped restart/expiry recovery. A restarted adapter can
-recover an expired receipt only with `RecoverPreviousUntil` and that exact
-durable scope. Immediate guarded Commit/Rollback/Recover lack a durable effect
-deadline in the current format and remain explicitly gated before new objects,
-Intent publication and helper Arm/Apply. Admission may already have been
-journaled: the operation stays accepted and the store remains available.
-Stage, Validate and Save metadata remain available.
-Neither admission timestamps nor mutable store clocks are repurposed.
+The coordinator passes selected `Pending.Deadline` directly for Commit Confirmed,
+Confirm and expiry recovery. Boot keeps its existing Started + 10 s authority.
+A restarted adapter recovers expired receipts only through
+`RecoverPreviousUntil` with the exact durable scope.
+
+Trusted, prepared assembly may opt in using `v2CoordinatorOptions.GuardDeadlines`.
+For immediate effectful Commit/Rollback/Recover it selects optional canonical
+`Intent.guard_deadline` and sticky feature `configuration.guard-deadline.v1` in
+one publication, before helper effects. The ten-second window starts after
+validation, immediately before selecting Intent. Admission's Accepted/ExecuteBefore
+and mutable store Clock never replace it. Request fields and revision hashes are
+unchanged; there is no public activation flag.
+
+Cold opt-in refuses unresolved legacy immediate Intents without inventing their
+start time. Old readers reject the new feature; new assembly must retain opt-in
+even after the Intent completes. Confirmed and Boot Intents reject a duplicate
+`guard_deadline`. Exact deadlines remain in physical PlanIntent and typed archive
+closure. R2 limits remain 16 MiB/64 ordinary inodes, 128 KiB metadata core and
+256 KiB objects; admission includes feature/descriptor overhead and refuses
+insufficient headroom before physical claims.
+
+Without opt-in, unsupported absolute immediate operations are refused before new
+objects/Intent/helper effects; an already admitted operation remains accepted and
+the store stays available. Relative legacy assembly is unchanged. A helper that
+already confirmed an ambiguous interrupted operation is never blindly rolled
+back or falsely published as Running: the existing recovery fence remains.
+Tests use real temporary stores, helper code and sockets with SIM engines. No
+runtime cutover, Startup adapter, real traffic, power-loss or production claim is
+introduced by this opt-in contract.

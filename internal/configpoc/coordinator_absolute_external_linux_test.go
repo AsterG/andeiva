@@ -67,3 +67,30 @@ func TestAbsoluteActualCoordinatorLifecycle(t *testing.T) {
 		})
 	}
 }
+
+func TestAbsoluteImmediateCoordinatorLifecycle(t *testing.T) {
+	for _, scenario := range []string{"success", "before-arm", "after-apply", "after-confirm", "expired-before-arm"} {
+		t.Run(scenario, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				helpers := map[configpoc.Engine]*nftguardian.Guardian{}
+				build := func(engine configpoc.Engine, previous configpoc.Revision) configpoc.Engine {
+					guardian := helpers[engine]
+					if guardian == nil {
+						guardian = nftguardian.NewRestricted(engine)
+						if err := guardian.Bootstrap(context.Background(), previous); err != nil {
+							t.Fatal(err)
+						}
+						helpers[engine] = guardian
+						t.Cleanup(func() { _ = guardian.Close() })
+					}
+					adapter, err := firewalladmin.NewPreparedAbsoluteGuardedEngine(engine, coordinatorAbsoluteAuthority{guardian, engine})
+					if err != nil {
+						t.Fatal(err)
+					}
+					return adapter
+				}
+				configpoc.ExerciseImmediateGuardDeadlineV2(t, build, scenario)
+			})
+		})
+	}
+}

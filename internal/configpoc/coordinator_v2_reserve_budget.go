@@ -58,6 +58,7 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 			return err
 		}
 		projected := reserveProjectedEnvelopeV2(s.state, target, op.Domain)
+		reserveGuardFeatureBudgetV2(s, &projected)
 		if !reserveMetadataStateFitsV2(projected) {
 			return errV2Limited
 		}
@@ -80,6 +81,7 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 		return errV2Limited
 	}
 	projected := reserveProjectedEnvelopeV2(s.state, target, op.Domain)
+	reserveGuardFeatureBudgetV2(s, &projected)
 	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited
 	}
@@ -189,6 +191,7 @@ func reserveTargetEnvelopeV2(s *v2Store, op v2Operation) (v2Configuration, error
 
 func reserveProfileFutureFitsV2(s *v2Store, target v2Configuration) error {
 	state := s.state
+	reserveGuardFeatureBudgetV2(s, &state)
 	state.Configuration = &target
 	_, hash, err := v2Canonical(*s.state.Configuration)
 	if err != nil {

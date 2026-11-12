@@ -30,6 +30,9 @@ func validReserveBundleV2(bundle *v2ReserveBundle) bool {
 		return false
 	}
 	if bundle.Plan != nil {
+		if !validGuardDeadlineShapeV2(bundle.PlanIntent) || (bundle.PlanIntent.GuardDeadline != nil && !bundle.PlanScope.Deadline.IsZero()) {
+			return false
+		}
 		hash, e := bundle.PlanScope.Hash()
 		if e != nil || bundle.Plan.Validate() != nil || bundle.Plan.Claim != bundle.Claims.Plan || bundle.Plan.ScopeHash != hash {
 			return false
@@ -94,6 +97,9 @@ func archiveCapsuleDependenciesV2(archive v2ReserveArchive) ([]string, error) {
 				work = capsule.Scope.Recovery
 			}
 			if capsule.Intent.Operation != work || capsule.Intent.Subject != capsule.Scope.Subject || capsule.Intent.TargetGeneration < capsule.Scope.Global || capsule.Intent.TargetGeneration-capsule.Scope.Global > 1 {
+				return nil, errV2Unavailable
+			}
+			if !validGuardDeadlineShapeV2(&capsule.Intent) || (capsule.Intent.GuardDeadline != nil && !capsule.Scope.Deadline.IsZero()) {
 				return nil, errV2Unavailable
 			}
 			if capsule.Scope.Kind == "boot" {
