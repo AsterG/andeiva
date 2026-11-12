@@ -318,6 +318,61 @@ func TestV2BootMissingCompletedReferenceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestV2BootReadSelectionRejectsStrippedFeatureEdge(t *testing.T) {
+	c, area, engines, _ := bootFixtureV2(t)
+	booted, err := reopenBootV2(t, c, area, ptrBootV2(testBootIDV2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := booted.store
+	stripped := clone(s.state)
+	stripped.RequiredFeatures = nil
+	stripped.Configuration.LastCompletedBoot = ""
+	stripped.Configuration.LastRecovery = ""
+	if !v2ValidState(stripped) {
+		t.Fatal("fixture should have valid individual state")
+	}
+	stateHash, err := s.object(stripped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := v2Selection{Format: v2Format, Lineage: s.state.Lineage, Sequence: s.selection.Sequence + 1, State: stateHash, Previous: s.selector.Current, Segment: s.selection.Segment + 1}
+	if next.Segment > 64 {
+		next.Segment = 1
+		next.Checkpoint = true
+	}
+	selectionHash, err := s.object(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(v2Selector{Format: v2Format, Current: selectionHash, Previous: s.selector.Current})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := area.WriteFile("selected.json", data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, engine := range engines {
+		engine.reset()
+	}
+	booted.close()
+	if err := s.close(); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := openV2(area, s.budget)
+	if loaded != nil {
+		_ = loaded.close()
+	}
+	if !errors.Is(err, errV2Unavailable) {
+		t.Fatal("stripped descendant accepted", err)
+	}
+	for _, engine := range engines {
+		if engine.applies.Load() != 0 {
+			t.Fatal("reader applied unverified state")
+		}
+	}
+}
+
 func oldStateDecoderV2(data []byte) error {
 	// Exact pre-feature v2State shape: preserve every field/type/order except
 	// the newly added top-level discriminator. This decoder existed before

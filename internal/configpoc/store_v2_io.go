@@ -353,13 +353,14 @@ func (s *v2Store) readSelection() error {
 	}
 	// Verify the bounded active delta segment and previous complete selection.
 	current := selection
+	currentState := selectedState
 	for i := uint64(1); current.Previous != "" && i <= 64; i++ {
 		var prior v2Selection
 		if err = s.readObject(current.Previous, &prior); err != nil || !v2ValidSelection(prior) || prior.Lineage != current.Lineage || prior.Sequence+1 != current.Sequence {
 			return errV2Unavailable
 		}
 		var state v2State
-		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage {
+		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage || !preservesFeaturesV2(state, currentState) {
 			return errV2Unavailable
 		}
 		if current.Checkpoint {
@@ -372,6 +373,7 @@ func (s *v2Store) readSelection() error {
 			return errV2Unavailable
 		}
 		current = prior
+		currentState = state
 	}
 	if selectedState.Index != "" {
 		var page v2Page
