@@ -28,7 +28,7 @@ intent and validate original deadline, contextual refs and reservations. Shape
 validation or an always-successful resolver is insufficient. `ObserveOwned` and
 `MatchOwned` return/verify only selected refs after physical semantic readback.
 
-Initial activation requires an actual known schema-4 empty deny table, absent
+Initial activation requires an actual known canonical schema-4 default-deny table, absent
 routed table, empty IPv4 baseline and absent or known empty local table. One nft
 transaction establishes routed/local deny and retires legacy enforcement before
 route effects. Target rules replace deny only after network and owned listeners
@@ -37,6 +37,22 @@ the exact network memento and atomically restores the previous tables, including
 verified absence. Unknown or foreign readback fences instead of blind deletion.
 This assumes exclusive writers in the retained namespace; it is not atomic against
 an unrelated CAP_NET_ADMIN writer. Subsequent edits require the same network plan.
+
+The trusted supervisor provisions the exact selected schema-4 revision, including
+its existing rules, only inside the newly owned empty-IPv4 namespace. Full semantic
+readback rejects missing rules even if a comment claims the selected hash; no
+reset to an empty policy or adoption of an encountered table is permitted.
+
+Inverse schema 6→4 requires Options.ResolveBaseline to resolve only the original
+cold Work's saved bundle, actual BeforeOwned and dependencies. The one-hop durable
+reference must retain original lineage and manager incarnation. Exact saved
+firewall/local revisions and the complete prepared baseline are checked; absent
+local state cannot impersonate enabled saved listeners. Under one confirmed lease,
+deny precedes listener retirement and network restoration, then legacy enforcement
+replaces routed enforcement atomically. Expiry reapplies the exact prior schema-6
+network/listeners/rules under deny. A confirmed baseline can subsequently activate
+the same owned network plan again. Prepare resolves the actual before/target side
+after recovery instead of retaining an optimistic last-target selector.
 
 Trusted helper-startup `RecoverPlan` resolves the authenticated original Work and
 calls RecoverPrepared with its exact UID/GID/boot/run/target/host identity. Root
@@ -52,8 +68,11 @@ provided. Trusted assembly must authenticate manager metadata and retained
 descriptors. Helper restart cannot reconstruct executor ownership from the stored
 snapshot alone. The module adds no database, workers or processes; it uses the
 single Group lease, at most three known states per table and 512 KiB nft batches.
-Controlled unit tests exercise compilers and fault results. Native helper/traffic,
-crash recovery, endpoint continuity and resource measurements remain pending.
+Controlled unit tests exercise compilers and faults. Native three-namespace group
+traffic/Confirm/expiry/recovery passed specifically at source `3918ad8`: wall
+46.166222 s, CPU 13.259767 s, peak 31,281,152 bytes. That measurement does not qualify
+the later inverse/legacy-rule extension, native helper restart, crash recovery or
+endpoint continuity; those require their own owner-reviewed evidence.
 
 ```sh
 go test -race ./internal/networkexecutor ./internal/routedactivation -count=3
