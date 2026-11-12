@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
-	"time"
 
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
@@ -83,7 +82,12 @@ func (m *v2ReserveManager) claim(class recoveryreserve.ClassV2, sequence uint64)
 	if err != nil {
 		return v2ReserveClaims{}, err
 	}
+	return m.claimOwner(class, owner)
+}
+
+func (m *v2ReserveManager) claimOwner(class recoveryreserve.ClassV2, owner string) (v2ReserveClaims, error) {
 	var claims v2ReserveClaims
+	var err error
 	for _, item := range []struct {
 		role   recoveryreserve.RoleV2
 		target *recoveryreserve.SlotClaimV2
@@ -121,7 +125,14 @@ func (m *v2ReserveManager) prepareAdmission(s *v2Store, st *v2State, op *v2Opera
 			return ErrRecovery
 		}
 	} else {
-		claims, err = m.claim(class, op.Sequence)
+		owner, e := v2ID("reserve", op.Sequence)
+		if e != nil {
+			return e
+		}
+		if e = m.operationProfile(s, *op, owner); e != nil {
+			return e
+		}
+		claims, err = m.claimOwner(class, owner)
 		if err != nil {
 			return err
 		}
@@ -195,7 +206,7 @@ func (m *v2ReserveManager) readBinding(s *v2Store, binding recoveryreserve.Bindi
 		return data, nil
 	}
 	entry := v2ReserveArchiveEntry{Claim: binding.Claim, Binding: &binding, Scope: &scope}
-	archive, ok, err := s.reserveArchiveLookupV2(s.state.ReserveArchiveRoot, entry, "binding")
+	archive, ok, err := s.reserveArchiveBundleLookupV2(s.state.ReserveArchiveRoot, entry, "binding")
 	if err != nil || !ok || validateArchiveFinalityV2(archive, s.state, s.readObject) != nil {
 		return nil, ErrRecovery
 	}
@@ -208,7 +219,7 @@ func (m *v2ReserveManager) readBinding(s *v2Store, binding recoveryreserve.Bindi
 }
 
 func (m *v2ReserveManager) verifyBundle(s *v2Store, bundle *v2ReserveBundle) error {
-	if bundle == nil || bundle.Scope.Validate() != nil || bundle.Admission.Claim != bundle.Claims.Admission {
+	if !validReserveBundleV2(bundle) {
 		return ErrRecovery
 	}
 	class := recoveryreserve.OrdinaryV2
@@ -249,7 +260,7 @@ func (m *v2ReserveManager) verifySelected(s *v2Store) error {
 		}
 		seen[active.Work] = true
 		op, err := s.lookupRetained(active.Bundle.Scope.Subject, active.Work)
-		if err != nil || !reflect.DeepEqual(op.Reserve, active.Bundle) || (active.CanonicalHeld && (op.State != "final" || op.Pinned)) {
+		if err != nil || !reserveScopeMatchesOperationV2(active.Bundle, op) || !reflect.DeepEqual(op.Reserve, active.Bundle) || (active.CanonicalHeld && (op.State != "final" || op.Pinned)) {
 			return ErrRecovery
 		}
 	}
@@ -264,8 +275,16 @@ func (m *v2ReserveManager) verifySelected(s *v2Store) error {
 		if active.Bundle == nil || reserveWorkV2(active.Bundle) != active.Work || active.Bundle.Scope.Kind == "operation" || m.verifyBundle(s, active.Bundle) != nil {
 			return ErrRecovery
 		}
+		record, err := (&v2Coordinator{store: s}).recoveryLookupLocked(active.Work)
+		if err != nil || record.Kind != v2BootKind || record.BootID == nil || string(*record.BootID) != active.Bundle.Scope.Boot || reserveRecoveryFingerprintV2(record) != active.Bundle.Scope.Fingerprint || !reflect.DeepEqual(record.Reserve, active.Bundle) || (active.CanonicalHeld && (record.State != "final" || record.Pinned)) {
+			return ErrRecovery
+		}
 	}
 	return nil
+}
+
+func reserveScopeMatchesOperationV2(bundle *v2ReserveBundle, op v2Operation) bool {
+	return bundle != nil && bundle.Scope.Kind == "operation" && bundle.Scope.Operation == op.ID && bundle.Scope.Subject == op.Subject && bundle.Scope.Namespace == op.Namespace && bundle.Scope.Domain == op.Domain && bundle.Scope.Lineage == op.Lineage && bundle.Scope.Fingerprint == op.Fingerprint && bundle.Scope.Global == op.Expected
 }
 
 func (m *v2ReserveManager) selectedPlan(s *v2Store, op *v2Operation, st *v2State, intent v2CoordinatorIntent, target v2Configuration) error {
@@ -303,33 +322,50 @@ func (m *v2ReserveManager) selectedPlan(s *v2Store, op *v2Operation, st *v2State
 	return s.point("reserve_plan_verified")
 }
 
-func (m *v2ReserveManager) emergencyCandidate(s *v2Store, bundle *v2ReserveBundle, code string) {
-	if m == nil || bundle == nil || bundle.Plan == nil || bundle.PlanScope == nil || s.state.Configuration == nil || s.state.Configuration.Intent == nil {
-		return
+func (m *v2ReserveManager) emergencyCandidate(s *v2Store, bundle *v2ReserveBundle, code string) (result error) {
+	if s == nil {
+		return ErrRecovery
+	}
+	if s.state.Configuration == nil || s.state.Configuration.Intent == nil {
+		return nil
+	}
+	defer func() {
+		if result != nil {
+			s.blocked = true
+		}
+	}()
+	if m == nil || bundle == nil || bundle.Plan == nil || bundle.PlanScope == nil || bundle.PlanIntent == nil {
+		return ErrRecovery
 	}
 	if code != "storage_uncertain" && code != "recovery_uncertain" {
-		return
+		return ErrRecovery
 	}
-	_, intentHash, err := v2Canonical(*s.state.Configuration.Intent)
+	_, intentHash, err := v2Canonical(*bundle.PlanIntent)
 	if err != nil {
-		return
+		return ErrRecovery
 	}
 	capsule := v2ReserveEmergency{Format: v2Format, Version: 1, Scope: *bundle.PlanScope, Admission: bundle.Admission, Plan: *bundle.Plan, Selection: s.selector.Current, SelectionSequence: s.selection.Sequence, Intent: intentHash, Code: code}
 	data, _, err := v2Canonical(capsule)
 	if err != nil || len(data) > bundle.Claims.Emergency.Capacity {
-		return
+		return ErrRecovery
 	}
 	// A lost reply or an existing first candidate never authorizes a second write.
 	if candidate, e := m.emergency.InspectClaimed(bundle.Claims.Emergency); e == nil {
-		_ = candidate
-		return
+		var previous v2ReserveEmergency
+		if checkpointDecode(candidate.Bytes, &previous) != nil || previous.Format != v2Format || previous.Version != 1 || previous.Plan != *bundle.Plan || previous.Admission != bundle.Admission || !reflect.DeepEqual(previous.Scope, *bundle.PlanScope) || previous.Intent != intentHash || (previous.Code != "storage_uncertain" && previous.Code != "recovery_uncertain") {
+			return ErrRecovery
+		}
+		return nil
 	}
-	_, _ = m.emergency.WriteOnce(bundle.Claims.Emergency, data, *bundle.PlanScope)
-}
-
-func reserveScopeWithLeaseV2(scope recoveryreserve.ScopeV2, origin, lease string, deadline time.Time) recoveryreserve.ScopeV2 {
-	scope.Origin, scope.Lease, scope.Deadline = origin, lease, deadline
-	return scope
+	binding, err := m.emergency.WriteOnce(bundle.Claims.Emergency, data, *bundle.PlanScope)
+	if err != nil {
+		return ErrRecovery
+	}
+	actual, err := m.emergency.ReadBound(binding)
+	if err != nil || !bytes.Equal(actual, data) {
+		return ErrRecovery
+	}
+	return nil
 }
 
 func reserveJSONEqualV2(left, right any) bool {

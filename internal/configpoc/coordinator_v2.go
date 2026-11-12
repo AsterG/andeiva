@@ -53,7 +53,12 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if store.blocked {
-		return nil, errV2Unavailable
+		if store.state.RecoveryReserveVersion != 1 || options.Reserves == nil {
+			return nil, errV2Unavailable
+		}
+		if err := recoverReservePendingV2(store, options.Reserves); err != nil {
+			return nil, err
+		}
 	}
 	if store.state.RecoveryReserveVersion == 1 {
 		if options.Reserves == nil || options.Reserves.verifySelected(store) != nil {
@@ -367,6 +372,26 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	if op.Expected != s.state.Generation {
 		return result(op), ErrConflict
+	}
+	if s.reserves != nil {
+		if err = s.reserves.operationProfile(s, op, op.Reserve.Scope.Bundle); err != nil {
+			st := clone(s.state)
+			if e := s.withoutEffects(&st, op, "ANDEIVA_RESERVE_PROFILE_CHANGED", now); e != nil {
+				return result(op), e
+			}
+			st.Clock = now
+			if e := s.publish(st); e != nil {
+				return result(op), e
+			}
+			if e := s.reserves.maintain(s); e != nil {
+				return result(op), e
+			}
+			final, e := s.lookupRetained(op.Subject, op.ID)
+			if e != nil {
+				return result(op), e
+			}
+			return result(final), err
+		}
 	}
 	if state.Pending != nil && op.Request.Kind != OpConfirm {
 		return result(op), ErrPending

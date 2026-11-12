@@ -3,6 +3,7 @@ package configpoc
 import (
 	"reflect"
 	"sort"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
@@ -31,6 +32,12 @@ func validReserveBundleV2(bundle *v2ReserveBundle) bool {
 	if bundle.Plan != nil {
 		hash, e := bundle.PlanScope.Hash()
 		if e != nil || bundle.Plan.Validate() != nil || bundle.Plan.Claim != bundle.Claims.Plan || bundle.Plan.ScopeHash != hash {
+			return false
+		}
+		base, want := *bundle.PlanScope, bundle.Scope
+		base.Origin, base.Lease, base.Deadline = "", "", time.Time{}
+		want.Origin, want.Lease, want.Deadline = "", "", time.Time{}
+		if !reflect.DeepEqual(base, want) || bundle.PlanIntent.Operation != reserveWorkV2(bundle) || bundle.PlanIntent.Subject != bundle.Scope.Subject || bundle.PlanIntent.Domain != bundle.Scope.Domain || bundle.PlanIntent.TargetGeneration < bundle.Scope.Global || bundle.PlanIntent.TargetGeneration-bundle.Scope.Global > 1 {
 			return false
 		}
 	}
@@ -114,6 +121,11 @@ func archiveCapsuleDependenciesV2(archive v2ReserveArchive) ([]string, error) {
 	}
 	for owner, emergency := range emergencyCapsules {
 		if admissions[owner] != emergency.Admission || plans[owner] != emergency.Plan {
+			return nil, errV2Unavailable
+		}
+		plan := planCapsules[owner]
+		_, intentHash, err := v2Canonical(plan.Intent)
+		if err != nil || intentHash != emergency.Intent || !reflect.DeepEqual(plan.Scope, emergency.Scope) {
 			return nil, errV2Unavailable
 		}
 	}

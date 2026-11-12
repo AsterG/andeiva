@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -13,8 +14,14 @@ import (
 )
 
 func attachReserveManagerV2(t *testing.T, c *v2Coordinator) *v2ReserveManager {
+	manager, _ := attachReserveAreasV2(t, c)
+	return manager
+}
+
+func attachReserveAreasV2(t *testing.T, c *v2Coordinator) (*v2ReserveManager, []*os.Root) {
 	t.Helper()
 	pools := []*recoveryreserve.PoolV2{}
+	areas := []*os.Root{}
 	for _, item := range []struct {
 		role     recoveryreserve.RoleV2
 		capacity int
@@ -26,6 +33,7 @@ func attachReserveManagerV2(t *testing.T, c *v2Coordinator) *v2ReserveManager {
 		}
 		t.Cleanup(func() { _ = pool.Close() })
 		pools = append(pools, pool)
+		areas = append(areas, area)
 	}
 	manager, err := newReserveManagerV2(pools[0], pools[1], pools[2])
 	if err != nil {
@@ -36,7 +44,7 @@ func attachReserveManagerV2(t *testing.T, c *v2Coordinator) *v2ReserveManager {
 	}
 	c.store.reserves = manager
 	c.options.Reserves = manager
-	return manager
+	return manager, areas
 }
 
 func TestReserveCoordinatorLifecycleArchivesAndReuses(t *testing.T) {
@@ -50,7 +58,7 @@ func TestReserveCoordinatorLifecycleArchivesAndReuses(t *testing.T) {
 		if len(c.store.state.ActiveReserves) != 0 || c.store.state.ReservedBytes != 0 || c.store.state.ReservedInodes != 0 || c.store.state.ReserveArchiveRoot == "" {
 			t.Fatalf("terminal reservations not retired at %d", i)
 		}
-		archive, known, err := c.store.reserveArchiveLookupV2(c.store.state.ReserveArchiveRoot, v2ReserveArchiveEntry{Claim: result.Operation.Reserve.Claims.Admission}, "claim")
+		archive, known, err := c.store.reserveArchiveBundleLookupV2(c.store.state.ReserveArchiveRoot, v2ReserveArchiveEntry{Claim: result.Operation.Reserve.Claims.Admission}, "claim")
 		if err != nil || !known || validateArchiveFinalityV2(archive, c.store.state, c.store.readObject) != nil {
 			t.Fatalf("missing terminal canonical bytes at %d: %v", i, err)
 		}
@@ -169,5 +177,135 @@ func TestReserveCoordinatorExpiredOrdinaryCannotStarveConfirm(t *testing.T) {
 	result := coordinatorV2Run(t, c, p, v2Request{Kind: OpConfirm, Origin: committed.Operation.ID, Target: committed.Current.Running.Hash})
 	if result.Current.Pending != nil || len(c.store.state.ActiveReserves) != 0 || c.store.state.ReservedBytes != 0 {
 		t.Fatal("Confirm did not drain exact held owners")
+	}
+}
+
+func TestReserveCoordinatorTimeoutArchivesUnusedClosingEscrow(t *testing.T) {
+	c, area, _, p, now := coordinatorV2Fixture(t, false)
+	attachReserveManagerV2(t, c)
+	before := c.store.state.Configuration.Running.Hash
+	coordinatorV2Stage(t, c, p, "timeout-escrow")
+	seconds := uint64(30)
+	result := coordinatorV2Run(t, c, p, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+	*now = now.Add(31 * time.Second)
+	if err := c.tick(context.Background(), *now); err != nil {
+		t.Fatal(err)
+	}
+	if c.store.state.Configuration.Running.Hash != before || len(c.store.state.ActiveReserves) != 0 || len(c.store.state.ClosingCredits) != 0 || c.store.state.ReservedBytes != 0 {
+		t.Fatal("timeout did not release resolved exact group")
+	}
+	archive, known, err := c.store.reserveArchiveBundleLookupV2(c.store.state.ReserveArchiveRoot, v2ReserveArchiveEntry{Claim: result.Operation.Reserve.Claims.Admission}, "claim")
+	if err != nil || !known || len(archive.UnusedEscrow) != 3 || archive.Child != "" || archive.LeaseResolution == "" {
+		t.Fatal("unused escrow not archived as real origin", err)
+	}
+	c.close()
+	_ = c.store.close()
+	report, err := inspectReachabilityV2(context.Background(), area, reachabilityBudgetV2())
+	if err != nil || !report.Complete {
+		t.Fatal(report, err)
+	}
+}
+
+func TestReserveCoordinatorBootUsesSystemAndRetires(t *testing.T) {
+	c, area, engines, _ := bootFixtureV2(t)
+	attachReserveManagerV2(t, c)
+	booted, err := reopenBootV2(t, c, area, ptrBootV2(testBootIDV2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if booted.store.state.SystemBundle != nil || booted.store.state.ReservedBytes != 0 {
+		t.Fatal("system bundle not retired")
+	}
+	var record v2RecoveryRecord
+	if err = booted.store.readObject(booted.store.state.Configuration.LastCompletedBoot, &record); err != nil || record.Reserve == nil || record.Reserve.Claims.Admission.Slot < 16 {
+		t.Fatal("boot did not use dedicated system class", err)
+	}
+	for _, engine := range engines[:2] {
+		if engine.Current() != booted.store.state.Configuration.Firewall.Startup.Hash {
+			t.Fatal("boot readback mismatch")
+		}
+	}
+	booted.close()
+	_ = booted.store.close()
+	report, err := inspectReachabilityV2(context.Background(), area, reachabilityBudgetV2())
+	if err != nil || !report.Complete {
+		t.Fatal(report, err)
+	}
+}
+
+func TestReserveCoordinatorFailedFinalPublicationKeepsLastGoodAndRecovers(t *testing.T) {
+	c, area, engines, p, now := coordinatorV2Fixture(t, false)
+	attachReserveManagerV2(t, c)
+	coordinatorV2Stage(t, c, p, "partial-final")
+	for c.store.used.Inodes < 256 {
+		if _, err := c.store.object(struct {
+			Purpose string
+			Index   uint64
+		}{"inactive test padding", c.store.used.Inodes}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := clone(c.store.state)
+	zero := uint64(0)
+	ns, err := c.store.namespace(p.Subject, "firewall", *now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := c.store.admit(p.Subject, ns.ID, before.Generation, v2Request{Kind: OpCommit, ConfirmSeconds: &zero}, *now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.store.budget.Inodes = c.store.used.Inodes + c.store.state.ReservedInodes
+	c.options.Hook = func(point string) error {
+		if point == "after_readback" {
+			c.store.hook = func(point string) error {
+				if point == "before_select" {
+					return ErrInterrupted
+				}
+				return nil
+			}
+		}
+		return nil
+	}
+	_, err = c.execute(context.Background(), p, op.ID)
+	if err == nil || !c.store.blocked || c.store.state.Configuration.Intent == nil || c.store.state.Configuration.Running.Hash != before.Configuration.Running.Hash {
+		t.Fatal("failed final selection published target", err)
+	}
+	for _, engine := range engines[:2] {
+		if engine.Current() != before.Configuration.Firewall.Running.Hash {
+			t.Fatal("storage ambiguity did not compensate real simulated component")
+		}
+	}
+	*now = now.Add(time.Second)
+	resumed, err := reopenBootV2(t, c, area, nil, nil)
+	if err != nil {
+		t.Fatal("restart after partial final publication", err)
+	}
+	final, err := resumed.store.lookup(p.Subject, op.ID)
+	if err != nil || final.State != "final" || final.Outcome.Code != "failed_rolled_back" || len(resumed.store.state.ActiveReserves) != 0 || resumed.store.state.ReservedBytes != 0 {
+		t.Fatal("partial finalization could not close", err)
+	}
+}
+
+func TestReserveCoordinatorEmergencyFailureRetainsMutationFence(t *testing.T) {
+	c, _, engines, p, _ := coordinatorV2Fixture(t, false)
+	m := attachReserveManagerV2(t, c)
+	initial := clone(c.store.state.Configuration)
+	coordinatorV2Stage(t, c, p, "emergency-failure")
+	engines[0].base.SetFailure(initial.Firewall.Running.Hash, "before")
+	engines[1].base.FailNext("before")
+	c.options.Hook = func(point string) error {
+		if point == "after_intent" {
+			return m.emergency.Close()
+		}
+		return nil
+	}
+	zero := uint64(0)
+	_, _, err := coordinatorV2Request(t, c, p, v2Request{Kind: OpCommit, ConfirmSeconds: &zero})
+	if !errors.Is(err, ErrRecovery) || !c.store.blocked || c.store.state.Configuration.Intent == nil || len(c.store.state.ActiveReserves) != 1 || c.store.state.Configuration.Running.Hash != initial.Running.Hash {
+		t.Fatal("failed emergency persistence lost selected fence", err)
+	}
+	if err = m.maintain(c.store); !errors.Is(err, ErrRecovery) {
+		t.Fatal("unverified emergency authorized retirement", err)
 	}
 }

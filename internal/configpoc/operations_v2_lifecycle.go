@@ -123,10 +123,6 @@ func (s *v2Store) withoutEffects(st *v2State, op v2Operation, code string, now t
 	defer restore()
 	completed := now.UTC()
 	until := completed.Add(30 * 24 * time.Hour)
-	audit, err := s.object(struct{ Format, Operation, Code string }{v2Format, op.ID, code})
-	if err != nil {
-		return err
-	}
 	op.State = "final"
 	op.Completed = &completed
 	op.RetainUntil = &until
@@ -135,8 +131,32 @@ func (s *v2Store) withoutEffects(st *v2State, op v2Operation, code string, now t
 	if code == "ANDEIVA_NAMESPACE_CLOSED" {
 		result = "rejected"
 	}
-	if code=="ANDEIVA_CONFIRMATION_RESOLVED" {result="confirmation_resolved_without_effects"}
-	op.Outcome = &v2Outcome{Code: result, ErrorCode: code, Generation: st.Generation, AuditHash: audit}
+	if code == "ANDEIVA_CONFIRMATION_RESOLVED" {
+		result = "confirmation_resolved_without_effects"
+	}
+	if code == "ANDEIVA_RESERVE_PROFILE_CHANGED" {
+		result = "profile_changed_without_effects"
+	}
+	var audit string
+	if cfg := st.Configuration; st.RecoveryReserveVersion == 1 && cfg != nil {
+		if cfg.AuditSequence == ^uint64(0) {
+			return errV2Limited
+		}
+		record := v2CoordinatorAudit{Format: v2Format, Sequence: cfg.AuditSequence + 1, Previous: cfg.AuditTip, Operation: op.ID, Subject: op.Subject, Kind: op.Request.Kind, Result: result, At: completed, Generation: st.Generation, Running: cfg.Running.Hash, Startup: cfg.Startup.Hash}
+		audit, err = s.object(record)
+		if err != nil {
+			return err
+		}
+		cfg.AuditSequence = record.Sequence
+		cfg.AuditTip = audit
+		op.Outcome = &v2Outcome{Code: result, ErrorCode: code, Generation: st.Generation, AuditHash: audit, DomainGeneration: domainSnapshotV2(cfg, op.Domain).Generation, RunningRevision: cfg.Running.Hash, StartupRevision: cfg.Startup.Hash, AuditFirst: record.Sequence, AuditLast: record.Sequence}
+	} else {
+		audit, err = s.object(struct{ Format, Operation, Code string }{v2Format, op.ID, code})
+		if err != nil {
+			return err
+		}
+		op.Outcome = &v2Outcome{Code: result, ErrorCode: code, Generation: st.Generation, AuditHash: audit}
+	}
 	return s.putOperation(st, op)
 }
 

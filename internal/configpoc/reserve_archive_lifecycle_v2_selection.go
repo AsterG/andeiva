@@ -41,7 +41,7 @@ func (s *v2Store) closedReserveSelectionsV2(archive v2ReserveArchive) (recoveryr
 			return current, previous, errReserveAnchorV2
 		}
 		for _, identity := range reserveArchiveIdentitiesV2(archive) {
-			actual, known, e := s.reserveArchiveLookupV2(state.ReserveArchiveRoot, identity.entry, identity.kind)
+			actual, known, e := s.reserveArchiveBundleLookupV2(state.ReserveArchiveRoot, identity.entry, identity.kind)
 			if e != nil {
 				return current, previous, e
 			}

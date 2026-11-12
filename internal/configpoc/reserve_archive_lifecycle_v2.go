@@ -12,18 +12,44 @@ import (
 // writer lease. A terminal bundle cannot be reused until both actual selected
 // anchors preserve its exact bytes and every physical CAS has completed.
 func (m *v2ReserveManager) maintain(s *v2Store) error {
+	return m.maintainWork(s, "")
+}
+
+func (m *v2ReserveManager) maintainWork(s *v2Store, preferred string) error {
 	if m == nil || s == nil || s.blocked {
 		return ErrRecovery
 	}
 	// A live lease owns the only application lane. Unrelated expired work
 	// keeps its own canonical/physical reserves; it cannot starve Confirm.
-	if cfg := s.state.Configuration; cfg != nil && cfg.Pending != nil {
+	if cfg := s.state.Configuration; cfg != nil && (cfg.Pending != nil || cfg.Intent != nil || cfg.RecoveryRequired) {
 		return nil
 	}
 	for {
 		var work *v2ActiveReserve
 		for _, active := range s.state.ActiveReserves {
-			if active.CanonicalHeld {
+			if active.Work == preferred && active.Bundle.Scope.Origin != "" {
+				preferred = active.Bundle.Scope.Origin
+				break
+			}
+		}
+		for _, active := range s.state.ActiveReserves {
+			if active.CanonicalHeld && active.Work == preferred {
+				value := active
+				work = &value
+				break
+			}
+		}
+		if work == nil {
+			for _, active := range s.state.ActiveReserves {
+				if active.CanonicalHeld && active.Bundle.ClosingEscrow != nil {
+					value := active
+					work = &value
+					break
+				}
+			}
+		}
+		for _, active := range s.state.ActiveReserves {
+			if work == nil && active.CanonicalHeld {
 				value := active
 				work = &value
 				break
@@ -38,6 +64,7 @@ func (m *v2ReserveManager) maintain(s *v2Store) error {
 		if err := m.archiveTerminal(s, *work); err != nil {
 			return err
 		}
+		preferred = ""
 	}
 }
 
@@ -57,7 +84,7 @@ func (m *v2ReserveManager) archiveTerminal(s *v2Store, active v2ActiveReserve) e
 		s.allowance = v2Budget{Bytes: v2ClosingReserveBytes, Inodes: v2ClosingReserveInodes}
 	}
 	first := v2ReserveArchiveEntry{Claim: active.Bundle.Claims.Admission}
-	archive, known, err := s.reserveArchiveLookupV2(s.state.ReserveArchiveRoot, first, "claim")
+	archive, known, err := s.reserveArchiveBundleLookupV2(s.state.ReserveArchiveRoot, first, "claim")
 	if err != nil {
 		return err
 	}
@@ -71,12 +98,12 @@ func (m *v2ReserveManager) archiveTerminal(s *v2Store, active v2ActiveReserve) e
 			return err
 		}
 		root := s.state.ReserveArchiveRoot
-		for _, entry := range reserveArchiveIdentitiesV2(archive) {
-			key, e := reserveIdentityKeyV2(entry.entry, entry.kind)
+		for _, owner := range reserveArchiveOwnersV2(archive) {
+			ref, e := reserveArchiveBundleRefV2(archive.Lineage, owner, hash)
 			if e != nil {
 				return e
 			}
-			root, e = s.reserveArchiveInsertV2(root, 0, "", v2ReserveArchiveRef{Key: key, Archive: hash, Owner: entry.entry.Claim.Owner, Role: entry.entry.Claim.Role, Kind: entry.kind})
+			root, e = s.reserveArchiveInsertV2(root, 0, "", ref)
 			if e != nil {
 				return e
 			}
@@ -117,6 +144,9 @@ func (m *v2ReserveManager) archiveTerminal(s *v2Store, active v2ActiveReserve) e
 	}
 	for _, entry := range archive.Entries {
 		scope := active.Bundle.Scope
+		if active.Bundle.PlanScope != nil {
+			scope = *active.Bundle.PlanScope
+		}
 		if entry.Scope != nil {
 			scope = *entry.Scope
 		} else if entry.Claim.Owner != scope.Bundle {
@@ -151,8 +181,24 @@ func (m *v2ReserveManager) archiveTerminal(s *v2Store, active v2ActiveReserve) e
 	return s.releaseArchivedReserveV2(archive)
 }
 
+func reserveArchiveOwnersV2(archive v2ReserveArchive) []string {
+	owners := map[string]bool{}
+	for _, entry := range archive.Entries {
+		owners[entry.Claim.Owner] = true
+	}
+	for _, claim := range archive.UnusedEscrow {
+		owners[claim.Owner] = true
+	}
+	result := make([]string, 0, len(owners))
+	for owner := range owners {
+		result = append(result, owner)
+	}
+	sort.Strings(result)
+	return result
+}
+
 func reserveArchiveHashV2(archive v2ReserveArchive) (string, error) {
-	_, hash, err := v2Canonical(archive)
+	_, hash, err := encodeReserveArchiveV2(archive)
 	return hash, err
 }
 
@@ -176,6 +222,11 @@ func reserveArchiveIdentitiesV2(archive v2ReserveArchive) []reserveArchiveIdenti
 }
 
 func (m *v2ReserveManager) archiveOwnerScope(archive v2ReserveArchive, owner string) recoveryreserve.ScopeV2 {
+	for _, entry := range archive.Entries {
+		if entry.Claim.Owner == owner && entry.Claim.Role == recoveryreserve.PlanV2 && entry.Scope != nil {
+			return *entry.Scope
+		}
+	}
 	for _, entry := range archive.Entries {
 		if entry.Claim.Owner == owner && entry.Scope != nil {
 			return *entry.Scope
@@ -350,6 +401,9 @@ func (m *v2ReserveManager) buildTerminalArchive(s *v2Store, active v2ActiveReser
 	}
 	archive.FinalWork = hash
 	sortReserveArchiveV2(&archive)
+	if _, _, err := encodeReserveArchiveV2(archive); err != nil {
+		return archive, err
+	}
 	if validateArchiveFinalityV2(archive, s.state, s.readObject) != nil {
 		return archive, ErrRecovery
 	}

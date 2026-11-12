@@ -14,7 +14,7 @@ func TestReserveArchiveV2ReachabilityValidatesArchiveOnlyAudit(t *testing.T) {
 			attachReserveManagerV2(t, c)
 			first := coordinatorV2Stage(t, c, p, "first")
 			second := coordinatorV2Stage(t, c, p, "second")
-			archive, found, err := c.store.reserveArchiveLookupV2(c.store.state.ReserveArchiveRoot, v2ReserveArchiveEntry{Claim: first.Operation.Reserve.Claims.Admission}, "claim")
+			archive, found, err := c.store.reserveArchiveBundleLookupV2(c.store.state.ReserveArchiveRoot, v2ReserveArchiveEntry{Claim: first.Operation.Reserve.Claims.Admission}, "claim")
 			if err != nil || !found {
 				t.Fatalf("fixture archive: %t %v", found, err)
 			}

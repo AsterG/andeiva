@@ -22,7 +22,18 @@ func (m *v2ReserveManager) prepareBoot(s *v2Store, st *v2State, record *v2Recove
 	if m == nil || st.SystemBundle != nil || record.BootID == nil {
 		return ErrRecovery
 	}
-	claims, err := m.claim(recoveryreserve.SystemV2, s.selection.Sequence+1)
+	owner, err := v2ID("reserve", s.selection.Sequence+1)
+	if err != nil {
+		return err
+	}
+	var target v2Configuration
+	if s.readObject(record.Target, &target) != nil {
+		return ErrRecovery
+	}
+	if err = m.bootProfile(s, *record, target, owner); err != nil {
+		return err
+	}
+	claims, err := m.claimOwner(recoveryreserve.SystemV2, owner)
 	if err != nil {
 		return err
 	}

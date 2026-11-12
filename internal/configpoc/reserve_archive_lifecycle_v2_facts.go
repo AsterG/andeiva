@@ -130,5 +130,5 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 }
 
 func reserveNeverAppliedV2(op v2Operation) bool {
-	return op.Reserve != nil && op.Reserve.Plan == nil && op.State == "final" && op.Outcome != nil && (op.Outcome.Code == "expired_without_effects" || (op.Outcome.Code == "rejected" && op.Outcome.ErrorCode == "ANDEIVA_NAMESPACE_CLOSED") || (op.Outcome.Code == "confirmation_resolved_without_effects" && op.Outcome.ErrorCode == "ANDEIVA_CONFIRMATION_RESOLVED"))
+	return op.Reserve != nil && op.Reserve.Plan == nil && op.State == "final" && op.Outcome != nil && (op.Outcome.Code == "expired_without_effects" || (op.Outcome.Code == "rejected" && op.Outcome.ErrorCode == "ANDEIVA_NAMESPACE_CLOSED") || (op.Outcome.Code == "confirmation_resolved_without_effects" && op.Outcome.ErrorCode == "ANDEIVA_CONFIRMATION_RESOLVED") || (op.Outcome.Code == "profile_changed_without_effects" && op.Outcome.ErrorCode == "ANDEIVA_RESERVE_PROFILE_CHANGED"))
 }
