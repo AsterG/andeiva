@@ -103,7 +103,9 @@ func (c *v2Coordinator) uncertainLocked(op v2Operation, cause error) (v2Coordina
 	c.invalidateLocalLocked()
 	s := c.store
 	if s.reserves != nil {
-		s.reserves.emergencyCandidate(s, op.Reserve, "recovery_uncertain")
+		if err := s.reserves.emergencyCandidate(s, op.Reserve, "recovery_uncertain"); err != nil {
+			return v2CoordinatorResult{Operation: clone(op), Current: clone(*s.state.Configuration), GlobalGeneration: s.state.Generation}, ErrRecovery
+		}
 	}
 	if s.reserves != nil {
 		// The selected intent is already a durable mutation fence. A failed

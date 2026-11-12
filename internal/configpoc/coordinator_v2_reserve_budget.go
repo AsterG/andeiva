@@ -14,6 +14,9 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 	if raw, _, err := v2Canonical(target); err != nil || len(raw) > 128*1024 {
 		return errV2Limited
 	}
+	if !reserveMetadataStateFitsV2(reserveProjectedEnvelopeV2(s.state, target, "firewall")) {
+		return errV2Limited
+	}
 	key, err := reserveBundleKeyV2(s.state.Lineage, owner)
 	if err != nil {
 		return err

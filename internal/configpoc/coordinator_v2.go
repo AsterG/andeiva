@@ -467,7 +467,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	consume = true
 	if err = s.publish(st); err != nil {
 		if s.reserves != nil {
-			s.reserves.emergencyCandidate(s, op.Reserve, "storage_uncertain")
+			if e := s.reserves.emergencyCandidate(s, op.Reserve, "storage_uncertain"); e != nil {
+				return result(op), ErrRecovery
+			}
 		}
 		return result(op), err
 	}
@@ -521,7 +523,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	final, err := c.completeLocked(op, target, generation, code, "", pin, c.now())
 	if err != nil {
 		if s.reserves != nil {
-			s.reserves.emergencyCandidate(s, op.Reserve, "storage_uncertain")
+			if e := s.reserves.emergencyCandidate(s, op.Reserve, "storage_uncertain"); e != nil {
+				return result(op), ErrRecovery
+			}
 		}
 		_ = c.reconcileStorageFailureLocked(ctx, state, op)
 		return result(op), err

@@ -181,7 +181,9 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	s := c.store
 	defer func() {
 		if result != nil && s.reserves != nil && s.state.SystemBundle != nil {
-			s.reserves.emergencyCandidate(s, s.state.SystemBundle.Bundle, "recovery_uncertain")
+			if err := s.reserves.emergencyCandidate(s, s.state.SystemBundle.Bundle, "recovery_uncertain"); err != nil {
+				result = ErrRecovery
+			}
 		}
 	}()
 	intent := s.state.Configuration.Intent

@@ -17,7 +17,7 @@ import (
 func growReserveMetadataFixtureV2(t *testing.T, s *v2Store, subject string) {
 	t.Helper()
 	st := clone(s.state)
-	for i := len(st.Namespaces); i < int(st.NamespaceSlots); i++ {
+	for i := len(st.Namespaces); i < int(st.NamespaceSlots-closingRegistryReservedV2(st)); i++ {
 		raw, _, err := v2Canonical(st)
 		if err != nil {
 			t.Fatal(err)
@@ -145,5 +145,36 @@ func TestReserveCOWCostIncludesDeepSplit(t *testing.T) {
 	count, err := reserveIndexBuildCostV2(keys, 0)
 	if err != nil || count != 17 {
 		t.Fatal("split node count omitted partitions", count, err)
+	}
+}
+
+func TestReserveAdmittedConfirmRetainsHeadroomAfterRegistryGrowth(t *testing.T) {
+	c, area, _, p, now := coordinatorV2Fixture(t, false)
+	attachReserveManagerV2(t, c)
+	coordinatorV2Stage(t, c, p, "headroom-confirm")
+	seconds := uint64(90)
+	committed := coordinatorV2Run(t, c, p, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+	ns, err := c.store.namespace(p.Subject, "firewall", *now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := c.store.admit(p.Subject, ns.ID, c.store.state.Generation, v2Request{Kind: OpConfirm, Origin: committed.Operation.ID, Target: committed.Current.Running.Hash}, *now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	growReserveMetadataFixtureV2(t, c.store, p.Subject)
+	data, _, _ := v2Canonical(c.store.state)
+	if len(data) <= 128*1024 {
+		t.Fatal("fixture does not exceed ordinary envelope")
+	}
+	result, err := c.execute(context.Background(), p, child.ID)
+	if err != nil || result.Current.Pending != nil || result.Operation.Outcome.Code != "applied" || len(c.store.state.ActiveReserves) != 0 || c.store.state.ReservedBytes != 0 {
+		t.Fatal("already admitted closing was charged to ordinary metadata", err)
+	}
+	c.close()
+	_ = c.store.close()
+	report, err := inspectReachabilityV2(context.Background(), area, reachabilityBudgetV2())
+	if err != nil || !report.Complete {
+		t.Fatal("closing envelope lost canonical graph", report, err)
 	}
 }
