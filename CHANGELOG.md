@@ -6,6 +6,12 @@
 - Preserve reservations on ambiguous writes and refuse stale bindings instead of treating fallback data as completion.
 - Add isolated byte/inode exhaustion tests and operator guides; coordinator integration and authorized retirement remain separate.
 
+## Unreleased — read-only configuration reference inspection
+
+- Inspect typed configuration v2 object references with bounded I/O and existing-lock identity checks.
+- Return incomplete results on corruption, concurrency, cancellation or exhausted budgets; do not delete objects or activate reclamation.
+- Document isolated tests and limitations in English, Spanish and Portuguese.
+
 ## Unreleased — isolated storage volume qualification
 
 - Inspect inactive volumes through read-only lock descriptors while retaining exclusive locking and identity checks.
