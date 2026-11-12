@@ -9,12 +9,15 @@ routedactivation, snapshot exacto, transporte nft de tablas fijas y resolver de
 artefactos efímero explícitamente confiable. Es un registro de fixture, no un
 coordinador durable de producción.
 
-Comprueba TCP/UDP SNAT pendiente y recuperación fría exacta; después crea otra
+Comienza con schema 4 realmente instalado y sus dos reglas guardadas. Comprueba
+TCP/UDP SNAT pendiente y recuperación fría exacta; después crea otra
 operación del fixture y confirma una lease distinta de treinta segundos. Todos
 los cambios posteriores pasan por Group y conservan las pruebas NAT/conntrack/
-deny/revocación. El último cambio vence en su deadline original de treinta
-segundos y debe restaurar la política previa real. Sólo una consulta completa
-exitosa demuestra ausencia de tabla.
+deny/revocación. Restaura schema 4 exacto, lo confirma y vuelve a activar schema 6.
+La última inversión 6→4 vence en su deadline original de treinta segundos y debe
+reponer red/reglas schema-6 previas reales. Sólo una consulta completa exitosa
+demuestra ausencia. Provisionar el baseline del fixture no cualifica publicación
+Boot/SystemBundle de producción; PrepareColdBoot se comprueba por separado.
 
 El perfil local no inicia procesos/listeners de servicios en gateway y comprueba
 sus tablas TCP/UDP reales. Nunca enumera ni detiene SSH/HTTPS del host. Un vecino
@@ -24,12 +27,18 @@ agregar reglas allow. Forwarding se habilita después de instalar deny/target re
 Marcadores adicionales, exclusivamente tras comprobaciones exitosas:
 
 ```text
+PASS typed group initial schema4 has exact two saved rules
 PASS typed group TCP/UDP SNAT and exact cold recovery
 PASS typed group distinct confirmed lease and exact lost-confirm reconciliation
-PASS typed group original confirmed deadline expired and exact previous policy recovered
+PASS typed group saved schema4 restores exact two-rule legacy and empty network
+PASS typed group confirmed schema4 reactivates owned schema6
+PASS typed group inverse saved schema4 deadline expired and exact schema6 recovered
 ```
 
-La ejecución conserva el límite de 55 segundos y limpieza independiente acotada.
+Group tiene límite de 80 segundos y limpieza independiente acotada; el modo previo
+sin Group conserva 55 segundos. No cambian deadlines del producto. La fuente
+`3918ad8` pasó el escenario Group anterior nativo en 46.166222 s (CPU 13.259767 s,
+pico 31,281,152 bytes); esa evidencia no cualifica este nuevo runner inverse/dos reglas.
 No cualifica reinicio del helper, migración LAN existente, continuidad de endpoints
 ni recuperación durable de producción. RecoverPrepared tiene pruebas unitarias
 separadas y exige WorkScope original autenticado y la misma encarnación retenida;
