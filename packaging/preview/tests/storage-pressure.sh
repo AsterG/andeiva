@@ -16,7 +16,7 @@ verify_test_log() {
   local task_log=$1 task_test=$2 task_case=${3:-}
   [[ $task_test = TestNativeVolumePressure || $task_test = TestRealStoragePressure ]] || return 1
   grep -Fqx -- "=== RUN   $task_test" "$task_log" || return 1
-  grep -Eq -- "^--- PASS: $task_test \([0-9]+([.][0-9]+)?s\)$" "$task_log" || return 1
+  grep -Eq -- "^--- PASS: $task_test \(([0-9]+h)?([0-9]+m)?[0-9]+([.][0-9]+)?s\)$" "$task_log" || return 1
   if [[ $task_test = TestNativeVolumePressure ]]; then
     [[ $task_case = bytes || $task_case = inodes || $task_case = readonly || $task_case = open-deleted ]] || return 1
     grep -Fqx -- "ANDEIVA_NATIVE_VOLUME_CASE_PASS=$task_case" "$task_log" || return 1

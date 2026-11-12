@@ -2,6 +2,8 @@
 
 ## Unreleased — isolated storage volume qualification
 
+- Accept anchored composite test durations and preserve failures during idempotent log-test cleanup.
+
 - Prepare inactive, preallocated filesystem images through a fixed descriptor-only
   formatter and a bounded laboratory profile; never mount or activate live data.
 - Extend the existing opt-in harness to test copied volumes for byte/inode
