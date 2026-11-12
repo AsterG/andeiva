@@ -24,7 +24,10 @@ func reserveFreezeSummaryV2(cfg *v2Configuration) *v2Configuration {
 	summary := &v2Configuration{RecoveryRequired: cfg.RecoveryRequired}
 	if cfg.Intent != nil {
 		summary.Intent = &v2CoordinatorIntent{}
-		if cfg.Intent.RoutedWork!=""{in:=*cfg.Intent;summary.Intent=&in}
+		if cfg.Intent.RoutedWork != "" {
+			in := *cfg.Intent
+			summary.Intent = &in
+		}
 		if cfg.Intent.GuardDeadline != nil {
 			in := *cfg.Intent
 			deadline := *in.GuardDeadline

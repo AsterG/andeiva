@@ -143,6 +143,27 @@ test('routed audit uses protected records with combined filters in both themes',
   expect(calls.some((call) => call.path.endsWith('/admit'))).toBe(false);
 });
 
+for (const locale of ['en', 'es', 'pt'] as Locale[]) test(`startup recovery audit is readable and excludes private fields in ${locale}`, async ({ page }, testInfo) => {
+  const calls = await setup(page);
+  const copy = workspaceMessages[locale];
+  const event = { sequence: '9', at: '2026-11-12T12:00:00Z', actor_id: 'system', operation_id: 'startup-recovery', operation: 'boot_boundary', result: 'superseded_by_boot', generation: '12', running_revision: 'a'.repeat(64), startup_revision: 'b'.repeat(64), boot_id: 'private-boot-identity' };
+  await page.route('**/api/v2/config/audit?**', (route) => route.fulfill({ json: { schema_version: 1, events: [event], next_before: '0', truncated: false } }));
+  await page.goto('/firewall#audit');
+  await selectLocale(page, locale);
+  await expect(page.getByRole('cell', { name: copy.auditBootRecovery, exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: copy.auditSuperseded, exact: true })).toBeVisible();
+  await page.locator('tbody button').click();
+  await expect(page.getByText('boot_boundary', { exact: true })).toBeVisible();
+  await expect(page.getByText('private-boot-identity', { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  for (const theme of ['light', 'dark'] as const) {
+    await selectTheme(page, theme);
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze()).violations).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`startup-audit-${locale}-${theme}.png`), fullPage: true });
+  }
+  expect(calls.some((call) => call.path.endsWith('/admit') || call.path.endsWith('/execute'))).toBe(false);
+});
+
 test('preserved historical Candidate remains visible but cannot validate or apply', async ({ page }) => {
   const calls = await setup(page), restored = structuredClone(fixtures.pre), old = fixtures.routed.current;
   restored.current.snapshot.candidate = { owner: 'subject', base: old.snapshot.running.hash, revision: structuredClone(old.snapshot.running) };
