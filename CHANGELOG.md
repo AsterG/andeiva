@@ -55,6 +55,12 @@
 - Finalize expired/closed operations and linked pins from their own released
   reservations, preserving other pending reservations through write failures.
 
+## Unreleased — authenticated configuration v2 adapter
+
+- Bind configuration operations to verified sessions and canonical durable subject identities.
+- Revalidate session expiry/revocation and atomic registry ownership on every request; preserve legacy unbound authentication.
+- Expose the existing coordinator through bounded adapters without activating public transports or migration.
+
 ## Unreleased — internal read-only network inventory
 
 - Observe real interfaces, IPv4/IPv6 addresses, masks and link flags through an

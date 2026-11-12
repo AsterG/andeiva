@@ -93,6 +93,10 @@ func (s *v2Store) namespaceIndex(subject, id string) int {
 func (s *v2Store) namespace(subject, domain string, now time.Time, lifetime time.Duration) (v2Namespace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.namespaceLocked(subject, domain, now, lifetime)
+}
+
+func (s *v2Store) namespaceLocked(subject, domain string, now time.Time, lifetime time.Duration) (v2Namespace, error) {
 	if s.blocked {
 		return v2Namespace{}, errV2Unavailable
 	}
@@ -125,6 +129,10 @@ func (s *v2Store) namespace(subject, domain string, now time.Time, lifetime time
 func (s *v2Store) admit(subject, namespace string, expected uint64, request v2Request, now time.Time) (v2Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.admitLocked(subject, namespace, expected, request, now)
+}
+
+func (s *v2Store) admitLocked(subject, namespace string, expected uint64, request v2Request, now time.Time) (v2Operation, error) {
 	if s.blocked {
 		return v2Operation{}, errV2Unavailable
 	}
@@ -419,6 +427,10 @@ func v2Release(st *v2State, op v2Operation) {
 func (s *v2Store) list(subject, namespace string, after uint64, limit int) ([]v2Operation, uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.listLocked(subject, namespace, after, limit)
+}
+
+func (s *v2Store) listLocked(subject, namespace string, after uint64, limit int) ([]v2Operation, uint64, error) {
 	if s.blocked {
 		return nil, 0, errV2Unavailable
 	}

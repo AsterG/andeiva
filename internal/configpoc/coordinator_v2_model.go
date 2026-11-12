@@ -117,8 +117,10 @@ type v2RecoveryRecord struct {
 // A trusted transport must verify the durable subject incarnation. Usernames,
 // headers, request bodies and current OS UIDs are not identity substitutes.
 type v2TrustedPrincipal struct {
-	Subject string
-	Role    Role
+	Subject            string
+	Role               Role
+	Login              string
+	CredentialRevision string
 }
 type v2CoordinatorResult struct {
 	Operation        v2Operation
