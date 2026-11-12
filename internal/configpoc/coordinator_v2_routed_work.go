@@ -6,6 +6,46 @@ import (
 	"time"
 )
 
+// ProjectRoutedRestoreBaselineV1 derives prospective schema4 table bytes from a
+// canonical target while preserving the original physical memento. It proves
+// neither target selection nor effective/saved state. Effects must authenticate
+// the complete selected Work, scope, deadline and returned TargetOwned separately.
+func ProjectRoutedRestoreBaselineV1(original RoutedBaselineV1, target RoutedActivationBundleV1) (RoutedBaselineV1, error) {
+	saved, err := CanonicalRoutedActivationBundleV1(original.Saved)
+	if err != nil || saved.Firewall.Config.SchemaVersion != 4 {
+		return RoutedBaselineV1{}, ErrRecovery
+	}
+	target, err = CanonicalRoutedActivationBundleV1(target)
+	if err != nil || target.Firewall.Config.SchemaVersion != 4 || target.LocalServices.Hash != saved.LocalServices.Hash {
+		return RoutedBaselineV1{}, ErrRecovery
+	}
+	owned, err := CanonicalOwned(original.Owned)
+	if err != nil || (owned.NetworkState != Baseline && owned.NetworkState != NoNetwork) || owned.LegacyFirewall.Revision == nil || owned.LegacyFirewall.Revision.Hash != saved.Firewall.Hash || owned.RoutedFirewall.Presence != Absent {
+		return RoutedBaselineV1{}, ErrRecovery
+	}
+	if owned.LocalServices.Presence == Present {
+		if owned.LocalServices.Revision == nil || owned.LocalServices.Revision.Hash != saved.LocalServices.Hash {
+			return RoutedBaselineV1{}, ErrRecovery
+		}
+	} else {
+		for _, service := range target.LocalServices.Config.LocalServices.Services {
+			if service.Enabled {
+				return RoutedBaselineV1{}, ErrRecovery
+			}
+		}
+	}
+	deps, err := CanonicalDependencies(original.Dependencies)
+	if err != nil || !RoutedOwnershipMatchesDependencies(owned, deps) {
+		return RoutedBaselineV1{}, ErrRecovery
+	}
+	owned.LegacyFirewall = TableStateV1{Presence: Present, Revision: &target.Firewall}
+	owned, err = CanonicalOwned(owned)
+	if err != nil {
+		return RoutedBaselineV1{}, ErrRecovery
+	}
+	return RoutedBaselineV1{Saved: target, Owned: owned, Dependencies: deps}, nil
+}
+
 func routedPreparationV2(input RoutedPreparationV1, previous, target RoutedActivationBundleV1, cold bool) (RoutedPreparationV1, error) {
 	before, err := CanonicalOwned(input.Before)
 	if err != nil {
@@ -243,11 +283,13 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	if plan.target.Firewall.Config.SchemaVersion == 4 && !(work.Kind == OpCommit && plan.preparation.Dependencies.Version == 2) {
-		_, expected, e1 := v2Canonical(plan.baseline.Owned)
+		projected, projectionErr := ProjectRoutedRestoreBaselineV1(*plan.baseline, plan.target)
+		_, expected, e1 := v2Canonical(projected.Owned)
 		_, actual, e2 := v2Canonical(plan.preparation.Target)
-		if e1 != nil || e2 != nil || expected != actual || plan.target.Composite.Hash != plan.baseline.Saved.Composite.Hash {
+		if projectionErr != nil || e1 != nil || e2 != nil || expected != actual {
 			return plan, errV2Unavailable
 		}
+		plan.baseline = &projected
 	}
 	return plan, nil
 }

@@ -94,3 +94,16 @@ estado exatos por RecoverObserved, sem adotar namespaces encontrados ou reinicia
 temporizadores. Os testes usam compiladores/readback, Group e coordenador/reservas
 duráveis reais com I/O kernel/rede simulado. Não qualificam Boot4 nativo, gestão
 de interfaces existentes, DHCP ou controle do host.
+
+Restaurar schema4 agora projeta somente a revisão legacy do target canônico exato
+sobre o baseline físico original. Preserva todos os fatos de rede/Observed/
+dependências e exige a revisão local original. `ProjectRoutedRestoreBaselineV1`
+é conversão pura prospectiva: não comprova target selecionado, salvo ou efetivo.
+Prepare pode descrevê-lo sem efeitos; Validate/Recover ainda autenticam o target
+exato do Work selecionado, scope/prazo originais e TargetOwned completo. O loader
+recalcula e compara a projeção. Permite salvar uma edição4 antes de6 e restaurá-la,
+ou retornar ao Startup4 antigo quando a edição não foi salva. Work.Baseline e o
+memento de rede originais são mantidos, sem nova DB, DTO ou campo IPC. Alterações
+dos serviços locais ou substituição do memento físico continuam rejeitadas.
+I/O kernel/rede é simulado nestes testes; não qualificam configuração host nativa
+ou DHCP.

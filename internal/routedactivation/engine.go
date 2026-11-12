@@ -300,7 +300,16 @@ func (e *Engine) prepareBaseline(ctx context.Context, target configpoc.RoutedAct
 	if current.NetworkState == NoNetwork && effective.Firewall.Config.SchemaVersion == 4 {
 		return e.prepareNoNetworkEdit(ctx, target, current)
 	}
-	baseline, err := e.resolveBaseline(ctx, target)
+	if e.options.ResolveBaseline == nil {
+		return PreparationV1{}, ErrState
+	}
+	original, err := e.options.ResolveBaseline(ctx, target)
+	if err != nil {
+		return PreparationV1{}, ErrState
+	}
+	// Preparation is prospective only. ValidatePlan/RecoverPlan still require
+	// the exact selected target and the full projected Owned comparison.
+	baseline, err := configpoc.ProjectRoutedRestoreBaselineV1(original, target)
 	if err != nil || !configpoc.RoutedOwnershipMatchesDependencies(baseline.Owned, e.prepared.Dependencies) {
 		return PreparationV1{}, ErrState
 	}

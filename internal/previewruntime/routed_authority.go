@@ -48,10 +48,19 @@ func (a *RoutedAuthority) Identity() networkexecutor.OwnedNamespaceIdentity { re
 func (a *RoutedAuthority) resolveBaseline(ctx context.Context, target configpoc.RoutedActivationBundleV1) (routedactivation.BaselineV1, error) {
 	a.mu.Lock()
 	baseline := a.baseline
+	selected := a.selected
 	a.mu.Unlock()
-	if ctx.Err() != nil || baseline == nil || baseline.Saved.Composite.Hash != target.Composite.Hash {
+	if ctx == nil || ctx.Err() != nil || baseline == nil {
 		return routedactivation.BaselineV1{}, configpoc.ErrRecovery
 	}
+	if selected.Valid() && selected.Scope().Identity == a.identity {
+		_, actual := selected.Bundles()
+		if actual.Composite.Hash == target.Composite.Hash && actual.Firewall.Config.SchemaVersion == 4 {
+			return configpoc.ProjectRoutedRestoreBaselineV1(*baseline, actual)
+		}
+	}
+	// Unselected preparation receives only the original memento. In particular
+	// this does not attest the request's target as saved, selected or effective.
 	return routedactivation.BaselineV1{Saved: baseline.Saved, Owned: baseline.Owned, Dependencies: baseline.Dependencies}, nil
 }
 
