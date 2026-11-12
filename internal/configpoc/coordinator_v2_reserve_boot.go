@@ -38,6 +38,9 @@ func (m *v2ReserveManager) prepareBoot(s *v2Store, st *v2State, record *v2Recove
 		return err
 	}
 	scope := recoveryreserve.ScopeV2{Kind: "boot", Lineage: st.Lineage, Bundle: claims.Admission.Owner, Recovery: record.ID, Boot: string(*record.BootID), Domain: "firewall", Fingerprint: reserveRecoveryFingerprintV2(*record), Global: st.Generation, Generation: st.Configuration.Firewall.Generation}
+	if intent.Domain == "routed" {
+		scope.Domain = "routed"
+	}
 	data, _, err := v2Canonical(v2ReserveAdmission{Format: v2Format, Version: 1, Scope: scope, Claims: claims})
 	if err != nil || len(data) > claims.Admission.Capacity {
 		return errV2Limited

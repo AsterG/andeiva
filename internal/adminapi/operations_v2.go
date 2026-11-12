@@ -147,6 +147,19 @@ func (h *handler) operationsV2(w http.ResponseWriter, r *http.Request, ctx conte
 	service := h.preparedOperations
 	path := r.URL.Path
 	switch {
+	case path == "/api/v2/config/audit":
+		h.auditV2(w, r, ctx, binding)
+	case path == "/api/v2/config/effective":
+		if r.Method != http.MethodGet {
+			h.fail(w, 405, "ANDEIVA_METHOD_NOT_ALLOWED")
+			return
+		}
+		effective, e := service.RoutedEffective(ctx, binding)
+		if e != nil {
+			h.operationErrorV2(w, e)
+			return
+		}
+		h.writeV2(w, 200, effective)
 	case path == "/api/v2/config/current":
 		if r.Method != http.MethodGet {
 			h.fail(w, 405, "ANDEIVA_METHOD_NOT_ALLOWED")

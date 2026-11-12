@@ -107,6 +107,9 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 			return c, err
 		}
 	}
+	if err := c.resumeRoutedLockedV2(ctx); err != nil {
+		return c, err
+	}
 	if !c.readback(*store.state.Configuration) {
 		return c, ErrRecovery
 	}
@@ -263,6 +266,10 @@ func (c *v2Coordinator) readback(state v2Configuration) bool {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
+		if in := c.store.state.Configuration.Intent; in != nil && in.Domain == "routed" && in.Recovery && in.Kind != v2BootKind && in.RoutedWork != "" {
+			plan, err := c.selectedRoutedPlanV2()
+			return err == nil && plan.previous.Composite.Hash == state.Running.Hash && c.options.Routed.Match(ctx, plan, "before") == nil
+		}
 		_, hash, err := c.options.Routed.Observe(ctx)
 		if err != nil {
 			return false
@@ -511,6 +518,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	st.Clock = now
 	st.Configuration.Intent = &v2CoordinatorIntent{Operation: op.ID, Subject: op.Subject, Domain: op.Domain, Kind: op.Request.Kind, Previous: previousHash, Target: targetHash, TargetGeneration: generation}
+	if op.Request.Kind == OpReplaceCandidate || op.Request.Kind == OpDiscardCandidate {
+		addFeatureV2(&st, v2OwnedCandidateFeature)
+	}
 	if err = c.publishRoutedWorkV2(ctx, op, state, target, st.Configuration.Intent); err != nil {
 		return result(op), err
 	}
@@ -615,7 +625,7 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 		}
 		return routedTargetV2(c.store, op, state, now, lease)
 	}
-	if state.CandidateGroup != nil || state.Firewall.Running.Config.SchemaVersion == 6 {
+	if state.CandidateGroup != nil || state.Firewall.Running.Config.SchemaVersion == 6 || c.options.Routed != nil && hasFeatureV2(c.store.state, v2RoutedFeature) {
 		return state, false, ErrConflict
 	}
 	target := clone(state)

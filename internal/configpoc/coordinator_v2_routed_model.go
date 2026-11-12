@@ -1,6 +1,10 @@
 package configpoc
 
 const v2RoutedFeature = "configuration.routed-composite.v1"
+const v2RoutedNoNetworkFeature = "configuration.routed-no-network.v1"
+const v2OwnedCandidateFeature = "configuration.owned-candidate.v1"
+const OpReplaceCandidate = "replace_candidate"
+const OpDiscardCandidate = "discard_candidate"
 
 type v2CandidateGroup struct {
 	Operation string   `json:"stage_operation_id"`
@@ -55,23 +59,39 @@ func validCandidateGroupV2(state *v2Configuration, routed bool) bool {
 	if group == nil {
 		return true
 	}
-	if !routed || group.Operation == "" || len(group.Operation) > 128 || group.Owner == "" || len(group.Owner) > 128 || !validHash(group.Base) || len(group.Domains) != 2 || group.Domains[0] != "firewall" || group.Domains[1] != "local_services" || group.Base != state.Running.Hash {
+	if !routed || group.Operation == "" || len(group.Operation) > 128 || group.Owner == "" || len(group.Owner) > 128 || !validHash(group.Base) || len(group.Domains) != 2 || group.Domains[0] != "firewall" || group.Domains[1] != "local_services" {
 		return false
 	}
 	for _, domain := range []v2DomainSnapshot{state.Firewall, state.LocalServices} {
-		if domain.Candidate == nil || domain.Candidate.Owner != group.Owner || domain.Candidate.Base != domain.Running.Hash {
+		if domain.Candidate == nil || domain.Candidate.Owner != group.Owner || !validHash(domain.Candidate.Base) {
 			return false
 		}
 	}
-	return state.Firewall.Candidate.Revision.Config.SchemaVersion == 6
+	return state.Firewall.Candidate.Revision.Config.SchemaVersion == 6 || state.Firewall.Candidate.Revision.Config.SchemaVersion == 4
 }
 
 func routedRequestValidV2(r v2Request) bool {
-	if r.Kind == OpStage {
-		if r.Config == nil || r.Config.SchemaVersion != 6 || r.ConfirmSeconds != nil || r.Target != "" || r.Origin != "" || r.Subject != "" {
+	if r.Kind == OpReplaceCandidate || r.Kind == OpDiscardCandidate {
+		if r.ExpectedCandidateStage == "" || len(r.ExpectedCandidateStage) > 128 || r.LocalServicesConfig != nil || r.ConfirmSeconds != nil || r.Target != "" || r.Origin != "" || r.Subject != "" {
 			return false
 		}
-		if _, err := CanonicalRouted(*r.Config); err != nil {
+		if r.Kind == OpDiscardCandidate {
+			return r.Config == nil
+		}
+		if r.Config == nil || (r.Config.SchemaVersion != 4 && r.Config.SchemaVersion != 6) {
+			return false
+		}
+		_, err := canonicalDomainRevisionV2(*r.Config, true)
+		return err == nil
+	}
+	if r.ExpectedCandidateStage != "" {
+		return false
+	}
+	if r.Kind == OpStage {
+		if r.Config == nil || (r.Config.SchemaVersion != 6 && r.Config.SchemaVersion != 4) || r.ConfirmSeconds != nil || r.Target != "" || r.Origin != "" || r.Subject != "" {
+			return false
+		}
+		if _, err := canonicalDomainRevisionV2(*r.Config, true); err != nil {
 			return false
 		}
 		if r.LocalServicesConfig != nil {
@@ -144,6 +164,10 @@ func validateCandidateGroupEvidenceV2(state v2Configuration, load func(string, a
 	if load == nil || !validCandidateGroupV2(&state, true) {
 		return errV2Unavailable
 	}
+	var base v2CompositeConfig
+	if load(group.Base, &base) != nil || base.SchemaVersion != 7 || base.Domains.Firewall.Revision != state.Firewall.Candidate.Base || base.Domains.LocalServices.Revision != state.LocalServices.Candidate.Base {
+		return errV2Unavailable
+	}
 	hash, sequence := state.AuditTip, state.AuditSequence
 	for sequence > 0 && validHash(hash) {
 		var audit v2CoordinatorAudit
@@ -151,7 +175,7 @@ func validateCandidateGroupEvidenceV2(state v2Configuration, load func(string, a
 			return errV2Unavailable
 		}
 		if audit.Operation == group.Operation {
-			if audit.Kind != OpStage || audit.Subject != group.Owner || audit.Result != "applied" || audit.Running != group.Base {
+			if (audit.Kind != OpStage && audit.Kind != OpReplaceCandidate) || audit.Subject != group.Owner || audit.Result != "applied" || audit.Running != group.Base {
 				return errV2Unavailable
 			}
 			return nil

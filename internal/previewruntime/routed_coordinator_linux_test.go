@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -36,6 +37,22 @@ func routedCoordinatorRoot(t *testing.T) *os.Root {
 	return root
 }
 
+type routedBootReplyLostFixture struct {
+	*RoutedAuthority
+	lose bool
+}
+
+func (a *routedBootReplyLostFixture) Bootstrap(ctx context.Context, p configpoc.RoutedSelectedPlanV1, started time.Time) error {
+	if err := a.RoutedAuthority.Bootstrap(ctx, p, started); err != nil {
+		return err
+	}
+	if a.lose {
+		a.lose = false
+		return configpoc.ErrInterrupted
+	}
+	return nil
+}
+
 func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	ctx := context.Background()
 	policy := routednft.LabPolicy()
@@ -43,7 +60,12 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 		{Name: "lan0", Zone: localpolicy.LAN, Addresses: []string{"198.18.0.1"}},
 		{Name: "wan0", Zone: localpolicy.WAN, Addresses: []string{"198.19.0.1"}},
 	}, Services: []localpolicy.Service{}}
-	legacy, err := configpoc.Canonical(configpoc.Config{SchemaVersion: 4, DefaultAction: "deny", Rules: []configpoc.Rule{}})
+	enabled := true
+	retained := []configpoc.Rule{
+		{ID: "retained-tcp", Enabled: &enabled, Action: "allow", Match: &configpoc.Match{Source: "198.18.0.2/32", Destination: "198.18.0.6/32", Protocol: "tcp", SourcePorts: configpoc.PortRange{From: 1, To: 65535}, DestinationPorts: configpoc.PortRange{From: 18080, To: 18080}}},
+		{ID: "retained-udp", Enabled: &enabled, Action: "deny", Match: &configpoc.Match{Source: "198.18.0.2/32", Destination: "198.18.0.6/32", Protocol: "udp", SourcePorts: configpoc.PortRange{From: 1, To: 65535}, DestinationPorts: configpoc.PortRange{From: 18081, To: 18081}}},
+	}
+	legacy, err := configpoc.Canonical(configpoc.Config{SchemaVersion: 4, DefaultAction: "deny", Rules: retained})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +171,11 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, domain := range []string{"firewall", "local_services"} {
+		if _, e := service.Namespace(binding, domain, time.Hour); !errors.Is(e, configpoc.ErrDenied) {
+			t.Fatal("independent legacy writer allowed beside group", domain, e)
+		}
+	}
 	initial, err := service.Status(binding)
 	if err != nil {
 		t.Fatal(err)
@@ -202,6 +229,33 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	if err != nil || receipt.Phase != "idle" || hash != committed.Current.RunningRevision {
 		t.Fatalf("API close changed dataplane: %+v %s %v", receipt, hash, err)
 	}
+	if err = authority.group.Close(); err != nil {
+		t.Fatal(err)
+	}
+	foreignIdentity := identity
+	foreignIdentity.RunID = "fedcba9876543210fedcba9876543210"
+	foreign, e := NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, foreignIdentity)
+	if e != nil {
+		t.Fatal(e)
+	}
+	foreignOptions := options
+	foreignOptions.Routed = foreign
+	foreignOptions.RoutedIdentity = foreignIdentity
+	batches, calls := len(kernel.batches), network.calls
+	if opened, e := configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, foreignOptions); e == nil {
+		_ = opened.Close()
+		t.Fatal("foreign helper incarnation adopted durable work")
+	}
+	if len(kernel.batches) != batches || network.calls != calls {
+		t.Fatal("foreign recovery changed physical state")
+	}
+	_ = foreign.group.Close()
+	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = authority.group.Close() })
+	options.Routed = authority
 	service, err = configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, options)
 	if err != nil {
 		t.Fatal("controller restart", err)
@@ -209,6 +263,44 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	observed, err = service.RoutedEffective(ctx, binding)
 	if err != nil || !observed.Consistent || observed.Running != saved.Current.RunningRevision {
 		t.Fatalf("confirmed restart: %+v %v", observed, err)
+	}
+	if err = service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = authority.group.Close(); err != nil {
+		t.Fatal(err)
+	}
+	identity.BootID = "22345678-1234-1234-1234-123456789abc"
+	identity.RunID = "1123456789abcdef0123456789abcdef"
+	kernel = &routedTestKernel{objects: map[routedactivation.Table][]map[string]any{}}
+	network = &routedTestNetwork{snapshot: snapshot, identity: identity}
+	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = authority.group.Close() })
+	options.Routed = &routedBootReplyLostFixture{RoutedAuthority: authority, lose: true}
+	options.RoutedIdentity = identity
+	options.BootID = identity.BootID
+	if first, e := configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, options); e == nil {
+		_ = first.Close()
+		t.Fatal("lost boot apply reply falsely finalized")
+	}
+	originalBootReceipt, _, e := authority.Observe(ctx)
+	if e != nil || originalBootReceipt.Phase != "pending" {
+		t.Fatal("boot lease did not remain independently pending", e)
+	}
+	service, err = configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, options)
+	if err != nil {
+		t.Fatal("Startup6 in fresh namespace with absent tables", err)
+	}
+	finalBootReceipt, _, e := authority.Observe(ctx)
+	if e != nil || !finalBootReceipt.Deadline.Equal(originalBootReceipt.Deadline) {
+		t.Fatal("boot restart changed original deadline", e)
+	}
+	booted, err := service.Status(binding)
+	if err != nil || booted.RunningRevision != saved.Current.StartupRevision || booted.GlobalGeneration <= saved.Current.GlobalGeneration || !network.active {
+		t.Fatalf("Startup6 boot not verified: %+v %v", booted, err)
 	}
 	rolled := run(configpoc.OperationRequestV2{Kind: configpoc.OpRollback, Target: initial.StartupRevision, ConfirmSeconds: &seconds})
 	if network.active {
@@ -230,6 +322,17 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	if err != nil || receipt.Phase != "pending" || hash != last.Current.RunningRevision {
 		t.Fatal("pending helper lease lost", err)
 	}
+	// An orderly helper stop restores its own pending lease independently. A
+	// fresh helper still needs selected recovery authority before becoming idle.
+	if err = authority.group.Close(); err != nil {
+		t.Fatal(err)
+	}
+	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = authority.group.Close() })
+	options.Routed = authority
 	service, err = configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, options)
 	if err != nil {
 		t.Fatal("pending controller restart", err)

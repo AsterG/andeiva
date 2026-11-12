@@ -41,3 +41,17 @@ func TestRoutedRequestDTOAdditiveLocalConfiguration(t *testing.T) {
 		t.Fatal("legacy request encoding changed", err, string(data))
 	}
 }
+
+func TestRoutedOwnedCandidateRequestDTO(t *testing.T) {
+	for _, kind := range []string{configpoc.OpReplaceCandidate, configpoc.OpDiscardCandidate} {
+		input := OperationRequestV2{Operation: kind, ExpectedCandidateStage: "stage-operation"}
+		canonical := input.canonical()
+		if canonical.Kind != kind || canonical.ExpectedCandidateStage != input.ExpectedCandidateStage {
+			t.Fatal("candidate guard lost")
+		}
+		data, err := json.Marshal(input)
+		if err != nil || !strings.Contains(string(data), `"expected_candidate_stage_operation_id":"stage-operation"`) {
+			t.Fatal("missing explicit candidate guard", err)
+		}
+	}
+}

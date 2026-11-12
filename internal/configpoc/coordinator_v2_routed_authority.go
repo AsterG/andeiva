@@ -26,8 +26,10 @@ type RoutedReceiptV1 struct {
 type RoutedAuthorityV1 interface {
 	Identity() networkexecutor.OwnedNamespaceIdentity
 	Prepare(context.Context, RoutedActivationBundleV1, *RoutedBaselineV1) (RoutedPreparationV1, error)
+	PrepareBoot(context.Context, RoutedActivationBundleV1, RoutedActivationBundleV1) (RoutedPreparationV1, error)
 	Observe(context.Context) (RoutedReceiptV1, string, error)
 	Match(context.Context, RoutedSelectedPlanV1, string) error
+	Resume(context.Context, RoutedSelectedPlanV1) error
 	Arm(context.Context, RoutedSelectedPlanV1) error
 	Apply(context.Context, RoutedSelectedPlanV1) error
 	Confirm(context.Context, RoutedSelectedPlanV1) error
@@ -44,6 +46,8 @@ type RoutedSelectedPlanV1 struct {
 	previous    RoutedActivationBundleV1
 	target      RoutedActivationBundleV1
 	baseline    *RoutedBaselineV1
+	resolution  string
+	bootRecord  *v2RecoveryRecord
 }
 
 func (p RoutedSelectedPlanV1) Transition() RoutedTransitionV1 { return p.work.Transition }
@@ -64,17 +68,20 @@ func (p RoutedSelectedPlanV1) Valid() bool {
 }
 
 type v2RoutedWork struct {
-	Scope      RoutedWorkScopeV1  `json:"scope"`
-	Baseline   string             `json:"baseline,omitempty"`
-	Version    int                `json:"version"`
-	Lineage    string             `json:"lineage"`
-	Operation  string             `json:"operation_id"`
-	Subject    string             `json:"subject"`
-	Generation uint64             `json:"generation,string"`
-	Lease      string             `json:"lease"`
-	Deadline   time.Time          `json:"deadline"`
-	Cold       bool               `json:"cold"`
-	Transition RoutedTransitionV1 `json:"transition"`
+	Scope        RoutedWorkScopeV1  `json:"scope"`
+	Baseline     string             `json:"baseline,omitempty"`
+	Kind         string             `json:"kind,omitempty"`
+	BootRecord   string             `json:"boot_record,omitempty"`
+	BootBaseline *RoutedBaselineV1  `json:"boot_baseline,omitempty"`
+	Version      int                `json:"version"`
+	Lineage      string             `json:"lineage"`
+	Operation    string             `json:"operation_id"`
+	Subject      string             `json:"subject"`
+	Generation   uint64             `json:"generation,string"`
+	Lease        string             `json:"lease"`
+	Deadline     time.Time          `json:"deadline"`
+	Cold         bool               `json:"cold"`
+	Transition   RoutedTransitionV1 `json:"transition"`
 }
 
 type RoutedWorkScopeV1 struct {
@@ -93,6 +100,11 @@ func validRoutedIdentityV1(identity networkexecutor.OwnedNamespaceIdentity) bool
 }
 
 func (p RoutedSelectedPlanV1) Scope() RoutedWorkScopeV1 { return p.work.Scope }
+func (p RoutedSelectedPlanV1) Resolution() string       { return p.resolution }
+
+func routedWorkUsesNoNetworkV2(p RoutedSelectedPlanV1) bool {
+	return p.work.Kind == OpCommit || p.work.Kind == OpRollback || p.preparation.Before.Version == 2 || p.preparation.Target.Version == 2 || p.preparation.Dependencies.Version == 2
+}
 
 type v2RoutedOwned struct {
 	Version   int     `json:"version"`

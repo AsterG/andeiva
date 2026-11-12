@@ -29,12 +29,24 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 func validFeaturesV2(state v2State) bool {
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature) || feature <= last {
+		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature) || feature <= last {
 			return false
 		}
 		last = feature
 	}
 	if !validGuardDeadlineFeatureV2(state) || !validRoutedFeatureV2(state) {
+		return false
+	}
+	if hasFeatureV2(state, v2RoutedBootFeature) && !hasFeatureV2(state, v2RoutedFeature) {
+		return false
+	}
+	if hasFeatureV2(state, v2RoutedNoNetworkFeature) && !hasFeatureV2(state, v2RoutedBootFeature) {
+		return false
+	}
+	if hasFeatureV2(state, v2OwnedCandidateFeature) && !hasFeatureV2(state, v2RoutedFeature) {
+		return false
+	}
+	if cfg := state.Configuration; cfg != nil && cfg.Intent != nil && cfg.Intent.Kind == v2BootKind && cfg.Intent.Domain == "routed" && !hasFeatureV2(state, v2RoutedBootFeature) {
 		return false
 	}
 	if state.Configuration != nil && (state.Configuration.LastCompletedBoot != "" || (state.Configuration.Intent != nil && state.Configuration.Intent.Kind == v2BootKind)) {
@@ -101,7 +113,11 @@ type startupDeadlineGuardV2 interface {
 
 func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) error {
 	s := c.store
-	if s.reserves != nil {
+	routed := hasFeatureV2(s.state, v2RoutedFeature)
+	if routed && c.options.Routed == nil {
+		return ErrRecovery
+	}
+	if s.reserves != nil && !routed {
 		for _, engine := range c.firewall {
 			if guard, ok := engine.(ActivationGuard); ok {
 				if _, absolute := guard.(startupDeadlineGuardV2); !absolute {
@@ -119,13 +135,16 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 			return ErrRecovery
 		}
 		if *completed.BootID == id {
+			if routed && c.resumeRoutedLockedV2(ctx) != nil {
+				return ErrRecovery
+			}
 			if !c.readback(current) {
 				return ErrRecovery
 			}
 			return nil
 		}
 	}
-	if current.Intent != nil || current.Pending != nil || current.RecoveryRequired || current.LocalServices.Running.Hash != current.LocalServices.Startup.Hash || !c.localReadback(current) {
+	if current.Intent != nil || current.Pending != nil || current.RecoveryRequired || !routed && (current.LocalServices.Running.Hash != current.LocalServices.Startup.Hash || !c.localReadback(current)) {
 		return ErrRecovery
 	}
 	if s.state.Generation == ^uint64(0) || current.Firewall.Generation == ^uint64(0) || s.used.Bytes+s.state.ReservedBytes+2*v2OperationReserveBytes > s.budget.Bytes || s.used.Inodes+s.state.ReservedInodes+2*v2OperationReserveInodes > s.budget.Inodes {
@@ -138,9 +157,11 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	if err != nil {
 		return ErrInvalid
 	}
-	for _, engine := range c.firewall {
-		if engine.Validate(target.Firewall.Running.Config) != nil {
-			return ErrEngine
+	if !routed {
+		for _, engine := range c.firewall {
+			if engine.Validate(target.Firewall.Running.Config) != nil {
+				return ErrEngine
+			}
 		}
 	}
 	if err := c.persistRevisions(target); err != nil {
@@ -161,6 +182,12 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	record := v2RecoveryRecord{Format: v2Format, ID: issued, BootID: &id, Kind: v2BootKind, State: "pending", Previous: previousHash, Target: targetHash, Lineage: s.state.Lineage, Started: c.recoveryNow(), Pinned: true}
 	st := clone(s.state)
 	bootIntent := v2CoordinatorIntent{Operation: issued, Domain: "firewall", Kind: v2BootKind, Previous: previousHash, Target: targetHash, TargetGeneration: st.Generation + 1, Recovery: true, BootID: &id}
+	if routed {
+		bootIntent.Domain = "routed"
+		if err = c.publishRoutedBootWorkV2(ctx, record, current, target, &bootIntent); err != nil {
+			return err
+		}
+	}
 	if s.reserves != nil {
 		if err = s.reserves.prepareBoot(s, &st, &record, bootIntent); err != nil {
 			return err
@@ -171,6 +198,12 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 		return err
 	}
 	addFeatureV2(&st, v2BootFeature)
+	if routed {
+		addFeatureV2(&st, v2RoutedBootFeature)
+		if target.Firewall.Running.Config.SchemaVersion == 4 {
+			addFeatureV2(&st, v2RoutedNoNetworkFeature)
+		}
+	}
 	st.Configuration.LastRecovery = hash
 	st.Configuration.RecoveryIndex, err = c.recoveryIndexPut(st.Configuration.RecoveryIndex, record, hash)
 	if err != nil {
@@ -218,7 +251,7 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	if _, err := c.bootRemainingV2(record); err != nil {
 		return err
 	}
-	if !c.localReadback(target) {
+	if intent.Domain != "routed" && !c.localReadback(target) {
 		return ErrRecovery
 	}
 	// Recheck observed space on resumed work as well. The boot allowance is
@@ -226,84 +259,90 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	if err := s.physicalCapacity(v2OperationReserveBytes, v2OperationReserveInodes); err != nil {
 		return err
 	}
-	for _, engine := range c.firewall {
-		if _, err := c.bootRemainingV2(record); err != nil {
+	if intent.Domain == "routed" {
+		if err := c.applyRoutedBootV2(ctx, record, target); err != nil {
 			return err
 		}
-		if engine.Validate(target.Firewall.Running.Config) != nil {
-			return ErrEngine
+	} else {
+		for _, engine := range c.firewall {
+			if _, err := c.bootRemainingV2(record); err != nil {
+				return err
+			}
+			if engine.Validate(target.Firewall.Running.Config) != nil {
+				return ErrEngine
+			}
+			if _, err := c.bootRemainingV2(record); err != nil {
+				return err
+			}
 		}
-		if _, err := c.bootRemainingV2(record); err != nil {
-			return err
+		for _, engine := range c.firewall {
+			current := engine.Current()
+			if _, err := c.bootRemainingV2(record); err != nil {
+				return err
+			}
+			if current == target.Firewall.Running.Hash {
+				continue
+			}
+			if current == previous.Firewall.Running.Hash {
+				if guard, ok := engine.(ActivationGuard); ok {
+					if c.armBootGuardV2(ctx, guard, record, previous.Firewall.Running, target.Firewall.Running) != nil {
+						return ErrRecovery
+					}
+					if _, err := c.bootRemainingV2(record); err != nil {
+						return err
+					}
+					if engine.Apply(ctx, target.Firewall.Running) != nil || engine.Current() != target.Firewall.Running.Hash {
+						return ErrRecovery
+					}
+				} else {
+					if _, err := c.bootRemainingV2(record); err != nil {
+						return err
+					}
+					if engine.Apply(ctx, target.Firewall.Running) != nil {
+						return ErrEngine
+					}
+				}
+			} else if bootstrap, ok := engine.(startupBootstrapV2); ok {
+				if s.reserves != nil {
+					return ErrRecovery
+				}
+				if _, err := c.bootRemainingV2(record); err != nil {
+					return err
+				}
+				if bootstrap.BootstrapStartup(ctx, record.ID, target.Firewall.Running) != nil {
+					return ErrRecovery
+				}
+			} else {
+				return ErrRecovery
+			}
+			if err := c.point("after_boot_engine"); err != nil {
+				return err
+			}
+			if _, err := c.bootRemainingV2(record); err != nil {
+				return err
+			}
 		}
-	}
-	for _, engine := range c.firewall {
-		current := engine.Current()
-		if _, err := c.bootRemainingV2(record); err != nil {
-			return err
+		if !c.readback(target) {
+			return ErrRecovery
 		}
-		if current == target.Firewall.Running.Hash {
-			continue
-		}
-		if current == previous.Firewall.Running.Hash {
-			if guard, ok := engine.(ActivationGuard); ok {
+		for _, engine := range c.firewall {
+			if _, err := c.bootRemainingV2(record); err != nil {
+				return err
+			}
+			if bootstrap, ok := engine.(startupBootstrapV2); ok && s.reserves == nil {
+				if bootstrap.ConfirmStartup(ctx, record.ID, previous.Firewall.Running, target.Firewall.Running) != nil {
+					return ErrRecovery
+				}
+			} else if guard, ok := engine.(ActivationGuard); ok {
 				if c.armBootGuardV2(ctx, guard, record, previous.Firewall.Running, target.Firewall.Running) != nil {
 					return ErrRecovery
 				}
 				if _, err := c.bootRemainingV2(record); err != nil {
 					return err
 				}
-				if engine.Apply(ctx, target.Firewall.Running) != nil || engine.Current() != target.Firewall.Running.Hash {
+				if guard.Confirm(ctx, record.ID, target.Firewall.Running.Hash) != nil {
 					return ErrRecovery
 				}
-			} else {
-				if _, err := c.bootRemainingV2(record); err != nil {
-					return err
-				}
-				if engine.Apply(ctx, target.Firewall.Running) != nil {
-					return ErrEngine
-				}
-			}
-		} else if bootstrap, ok := engine.(startupBootstrapV2); ok {
-			if s.reserves != nil {
-				return ErrRecovery
-			}
-			if _, err := c.bootRemainingV2(record); err != nil {
-				return err
-			}
-			if bootstrap.BootstrapStartup(ctx, record.ID, target.Firewall.Running) != nil {
-				return ErrRecovery
-			}
-		} else {
-			return ErrRecovery
-		}
-		if err := c.point("after_boot_engine"); err != nil {
-			return err
-		}
-		if _, err := c.bootRemainingV2(record); err != nil {
-			return err
-		}
-	}
-	if !c.readback(target) {
-		return ErrRecovery
-	}
-	for _, engine := range c.firewall {
-		if _, err := c.bootRemainingV2(record); err != nil {
-			return err
-		}
-		if bootstrap, ok := engine.(startupBootstrapV2); ok && s.reserves == nil {
-			if bootstrap.ConfirmStartup(ctx, record.ID, previous.Firewall.Running, target.Firewall.Running) != nil {
-				return ErrRecovery
-			}
-		} else if guard, ok := engine.(ActivationGuard); ok {
-			if c.armBootGuardV2(ctx, guard, record, previous.Firewall.Running, target.Firewall.Running) != nil {
-				return ErrRecovery
-			}
-			if _, err := c.bootRemainingV2(record); err != nil {
-				return err
-			}
-			if guard.Confirm(ctx, record.ID, target.Firewall.Running.Hash) != nil {
-				return ErrRecovery
 			}
 		}
 	}
@@ -339,6 +378,9 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	}
 	st := clone(s.state)
 	st.Configuration = &target
+	if intent.Domain == "routed" {
+		st.RoutedActive = &v2RoutedActive{Work: intent.RoutedWork, Side: "target"}
+	}
 	st.Generation = intent.TargetGeneration
 	if st.SystemBundle != nil {
 		st.SystemBundle.CanonicalHeld = true
@@ -397,13 +439,24 @@ func (c *v2Coordinator) armBootGuardV2(ctx context.Context, guard ActivationGuar
 }
 
 func bootTargetV2(previous v2Configuration) (v2Configuration, error) {
-	if !validV2Configuration(&previous) || previous.Intent != nil || previous.Pending != nil || previous.RecoveryRequired || previous.Firewall.Generation == ^uint64(0) || previous.LocalServices.Running.Hash != previous.LocalServices.Startup.Hash {
+	routed := previous.Running.Config.SchemaVersion == 7
+	if !validV2Configuration(&previous) || previous.Intent != nil || previous.Pending != nil || previous.RecoveryRequired || previous.Firewall.Generation == ^uint64(0) || !routed && previous.LocalServices.Running.Hash != previous.LocalServices.Startup.Hash {
 		return v2Configuration{}, ErrRecovery
 	}
 	target := clone(previous)
 	target.Firewall.Running = target.Firewall.Startup
 	target.Firewall.LastGood = target.Firewall.Startup
 	target.Firewall.Generation++
+	if routed {
+		changed := target.LocalServices.Running.Hash != target.LocalServices.Startup.Hash || target.LocalServices.LastGood.Hash != target.LocalServices.Startup.Hash
+		if changed && target.LocalServices.Generation == ^uint64(0) {
+			return v2Configuration{}, errV2Limited
+		}
+		target.LocalServices.Running, target.LocalServices.LastGood = target.LocalServices.Startup, target.LocalServices.Startup
+		if changed {
+			target.LocalServices.Generation++
+		}
+	}
 	if err := target.refresh(); err != nil {
 		return v2Configuration{}, err
 	}

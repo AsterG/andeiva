@@ -30,6 +30,7 @@ func NewRoutedAuthority(kernel routedactivation.Kernel, network routedactivation
 	a := &RoutedAuthority{identity: identity}
 	options.ResolvePlan = a.resolveSelected
 	options.ResolveBaseline = a.resolveBaseline
+	options.ResolveRecoveredIdle = a.resolveRecoveredIdle
 	engine, err := routedactivation.New(kernel, network, listeners, options)
 	if err != nil {
 		return nil, err
@@ -52,6 +53,55 @@ func (a *RoutedAuthority) resolveBaseline(ctx context.Context, target configpoc.
 		return routedactivation.BaselineV1{}, configpoc.ErrRecovery
 	}
 	return routedactivation.BaselineV1{Saved: baseline.Saved, Owned: baseline.Owned, Dependencies: baseline.Dependencies}, nil
+}
+
+func (a *RoutedAuthority) resolveRecoveredIdle(ctx context.Context, transition configpoc.RoutedTransitionV1, deadline time.Time) (nftguardian.RecoveredIdleV1, error) {
+	a.mu.Lock()
+	p := a.selected
+	a.mu.Unlock()
+	if ctx.Err() != nil || !p.Valid() || p.Scope().Identity != a.identity || p.Transition() != transition || !p.Deadline().Equal(deadline) {
+		return nftguardian.RecoveredIdleV1{}, configpoc.ErrRecovery
+	}
+	previous, target := p.Bundles()
+	witness := nftguardian.RecoveredIdleV1{Plan: transition, Deadline: deadline, Scope: a.identity}
+	switch p.Resolution() {
+	case "before":
+		witness.Bundle = previous
+		witness.OwnedRef = transition.BeforeOwned
+		witness.Finality = nftguardian.BeforeRestored
+	case "target":
+		witness.Bundle = &target
+		witness.OwnedRef = transition.TargetOwned
+		witness.Finality = nftguardian.TargetConfirmed
+	default:
+		return nftguardian.RecoveredIdleV1{}, configpoc.ErrRecovery
+	}
+	return witness, nil
+}
+
+func (a *RoutedAuthority) Resume(ctx context.Context, p configpoc.RoutedSelectedPlanV1) error {
+	if p.Resolution() != "before" && p.Resolution() != "target" {
+		return configpoc.ErrRecovery
+	}
+	if err := a.install(p); err != nil {
+		return err
+	}
+	state, _, err := a.group.SnapshotObserved()
+	_, selectedTarget := p.Bundles()
+	confirmedReceipt := p.Resolution() == "target" && state.ID == p.Lease() && state.Target == selectedTarget.Composite.Hash && state.Deadline.Equal(p.Deadline())
+	if err == nil && state.Phase == "idle" && (state.ID == "" || confirmedReceipt) && a.Match(ctx, p, p.Resolution()) == nil {
+		return nil
+	}
+	// A selected recovery intent may already have reconstructed and restored
+	// this engine. Final publication now supplies the missing idle witness.
+	if err = a.group.RecoverIdle(ctx, p.Transition()); err == nil {
+		return nil
+	}
+	previous, target := p.Bundles()
+	if err = a.engine.RecoverPlan(ctx, p.Transition(), previous, target, p.Deadline(), p.Scope().Identity); err != nil {
+		return err
+	}
+	return a.group.RecoverIdle(ctx, p.Transition())
 }
 
 func (a *RoutedAuthority) resolveSelected(ctx context.Context, transition configpoc.RoutedTransitionV1, previous *configpoc.RoutedActivationBundleV1, target configpoc.RoutedActivationBundleV1, deadline time.Time) (routedactivation.PreparationV1, error) {
@@ -88,6 +138,17 @@ func (a *RoutedAuthority) Prepare(ctx context.Context, target configpoc.RoutedAc
 	a.baseline = baseline
 	a.mu.Unlock()
 	value, err := a.engine.Prepare(ctx, target)
+	return configpoc.RoutedPreparationV1{Before: value.Before, Target: value.Target, Dependencies: value.Dependencies}, err
+}
+
+func (a *RoutedAuthority) PrepareBoot(ctx context.Context, target, saved configpoc.RoutedActivationBundleV1) (configpoc.RoutedPreparationV1, error) {
+	engine, ok := any(a.engine).(interface {
+		PrepareColdBoot(context.Context, configpoc.RoutedActivationBundleV1, configpoc.RoutedActivationBundleV1) (routedactivation.PreparationV1, error)
+	})
+	if !ok {
+		return configpoc.RoutedPreparationV1{}, configpoc.ErrRecovery
+	}
+	value, err := engine.PrepareColdBoot(ctx, target, saved)
 	return configpoc.RoutedPreparationV1{Before: value.Before, Target: value.Target, Dependencies: value.Dependencies}, err
 }
 
@@ -156,7 +217,16 @@ func (a *RoutedAuthority) Confirm(ctx context.Context, p configpoc.RoutedSelecte
 func (a *RoutedAuthority) Recover(ctx context.Context, p configpoc.RoutedSelectedPlanV1) error {
 	state, err := a.receipt(ctx, p)
 	if err != nil {
-		return err
+		if p.Resolution() != "recovery-before" {
+			return err
+		}
+		previous, target := p.Bundles()
+		if err = a.engine.RecoverPlan(ctx, p.Transition(), previous, target, p.Deadline(), p.Scope().Identity); err != nil {
+			return err
+		}
+		// Recovery is already selected but not final. Restore its exact before
+		// image; do not manufacture an idle/finality witness before publication.
+		return a.engine.RestoreOwned(ctx, p.Transition().BeforeOwned)
 	}
 	return a.group.RecoverLease(p.Transition(), state)
 }
@@ -168,5 +238,17 @@ func (a *RoutedAuthority) Bootstrap(ctx context.Context, p configpoc.RoutedSelec
 		return configpoc.ErrRecovery
 	}
 	_, target := p.Bundles()
+	state, current, err := a.group.SnapshotObserved()
+	if err == nil && state.ID == p.Lease() && state.Target == target.Composite.Hash && state.Previous == "" && state.Deadline.Equal(p.Deadline()) {
+		switch state.Phase {
+		case "pending", "idle":
+			if current == target.Composite.Hash && a.engine.MatchOwned(ctx, p.Transition().TargetOwned) == nil {
+				return nil
+			}
+		case "armed":
+			return a.group.ApplyLease(ctx, p.Transition(), target, state)
+		}
+		return configpoc.ErrRecovery
+	}
 	return a.group.BootstrapStartup(ctx, p.Transition(), target, started)
 }

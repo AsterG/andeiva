@@ -53,9 +53,10 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 		}
 		if capsule.Intent.RoutedWork != "" {
 			plan, err := loadRoutedWorkV2(capsule.Intent.RoutedWork, state.Lineage, load)
-			if err != nil || !hasFeatureV2(state, v2RoutedFeature) || validateRoutedWorkIntentV2(&capsule.Intent, plan, load) != nil {
+			if err != nil || !hasFeatureV2(state, v2RoutedFeature) || plan.work.Kind == v2BootKind && !hasFeatureV2(state, v2RoutedBootFeature) || validateRoutedWorkIntentV2(&capsule.Intent, plan, load) != nil {
 				return errV2Unavailable
 			}
+			if routedWorkUsesNoNetworkV2(plan)&&!hasFeatureV2(state,v2RoutedNoNetworkFeature){return errV2Unavailable}
 		}
 	}
 	if validateArchiveGuardDeadlinesV2(archive, state, load) != nil {
@@ -72,6 +73,12 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 		}
 		if !archiveMatchesBundleV2(archive, record.Reserve, false) || len(archive.UnusedEscrow) != 0 {
 			return errV2Unavailable
+		}
+		if record.Reserve != nil && record.Reserve.PlanIntent != nil && record.Reserve.PlanIntent.RoutedWork != "" {
+			plan, err := loadRoutedWorkV2(record.Reserve.PlanIntent.RoutedWork, state.Lineage, load)
+			if err != nil || !routedBootRecordMatchesV2(plan, record) {
+				return errV2Unavailable
+			}
 		}
 		return nil
 	}

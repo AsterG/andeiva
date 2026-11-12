@@ -138,7 +138,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if !(h.preparedOperations != nil && r.URL.Path == "/api/v2/config/operations" && r.Method == http.MethodGet) && r.URL.Path != "/api/v1/firewall/history" && r.URL.Path != "/api/v1/firewall/traffic" && r.URL.Path != "/api/v1/local-services/history" && r.URL.Path != "/api/v1/effective-policies" && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
+	if !(h.preparedOperations != nil && (r.URL.Path == "/api/v2/config/operations" || r.URL.Path == "/api/v2/config/audit") && r.Method == http.MethodGet) && r.URL.Path != "/api/v1/firewall/history" && r.URL.Path != "/api/v1/firewall/traffic" && r.URL.Path != "/api/v1/local-services/history" && r.URL.Path != "/api/v1/effective-policies" && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
 		h.fail(w, 400, "ANDEIVA_REQUEST_INVALID")
 		return
 	}

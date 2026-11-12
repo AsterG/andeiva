@@ -115,7 +115,7 @@ func (s *ServiceV2) AdmitObserved(binding adminauth.SessionBinding, namespace st
 		// Revoke has a reserved union member but no D execution implementation.
 		// Do not reserve an operation that this prepared adapter cannot execute.
 		switch request.Kind {
-		case OpStage, OpValidate, OpCommit, OpConfirm, OpSave, OpRollback, OpRecover:
+		case OpStage, OpReplaceCandidate, OpDiscardCandidate, OpValidate, OpCommit, OpConfirm, OpSave, OpRollback, OpRecover:
 		default:
 			return errV2Invalid
 		}

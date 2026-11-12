@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/adminauth"
 )
@@ -16,13 +17,29 @@ type RoutedEffectiveV2 struct {
 }
 
 func (s *ServiceV2) RoutedEffective(ctx context.Context, binding adminauth.SessionBinding) (RoutedEffectiveV2, error) {
+	if ctx == nil {
+		return RoutedEffectiveV2{}, ErrInvalid
+	}
 	p, err := s.principal(binding)
 	if err != nil {
 		return RoutedEffectiveV2{}, err
 	}
 	c := s.coordinator
-	c.store.mu.Lock()
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	for !c.store.mu.TryLock() {
+		timer := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return RoutedEffectiveV2{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	defer c.store.mu.Unlock()
+	if ctx.Err() != nil {
+		return RoutedEffectiveV2{}, ctx.Err()
+	}
 	if c.closed || c.store.blocked || c.options.Routed == nil || !hasFeatureV2(c.store.state, v2RoutedFeature) {
 		return RoutedEffectiveV2{}, errV2Unavailable
 	}
