@@ -89,10 +89,24 @@ func (s *v2Store) closeNamespace(subject, id string, now time.Time) error {
 			}
 		}
 	}
+	restore, err := s.releasedAllowance(&st)
+	if err != nil {
+		return err
+	}
+	defer restore()
 	return s.publish(st)
 }
 
 func (s *v2Store) withoutEffects(st *v2State, op v2Operation, code string, now time.Time) error {
+	if st == nil || op.State != "accepted" {
+		return errV2Invalid
+	}
+	v2Release(st, op)
+	restore, err := s.releasedAllowance(st)
+	if err != nil {
+		return err
+	}
+	defer restore()
 	completed := now.UTC()
 	until := completed.Add(30 * 24 * time.Hour)
 	audit, err := s.object(struct{ Format, Operation, Code string }{v2Format, op.ID, code})
@@ -108,7 +122,6 @@ func (s *v2Store) withoutEffects(st *v2State, op v2Operation, code string, now t
 		result = "rejected"
 	}
 	op.Outcome = &v2Outcome{Code: result, ErrorCode: code, Generation: st.Generation, AuditHash: audit}
-	v2Release(st, op)
 	return s.putOperation(st, op)
 }
 
@@ -139,6 +152,11 @@ func (s *v2Store) expire(now time.Time) error {
 		return nil
 	}
 	st.Clock = now.UTC()
+	restore, err := s.releasedAllowance(&st)
+	if err != nil {
+		return err
+	}
+	defer restore()
 	return s.publish(st)
 }
 
@@ -167,6 +185,11 @@ func (s *v2Store) releasePin(subject, id, reconciliation string, now time.Time) 
 	st := clone(s.state)
 	op.Pinned = false
 	v2Release(&st, op)
+	restore, err := s.releasedAllowance(&st)
+	if err != nil {
+		return err
+	}
+	defer restore()
 	st.Clock = now.UTC()
 	if err = s.putOperation(&st, op); err != nil {
 		s.blocked = true
@@ -279,4 +302,15 @@ func (s *v2Store) retireSubjectRecord(id string, now time.Time) error {
 	st.Subjects = append(st.Subjects[:i], st.Subjects[i+1:]...)
 	st.Clock = now.UTC()
 	return s.publish(st)
+}
+
+// A locked finalization may spend reservations released by that same proposed
+// state, including its selector publication. Other operations remain reserved.
+func (s *v2Store) releasedAllowance(st *v2State) (func(), error) {
+	if st == nil || st.ReservedBytes > s.state.ReservedBytes || st.ReservedInodes > s.state.ReservedInodes || !v2ValidState(*st) {
+		return nil, errV2Invalid
+	}
+	previous := s.allowance
+	s.allowance = v2Budget{Bytes: s.state.ReservedBytes - st.ReservedBytes, Inodes: s.state.ReservedInodes - st.ReservedInodes}
+	return func() { s.allowance = previous }, nil
 }
