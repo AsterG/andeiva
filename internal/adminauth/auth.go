@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/authobservations"
 )
 
 var (
@@ -61,6 +63,7 @@ type Manager struct {
 	failed       bool
 	denialWindow time.Time
 	denials      int
+	observations *authobservations.Store
 }
 
 var username = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
@@ -124,6 +127,9 @@ func (m *Manager) Login(name, credential string) (Identity, string, error) {
 // header or user-supplied identity. Storage/audit failures still fail closed.
 func (m *Manager) LoginFrom(source netip.Addr, name, credential string) (Identity, string, error) {
 	if !validLoginSource(source) {
+		if m.observations != nil {
+			m.observations.Record(netip.Addr{})
+		}
 		return Identity{}, "", ErrDenied
 	}
 	return m.login(source.Unmap(), name, credential, false)
@@ -140,19 +146,32 @@ func (m *Manager) login(source netip.Addr, name, credential string, legacy bool)
 	// must also obey the verified gate below; this entry point cannot create
 	// another verified-login allowance. Network transports use LoginFrom.
 	if legacy && !m.admission.anonymous.allow(now) {
+		if m.observations != nil {
+			m.observations.Record(source)
+		}
 		return Identity{}, "", ErrLimited
 	}
 	known, valid := m.credential(name, credential)
 	if !valid {
+		if m.observations != nil {
+			m.observations.Record(source)
+		}
 		if !legacy && !m.admission.allowAnonymous(source, now) {
 			return Identity{}, "", ErrLimited
 		}
-		if err := m.record("unknown", "login", "denied"); err != nil {
-			return Identity{}, "", err
+		if m.observations == nil {
+			if err := m.record("unknown", "login", "denied"); err != nil {
+				return Identity{}, "", err
+			}
 		}
 		return Identity{}, "", ErrDenied
 	}
 	if !m.admission.verified.allow(now) {
+		if m.observations != nil {
+			if err := m.record(name, "login", "limited"); err != nil {
+				return Identity{}, "", err
+			}
+		}
 		return Identity{}, "", ErrLimited
 	}
 	for key, s := range m.sessions {
@@ -161,6 +180,11 @@ func (m *Manager) login(source netip.Addr, name, credential string, legacy bool)
 		}
 	}
 	if len(m.sessions) >= 32 {
+		if m.observations != nil {
+			if err := m.record(name, "login", "limited"); err != nil {
+				return Identity{}, "", err
+			}
+		}
 		return Identity{}, "", ErrLimited
 	}
 	token, err := randomSecret()

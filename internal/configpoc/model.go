@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AsterG/andeiva/internal/localpolicy"
+	"github.com/AsterG/andeiva/internal/routedmodel"
 )
 
 var (
@@ -89,6 +90,7 @@ type Config struct {
 	DefaultAction string              `json:"default_action"`
 	Rules         []Rule              `json:"rules"`
 	LocalServices *localpolicy.Config `json:"local_services,omitempty"`
+	Routed        *routedmodel.Policy `json:"routed,omitempty"`
 }
 type Revision struct {
 	Hash   string `json:"hash"`
@@ -172,6 +174,9 @@ type Options struct {
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 
 func Canonical(config Config) (Revision, error) {
+	if config.Routed != nil {
+		return Revision{}, ErrInvalid
+	}
 	if (config.SchemaVersion != 1 && config.SchemaVersion != 2 && config.SchemaVersion != 3 && config.SchemaVersion != 4) || config.DefaultAction != "deny" || len(config.Rules) > 64 {
 		return Revision{}, ErrInvalid
 	}
@@ -203,6 +208,26 @@ func Canonical(config Config) (Revision, error) {
 		seen[rule.ID] = true
 	}
 	config.Rules = clone(append([]Rule{}, config.Rules...))
+	return configRevision(config)
+}
+
+// CanonicalRouted validates a prepared routed transaction envelope. Existing
+// journal, API and engine consumers deliberately continue to reject schema 6
+// through Canonical until their versioned activation is qualified.
+func CanonicalRouted(config Config) (Revision, error) {
+	if config.SchemaVersion != 6 || config.DefaultAction != "deny" || len(config.Rules) != 0 || config.LocalServices != nil || config.Routed == nil {
+		return Revision{}, ErrInvalid
+	}
+	routed, err := routedmodel.Canonical(*config.Routed)
+	if err != nil {
+		return Revision{}, ErrInvalid
+	}
+	config.Rules = []Rule{}
+	config.Routed = &routed.Policy
+	return configRevision(config)
+}
+
+func configRevision(config Config) (Revision, error) {
 	data, err := json.Marshal(config)
 	if err != nil {
 		return Revision{}, ErrInvalid
