@@ -202,6 +202,9 @@ func v2ValidState(st v2State) bool {
 	if (st.HighWater == 0) != (st.Index == "") || (st.Migration != "" && !v2HashPattern.MatchString(st.Migration)) {
 		return false
 	}
+	if st.Configuration != nil && !validV2Configuration(st.Configuration) {
+		return false
+	}
 	ids, logins := map[string]bool{}, map[string]bool{}
 	for _, sub := range st.Subjects {
 		if sub.ID == "" || len(sub.ID) > 128 || sub.Login == "" || len(sub.Login) > 128 || !v2HashPattern.MatchString(sub.CredentialRevision) || ids[sub.ID] || (!sub.Retired && logins[sub.Login]) {
@@ -324,31 +327,39 @@ func (s *v2Store) object(value any) (string, error) {
 }
 
 func (s *v2Store) readSelection() error {
+	// Decode into fresh values: omitted optional fields must not survive a
+	// reconciliation read into a previously populated in-memory selection.
+	var selector v2Selector
+	var selection v2Selection
+	var selectedState v2State
 	data, err := checkpointRead(s.root, "selected.json", 4096)
-	if err != nil || checkpointDecode(data, &s.selector) != nil || s.selector.Format != v2Format {
+	if err != nil || checkpointDecode(data, &selector) != nil || selector.Format != v2Format {
 		return errV2Unavailable
 	}
-	if err = s.readObject(s.selector.Current, &s.selection); err != nil {
+	if err = s.readObject(selector.Current, &selection); err != nil {
 		return err
 	}
-	if s.selection.Format != v2Format || s.selection.Sequence == 0 || s.selection.Segment == 0 || s.selection.Segment > 64 || s.selection.Previous != s.selector.Previous {
+	if !v2ValidSelection(selection) || selection.Previous != selector.Previous {
 		return errV2Unavailable
 	}
-	if err = s.readObject(s.selection.State, &s.state); err != nil || !v2ValidState(s.state) || s.state.Lineage != s.selection.Lineage {
+	if err = s.readObject(selection.State, &selectedState); err != nil || !v2ValidState(selectedState) || selectedState.Lineage != selection.Lineage {
 		return errV2Unavailable
 	}
 	// Verify the bounded active delta segment and previous complete selection.
-	current := s.selection
+	current := selection
 	for i := uint64(1); current.Previous != "" && i <= 64; i++ {
 		var prior v2Selection
-		if err = s.readObject(current.Previous, &prior); err != nil || prior.Format != v2Format || prior.Lineage != current.Lineage || prior.Sequence+1 != current.Sequence {
+		if err = s.readObject(current.Previous, &prior); err != nil || !v2ValidSelection(prior) || prior.Lineage != current.Lineage || prior.Sequence+1 != current.Sequence {
 			return errV2Unavailable
 		}
 		var state v2State
-		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) {
+		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage {
 			return errV2Unavailable
 		}
 		if current.Checkpoint {
+			if prior.Segment != 64 {
+				return errV2Unavailable
+			}
 			break
 		}
 		if prior.Segment+1 != current.Segment {
@@ -356,16 +367,30 @@ func (s *v2Store) readSelection() error {
 		}
 		current = prior
 	}
-	if s.state.Index != "" {
+	if selectedState.Index != "" {
 		var page v2Page
-		if s.readObject(s.state.Index, &page) != nil || !v2ValidPage(page, 2) {
+		if s.readObject(selectedState.Index, &page) != nil || !v2ValidPage(page, 2) {
 			return errV2Unavailable
 		}
 	}
-	if s.state.Migration != "" && s.validateMigration() != nil {
+	reader := &v2Store{root: s.root, state: selectedState}
+	if selectedState.Migration != "" && reader.validateMigration() != nil {
 		return errV2Unavailable
 	}
+	s.selector = selector
+	s.selection = selection
+	s.state = selectedState
 	return nil
+}
+
+func v2ValidSelection(selection v2Selection) bool {
+	if selection.Format != v2Format || selection.Sequence == 0 || selection.Segment == 0 || selection.Segment > 64 {
+		return false
+	}
+	if selection.Sequence == 1 {
+		return selection.Previous == "" && selection.Segment == 1 && !selection.Checkpoint
+	}
+	return selection.Previous != "" && selection.Checkpoint == (selection.Segment == 1)
 }
 
 func (s *v2Store) publish(state v2State) (result error) {

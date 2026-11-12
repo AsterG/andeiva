@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — internal composite transaction coordinator
+
+- Coordinate firewall changes against durable operations with atomic outcome/state/audit selection and verified component readback.
+- Preserve independent domain projections, explicit Startup, confirmed-commit recovery and verified rollback targets.
+- Add simulated-engine interruption and endurance tests; runtime activation and administrative transport integration remain disabled.
+
 ## Unreleased — custom CA platform safety
 
 - Reject custom CA files before filesystem access on platforms without a qualified
