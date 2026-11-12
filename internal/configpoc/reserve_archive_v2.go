@@ -60,10 +60,11 @@ func validateReserveArchiveV2(archive v2ReserveArchive) error {
 	seen := map[string]bool{}
 	roles := map[string]map[recoveryreserve.RoleV2]bool{}
 	ownerWork := map[string]string{}
+	ownerScope := map[string]string{}
 	work := map[string]bool{}
 	payload := 0
 	previous = ""
-	var subject, domain, lease string
+	var subject, domain, origin, lease string
 	var deadline time.Time
 	for _, entry := range archive.Entries {
 		key, err := reserveClaimKeyV2(entry.Claim)
@@ -106,12 +107,25 @@ func validateReserveArchiveV2(archive v2ReserveArchive) error {
 			return errV2Invalid
 		}
 		ownerWork[owner] = id
+		invariant := scope
+		invariant.Origin, invariant.Lease, invariant.Deadline = "", "", time.Time{}
+		invariantHash, err := invariant.Hash()
+		if err != nil || (ownerScope[owner] != "" && ownerScope[owner] != invariantHash) {
+			return errV2Invalid
+		}
+		ownerScope[owner] = invariantHash
 		if domain != "" && (domain != scope.Domain || subject != scope.Subject) {
 			return errV2Invalid
 		}
 		domain, subject = scope.Domain, scope.Subject
 		if id == archive.Child && scope.Origin != archive.Origin {
 			return errV2Invalid
+		}
+		if scope.Origin != "" {
+			if origin != "" && origin != scope.Origin {
+				return errV2Invalid
+			}
+			origin = scope.Origin
 		}
 		if scope.Lease != "" {
 			if lease != "" && (lease != scope.Lease || !deadline.Equal(scope.Deadline)) {

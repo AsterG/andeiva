@@ -188,4 +188,69 @@ func TestReserveArchiveV2CountsSerializedEnvelope(t *testing.T) {
 	if _, _, err := encodeReserveArchiveV2(archive); err != errV2Limited {
 		t.Fatalf("serialized limit was not enforced: %v", err)
 	}
+	s, _, _, _ := v2Fixture(t, v2MaximumOperations)
+	defer s.close()
+	hash, err := s.object(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := archive.Entries[0]
+	key, err := reserveIdentityKeyV2(expected, "binding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := s.reserveArchiveInsertV2("", 0, "", v2ReserveArchiveRef{Key: key, Archive: hash, Owner: expected.Claim.Owner, Role: expected.Claim.Role, Kind: "binding"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.reserveArchiveLookupV2(root, expected, "binding"); err == nil || found || !s.blocked {
+		t.Fatal("oversized archive lookup did not refuse and fence")
+	}
+}
+
+func TestReserveArchiveV2RejectsContradictoryOwnerScope(t *testing.T) {
+	for _, field := range []string{"namespace", "fingerprint", "global", "generation"} {
+		t.Run(field, func(t *testing.T) {
+			archive := reserveArchiveFixtureV2(t, "bundle")
+			scope := archive.Entries[0].Scope
+			switch field {
+			case "namespace":
+				scope.Namespace = "foreign"
+			case "fingerprint":
+				scope.Fingerprint = strings.Repeat("f", 64)
+			case "global":
+				scope.Global++
+			case "generation":
+				scope.Generation++
+			}
+			var err error
+			archive.Entries[0].Binding.ScopeHash, err = scope.Hash()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := encodeReserveArchiveV2(archive); err == nil {
+				t.Fatal("contradictory owner scope accepted")
+			}
+		})
+	}
+}
+
+func TestReserveArchiveV2SharedPrefixWriteBudget(t *testing.T) {
+	s, _, _, _ := v2Fixture(t, v2MaximumOperations)
+	defer s.close()
+	root := ""
+	for i := 0; i < 65; i++ {
+		// Synthetic semantic keys exercise the worst valid prefix split without
+		// claiming that a generated binding has this adversarial SHA-256 prefix.
+		key := strings.Repeat("0", 15) + fmt.Sprintf("%x%048x", i%16, i)
+		before := s.used.Inodes
+		var err error
+		root, err = s.reserveArchiveInsertV2(root, 0, "", v2ReserveArchiveRef{Key: key, Archive: strings.Repeat("a", 64), Owner: "bundle", Role: recoveryreserve.PlanV2, Kind: "binding"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if delta := s.used.Inodes - before; delta > 128 {
+			t.Fatalf("archive insertion exceeded reserved node budget: %d", delta)
+		}
+	}
 }

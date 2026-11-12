@@ -151,16 +151,40 @@ func (s *v2Store) reserveArchiveInsertV2(root string, depth int, prefix string, 
 	if depth == v2VerifiedDepthLimit {
 		return "", errV2Limited
 	}
-	branch := v2ReserveArchiveNode{Format: v2Format, Depth: depth, Kind: "branch"}
-	for _, item := range node.Entries {
-		digit := archiveDigitV2(item.Key, depth)
-		child, err := s.reserveArchiveInsertV2(branch.Children[digit], depth+1, item.Key[:depth+1], item)
+	return s.reserveArchiveBuildV2(depth, prefix, node.Entries)
+}
+
+// Build each partition once. Reinserting each entry through every shared
+// prefix would multiply COW writes beyond the reserved closing budget.
+func (s *v2Store) reserveArchiveBuildV2(depth int, prefix string, entries []v2ReserveArchiveRef) (string, error) {
+	if len(entries) == 0 || depth < 0 || depth > v2VerifiedDepthLimit || len(prefix) != depth {
+		return "", errV2Invalid
+	}
+	node := v2ReserveArchiveNode{Format: v2Format, Depth: depth, Kind: "leaf", Entries: entries}
+	if len(entries) <= v2VerifiedLeafLimit {
+		if !validReserveArchiveNodeV2(node, depth, prefix) {
+			return "", errV2Invalid
+		}
+		return s.object(node)
+	}
+	if depth == v2VerifiedDepthLimit {
+		return "", errV2Limited
+	}
+	node.Kind, node.Entries = "branch", nil
+	for start := 0; start < len(entries); {
+		digit := archiveDigitV2(entries[start].Key, depth)
+		end := start + 1
+		for end < len(entries) && archiveDigitV2(entries[end].Key, depth) == digit {
+			end++
+		}
+		child, err := s.reserveArchiveBuildV2(depth+1, entries[start].Key[:depth+1], entries[start:end])
 		if err != nil {
 			return "", err
 		}
-		branch.Children[digit] = child
+		node.Children[digit] = child
+		start = end
 	}
-	return s.object(branch)
+	return s.object(node)
 }
 
 // Every lookup validates its contextual identity against the archived bytes;
@@ -187,9 +211,9 @@ func (s *v2Store) reserveArchiveLookupV2(root string, expected v2ReserveArchiveE
 		if ref.Owner != expected.Claim.Owner || ref.Role != expected.Claim.Role || ref.Kind != kind {
 			return v2ReserveArchive{}, false, errV2Unavailable
 		}
-		var archive v2ReserveArchive
-		if s.readObject(ref.Archive, &archive) != nil || validateReserveArchiveV2(archive) != nil {
-			return v2ReserveArchive{}, false, errV2Unavailable
+		archive, err := s.readReserveArchiveV2(ref.Archive)
+		if err != nil {
+			return v2ReserveArchive{}, false, err
 		}
 		for _, entry := range archive.Entries {
 			if entry.Claim != expected.Claim {
@@ -203,4 +227,23 @@ func (s *v2Store) reserveArchiveLookupV2(root string, expected v2ReserveArchiveE
 		return v2ReserveArchive{}, false, errV2Unavailable
 	}
 	return v2ReserveArchive{}, false, nil
+}
+
+func (s *v2Store) readReserveArchiveV2(hash string) (v2ReserveArchive, error) {
+	name, err := v2ObjectName(hash)
+	if err != nil {
+		s.blocked = true
+		return v2ReserveArchive{}, errV2Unavailable
+	}
+	data, err := checkpointRead(s.root, name, reserveArchiveLimitV2)
+	if err != nil || checkpointDigest(data) != hash {
+		s.blocked = true
+		return v2ReserveArchive{}, errV2Unavailable
+	}
+	archive, err := decodeReserveArchiveV2(data)
+	if err != nil {
+		s.blocked = true
+		return v2ReserveArchive{}, errV2Unavailable
+	}
+	return archive, nil
 }
