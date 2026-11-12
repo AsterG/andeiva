@@ -13,7 +13,7 @@ var errReserveAnchorV2 = errors.New("ANDEIVA_RESERVE_ARCHIVE_ANCHOR_PENDING")
 // Store.mu and the existing directory writer flock remain held throughout.
 func (s *v2Store) closedReserveSelectionsV2(archive v2ReserveArchive) (recoveryreserve.SelectionProofV2, recoveryreserve.SelectionProofV2, error) {
 	var current, previous recoveryreserve.SelectionProofV2
-	data, err := checkpointRead(s.root, "selected.json", 4096)
+	data, err := s.readRecordV2("selected.json", 4096)
 	var selector v2Selector
 	if err != nil || checkpointDecode(data, &selector) != nil || selector != s.selector || selector.Previous == "" {
 		return current, previous, ErrRecovery
@@ -67,7 +67,7 @@ func (s *v2Store) closedReserveSelectionsV2(archive v2ReserveArchive) (recoveryr
 	}
 	// Never qualify a pair read across a selector replacement, including a
 	// caller violating the writer-lease contract outside this process.
-	again, e := checkpointRead(s.root, "selected.json", 4096)
+	again, e := s.readRecordV2("selected.json", 4096)
 	var final v2Selector
 	if e != nil || checkpointDecode(again, &final) != nil || final != selector {
 		return current, previous, ErrRecovery

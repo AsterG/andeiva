@@ -106,7 +106,7 @@ func (s *v2Store) enableIndexReclamation() error {
 
 func (s *v2Store) rememberReclaimPage(hash string, info os.FileInfo) {
 	r := s.reclaim
-	if r == nil || r.revoked || s.state.ReclamationVersion != 1 || s.state.Lineage != r.lineage || len(r.pages) >= v2ReclaimPageLimit || !regularOwned(info, v2ObjectLimit) || !v2PhysicalSameDevice(r.root, info) {
+	if r == nil || r.revoked || s.state.ReclamationVersion != 1 || s.state.Lineage != r.lineage || len(r.pages) >= v2ReclaimPageLimit || !s.recordMetadataV2("object-"+hash+".json", info, v2ObjectLimit) || !v2PhysicalSameDevice(r.root, info) {
 		return
 	}
 	r.pages[hash] = info
@@ -139,7 +139,7 @@ func (s *v2Store) reclaimIndexPages(ctx context.Context, budget v2ReachabilityBu
 	}()
 	report.Tracked = uint64(len(r.pages))
 	report.AuthorityRevoked = r.revoked
-	reader := &v2ReachabilityReader{ctx: ctx, area: s.root, root: r.root, budget: budget, objects: make(map[string]bool), edges: make(map[string]uint8)}
+	reader := &v2ReachabilityReader{ctx: ctx, area: s.root, root: r.root, shared: s.access, budget: budget, objects: make(map[string]bool), edges: make(map[string]uint8)}
 	if err := reader.verifyScope(s.lock); err != nil {
 		return report, err
 	}
@@ -216,7 +216,7 @@ func (s *v2Store) reclaimPage(ctx context.Context, reader *v2ReachabilityReader,
 		return errV2Unavailable
 	}
 	delete(s.reclaim.pages, hash)
-	if s.point("after_reclaim_unlink") != nil || checkpointSync(s.root, nil, "") != nil {
+	if s.point("after_reclaim_unlink") != nil || s.syncRecordDirectoryV2() != nil {
 		s.blocked = true
 		return errV2Uncertain
 	}

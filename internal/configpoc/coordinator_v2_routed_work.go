@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"time"
 )
 
@@ -268,12 +269,21 @@ func (c *v2Coordinator) routedBaselineV2() (string, *RoutedBaselineV1, error) {
 }
 
 func (c *v2Coordinator) selectedRoutedPlanV2() (RoutedSelectedPlanV1, error) {
-	s := c.store
-	intent := s.state.Configuration.Intent
-	if intent == nil || intent.Domain != "routed" || c.options.Routed == nil || s.reserves == nil || s.reserves.verifySelected(s) != nil {
+	if c.options.Routed == nil {
 		return RoutedSelectedPlanV1{}, ErrRecovery
 	}
-	data, err := checkpointRead(s.root, "selected.json", 4096)
+	return selectedRoutedPlanFromStoreV2(c.store, c.options.RoutedIdentity)
+}
+
+func selectedRoutedPlanFromStoreV2(s *v2Store, identity networkexecutor.OwnedNamespaceIdentity) (RoutedSelectedPlanV1, error) {
+	if s == nil || s.state.Configuration == nil || !validRoutedIdentityV1(identity) {
+		return RoutedSelectedPlanV1{}, ErrRecovery
+	}
+	intent := s.state.Configuration.Intent
+	if intent == nil || intent.Domain != "routed" || s.reserves == nil || s.reserves.verifySelected(s) != nil {
+		return RoutedSelectedPlanV1{}, ErrRecovery
+	}
+	data, err := s.readRecordV2("selected.json", 4096)
 	var selected v2Selector
 	if err != nil || checkpointDecode(data, &selected) != nil || selected != s.selector {
 		return RoutedSelectedPlanV1{}, ErrRecovery
@@ -285,7 +295,7 @@ func (c *v2Coordinator) selectedRoutedPlanV2() (RoutedSelectedPlanV1, error) {
 	if err = validateRoutedWorkIntentV2(intent, plan, s.readObject); err != nil {
 		return plan, err
 	}
-	if plan.work.Scope.Identity != c.options.RoutedIdentity {
+	if plan.work.Scope.Identity != identity {
 		return plan, ErrRecovery
 	}
 	if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(s.state, v2RoutedNoNetworkFeature) {
@@ -293,7 +303,7 @@ func (c *v2Coordinator) selectedRoutedPlanV2() (RoutedSelectedPlanV1, error) {
 	}
 	if plan.work.Kind == v2BootKind {
 		var record v2RecoveryRecord
-		if c.store.readObject(c.store.state.Configuration.LastRecovery, &record) != nil || !routedBootRecordMatchesV2(plan, record) {
+		if s.readObject(s.state.Configuration.LastRecovery, &record) != nil || !routedBootRecordMatchesV2(plan, record) {
 			return plan, ErrRecovery
 		}
 	}

@@ -127,7 +127,13 @@ func openServiceCoordinatorV2(ctx context.Context, area *os.Root, budget BudgetV
 	if auth == nil {
 		return nil, ErrDenied
 	}
-	store, err := openV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes})
+	var store *v2Store
+	var err error
+	if options.SharedReader != nil {
+		store, err = openSharedStoreV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes}, *options.SharedReader)
+	} else {
+		store, err = openV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes})
+	}
 	if err != nil {
 		return nil, err
 	}

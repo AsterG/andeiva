@@ -3,6 +3,7 @@ package configpoc
 import (
 	"context"
 	"errors"
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"os"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 )
 
 type v2CoordinatorOptions struct {
+	SharedReader   *recoveryreserve.ReaderAccessV2
 	Routed         RoutedAuthorityV1
 	RoutedIdentity networkexecutor.OwnedNamespaceIdentity
 	GuardDeadlines bool
@@ -784,7 +786,7 @@ func (c *v2Coordinator) loadDomainRevision(hash, domain string) (Revision, error
 		return Revision{}, ErrInvalid
 	}
 	var composite v2CompositeConfig
-	data, readErr := checkpointRead(c.store.root, name, v2ObjectLimit)
+	data, readErr := c.store.readRecordV2(name, v2ObjectLimit)
 	if readErr != nil || checkpointDigest(data) != hash {
 		c.store.blocked = true
 		return Revision{}, errV2Unavailable
