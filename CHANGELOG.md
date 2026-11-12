@@ -61,6 +61,12 @@
   nonblocking, no-follow opener. Keep verified system-trust HTTPS available.
 - Test Linux FIFO/symlink substitutions and non-Linux refusal.
 
+## Unreleased — preallocated recovery storage primitive
+
+- Add fixed, checksummed recovery banks with exclusive locking and exact transaction bindings.
+- Preserve reservations on ambiguous writes and refuse stale bindings instead of treating fallback data as completion.
+- Add isolated byte/inode exhaustion tests and operator guides; coordinator integration and authorized retirement remain separate.
+
 ## Unreleased — configuration v2 physical admission accounting
 
 - Measure allocated file/directory blocks and owned inodes through validated
