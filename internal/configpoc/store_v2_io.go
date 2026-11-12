@@ -10,6 +10,7 @@ import (
 )
 
 type v2Store struct {
+	reserves   *v2ReserveManager
 	mu         sync.Mutex
 	root       *os.Root
 	lock       *os.File
@@ -265,6 +266,11 @@ func v2ValidState(st v2State) bool {
 	if st.Configuration != nil && st.Configuration.Intent != nil && st.Configuration.Intent.Kind == v2BootKind {
 		reserved++
 	}
+	held, ok := reserveHeldReservationsV2(st)
+	if !ok {
+		return false
+	}
+	reserved += held
 	return validClosingStateV2(st, reserved)
 }
 
