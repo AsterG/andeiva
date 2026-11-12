@@ -32,6 +32,13 @@
 - Preserve independent domain projections, explicit Startup, confirmed-commit recovery and verified rollback targets.
 - Add simulated-engine interruption and endurance tests; runtime activation and administrative transport integration remain disabled.
 
+## Unreleased — prepared routed configuration contracts
+
+- Separate the pure routed policy model from kernel execution while preserving
+  compiler output and existing error identities.
+- Validate routed envelopes through an explicit preparation entry point; existing
+  configuration readers and engines continue to reject them before activation.
+
 ## Unreleased — inactive routed network configuration model
 
 - Report a single stable field path for schema, collection and field-size validation errors.
