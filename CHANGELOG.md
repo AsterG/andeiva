@@ -6,6 +6,12 @@
 - Preserve host separation, stable link bindings, bounded fixed commands, exact compensation and uncertainty fences; keep recovery authority independent of request cancellation.
 - Qualify the existing three-namespace routing laboratory with real TCP/UDP SNAT, conntrack, deny/revocation and verified restoration. Existing management LAN migration, DHCP, durable crash recovery and appliance runtime integration remain unsupported.
 
+## Unreleased — internal transaction recovery reserves
+
+- Bind preallocated admission, plan and emergency pools to the selected v2 transaction lifecycle; retain uncertain operations without publishing unverified Running state.
+- Preserve exact terminal capsules and audit dependencies in bounded canonical archives before compare-and-swap slot reuse.
+- Keep confirmation-closing capacity separate from ordinary admission, with explicit resource and recovery gates; administrative runtime activation remains independent.
+
 ## Unreleased — scoped helper transport v2
 
 - Add an explicitly versioned private protocol for atomic observed-state attachment and exact-lease recovery.

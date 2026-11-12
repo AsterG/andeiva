@@ -63,8 +63,8 @@ func localProofFixtureV2(t testing.TB, kind string) (LocalProofInputV2, time.Tim
 		t.Fatal(err)
 	}
 	global, _ := v2CompositeFromDomains(fw, local)
-	op := v2Operation{ID: "v2.op.2.fixture", Namespace: "v2.ns.1.fixture", Subject: "subject-a", Lineage: "lineage", Domain: "local_services", Sequence: 2, Expected: 9, State: "accepted", Accepted: now, ExecuteBefore: now.Add(5 * time.Minute), Request: v2Request{Kind: kind}}
-	input := LocalProofInputV2{Operation: op, Namespace: v2Namespace{ID: op.Namespace, Subject: op.Subject, Domain: op.Domain, AdmitUntil: now.Add(time.Hour), Open: []string{op.ID}}, Subject: v2Subject{ID: op.Subject, Login: "alice", CredentialRevision: strings.Repeat("a", 64)}, Global: GlobalV2{Lineage: op.Lineage, Generation: 9, Running: global.Hash, Startup: global.Hash}, Firewall: Snapshot{Generation: 3, Running: fw, Startup: fw, LastGood: fw}, Local: Snapshot{Generation: 4, Running: local, Startup: local, LastGood: local}}
+	op := OperationV2{ID: "v2.op.2.fixture", Namespace: "v2.ns.1.fixture", Subject: "subject-a", Lineage: "lineage", Domain: "local_services", Sequence: 2, Expected: 9, State: "accepted", Accepted: now, ExecuteBefore: now.Add(5 * time.Minute), Request: v2Request{Kind: kind}}
+	input := LocalProofInputV2{Operation: op, Namespace: NamespaceV2{ID: op.Namespace, Subject: op.Subject, Domain: op.Domain, AdmitUntil: now.Add(time.Hour), Open: []string{op.ID}}, Subject: v2Subject{ID: op.Subject, Login: "alice", CredentialRevision: strings.Repeat("a", 64)}, Global: GlobalV2{Lineage: op.Lineage, Generation: 9, Running: global.Hash, Startup: global.Hash}, Firewall: Snapshot{Generation: 3, Running: fw, Startup: fw, LastGood: fw}, Local: Snapshot{Generation: 4, Running: local, Startup: local, LastGood: local}}
 	switch kind {
 	case OpStage:
 		input.Operation.Request.Config = &previous.Config
@@ -85,15 +85,15 @@ func localProofFixtureV2(t testing.TB, kind string) (LocalProofInputV2, time.Tim
 		origin.ID, origin.Sequence, origin.Expected, origin.State, origin.Pinned = "v2.op.1.fixture", 1, 8, "final", true
 		origin.Request = v2Request{Kind: OpCommit, ConfirmSeconds: &seconds}
 		origin.Completed = &now
-		origin.Fingerprint = v2OperationFingerprint(origin)
-		origin.Outcome = &v2Outcome{Code: "applied_pending_confirmation", RunningRevision: global.Hash, ConfirmationLease: input.Confirmation.Lease, ConfirmationDeadline: &deadline}
+		origin.Fingerprint = operationDTOFingerprintV2(origin)
+		origin.Outcome = &OutcomeV2{Code: "applied_pending_confirmation", RunningRevision: global.Hash, ConfirmationLease: input.Confirmation.Lease, ConfirmationDeadline: &deadline}
 		input.Origin = &origin
 	case OpRollback:
 		input.Historical = &previous
 		target, _ := v2CompositeFromDomains(fw, previous)
 		input.Operation.Request.Target = target.Hash
 	}
-	input.Operation.Fingerprint = v2OperationFingerprint(input.Operation)
+	input.Operation.Fingerprint = operationDTOFingerprintV2(input.Operation)
 	return input, now
 }
 
@@ -167,7 +167,7 @@ func TestLocalProofV2RejectsInvalidMapping(t *testing.T) {
 		{"other-recovery", func(i *LocalProofInputV2) { i.Firewall.RecoveryRequired = true }},
 		{"immediate", func(i *LocalProofInputV2) {
 			*i.Operation.Request.ConfirmSeconds = 0
-			i.Operation.Fingerprint = v2OperationFingerprint(i.Operation)
+			i.Operation.Fingerprint = operationDTOFingerprintV2(i.Operation)
 		}},
 		{"expired", func(i *LocalProofInputV2) { i.Operation.ExecuteBefore = i.Operation.Accepted }},
 		{"overlong", func(i *LocalProofInputV2) { i.Operation.ExecuteBefore = i.Operation.Accepted.Add(16 * time.Minute) }},
@@ -213,7 +213,7 @@ func TestLocalProofV2ConfirmationAndHistoricalBinding(t *testing.T) {
 	}
 	in, now := localProofFixtureV2(t, OpRollback)
 	in.Operation.Request.Target = in.Historical.Hash
-	in.Operation.Fingerprint = v2OperationFingerprint(in.Operation)
+	in.Operation.Fingerprint = operationDTOFingerprintV2(in.Operation)
 	if _, err := ResolveLocalProofV2(in, now); err == nil {
 		t.Fatal("domain hash accepted as global rollback")
 	}

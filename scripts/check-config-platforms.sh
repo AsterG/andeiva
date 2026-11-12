@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export CGO_ENABLED=0 GOTOOLCHAIN=local GOWORK=off
+platform_temp=$(mktemp -d "${TMPDIR:-/tmp}/andeiva-config-platforms.XXXXXXXX")
+trap 'rm -f -- "$platform_temp/config.test"; rmdir -- "$platform_temp"' EXIT
 
 # Cross-compilation verifies source selection, not appliance runtime support.
 for target in linux windows darwin; do
@@ -14,5 +16,9 @@ for target in linux windows darwin; do
     }
   done
   GOOS=$target GOARCH=amd64 go build ./internal/configpoc ./cmd/andeiva-config-poc
+  if [[ "$target" != linux ]]; then
+    GOOS=$target GOARCH=amd64 go test -c -o "$platform_temp/config.test" ./internal/configpoc
+    printf 'PASS: %s/amd64 test source compilation\n' "$target"
+  fi
   printf 'PASS: %s/amd64 source selection and compilation\n' "$target"
 done
