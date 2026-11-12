@@ -16,12 +16,48 @@ type v2ReclaimSession struct {
 	root    os.FileInfo
 	lineage string
 	pages   map[string]os.FileInfo
+	revoked bool
 }
 
 type v2ReclaimReport struct {
+	AuthorityRevoked                         bool
 	Complete                                 bool
 	Tracked, Retained, Removed, RemovedBytes uint64
 	LockDuration                             time.Duration
+}
+
+// Closed set of existing producer contracts, not a structural JSON classifier.
+// State/selection/operation COW roots are covered by G1 once selected; failed
+// publication fences the writer. Configuration, audit and witness producers
+// have their distinct typed reference graphs, never an arbitrary index-page
+// root. Opaque catalogue audit wrappers have no object edges in their payload.
+// Any new/aliased/raw type must lose authority until its graph is reviewed.
+func (s *v2Store) revokeReclaimGeneric(value any) {
+	if s.reclaim == nil {
+		return
+	}
+	switch value.(type) {
+	case v2State, v2Selection, v2Operation, v2Configuration,
+		v2CoordinatorAudit, v2RecoveryRecord, v2VerifiedNode,
+		Config, v2CompositeConfig:
+		return
+	case struct {
+		Format    string `json:"format"`
+		Operation string `json:"operation"`
+		Data      []byte `json:"data"`
+	}, struct{ Format, Operation, Code string }:
+		return
+	default:
+		// Before serialization: a failed marshal provides no stronger proof.
+		s.revokeReclaimAuthority()
+	}
+}
+
+func (s *v2Store) revokeReclaimAuthority() {
+	if s.reclaim != nil {
+		clear(s.reclaim.pages)
+		s.reclaim.revoked = true
+	}
 }
 
 func preservesReclamationV2(previous, next v2State) bool {
@@ -70,7 +106,7 @@ func (s *v2Store) enableIndexReclamation() error {
 
 func (s *v2Store) rememberReclaimPage(hash string, info os.FileInfo) {
 	r := s.reclaim
-	if r == nil || s.state.ReclamationVersion != 1 || s.state.Lineage != r.lineage || len(r.pages) >= v2ReclaimPageLimit || !regularOwned(info, v2ObjectLimit) || !v2PhysicalSameDevice(r.root, info) {
+	if r == nil || r.revoked || s.state.ReclamationVersion != 1 || s.state.Lineage != r.lineage || len(r.pages) >= v2ReclaimPageLimit || !regularOwned(info, v2ObjectLimit) || !v2PhysicalSameDevice(r.root, info) {
 		return
 	}
 	r.pages[hash] = info
@@ -102,6 +138,7 @@ func (s *v2Store) reclaimIndexPages(ctx context.Context, budget v2ReachabilityBu
 		}
 	}()
 	report.Tracked = uint64(len(r.pages))
+	report.AuthorityRevoked = r.revoked
 	reader := &v2ReachabilityReader{ctx: ctx, area: s.root, root: r.root, budget: budget, objects: make(map[string]bool), edges: make(map[string]uint8)}
 	if err := reader.verifyScope(s.lock); err != nil {
 		return report, err

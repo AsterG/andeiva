@@ -110,24 +110,20 @@ func TestV2ReclaimRequiresNewExclusiveProvenance(t *testing.T) {
 	if _, ok := s.reclaim.pages[protected]; ok {
 		t.Fatal("generic protected use retained deletion authority")
 	}
-	good := reclaimOrphanV2(t, s, "eligible")
 	dedup := reclaimOrphanV2(t, s, "dedup-held")
 	if again := reclaimOrphanV2(t, s, "dedup-held"); again != dedup || s.reclaim.pages[dedup] != nil {
 		t.Fatal("dedup preserved deletion authority")
 	}
+	good := reclaimOrphanV2(t, s, "eligible")
 	report, err := s.reclaimIndexPages(context.Background(), reachabilityBudgetV2())
-	if err != nil || report.Removed != 1 {
+	if err != nil || report.Removed != 0 || !report.AuthorityRevoked {
 		t.Fatal(report, err)
 	}
-	for _, h := range []string{old, protected, dedup} {
+	for _, h := range []string{old, protected, dedup, good} {
 		n, _ := v2ObjectName(h)
 		if _, e := area.Stat(n); e != nil {
 			t.Fatal("held file deleted", e)
 		}
-	}
-	n, _ := v2ObjectName(good)
-	if _, e := area.Stat(n); !os.IsNotExist(e) {
-		t.Fatal("eligible file not removed", e)
 	}
 }
 
@@ -580,5 +576,215 @@ func TestV2ReclaimCombinedLocalCandidateBootAndReplay(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestV2ReclaimPromotedPagePreservesUnselectedDescendants(t *testing.T) {
+	s, area, _, _ := v2Fixture(t, 64)
+	if err := s.enableIndexReclamation(); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	root, err := s.indexPut("", 2, 1, checkpointDigest([]byte("unselected operation")))
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page v2Page
+	if err = s.readObject(root, &page); err != nil {
+		t.Fatal(err)
+	}
+	identities := make(map[string]os.FileInfo)
+	for hash, info := range s.reclaim.pages {
+		identities[hash] = info
+	}
+	if len(identities) != 3 {
+		t.Fatal("fixture requires parent and two child pages")
+	}
+	before := clone(s.state)
+	s.mu.Lock()
+	_, err = s.object(page)
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A successful generic/protected use is sufficient; no publication follows.
+	report, err := s.reclaimIndexPages(context.Background(), reachabilityBudgetV2())
+	if err != nil || report.Removed != 0 || !reflect.DeepEqual(before, s.state) {
+		t.Fatal("promoted parent lost descendants", report, err)
+	}
+	for hash, expected := range identities {
+		name, _ := v2ObjectName(hash)
+		actual, e := area.Lstat(name)
+		if e != nil || !sameRecordFile(expected, actual) {
+			t.Fatal("held closure changed", hash, e)
+		}
+	}
+}
+
+func TestV2ReclaimUnknownAndDeduplicatedParentsRevokeSession(t *testing.T) {
+	type pageAlias v2Page
+	for _, mode := range []string{"raw", "alias", "unknown", "invalid-raw", "dedup", "cap-raw", "cap-dedup", "missing-child"} {
+		t.Run(mode, func(t *testing.T) {
+			s, area, _, _ := v2Fixture(t, 64)
+			if err := s.enableIndexReclamation(); err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasPrefix(mode, "cap-") {
+				for i := 0; i < v2ReclaimPageLimit-2; i++ {
+					reclaimOrphanV2(t, s, fmt.Sprintf("filler-%d", i))
+				}
+			}
+			s.mu.Lock()
+			root, err := s.indexPut("", 2, 1, checkpointDigest([]byte("unselected operation")))
+			s.mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasPrefix(mode, "cap-") && s.reclaim.pages[root] != nil {
+				t.Fatal("root should lack provenance at cap")
+			}
+			var page v2Page
+			if err = s.readObject(root, &page); err != nil {
+				t.Fatal(err)
+			}
+			name, _ := v2ObjectName(root)
+			data, err := checkpointRead(area, name, v2ObjectLimit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "missing-child" {
+				child, _ := v2ObjectName(page.Refs[0])
+				if err = area.Remove(child); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := journalFiles(t, area.Name())
+			s.mu.Lock()
+			switch mode {
+			case "raw", "cap-raw":
+				_, err = s.object(json.RawMessage(data))
+			case "alias":
+				_, err = s.object(pageAlias(page))
+			case "unknown":
+				_, err = s.object(map[string]string{"protected_parent": root})
+			case "invalid-raw":
+				_, err = s.object(json.RawMessage(`{"unfinished":`))
+			case "dedup", "cap-dedup":
+				_, err = s.objectClass(page, true)
+			case "missing-child":
+				_, err = s.object(page)
+			}
+			s.mu.Unlock()
+			if mode == "invalid-raw" {
+				if err == nil {
+					t.Fatal("invalid raw accepted")
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if len(s.reclaim.pages) != 0 {
+				t.Fatal("partial parent-only revocation")
+			}
+			// Unknown successful writes may add a held object; record that result
+			// before sweeping so the assertion concerns deletion authority only.
+			if mode == "unknown" {
+				before = journalFiles(t, area.Name())
+			}
+			r, err := s.reclaimIndexPages(context.Background(), reachabilityBudgetV2())
+			if err != nil || r.Removed != 0 || !reflect.DeepEqual(before, journalFiles(t, area.Name())) {
+				t.Fatal("held closure modified", r, err)
+			}
+		})
+	}
+}
+
+func TestV2ReclaimKnownPublicationFailureFencesAndLosesAuthority(t *testing.T) {
+	for _, point := range []string{"objects_durable", "after_select"} {
+		t.Run(point, func(t *testing.T) {
+			s, area, now, subject := v2Fixture(t, 64)
+			if err := s.enableIndexReclamation(); err != nil {
+				t.Fatal(err)
+			}
+			ns, err := s.namespace(subject, "firewall", now, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.hook = func(p string) error {
+				if p == point {
+					return ErrInterrupted
+				}
+				return nil
+			}
+			if _, err = s.admit(subject, ns.ID, s.state.Generation, v2Request{Kind: OpValidate}, now); err == nil || !s.blocked || len(s.reclaim.pages) == 0 {
+				t.Fatal("fixture did not fence newly indexed work", err)
+			}
+			before := journalFiles(t, area.Name())
+			r, err := s.reclaimIndexPages(context.Background(), reachabilityBudgetV2())
+			if err == nil || r.Removed != 0 || !reflect.DeepEqual(before, journalFiles(t, area.Name())) {
+				t.Fatal("failed publication permitted sweep", r, err)
+			}
+			if err = s.close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := openV2(area, s.budget)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reopened.close()
+			if reopened.reclaim != nil {
+				t.Fatal("reopen restored uncertain authority")
+			}
+			if err = reopened.enableIndexReclamation(); err != nil {
+				t.Fatal(err)
+			}
+			r, err = reopened.reclaimIndexPages(context.Background(), reachabilityBudgetV2())
+			if err != nil || r.Removed != 0 || !reflect.DeepEqual(before, journalFiles(t, area.Name())) {
+				t.Fatal("reopen swept previously held pages", r, err)
+			}
+		})
+	}
+}
+
+func TestV2ReclaimRevocationCannotAcquireLaterChild(t *testing.T) {
+	s, area, now, subject := v2Fixture(t, 64)
+	if err := s.enableIndexReclamation(); err != nil {
+		t.Fatal(err)
+	}
+	child := v2Page{Format: v2Format, Level: 0}
+	child.Refs[0] = checkpointDigest([]byte("later-child-operation"))
+	_, childHash, err := v2Canonical(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := v2Page{Format: v2Format, Level: 1}
+	parent.Refs[0] = childHash
+	// No tracked pages exist yet. Unknown-parent use still revokes future
+	// tracking, so an unselected held reference cannot acquire a deletable child.
+	s.mu.Lock()
+	_, err = s.object(parent)
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.reclaim.revoked {
+		t.Fatal("empty ledger did not revoke future authority")
+	}
+	if err = s.enableIndexReclamation(); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	created, err := s.objectClass(child, true)
+	s.mu.Unlock()
+	if err != nil || created != childHash || len(s.reclaim.pages) != 0 {
+		t.Fatal("authority reacquired after promotion", err)
+	}
+	if _, err = s.namespace(subject, "firewall", now, time.Hour); err != nil {
+		t.Fatal("revocation blocked normal writer", err)
+	}
+	before := journalFiles(t, area.Name())
+	r, err := s.reclaimIndexPages(context.Background(), reachabilityBudgetV2())
+	if err != nil || !r.AuthorityRevoked || r.Removed != 0 || !reflect.DeepEqual(before, journalFiles(t, area.Name())) {
+		t.Fatal(r, err)
 	}
 }

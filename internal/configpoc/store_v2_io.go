@@ -298,19 +298,26 @@ func (s *v2Store) object(value any) (string, error) {
 }
 
 func (s *v2Store) objectClass(value any, indexPage bool) (string, error) {
+	if !indexPage {
+		s.revokeReclaimGeneric(value)
+	}
 	data, hash, err := v2Canonical(value)
 	if err != nil {
 		return "", err
 	}
-	// Unknown/protected use dominates previous page provenance, even when a
-	// subsequent read or publication fails. Deduplication never creates authority.
+	// A promoted parent can retain descendants outside the selected closure.
+	// Revoke the whole session authority rather than guessing a partial closure.
 	if !indexPage && s.reclaim != nil {
-		delete(s.reclaim.pages, hash)
+		if _, tracked := s.reclaim.pages[hash]; tracked {
+			s.revokeReclaimAuthority()
+		}
 	}
 	name, _ := v2ObjectName(hash)
 	if _, err = s.root.Lstat(name); err == nil {
-		if s.reclaim != nil {
-			delete(s.reclaim.pages, hash)
+		if indexPage && s.reclaim != nil {
+			// The parent itself may have been untracked at the ledger cap while
+			// its newly created children are still tracked.
+			s.revokeReclaimAuthority()
 		}
 		prior, e := checkpointRead(s.root, name, v2ObjectLimit)
 		if e != nil || !bytes.Equal(prior, data) {
