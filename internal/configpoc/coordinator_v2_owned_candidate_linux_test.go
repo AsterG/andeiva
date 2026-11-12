@@ -51,6 +51,15 @@ func TestRoutedOwnedCandidateReplaceDiscardPreservesAppliedAndAudit(t *testing.T
 			t.Fatal("metadata applied engine")
 		}
 	}
+	area := c.store.root
+	c.close()
+	if err := c.store.close(); err != nil {
+		t.Fatal(err)
+	}
+	report, err := inspectReachabilityV2(context.Background(), area, reachabilityBudgetV2())
+	if err != nil || !report.Complete {
+		t.Fatal("candidate lifecycle lost protected graph", err, report)
+	}
 }
 
 func TestRoutedOwnedCandidateGuardsAndStageRemainsStrict(t *testing.T) {
