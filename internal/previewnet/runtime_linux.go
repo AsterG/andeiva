@@ -17,9 +17,12 @@ import (
 
 func checkFixture(ctx context.Context, f fixture) error {
 	if e := f.CheckHost(ctx); e != nil {
-		return e
+		return &fixtureFailure{check: "host", cause: e}
 	}
-	return f.CheckSentinel(ctx)
+	if e := f.CheckSentinel(ctx); e != nil {
+		return &fixtureFailure{check: "sentinel", cause: e}
+	}
+	return nil
 }
 
 // Run holds an isolated fixture until cancellation. It has no stdin dependency,
@@ -39,21 +42,36 @@ func Run(ctx context.Context, o Options) (result error) {
 			Data  any       `json:"data,omitempty"`
 		}{event, time.Now().UTC(), m.RunID, extra})
 	}
+	phase := "directories"
+	var m Metadata
+	var stopped map[string]bool
+	failures := lifecycleFailures{emit: func(event string, data lifecycleDiagnostic) { _ = emit(event, m, data) }}
+	defer func() {
+		failures.primary(phase, result)
+		failures.flush()
+		if stopped != nil {
+			_ = emit("stopped", m, stopped)
+		}
+	}()
 	if secureDirectory(RuntimeDir, true) != nil || secureDirectory(RuntimeDir+"/netns", true) != nil {
 		return ErrRuntime
 	}
+	phase = "lock"
 	lock, e := lockRuntime()
 	if e != nil {
 		return ErrRuntime
 	}
 	defer lock.Close()
+	phase = "recovery"
 	if e = recoverRuntime(); e != nil {
 		return e
 	}
+	phase = "boot_identity"
 	boot, e := kernelBootID()
 	if e != nil {
 		return e
 	}
+	phase = "host_identity"
 	host, e := namespaceInode("/proc/self/ns/net")
 	if e != nil {
 		return e
@@ -64,36 +82,42 @@ func Run(ctx context.Context, o Options) (result error) {
 	// the fixture is ready and the supervisor receives a normal stop request.
 	stopStartupCancel := context.AfterFunc(ctx, cancel)
 	defer stopStartupCancel()
+	phase = "fixture_create"
 	f, e := nftfixture.NewOwned(childCtx, o.Executable, o.UID, o.GID)
 	if e != nil {
 		return e
 	}
-	var m Metadata
 	published := false
 	defer func() {
-		cleanup := unpinGateway(m)
-		cleanup = errors.Join(cleanup, f.CloseOwned())
-		if published {
-			current, e := readMetadataPath(MetadataPath)
-			if e == nil && current == m {
-				cleanup = errors.Join(cleanup, removeOwnedSocket(ControlPath))
-				if cleanup == nil {
-					cleanup = os.Remove(MetadataPath)
+		var cleanup error
+		result, cleanup = failures.finish(phase, result, func() error {
+			cleanup := unpinGateway(m)
+			cleanup = errors.Join(cleanup, f.CloseOwned())
+			if published {
+				current, e := readMetadataPath(MetadataPath)
+				if e == nil && current == m {
+					cleanup = errors.Join(cleanup, removeOwnedSocket(ControlPath))
+					if cleanup == nil {
+						cleanup = os.Remove(MetadataPath)
+					}
+				} else {
+					cleanup = errors.Join(cleanup, ErrRuntime)
 				}
-			} else {
-				cleanup = errors.Join(cleanup, ErrRuntime)
 			}
-		}
-		result = errors.Join(result, cleanup)
-		_ = emit("stopped", m, map[string]bool{"cleanup": cleanup == nil, "healthy": result == nil, "owned_resources_only": true})
+			return cleanup
+		})
+		stopped = map[string]bool{"cleanup": cleanup == nil, "healthy": result == nil, "owned_resources_only": true}
 	}()
+	phase = "listener_start"
 	if e = f.StartReverseListener(childCtx); e != nil {
 		return e
 	}
+	phase = "initial_policy"
 	if e = f.SealAdminDeny(childCtx); e != nil {
 		return e
 	}
 	ids := f.NamespaceIDs()
+	phase = "run_identity"
 	var random [16]byte
 	if _, e = rand.Read(random[:]); e != nil {
 		return e
@@ -102,13 +126,16 @@ func Run(ctx context.Context, o Options) (result error) {
 	if e = ctx.Err(); e != nil {
 		return e
 	}
+	phase = "metadata"
 	if e = writeMetadata(m); e != nil {
 		return e
 	}
 	published = true
+	phase = "namespace_pin"
 	if e = f.PinPreviewGateway(); e != nil {
 		return e
 	}
+	phase = "control_socket"
 	listener, e := net.ListenUnix("unix", &net.UnixAddr{Name: ControlPath, Net: "unix"})
 	if e != nil {
 		return e
@@ -118,6 +145,7 @@ func Run(ctx context.Context, o Options) (result error) {
 	if e = os.Chmod(ControlPath, 0600); e != nil {
 		return e
 	}
+	phase = "initial_check"
 	if e = checkFixture(childCtx, f); e != nil {
 		return e
 	}
@@ -125,9 +153,11 @@ func Run(ctx context.Context, o Options) (result error) {
 	if e = ctx.Err(); e != nil {
 		return e
 	}
+	phase = "readiness"
 	if e = notifyReady(); e != nil {
 		return e
 	}
+	phase = "event_log"
 	if e = emit("ready", m, m); e != nil {
 		return e
 	}
@@ -136,6 +166,7 @@ func Run(ctx context.Context, o Options) (result error) {
 		if ctx.Err() != nil {
 			return nil
 		}
+		phase = "control_accept"
 		if e = listener.SetDeadline(time.Now().Add(time.Second)); e != nil {
 			return e
 		}
@@ -146,6 +177,7 @@ func Run(ctx context.Context, o Options) (result error) {
 				return e
 			}
 		} else {
+			phase = "control_request"
 			reply, requestErr := handleControl(ctx, conn, f, m)
 			if reply.Operation != "" {
 				if e = emit("control", m, reply); e != nil {
@@ -158,10 +190,8 @@ func Run(ctx context.Context, o Options) (result error) {
 		}
 		if time.Now().After(nextCheck) {
 			checkCtx, stop := context.WithTimeout(ctx, 10*time.Second)
-			e = checkFixture(checkCtx, f)
-			if e == nil {
-				e = f.CheckPreviewListeners(checkCtx)
-			}
+			phase = "periodic_check"
+			e = checkRuntimeHealth(checkCtx, f)
 			stop()
 			if e != nil {
 				if ctx.Err() != nil {
