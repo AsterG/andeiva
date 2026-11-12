@@ -222,3 +222,141 @@ func TestPreparedGuardConfirmedRemoteUncertainPublicationFencesReopen(t *testing
 		t.Fatal("reopen invented helper rollback")
 	}
 }
+
+func TestPreparedGuardUnchangedCommitStillHasExactLease(t *testing.T) {
+	f := guardedCoordinator(t)
+	if _, err := f.run(t, configpoc.OperationRequestV2{Kind: configpoc.OpStage, Config: &f.old.Config}); err != nil {
+		t.Fatal(err)
+	}
+	seconds := uint64(30)
+	result, err := f.run(t, configpoc.OperationRequestV2{Kind: configpoc.OpCommit, ConfirmSeconds: &seconds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := f.authority.g.Status()
+	if state.Phase != "pending" || state.Previous != state.Target || state.ID != result.Operation.Outcome.ConfirmationLease {
+		t.Fatal("unchanged commit bypassed helper lease")
+	}
+	if _, err := f.run(t, configpoc.OperationRequestV2{Kind: configpoc.OpConfirm, Target: result.Current.RunningRevision, Origin: result.Operation.ID}); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestPreparedGuardFailedArmAndPartialApplyVerifyCompensation(t *testing.T) {
+	for _, point := range []string{"arm", "apply"} {
+		t.Run(point, func(t *testing.T) {
+			f := guardedCoordinator(t)
+			f.stage(t)
+			if point == "arm" {
+				f.authority.denyArm = true
+			} else {
+				f.authority.engine.FailNext("after")
+			}
+			seconds := uint64(0)
+			result, err := f.run(t, configpoc.OperationRequestV2{Kind: configpoc.OpCommit, ConfirmSeconds: &seconds})
+			if err == nil || result.Operation.Outcome == nil || result.Operation.Outcome.Code != "failed_rolled_back" || f.guard.Current() != f.old.Hash || f.authority.g.Status().Phase != "idle" {
+				t.Fatal("failed transition did not verify compensation", err)
+			}
+		})
+	}
+}
+func TestPreparedGuardUnconfirmedFailureReconcilesAfterHelperTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := guardedCoordinator(t)
+		f.stage(t)
+		f.authority.denyConfirm = true
+		seconds := uint64(0)
+		result, err := f.run(t, configpoc.OperationRequestV2{Kind: configpoc.OpCommit, ConfirmSeconds: &seconds})
+		if !errors.Is(err, configpoc.ErrRecovery) || result.Operation.State != "uncertain" || f.authority.g.Status().Phase != "pending" {
+			t.Fatal("unacknowledged helper confirmation was published", err)
+		}
+		if err := f.service.Close(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(11 * time.Second)
+		if f.guard.Current() != f.old.Hash {
+			t.Fatal("independent guard did not restore previous")
+		}
+		f.authority.denyConfirm = false
+		f.reopen(t)
+		op, err := f.service.Query(f.binding, result.Operation.ID)
+		if err != nil || op.State != "final" || op.Outcome == nil || op.Outcome.Code != "failed_rolled_back" {
+			t.Fatal("verified interrupted work not recovered", err)
+		}
+	})
+}
+
+func TestPreparedGuardLateConfirmationRebindDoesNotExtendLease(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := guardedCoordinator(t)
+		f.stage(t)
+		seconds := uint64(30)
+		commit, err := f.run(t, configpoc.OperationRequestV2{Kind: configpoc.OpCommit, ConfirmSeconds: &seconds})
+		if err != nil {
+			t.Fatal(err)
+		}
+		original := f.authority.g.Status()
+		time.Sleep(29600 * time.Millisecond)
+		if _, err := f.run(t, configpoc.OperationRequestV2{Kind: configpoc.OpConfirm, Origin: commit.Operation.ID, Target: commit.Current.RunningRevision}); err != nil {
+			t.Fatal("exact late lease could not confirm", err)
+		}
+		state := f.authority.g.Status()
+		if state.ID != original.ID || !state.Deadline.Equal(original.Deadline) || state.Phase != "idle" {
+			t.Fatal("late confirmation rearmed or extended lease")
+		}
+	})
+}
+func TestPreparedGuardFailedConfirmationReopenProvesExpiredRollback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := guardedCoordinator(t)
+		f.stage(t)
+		seconds := uint64(30)
+		commit, err := f.run(t, configpoc.OperationRequestV2{Kind: configpoc.OpCommit, ConfirmSeconds: &seconds})
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, err := f.service.Projection(f.binding, "firewall")
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.authority.denyConfirm = true
+		f.authority.failStateAfterDeniedConfirm = true
+		confirmation, err := f.run(t, configpoc.OperationRequestV2{Kind: configpoc.OpConfirm, Origin: commit.Operation.ID, Target: commit.Current.RunningRevision})
+		if !errors.Is(err, configpoc.ErrRecovery) || confirmation.Operation.State != "uncertain" {
+			t.Fatal("unavailable confirmation proof did not fence", err)
+		}
+		if err := f.service.Close(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(31 * time.Second)
+		if f.guard.Current() != f.old.Hash || f.authority.g.Status().Phase != "expired" {
+			t.Fatal("helper did not independently revert")
+		}
+		f.authority.failState = false
+		f.authority.denyConfirm = false
+		f.authority.failStateAfterDeniedConfirm = false
+		f.reopen(t)
+		failed, err := f.service.Query(f.binding, confirmation.Operation.ID)
+		if err != nil || failed.State != "final" || failed.Outcome == nil || failed.Outcome.Code != "failed_rolled_back" || failed.Pinned {
+			t.Fatal("failed confirmation remained permanently fenced", err)
+		}
+		origin, err := f.service.Query(f.binding, commit.Operation.ID)
+		if err != nil || origin.Pinned || origin.Outcome == nil || origin.Outcome.Code != commit.Operation.Outcome.Code || origin.Outcome.Generation != commit.Operation.Outcome.Generation {
+			t.Fatal("origin outcome was overwritten or pin retained", err)
+		}
+		after, err := f.service.Projection(f.binding, "firewall")
+		if err != nil || after.Pending != nil || after.RecoveryRequired || after.Running.Hash != f.old.Hash || after.Startup.Hash != before.Startup.Hash || after.Generation <= before.Generation {
+			t.Fatal("recovery counter/startup/current inconsistent", err)
+		}
+		if failed.Outcome.Generation <= commit.Current.GlobalGeneration {
+			t.Fatal("global generation did not advance")
+		}
+		if err := f.service.Close(); err != nil {
+			t.Fatal(err)
+		}
+		f.reopen(t)
+		replayed, err := f.service.Query(f.binding, confirmation.Operation.ID)
+		if err != nil || replayed.Outcome.Generation != failed.Outcome.Generation || replayed.Outcome.Code != failed.Outcome.Code {
+			t.Fatal("second reopen reexecuted recovery", err)
+		}
+	})
+}

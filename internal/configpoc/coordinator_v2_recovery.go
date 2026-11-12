@@ -62,7 +62,7 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 	op.RetainUntil = &until
 	op.Outcome = &outcome
 	op.Pinned = pin
-	if op.Request.Kind == OpConfirm && originID != "" && code == "applied" && target.Pending == nil {
+	if op.Request.Kind == OpConfirm && originID != "" && (code == "applied" || code == "failed_rolled_back") && target.Pending == nil {
 		origin, e := s.lookupRetained(op.Subject, originID)
 		if e != nil {
 			return v2Operation{}, e
@@ -115,6 +115,9 @@ func (c *v2Coordinator) compensateLocked(_ context.Context, op v2Operation, prev
 	// Rollback must not inherit a request's cancelled context.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if c.hasPreparedGuard() && op.Request.Kind == OpConfirm {
+		return c.compensateConfirmationLocked(ctx, op, previous)
+	}
 	if c.hasPreparedGuard() {
 		if err := c.compensationGuardsLocked(ctx, op, previous); err != nil {
 			return c.uncertainLocked(op, ErrRecovery)

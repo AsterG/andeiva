@@ -373,6 +373,9 @@ func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPr
 		return c.compensateLocked(ctx, op, state, ErrInterrupted)
 	}
 	if err = c.confirmGuardsLocked(ctx, op, state, target); err != nil {
+		if op.Request.Kind == OpConfirm {
+			return c.compensateLocked(ctx, op, state, err)
+		}
 		return c.uncertainLocked(op, ErrRecovery)
 	}
 	code := "applied"

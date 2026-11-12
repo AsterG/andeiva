@@ -51,7 +51,7 @@ func (c *v2Coordinator) prepareGuardsLocked(ctx context.Context, op v2Operation,
 	if err != nil {
 		return err
 	}
-	if ttl < 500*time.Millisecond || ttl > 120*time.Second {
+	if ttl <= 0 || ttl > 120*time.Second || (op.Request.Kind != OpConfirm && ttl < 500*time.Millisecond) {
 		return ErrExpired
 	}
 	for _, engine := range c.firewall {
@@ -110,11 +110,6 @@ func (c *v2Coordinator) compensationGuardsLocked(ctx context.Context, op v2Opera
 	}
 	var target v2Configuration
 	if c.store.readObject(intent.Target, &target) != nil || !validV2Configuration(&target) {
-		return ErrRecovery
-	}
-	// An ambiguous confirmation must not replay the applied target or reverse a
-	// helper safety rollback. Leave its linked intent/pins for authorized recovery.
-	if op.Request.Kind == OpConfirm {
 		return ErrRecovery
 	}
 	id, _, _, _, err := c.guardScopeLocked(op, previous, target)

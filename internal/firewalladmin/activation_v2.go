@@ -41,7 +41,7 @@ func guardRevision(revision configpoc.Revision) bool {
 func (g *PreparedGuardedEngine) Arm(ctx context.Context, id string, previous, target configpoc.Revision, ttl time.Duration) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if id == "" || len(id) > 64 || !guardRevision(previous) || !guardRevision(target) || ttl < 500*time.Millisecond || ttl > 120*time.Second {
+	if id == "" || len(id) > 64 || !guardRevision(previous) || !guardRevision(target) || ttl <= 0 || ttl > 120*time.Second {
 		return configpoc.ErrInvalid
 	}
 	state, err := g.authority.State(ctx)
@@ -64,6 +64,9 @@ func (g *PreparedGuardedEngine) Arm(ctx context.Context, id string, previous, ta
 	}
 	if state.Phase != "idle" {
 		return configpoc.ErrRecovery
+	}
+	if ttl < 500*time.Millisecond {
+		return configpoc.ErrExpired
 	}
 	// Arm may succeed remotely despite a lost reply. Only the exact observed
 	// receipt and unchanged previous revision can reconcile that ambiguity.
@@ -117,6 +120,9 @@ func (g *PreparedGuardedEngine) RecoverPrevious(ctx context.Context, id string, 
 	state, err := g.authority.State(ctx)
 	current, currentErr := g.authority.Current(ctx)
 	if err != nil || currentErr != nil || g.engine.Current() != current {
+		return configpoc.ErrRecovery
+	}
+	if state.Phase == "idle" && exactGuardScope(state, id, previous, target) && current == target.Hash {
 		return configpoc.ErrRecovery
 	}
 	if state.Phase == "idle" && current == previous.Hash {

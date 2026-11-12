@@ -11,14 +11,19 @@ import (
 )
 
 type preparedGuardAuthority struct {
-	g                  *nftguardian.Guardian
-	engine             *configpoc.SimEngine
-	armErr, confirmErr bool
-	wrongID            bool
-	afterConfirm       func() error
+	g                                      *nftguardian.Guardian
+	engine                                 *configpoc.SimEngine
+	armErr, confirmErr                     bool
+	denyArm, denyConfirm                   bool
+	failState, failStateAfterDeniedConfirm bool
+	wrongID                                bool
+	afterConfirm                           func() error
 }
 
 func (a *preparedGuardAuthority) Arm(_ context.Context, id string, previous, target configpoc.Revision, ttl time.Duration) error {
+	if a.denyArm {
+		return errors.New("arm unavailable")
+	}
 	err := a.g.Arm(id, previous, target, ttl)
 	if err == nil && a.armErr {
 		return errors.New("lost arm reply")
@@ -26,6 +31,12 @@ func (a *preparedGuardAuthority) Arm(_ context.Context, id string, previous, tar
 	return err
 }
 func (a *preparedGuardAuthority) Confirm(_ context.Context, id, hash string) error {
+	if a.denyConfirm {
+		if a.failStateAfterDeniedConfirm {
+			a.failState = true
+		}
+		return errors.New("confirmation unavailable")
+	}
 	err := a.g.Confirm(id, hash)
 	if err == nil && a.afterConfirm != nil {
 		if err = a.afterConfirm(); err != nil {
@@ -41,6 +52,9 @@ func (a *preparedGuardAuthority) Current(context.Context) (string, error) {
 	return a.engine.Current(), nil
 }
 func (a *preparedGuardAuthority) State(context.Context) (LeaseState, error) {
+	if a.failState {
+		return LeaseState{}, errors.New("state unavailable")
+	}
 	s := a.g.Status()
 	if a.wrongID {
 		s.ID = "unrelated-lease"
