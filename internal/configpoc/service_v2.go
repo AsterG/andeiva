@@ -121,6 +121,9 @@ func OpenServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *ad
 	return openServiceV2(ctx, area, budget, auth, firewall, local, nil)
 }
 func openServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *adminauth.Manager, firewall, local []Engine, policy LocalPolicyV2) (*ServiceV2, error) {
+	return openServiceCoordinatorV2(ctx, area, budget, auth, firewall, local, v2CoordinatorOptions{LocalPolicy: policy})
+}
+func openServiceCoordinatorV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *adminauth.Manager, firewall, local []Engine, options v2CoordinatorOptions) (*ServiceV2, error) {
 	if auth == nil {
 		return nil, ErrDenied
 	}
@@ -128,7 +131,7 @@ func openServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *ad
 	if err != nil {
 		return nil, err
 	}
-	c, err := openCoordinatorV2(ctx, store, firewall, local, v2CoordinatorOptions{LocalPolicy: policy})
+	c, err := openCoordinatorV2(ctx, store, firewall, local, options)
 	if err != nil {
 		if c != nil {
 			c.close()

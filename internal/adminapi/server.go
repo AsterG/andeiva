@@ -21,6 +21,7 @@ import (
 	"github.com/AsterG/andeiva/internal/firewalltraffic"
 	"github.com/AsterG/andeiva/internal/localadmin"
 	"github.com/AsterG/andeiva/internal/localpolicy"
+	"github.com/AsterG/andeiva/internal/networkinventory"
 	"github.com/AsterG/andeiva/internal/productinfo"
 )
 
@@ -43,6 +44,7 @@ type State struct {
 	Effective Effective          `json:"effective"`
 }
 type Options struct {
+	NetworkInventory func(context.Context) (networkinventory.Snapshot, error)
 	// FirewallRuleState is asserted only by a runtime with schema-4 verified
 	// compilation, rollback and counter support. It is never client supplied.
 	FirewallRuleState bool
@@ -66,8 +68,17 @@ type handler struct {
 }
 
 func New(options Options) (http.Handler, error) {
+	return newHandler(options, nil)
+}
+func newHandler(options Options, operations *configpoc.ServiceV2) (http.Handler, error) {
 	origin, err := url.Parse(options.Origin)
-	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.Path != "" || origin.User != nil || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" || options.Auth == nil || (options.Backend == nil && options.Local == nil) || (options.Backend != nil && options.Observe == nil) || (options.Local != nil && options.LocalEndpointID == "") {
+	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.Path != "" || origin.User != nil || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" || options.Auth == nil || (options.Backend == nil && options.Local == nil && operations == nil) || (options.Backend != nil && options.Observe == nil) || (options.Local != nil && options.LocalEndpointID == "") {
+		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
+	}
+	if operations != nil && (options.Backend != nil || options.Local != nil || !operations.AuthenticatedBy(options.Auth)) {
+		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
+	}
+	if operations == nil && options.NetworkInventory != nil {
 		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
 	}
 	if options.Local != nil {
@@ -82,14 +93,14 @@ func New(options Options) (http.Handler, error) {
 	} else if options.LocalEndpointID != "" || options.LocalActivationHash != "" || options.LocalRecovery || len(options.LocalInventory) != 0 {
 		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
 	}
-	if options.FirewallRuleState && options.Backend == nil {
+	if options.FirewallRuleState && options.Backend == nil && operations == nil {
 		return nil, errors.New("ANDEIVA_ADMIN_CONFIGURATION")
 	}
 	traffic, err := firewalltraffic.New()
 	if err != nil {
 		return nil, err
 	}
-	return &handler{options: options, host: origin.Host, traffic: traffic}, nil
+	return &handler{options: options, host: origin.Host, traffic: traffic, preparedOperations: operations}, nil
 }
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var requestID [16]byte
@@ -190,6 +201,18 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.operationsV2(w, r, ctx, token)
 		return
 	}
+	if h.preparedOperations != nil && r.URL.Path == "/api/v2/network/interfaces" {
+		h.networkInterfacesV2(w, r, ctx, token)
+		return
+	}
+	if h.preparedOperations != nil && h.options.Backend == nil && r.Method == http.MethodPost && (strings.HasPrefix(r.URL.Path, "/api/v1/firewall") || strings.HasPrefix(r.URL.Path, "/api/v1/local-services")) {
+		if id.Role != "admin" {
+			h.deny(w, r, id.Username, "write", http.StatusForbidden, "ANDEIVA_CONFIG_DENIED")
+			return
+		}
+		h.fail(w, http.StatusConflict, "ANDEIVA_V2_OPERATIONS_REQUIRED")
+		return
+	}
 	if r.URL.Path == "/api/v1/capabilities" && r.Method == http.MethodGet {
 		versions := []int{}
 		if h.options.Backend != nil {
@@ -198,7 +221,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				versions = append(versions, 4)
 			}
 		}
-		h.write(w, 200, Capabilities{FirewallConfigSchemaVersions: versions, FirewallRuleEnabled: h.options.FirewallRuleState, Firewall: h.options.Backend != nil, LocalServices: h.options.Local != nil, EndpointID: h.options.LocalEndpointID, RecoveryEndpoint: h.options.Local != nil && h.options.LocalRecovery, LocalInterfaces: h.options.LocalInventory})
+		if h.preparedOperations != nil && h.options.Backend == nil && h.options.FirewallRuleState {
+			versions = []int{4}
+		}
+		h.write(w, 200, Capabilities{NetworkInventoryV2: h.preparedOperations != nil && h.options.NetworkInventory != nil, ConfigurationOperationsV2: h.preparedOperations != nil && h.options.Backend == nil, FirewallConfigSchemaVersions: versions, FirewallRuleEnabled: h.options.FirewallRuleState, Firewall: h.options.Backend != nil, LocalServices: h.options.Local != nil, EndpointID: h.options.LocalEndpointID, RecoveryEndpoint: h.options.Local != nil && h.options.LocalRecovery, LocalInterfaces: h.options.LocalInventory})
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/local-services") || r.URL.Path == "/api/v1/effective-policies" {
