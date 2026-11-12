@@ -37,6 +37,9 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 			if err != nil || validateRoutedWorkIntentV2(intent, plan, s.readObject) != nil {
 				return errV2Unavailable
 			}
+			if routedBootHistoryV2(plan, s.state, s.readObject) != nil {
+				return errV2Unavailable
+			}
 		}
 		var previous, target v2Configuration
 		if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validV2Configuration(&previous) || !validV2Configuration(&target) || previous.Intent != nil || target.Intent != nil || intent.TargetGeneration < s.state.Generation || (intent.TargetGeneration != s.state.Generation && (s.state.Generation == ^uint64(0) || intent.TargetGeneration != s.state.Generation+1)) {

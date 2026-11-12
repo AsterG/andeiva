@@ -87,7 +87,9 @@ func (a *RoutedAuthority) Resume(ctx context.Context, p configpoc.RoutedSelected
 		return err
 	}
 	state, _, err := a.group.SnapshotObserved()
-	if err == nil && state.Phase == "idle" && state.ID == "" && a.Match(ctx, p, p.Resolution()) == nil {
+	_, selectedTarget := p.Bundles()
+	confirmedReceipt := p.Resolution() == "target" && state.ID == p.Lease() && state.Target == selectedTarget.Composite.Hash && state.Deadline.Equal(p.Deadline())
+	if err == nil && state.Phase == "idle" && (state.ID == "" || confirmedReceipt) && a.Match(ctx, p, p.Resolution()) == nil {
 		return nil
 	}
 	// A selected recovery intent may already have reconstructed and restored
@@ -136,6 +138,17 @@ func (a *RoutedAuthority) Prepare(ctx context.Context, target configpoc.RoutedAc
 	a.baseline = baseline
 	a.mu.Unlock()
 	value, err := a.engine.Prepare(ctx, target)
+	return configpoc.RoutedPreparationV1{Before: value.Before, Target: value.Target, Dependencies: value.Dependencies}, err
+}
+
+func (a *RoutedAuthority) PrepareBoot(ctx context.Context, target, saved configpoc.RoutedActivationBundleV1) (configpoc.RoutedPreparationV1, error) {
+	engine, ok := any(a.engine).(interface {
+		PrepareColdBoot(context.Context, configpoc.RoutedActivationBundleV1, configpoc.RoutedActivationBundleV1) (routedactivation.PreparationV1, error)
+	})
+	if !ok {
+		return configpoc.RoutedPreparationV1{}, configpoc.ErrRecovery
+	}
+	value, err := engine.PrepareColdBoot(ctx, target, saved)
 	return configpoc.RoutedPreparationV1{Before: value.Before, Target: value.Target, Dependencies: value.Dependencies}, err
 }
 
@@ -225,5 +238,17 @@ func (a *RoutedAuthority) Bootstrap(ctx context.Context, p configpoc.RoutedSelec
 		return configpoc.ErrRecovery
 	}
 	_, target := p.Bundles()
+	state, current, err := a.group.SnapshotObserved()
+	if err == nil && state.ID == p.Lease() && state.Target == target.Composite.Hash && state.Previous == "" && state.Deadline.Equal(p.Deadline()) {
+		switch state.Phase {
+		case "pending", "idle":
+			if current == target.Composite.Hash && a.engine.MatchOwned(ctx, p.Transition().TargetOwned) == nil {
+				return nil
+			}
+		case "armed":
+			return a.group.ApplyLease(ctx, p.Transition(), target, state)
+		}
+		return configpoc.ErrRecovery
+	}
 	return a.group.BootstrapStartup(ctx, p.Transition(), target, started)
 }

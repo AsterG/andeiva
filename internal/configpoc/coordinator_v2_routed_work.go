@@ -121,20 +121,25 @@ func (c *v2Coordinator) publishRoutedWorkV2(ctx context.Context, op v2Operation,
 		}
 		work.Baseline = baselineHash
 	}
-	work.Transition.BeforeOwned, err = c.store.object(v2RoutedOwned{1, work.Lineage, op.ID, "before", prepared.Before})
-	if err != nil {
-		return err
-	}
-	work.Transition.TargetOwned, err = c.store.object(v2RoutedOwned{1, work.Lineage, op.ID, "target", prepared.Target})
-	if err != nil {
-		return err
-	}
-	work.Transition.Dependencies, err = c.store.object(v2RoutedDependencies{1, work.Lineage, op.ID, prepared.Dependencies})
-	if err != nil {
-		return err
-	}
-	intent.RoutedWork, err = c.store.object(work)
+	intent.RoutedWork, err = c.publishRoutedObjectsV2(work, prepared)
 	return err
+}
+
+func (c *v2Coordinator) publishRoutedObjectsV2(work v2RoutedWork, prepared RoutedPreparationV1) (string, error) {
+	var err error
+	work.Transition.BeforeOwned, err = c.store.object(v2RoutedOwned{1, work.Lineage, work.Operation, "before", prepared.Before})
+	if err != nil {
+		return "", err
+	}
+	work.Transition.TargetOwned, err = c.store.object(v2RoutedOwned{1, work.Lineage, work.Operation, "target", prepared.Target})
+	if err != nil {
+		return "", err
+	}
+	work.Transition.Dependencies, err = c.store.object(v2RoutedDependencies{1, work.Lineage, work.Operation, prepared.Dependencies})
+	if err != nil {
+		return "", err
+	}
+	return c.store.object(work)
 }
 
 // loadRoutedWorkV2 validates typed payloads without accessing engines or pools.
@@ -152,7 +157,11 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 	if original && (!work.Cold || work.Baseline != "") || work.Cold && work.Baseline != "" || !work.Cold && !validHash(work.Baseline) {
 		return plan, errV2Unavailable
 	}
-	if work.Version != 1 || work.Lineage != lineage || work.Operation == "" || work.Subject == "" || work.Generation == 0 || work.Lease == "" || work.Deadline.IsZero() || work.Deadline.Location() != time.UTC || !work.Transition.ValidShape() || work.Transition.Operation != work.Operation || work.Scope.Version != 1 || work.Scope.Lineage != lineage || work.Scope.Generation != work.Generation || !validRoutedIdentityV1(work.Scope.Identity) {
+	boot := work.Kind == v2BootKind
+	if work.Kind != "" && !boot || boot && (work.Subject != "" || !work.Cold || !validHash(work.BootRecord) || work.Lease != work.Operation || work.BootBaseline == nil) || !boot && (work.Subject == "" || work.BootRecord != "" || work.BootBaseline != nil) {
+		return plan, errV2Unavailable
+	}
+	if work.Version != 1 || work.Lineage != lineage || work.Operation == "" || work.Generation == 0 || work.Lease == "" || work.Deadline.IsZero() || work.Deadline.Location() != time.UTC || !work.Transition.ValidShape() || work.Transition.Operation != work.Operation || work.Scope.Version != 1 || work.Scope.Lineage != lineage || work.Scope.Generation != work.Generation || !validRoutedIdentityV1(work.Scope.Identity) {
 		return plan, errV2Unavailable
 	}
 	var before, target v2Configuration
@@ -165,7 +174,16 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	plan.target, err = bundleFromConfigurationV2(target)
-	if err != nil || target.Pending == nil || target.Pending.OriginCommit != work.Operation || target.Pending.Owner != work.Subject || target.Pending.Lease != work.Lease || target.Pending.Domain != "routed" || !target.Pending.Deadline.Equal(work.Deadline) || target.Pending.Previous != work.Transition.Previous {
+	if err != nil {
+		return plan, errV2Unavailable
+	}
+	if boot {
+		var record v2RecoveryRecord
+		if load(work.BootRecord, &record) != nil || !validRecoveryRecordV2(record, lineage) || record.Kind != v2BootKind || record.State != "pending" || record.Reserve != nil || record.ID != work.Operation || record.Previous != work.Transition.Previous || record.Target != work.Transition.Target || record.BootID == nil || string(*record.BootID) != work.Scope.Identity.BootID || !record.Started.Add(10*time.Second).Equal(work.Deadline) || !validBootTargetV2(before, target) {
+			return plan, errV2Unavailable
+		}
+		plan.bootRecord = &record
+	} else if target.Pending == nil || target.Pending.OriginCommit != work.Operation || target.Pending.Owner != work.Subject || target.Pending.Lease != work.Lease || target.Pending.Domain != "routed" || !target.Pending.Deadline.Equal(work.Deadline) || target.Pending.Previous != work.Transition.Previous {
 		return plan, errV2Unavailable
 	}
 	var priorOwned, targetOwned v2RoutedOwned
@@ -173,7 +191,18 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 	if load(work.Transition.BeforeOwned, &priorOwned) != nil || load(work.Transition.TargetOwned, &targetOwned) != nil || load(work.Transition.Dependencies, &dependencies) != nil || priorOwned.Version != 1 || targetOwned.Version != 1 || dependencies.Version != 1 || priorOwned.Lineage != lineage || targetOwned.Lineage != lineage || dependencies.Lineage != lineage || priorOwned.Operation != work.Operation || targetOwned.Operation != work.Operation || dependencies.Operation != work.Operation || priorOwned.Role != "before" || targetOwned.Role != "target" {
 		return plan, errV2Unavailable
 	}
-	plan.preparation, err = routedPreparationV2(RoutedPreparationV1{priorOwned.Value, targetOwned.Value, dependencies.Value}, plan.previous, plan.target, work.Cold)
+	physicalPrevious := plan.previous
+	if boot {
+		physicalPrevious, err = CanonicalRoutedActivationBundleV1(work.BootBaseline.Saved)
+		if err != nil {
+			return plan, errV2Unavailable
+		}
+	}
+	if boot {
+		plan.preparation, err = routedBootPreparationV2(RoutedPreparationV1{priorOwned.Value, targetOwned.Value, dependencies.Value}, *work.BootBaseline, plan.target, before, load)
+	} else {
+		plan.preparation, err = routedPreparationV2(RoutedPreparationV1{priorOwned.Value, targetOwned.Value, dependencies.Value}, physicalPrevious, plan.target, work.Cold)
+	}
 	if err != nil {
 		return plan, errV2Unavailable
 	}
@@ -182,9 +211,12 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		if err != nil || baseline.work.Scope.Identity != work.Scope.Identity || baseline.work.Generation >= work.Generation {
 			return plan, errV2Unavailable
 		}
-		plan.baseline = &RoutedBaselineV1{Saved: baseline.previous, Owned: baseline.preparation.Before, Dependencies: baseline.preparation.Dependencies}
+		plan.baseline = baseline.Baseline()
 	} else {
-		plan.baseline = &RoutedBaselineV1{Saved: plan.previous, Owned: plan.preparation.Before, Dependencies: plan.preparation.Dependencies}
+		plan.baseline = &RoutedBaselineV1{Saved: physicalPrevious, Owned: plan.preparation.Before, Dependencies: plan.preparation.Dependencies}
+		if boot {
+			plan.baseline = clone(work.BootBaseline)
+		}
 	}
 	if plan.preparation.Dependencies.Prepared.Hash != plan.baseline.Dependencies.Prepared.Hash || plan.preparation.Dependencies.Network.Hash != plan.baseline.Dependencies.Network.Hash {
 		return plan, errV2Unavailable
@@ -236,6 +268,12 @@ func (c *v2Coordinator) selectedRoutedPlanV2() (RoutedSelectedPlanV1, error) {
 	if plan.work.Scope.Identity != c.options.RoutedIdentity {
 		return plan, ErrRecovery
 	}
+	if plan.work.Kind == v2BootKind {
+		var record v2RecoveryRecord
+		if c.store.readObject(c.store.state.Configuration.LastRecovery, &record) != nil || !routedBootRecordMatchesV2(plan, record) {
+			return plan, ErrRecovery
+		}
+	}
 	if intent.Recovery {
 		plan.resolution = "recovery-before"
 	}
@@ -245,6 +283,12 @@ func (c *v2Coordinator) selectedRoutedPlanV2() (RoutedSelectedPlanV1, error) {
 func validateRoutedWorkIntentV2(intent *v2CoordinatorIntent, plan RoutedSelectedPlanV1, load func(string, any) error) error {
 	if intent == nil || intent.Domain != "routed" || !plan.Valid() {
 		return ErrRecovery
+	}
+	if intent.Kind == v2BootKind {
+		if !validBootIntentV2(intent) || plan.work.Kind != v2BootKind || intent.Operation != plan.work.Operation || intent.Previous != plan.work.Transition.Previous || intent.Target != plan.work.Transition.Target || intent.TargetGeneration != plan.work.Generation || string(*intent.BootID) != plan.work.Scope.Identity.BootID {
+			return ErrRecovery
+		}
+		return nil
 	}
 	if intent.Kind == OpConfirm || intent.Recovery {
 		if intent.Recovery && (intent.OriginCommit != plan.work.Operation || intent.Lease != plan.work.Lease) {
