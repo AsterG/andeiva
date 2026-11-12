@@ -1,0 +1,28 @@
+# Autoridade de configuração roteada
+
+O supervisor pode fornecer ao controle V2 uma autoridade roteada exclusiva. A
+entrada administrativa não seleciona namespaces, pools, caminhos de artefatos,
+identidades do helper ou capacidades de ativação. Firewall 6 e serviços locais
+3 formam uma candidata 7 e uma transação protegida conjunta.
+
+Antes de armar, o coordenador seleciona objetos tipados de propriedade,
+dependências e identidade com o Intent e as reservas existentes. O helper
+verifica esse plano e seu prazo original, aplica lotes compilados e lê o estado
+efetivo. Confirm utiliza a operação original e a revisão de Pending; Save copia
+Running confirmado completo para Startup.
+
+Fechar API/catálogo preserva helper e tráfego. Reabrir o controlador preserva o
+estado confirmado; commits pendentes seguem a compensação de reinício
+existente. Outro helper ou boot não pode adotar identidade anterior nem criar
+um prazo novo.
+
+`TestRoutedPhysicalCoordinatorConfirmedLifecycle` usa armazenamento,
+autenticação, reservas físicas, compiladores e guardian reais com transporte
+kernel/rede simulado. Não comprova tráfego real, recuperação de um helper novo
+ou boot. Boot agrupado e IPC produtivo continuam bloqueados até validar a
+integração. O router V2 recusa mutações V1; o despacho de tentativas V1 migradas
+conhecidas ainda requer integração. Consumo de recursos pendente de medição;
+estas provas não demonstram capacidade do appliance.
+
+Teste Linux: `go test -race ./internal/configpoc ./internal/previewruntime
+./internal/localnft ./internal/routedactivation`.

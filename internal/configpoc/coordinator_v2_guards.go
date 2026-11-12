@@ -41,6 +41,12 @@ func (c *v2Coordinator) absoluteGuardPreflightV2(op v2Operation, previous, targe
 	if !guardEffectV2(op, previous, target) {
 		return nil
 	}
+	if op.Domain == "routed" {
+		if c.options.Routed == nil {
+			return ErrRecovery
+		}
+		return nil
+	}
 	id := op.ID
 	if (op.Request.Kind == OpCommit || op.Request.Kind == OpRollback) && target.Pending != nil {
 		id = target.Pending.Lease
@@ -69,6 +75,9 @@ func (c *v2Coordinator) hasPreparedGuard(domains ...string) bool {
 	domain := "firewall"
 	if len(domains) == 1 {
 		domain = domains[0]
+	}
+	if domain == "routed" {
+		return c.options.Routed != nil
 	}
 	for _, engine := range c.enginesV2(domain) {
 		if _, ok := engine.(ActivationGuard); ok {
@@ -100,6 +109,16 @@ func guardEffectV2(op v2Operation, previous, target v2Configuration) bool {
 	return op.Request.Kind == OpRecover || op.Request.Kind == OpCommit || op.Request.Kind == OpConfirm || (op.Request.Kind == OpRollback && target.Pending != nil) || domainSnapshotV2(&previous, op.Domain).Running.Hash != domainSnapshotV2(&target, op.Domain).Running.Hash
 }
 func (c *v2Coordinator) prepareGuardsLocked(ctx context.Context, op v2Operation, previous, target v2Configuration) error {
+	if op.Domain == "routed" && !metadataOperationV2(op.Request.Kind) {
+		plan, err := c.selectedRoutedPlanV2()
+		if err != nil {
+			return err
+		}
+		if op.Request.Kind == OpConfirm {
+			return nil
+		}
+		return c.options.Routed.Arm(ctx, plan)
+	}
 	domain := op.Domain
 	if !c.hasPreparedGuard(op.Domain) || !guardEffectV2(op, previous, target) {
 		return nil
@@ -140,6 +159,16 @@ func (c *v2Coordinator) prepareGuardsLocked(ctx context.Context, op v2Operation,
 	return c.point("after_guard_arm")
 }
 func (c *v2Coordinator) confirmGuardsLocked(ctx context.Context, op v2Operation, previous, target v2Configuration) error {
+	if op.Domain == "routed" && !metadataOperationV2(op.Request.Kind) {
+		if target.Pending != nil {
+			return nil
+		}
+		plan, err := c.selectedRoutedPlanV2()
+		if err != nil {
+			return err
+		}
+		return c.options.Routed.Confirm(ctx, plan)
+	}
 	domain := op.Domain
 	if !c.hasPreparedGuard(op.Domain) || target.Pending != nil || !guardEffectV2(op, previous, target) {
 		return nil
@@ -163,6 +192,13 @@ func (c *v2Coordinator) restoreGuardsLocked(ctx context.Context, id string, prev
 	domain := effectDomainV2(previous, target)
 	if len(domains) == 1 {
 		domain = domains[0]
+	}
+	if domain == "routed" {
+		plan, err := c.selectedRoutedPlanV2()
+		if err != nil || plan.Lease() != id {
+			return ErrRecovery
+		}
+		return c.options.Routed.Recover(ctx, plan)
 	}
 	for _, engine := range c.enginesV2(domain) {
 		if guard, ok := engine.(ActivationGuard); ok {

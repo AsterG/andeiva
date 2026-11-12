@@ -38,7 +38,11 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 	if err != nil {
 		return err
 	}
-	if 18+8+archive+2*initial+verified > v2OperationReserveInodes {
+	routedObjects := uint64(0)
+	if target.Running.Config.SchemaVersion == 7 && target.Firewall.Running.Config.SchemaVersion == 6 {
+		routedObjects = 4
+	}
+	if 18+8+archive+2*initial+verified+routedObjects > v2OperationReserveInodes {
 		return errV2Limited
 	}
 	return nil
@@ -118,6 +122,17 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 }
 
 func reserveTargetEnvelopeV2(s *v2Store, op v2Operation) (v2Configuration, error) {
+	if op.Domain == "routed" {
+		now := op.Accepted
+		if now.IsZero() {
+			now = s.state.Clock
+		}
+		target, _, err := routedTargetV2(s, op, *s.state.Configuration, now, "reserve-forecast")
+		if target.Pending != nil && target.Pending.OriginCommit == op.ID {
+			target.Pending.Deadline = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+		}
+		return target, err
+	}
 	target := clone(*s.state.Configuration)
 	target.Intent = nil
 	domain := domainSnapshotV2(&target, op.Domain)
@@ -218,6 +233,9 @@ func reserveProfileFutureFitsV2(s *v2Store, target v2Configuration) error {
 func reserveProjectedEnvelopeV2(st v2State, target v2Configuration, _ string) v2State {
 	projected := st
 	projected.Configuration = &target
+	if hasFeatureV2(st, v2RoutedFeature) && target.Firewall.Running.Config.SchemaVersion == 6 {
+		projected.RoutedActive = &v2RoutedActive{Work: strings.Repeat("f", 64), Side: "target"}
+	}
 	reserveNormalizeEnvelopeScalarsV2(&projected)
 	return projected
 }

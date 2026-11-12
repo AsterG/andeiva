@@ -6,6 +6,12 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 	if state == nil || !validV2Configuration(state) {
 		return errV2Unavailable
 	}
+	if validateCandidateGroupEvidenceV2(*state, s.readObject) != nil {
+		return errV2Unavailable
+	}
+	if validateRoutedActiveV2(s.state, s.readObject) != nil {
+		return errV2Unavailable
+	}
 	if err := c.pendingReferencesLocked(state); err != nil {
 		return err
 	}
@@ -26,6 +32,12 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 	}
 	if state.Intent != nil {
 		intent := state.Intent
+		if intent.RoutedWork != "" {
+			plan, err := loadRoutedWorkV2(intent.RoutedWork, s.state.Lineage, s.readObject)
+			if err != nil || validateRoutedWorkIntentV2(intent, plan, s.readObject) != nil {
+				return errV2Unavailable
+			}
+		}
 		var previous, target v2Configuration
 		if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validV2Configuration(&previous) || !validV2Configuration(&target) || previous.Intent != nil || target.Intent != nil || intent.TargetGeneration < s.state.Generation || (intent.TargetGeneration != s.state.Generation && (s.state.Generation == ^uint64(0) || intent.TargetGeneration != s.state.Generation+1)) {
 			return errV2Unavailable

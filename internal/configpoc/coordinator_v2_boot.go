@@ -29,12 +29,12 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 func validFeaturesV2(state v2State) bool {
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature) || feature <= last {
+		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature) || feature <= last {
 			return false
 		}
 		last = feature
 	}
-	if !validGuardDeadlineFeatureV2(state) {
+	if !validGuardDeadlineFeatureV2(state) || !validRoutedFeatureV2(state) {
 		return false
 	}
 	if state.Configuration != nil && (state.Configuration.LastCompletedBoot != "" || (state.Configuration.Intent != nil && state.Configuration.Intent.Kind == v2BootKind)) {
@@ -65,6 +65,16 @@ func addFeatureV2(state *v2State, feature string) {
 }
 
 func preservesFeaturesV2(previous, next v2State) bool {
+	if previous.Configuration != nil && next.Configuration != nil {
+		p, n := previous.Configuration.Intent, next.Configuration.Intent
+		if p != nil && n != nil && p.RoutedWork != "" {
+			_, left, e1 := v2Canonical(p)
+			_, right, e2 := v2Canonical(n)
+			if e1 != nil || e2 != nil || left != right {
+				return false
+			}
+		}
+	}
 	if !preservesGuardDeadlineV2(previous, next) {
 		return false
 	}
