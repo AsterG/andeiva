@@ -43,6 +43,10 @@ jobs:
           bash scripts/check-config-platforms.sh
           bash -n packaging/preview/tests/storage-pressure.sh
           bash packaging/preview/tests/storage-pressure-log-test.sh
+          bash -n packaging/preview/tests/recovery-reserve-pressure.sh
+          refusal=0
+          bash packaging/preview/tests/recovery-reserve-pressure.sh --invalid || refusal=$?
+          test "$refusal" -eq 64
       - name: Inactive boot themes and reproducible data package
         run: bash packaging/boot-branding/tests/run.sh
       - name: Boot activation unprivileged failure and recovery tests
