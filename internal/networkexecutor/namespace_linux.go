@@ -2,11 +2,15 @@ package networkexecutor
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -139,6 +143,243 @@ func NewWithHost(lifetime context.Context, namespace, host *os.File) (*Executor,
 
 func validNamespaceBinding(target, host, self uint64) bool {
 	return target != 0 && host != 0 && self == host && target != host
+}
+
+// OwnedNamespaceIdentity is copied by trusted assembly from authenticated manager
+// metadata and identities. It is not a request DTO. Neither an inode nor RunID
+// proves manager provenance: assembly must authenticate the metadata and inherited
+// descriptors before calling NewInOwnedNamespace.
+type OwnedNamespaceIdentity struct {
+	UID, GID        uint32
+	Namespace, Host uint64
+	BootID, RunID   string
+}
+
+// NewInOwnedNamespace runs only inside the manager's retained non-host namespace.
+// It needs NET_ADMIN, never SYS_ADMIN or nsenter. NewWithHost remains the separate
+// host-supervisor constructor. Caller pins are duplicated and never passed to ip.
+func NewInOwnedNamespace(lifetime context.Context, target, host *os.File, expected OwnedNamespaceIdentity) (*Executor, error) {
+	if lifetime == nil || target == nil || host == nil || !validOwnedIdentity(expected) {
+		return nil, ErrScope
+	}
+	if err := lifetime.Err(); err != nil {
+		return nil, err
+	}
+	pin, id, err := pinNamespace(target)
+	if err != nil {
+		return nil, err
+	}
+	hostPin, hostID, err := pinNamespace(host)
+	if err != nil {
+		_ = pin.Close()
+		return nil, err
+	}
+	guard := func() error {
+		if id != expected.Namespace || hostID != expected.Host || verifyOwnedNamespace(pin, hostPin, expected) != nil || !trustedExecutable("/usr/bin/ip") {
+			return ErrScope
+		}
+		return nil
+	}
+	if err := guard(); err != nil {
+		_ = pin.Close()
+		_ = hostPin.Close()
+		return nil, err
+	}
+	owners.Lock()
+	if owners.ids[id] {
+		owners.Unlock()
+		_ = pin.Close()
+		_ = hostPin.Close()
+		return nil, ErrBusy
+	}
+	owners.ids[id] = true
+	owners.Unlock()
+	e := &Executor{lifetime: lifetime}
+	e.release = func() error {
+		err := errors.Join(pin.Close(), hostPin.Close())
+		owners.Lock()
+		delete(owners.ids, id)
+		owners.Unlock()
+		return err
+	}
+	e.run = func(ctx context.Context, op operation) ([]byte, error) {
+		// Pin guard and exec to the same OS thread; no setns is performed here.
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		if guard() != nil {
+			return nil, ErrScope
+		}
+		cmd, err := ownedNamespaceCommand(ctx, op)
+		if err != nil {
+			return nil, err
+		}
+		output, diagnostic := &limitedBuffer{}, &limitedBuffer{}
+		cmd.Stdout, cmd.Stderr = output, diagnostic
+		if err := cmd.Run(); err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, ErrCommand
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if output.exceeded || diagnostic.exceeded {
+			return nil, ErrCommand
+		}
+		return output.data, nil
+	}
+	return e, nil
+}
+
+func validOwnedIdentity(want OwnedNamespaceIdentity) bool {
+	if want.UID == 0 || want.GID == 0 || want.Namespace == 0 || want.Host == 0 || want.Namespace == want.Host || len(want.RunID) != 32 || len(want.BootID) != 36 {
+		return false
+	}
+	if want.BootID[8] != '-' || want.BootID[13] != '-' || want.BootID[18] != '-' || want.BootID[23] != '-' {
+		return false
+	}
+	for _, value := range []string{want.RunID, strings.ReplaceAll(want.BootID, "-", "")} {
+		if value != strings.ToLower(value) {
+			return false
+		}
+		if _, err := hex.DecodeString(value); err != nil {
+			return false
+		}
+	}
+	return len(strings.ReplaceAll(want.BootID, "-", "")) == 32
+}
+
+func verifyOwnedNamespace(target, host *os.File, want OwnedNamespaceIdentity) error {
+	if !validOwnedIdentity(want) || target == nil || host == nil {
+		return ErrScope
+	}
+	targetID, err := namespaceID(int(target.Fd()))
+	if err != nil || targetID != want.Namespace {
+		return ErrScope
+	}
+	hostID, err := namespaceID(int(host.Fd()))
+	if err != nil || hostID != want.Host || targetID == hostID {
+		return ErrScope
+	}
+	for _, thread := range []bool{false, true} {
+		var self *os.File
+		var err error
+		if thread {
+			self, err = os.Open("/proc/thread-self/ns/net")
+		} else {
+			self, err = os.Open("/proc/self/ns/net")
+		}
+		if err != nil {
+			return ErrScope
+		}
+		selfID, err := namespaceID(int(self.Fd()))
+		_ = self.Close()
+		if err != nil || selfID != targetID {
+			return ErrScope
+		}
+	}
+	boot, err := readOwnedIdentityFile(true)
+	if err != nil || string(boot) != want.BootID+"\n" {
+		return ErrScope
+	}
+	status, err := readOwnedIdentityFile(false)
+	if err != nil || ownedPrivileges(status, want.UID, want.GID) != nil {
+		return ErrScope
+	}
+	groups, err := os.Getgroups()
+	if err != nil {
+		return ErrScope
+	}
+	for _, group := range groups {
+		if group < 0 || uint64(group) != uint64(want.GID) {
+			return ErrScope
+		}
+	}
+	return nil
+}
+
+func readOwnedIdentityFile(boot bool) ([]byte, error) {
+	var f *os.File
+	var err error
+	var limit int64 = 64 << 10
+	if boot {
+		f, err = os.Open("/proc/sys/kernel/random/boot_id")
+		limit = 128
+	} else {
+		f, err = os.Open("/proc/thread-self/status")
+	}
+	if err != nil {
+		return nil, ErrScope
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(data)) > limit {
+		return nil, ErrScope
+	}
+	return data, nil
+}
+
+func ownedPrivileges(status []byte, uid, gid uint32) error {
+	if uid == 0 || gid == 0 || len(status) > 64<<10 {
+		return ErrScope
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(status), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || (key != "Uid" && key != "Gid" && key != "NoNewPrivs" && key != "CapInh" && key != "CapPrm" && key != "CapEff" && key != "CapBnd" && key != "CapAmb") {
+			continue
+		}
+		if seen[key] {
+			return ErrScope
+		}
+		seen[key] = true
+		fields := strings.Fields(value)
+		switch key {
+		case "Uid", "Gid":
+			want := uid
+			if key == "Gid" {
+				want = gid
+			}
+			if len(fields) != 4 {
+				return ErrScope
+			}
+			for _, field := range fields {
+				id, err := strconv.ParseUint(field, 10, 32)
+				if err != nil || id != uint64(want) {
+					return ErrScope
+				}
+			}
+		case "NoNewPrivs":
+			if len(fields) != 1 || fields[0] != "1" {
+				return ErrScope
+			}
+		default:
+			if len(fields) != 1 || len(fields[0]) != 16 {
+				return ErrScope
+			}
+			mask, err := strconv.ParseUint(fields[0], 16, 64)
+			if err != nil || mask != uint64(1)<<12 {
+				return ErrScope
+			}
+		}
+	}
+	if len(seen) != 8 {
+		return ErrScope
+	}
+	return nil
+}
+
+func ownedNamespaceCommand(ctx context.Context, op operation) (*exec.Cmd, error) {
+	args, err := arguments(op)
+	if err != nil || ctx == nil {
+		return nil, ErrScope
+	}
+	cmd := exec.CommandContext(ctx, "/usr/bin/ip", args...) // #nosec G204 -- Fixed executable, private validated operations, verified inherited namespace.
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C", "LC_ALL=C"}
+	cmd.WaitDelay = 250 * time.Millisecond
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	return cmd, nil
 }
 
 func pinNamespace(source *os.File) (*os.File, uint64, error) {
