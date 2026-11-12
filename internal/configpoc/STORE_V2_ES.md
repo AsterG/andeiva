@@ -104,3 +104,5 @@ quedaron 112.132.096 bytes. La presión por inodos alcanzó cero inodos libres c
 disponibilidad cero hasta cerrarlo; después se observaron 111.075.328 bytes.
 Son medidas del filesystem de esta corrida sobre copias. El pico cgroup incluye
 caché; no es RSS del proceso, heap de la aplicación ni dimensionamiento productivo.
+
+Véanse las [reservas de recuperación transaccional](RECOVERY_RESERVES_V2_ES.md) para la integración interna de pools/coordinador y sus pruebas pendientes.

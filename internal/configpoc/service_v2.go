@@ -11,9 +11,75 @@ import (
 
 // Catalogue DTOs contain durable business requests/results, never credentials,
 // transport evidence or a handle to the storage/coordinator implementation.
-type OperationV2 = v2Operation
+type OperationV2 struct {
+	ID            string             `json:"id"`
+	Namespace     string             `json:"namespace_id"`
+	Subject       string             `json:"subject"`
+	Lineage       string             `json:"lineage"`
+	Domain        string             `json:"domain"`
+	Sequence      uint64             `json:"sequence,string"`
+	Expected      uint64             `json:"expected_generation,string"`
+	Request       OperationRequestV2 `json:"request"`
+	Fingerprint   string             `json:"fingerprint"`
+	State         string             `json:"state"`
+	Accepted      time.Time          `json:"accepted_at"`
+	ExecuteBefore time.Time          `json:"execute_before"`
+	Completed     *time.Time         `json:"completed_at,omitempty"`
+	RetainUntil   *time.Time         `json:"retain_until,omitempty"`
+	Outcome       *OutcomeV2         `json:"outcome,omitempty"`
+	Pinned        bool               `json:"pinned"`
+	Retired       bool               `json:"retired"`
+}
+type OutcomeV2 struct {
+	Code                 string     `json:"code"`
+	ErrorCode            string     `json:"error_code,omitempty"`
+	Generation           uint64     `json:"generation,string"`
+	AuditHash            string     `json:"audit_hash"`
+	DomainGeneration     uint64     `json:"domain_generation,string,omitempty"`
+	RunningRevision      string     `json:"running_revision,omitempty"`
+	StartupRevision      string     `json:"startup_revision,omitempty"`
+	ConfirmationDeadline *time.Time `json:"confirmation_deadline,omitempty"`
+	ConfirmationLease    string     `json:"confirmation_lease,omitempty"`
+	AuditFirst           uint64     `json:"audit_first_sequence,string,omitempty"`
+	AuditLast            uint64     `json:"audit_last_sequence,string,omitempty"`
+}
 type OperationRequestV2 = v2Request
-type NamespaceV2 = v2Namespace
+type NamespaceV2 struct {
+	ID         string    `json:"id"`
+	Subject    string    `json:"subject"`
+	Domain     string    `json:"domain"`
+	Closed     bool      `json:"closed"`
+	AdmitUntil time.Time `json:"admit_until"`
+	Open       []string  `json:"open"`
+}
+
+func operationDTOv2(op v2Operation) OperationV2 {
+	op = clone(op)
+	result := OperationV2{ID: op.ID, Namespace: op.Namespace, Subject: op.Subject, Lineage: op.Lineage, Domain: op.Domain, Sequence: op.Sequence, Expected: op.Expected, Request: op.Request, Fingerprint: op.Fingerprint, State: op.State, Accepted: op.Accepted, ExecuteBefore: op.ExecuteBefore, Completed: op.Completed, RetainUntil: op.RetainUntil, Pinned: op.Pinned, Retired: op.Retired}
+	if op.Outcome != nil {
+		outcome := OutcomeV2(*op.Outcome)
+		result.Outcome = &outcome
+	}
+	return result
+}
+func operationsDTOv2(ops []v2Operation) []OperationV2 {
+	if ops == nil {
+		return nil
+	}
+	result := make([]OperationV2, len(ops))
+	for i, op := range ops {
+		result[i] = operationDTOv2(op)
+	}
+	return result
+}
+
+func namespaceDTOv2(ns v2Namespace) NamespaceV2 {
+	return NamespaceV2{ID: ns.ID, Subject: ns.Subject, Domain: ns.Domain, Closed: ns.Closed, AdmitUntil: ns.AdmitUntil, Open: clone(ns.Open)}
+}
+
+func operationDTOFingerprintV2(op OperationV2) string {
+	return v2OperationFingerprint(v2Operation{ID: op.ID, Namespace: op.Namespace, Subject: op.Subject, Lineage: op.Lineage, Domain: op.Domain, Expected: op.Expected, Request: op.Request})
+}
 
 type BudgetV2 struct{ Bytes, Inodes uint64 }
 type StatusV2 struct {
@@ -151,7 +217,7 @@ func (s *ServiceV2) Namespace(binding adminauth.SessionBinding, domain string, l
 		result, err = store.namespaceLocked(p.Subject, domain, s.coordinator.now(), lifetime)
 		return err
 	})
-	return clone(result), err
+	return namespaceDTOv2(result), err
 }
 func (s *ServiceV2) Admit(binding adminauth.SessionBinding, namespace string, expected uint64, request OperationRequestV2) (OperationV2, error) {
 	var result v2Operation
@@ -159,7 +225,7 @@ func (s *ServiceV2) Admit(binding adminauth.SessionBinding, namespace string, ex
 		result, err = store.admitLocked(p.Subject, namespace, expected, request, s.coordinator.now())
 		return err
 	})
-	return clone(result), err
+	return operationDTOv2(result), err
 }
 func (s *ServiceV2) Query(binding adminauth.SessionBinding, id string) (OperationV2, error) {
 	var result v2Operation
@@ -167,7 +233,7 @@ func (s *ServiceV2) Query(binding adminauth.SessionBinding, id string) (Operatio
 		result, err = store.lookupLocked(p.Subject, id)
 		return err
 	})
-	return clone(result), err
+	return operationDTOv2(result), err
 }
 func (s *ServiceV2) List(binding adminauth.SessionBinding, namespace string, after uint64, limit int) ([]OperationV2, uint64, error) {
 	var result []v2Operation
@@ -176,7 +242,7 @@ func (s *ServiceV2) List(binding adminauth.SessionBinding, namespace string, aft
 		result, cursor, err = store.listLocked(p.Subject, namespace, after, limit)
 		return err
 	})
-	return clone(result), cursor, err
+	return operationsDTOv2(result), cursor, err
 }
 func (s *ServiceV2) CloseNamespace(binding adminauth.SessionBinding, namespace string) error {
 	return s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) error {
@@ -192,7 +258,7 @@ func (s *ServiceV2) Execute(ctx context.Context, binding adminauth.SessionBindin
 	if result.GlobalGeneration == 0 {
 		return ResultV2{}, err
 	}
-	return ResultV2{Operation: result.Operation, Current: serviceStatusV2(result.Current, result.GlobalGeneration)}, err
+	return ResultV2{Operation: operationDTOv2(result.Operation), Current: serviceStatusV2(result.Current, result.GlobalGeneration)}, err
 }
 func (s *ServiceV2) Status(binding adminauth.SessionBinding) (StatusV2, error) {
 	p, err := s.principal(binding)
