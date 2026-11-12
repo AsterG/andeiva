@@ -78,8 +78,25 @@ type startupBootstrapV2 interface {
 	ConfirmStartup(context.Context, string, Revision, Revision) error
 }
 
+// Marker 1 requires an original absolute deadline. Current real helpers stay
+// gated until this trusted contract is implemented; legacy assembly is intact.
+type startupDeadlineGuardV2 interface {
+	ArmUntil(context.Context, string, Revision, Revision, time.Time) error
+}
+
 func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) error {
 	s := c.store
+	if s.reserves != nil {
+		for _, engine := range c.firewall {
+			if guard, ok := engine.(ActivationGuard); ok {
+				if _, absolute := guard.(startupDeadlineGuardV2); !absolute {
+					return ErrRecovery
+				}
+			} else if _, bootstrap := engine.(startupBootstrapV2); bootstrap {
+				return ErrRecovery
+			}
+		}
+	}
 	current := clone(*s.state.Configuration)
 	if current.LastCompletedBoot != "" {
 		var completed v2RecoveryRecord
@@ -127,18 +144,24 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 		return err
 	}
 	record := v2RecoveryRecord{Format: v2Format, ID: issued, BootID: &id, Kind: v2BootKind, State: "pending", Previous: previousHash, Target: targetHash, Lineage: s.state.Lineage, Started: c.recoveryNow(), Pinned: true}
+	st := clone(s.state)
+	bootIntent := v2CoordinatorIntent{Operation: issued, Domain: "firewall", Kind: v2BootKind, Previous: previousHash, Target: targetHash, TargetGeneration: st.Generation + 1, Recovery: true, BootID: &id}
+	if s.reserves != nil {
+		if err = s.reserves.prepareBoot(s, &st, &record, bootIntent); err != nil {
+			return err
+		}
+	}
 	hash, err := s.object(record)
 	if err != nil {
 		return err
 	}
-	st := clone(s.state)
 	addFeatureV2(&st, v2BootFeature)
 	st.Configuration.LastRecovery = hash
 	st.Configuration.RecoveryIndex, err = c.recoveryIndexPut(st.Configuration.RecoveryIndex, record, hash)
 	if err != nil {
 		return err
 	}
-	st.Configuration.Intent = &v2CoordinatorIntent{Operation: issued, Domain: "firewall", Kind: v2BootKind, Previous: previousHash, Target: targetHash, TargetGeneration: st.Generation + 1, Recovery: true, BootID: &id}
+	st.Configuration.Intent = &bootIntent
 	st.ReservedBytes += v2OperationReserveBytes
 	st.ReservedInodes += v2OperationReserveInodes
 	st.Clock = c.recoveryNow()
@@ -154,8 +177,15 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	return c.finishBootLocked(ctx)
 }
 
-func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
+func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	s := c.store
+	defer func() {
+		if result != nil && s.reserves != nil && s.state.SystemBundle != nil {
+			if err := s.reserves.emergencyCandidate(s, s.state.SystemBundle.Bundle, "recovery_uncertain"); err != nil {
+				result = ErrRecovery
+			}
+		}
+	}()
 	intent := s.state.Configuration.Intent
 	if !validBootIntentV2(intent) || c.options.BootID == nil || *intent.BootID != *c.options.BootID || s.state.ReservedBytes < v2OperationReserveBytes || s.state.ReservedInodes < v2OperationReserveInodes {
 		return ErrRecovery
@@ -167,6 +197,12 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 	if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validBootTargetV2(previous, target) || s.readObject(s.state.Configuration.LastRecovery, &record) != nil || !validRecoveryRecordV2(record, s.state.Lineage) || record.ID != intent.Operation || record.Kind != v2BootKind || record.State != "pending" || *record.BootID != *intent.BootID || record.Previous != intent.Previous || record.Target != intent.Target || intent.TargetGeneration != s.state.Generation+1 {
 		return ErrRecovery
 	}
+	if s.reserves != nil && s.reserves.verifyBundle(s, record.Reserve) != nil {
+		return ErrRecovery
+	}
+	if _, err := c.bootRemainingV2(record); err != nil {
+		return err
+	}
 	if !c.localReadback(target) {
 		return ErrRecovery
 	}
@@ -176,26 +212,50 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 		return err
 	}
 	for _, engine := range c.firewall {
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
 		if engine.Validate(target.Firewall.Running.Config) != nil {
 			return ErrEngine
 		}
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
 	}
 	for _, engine := range c.firewall {
-		if engine.Current() == target.Firewall.Running.Hash {
+		current := engine.Current()
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
+		if current == target.Firewall.Running.Hash {
 			continue
 		}
-		if engine.Current() == previous.Firewall.Running.Hash {
+		if current == previous.Firewall.Running.Hash {
 			if guard, ok := engine.(ActivationGuard); ok {
-				if guard.Arm(ctx, record.ID, previous.Firewall.Running, target.Firewall.Running, 10*time.Second) != nil {
+				if c.armBootGuardV2(ctx, guard, record, previous.Firewall.Running, target.Firewall.Running) != nil {
 					return ErrRecovery
+				}
+				if _, err := c.bootRemainingV2(record); err != nil {
+					return err
 				}
 				if engine.Apply(ctx, target.Firewall.Running) != nil || engine.Current() != target.Firewall.Running.Hash {
 					return ErrRecovery
 				}
-			} else if engine.Apply(ctx, target.Firewall.Running) != nil {
-				return ErrEngine
+			} else {
+				if _, err := c.bootRemainingV2(record); err != nil {
+					return err
+				}
+				if engine.Apply(ctx, target.Firewall.Running) != nil {
+					return ErrEngine
+				}
 			}
 		} else if bootstrap, ok := engine.(startupBootstrapV2); ok {
+			if s.reserves != nil {
+				return ErrRecovery
+			}
+			if _, err := c.bootRemainingV2(record); err != nil {
+				return err
+			}
 			if bootstrap.BootstrapStartup(ctx, record.ID, target.Firewall.Running) != nil {
 				return ErrRecovery
 			}
@@ -205,17 +265,29 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 		if err := c.point("after_boot_engine"); err != nil {
 			return err
 		}
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
 	}
 	if !c.readback(target) {
 		return ErrRecovery
 	}
 	for _, engine := range c.firewall {
-		if bootstrap, ok := engine.(startupBootstrapV2); ok {
+		if _, err := c.bootRemainingV2(record); err != nil {
+			return err
+		}
+		if bootstrap, ok := engine.(startupBootstrapV2); ok && s.reserves == nil {
 			if bootstrap.ConfirmStartup(ctx, record.ID, previous.Firewall.Running, target.Firewall.Running) != nil {
 				return ErrRecovery
 			}
 		} else if guard, ok := engine.(ActivationGuard); ok {
-			if guard.Arm(ctx, record.ID, previous.Firewall.Running, target.Firewall.Running, 10*time.Second) != nil || guard.Confirm(ctx, record.ID, target.Firewall.Running.Hash) != nil {
+			if c.armBootGuardV2(ctx, guard, record, previous.Firewall.Running, target.Firewall.Running) != nil {
+				return ErrRecovery
+			}
+			if _, err := c.bootRemainingV2(record); err != nil {
+				return err
+			}
+			if guard.Confirm(ctx, record.ID, target.Firewall.Running.Hash) != nil {
 				return ErrRecovery
 			}
 		}
@@ -224,6 +296,9 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 		return ErrRecovery
 	}
 	if err := c.point("after_boot_readback"); err != nil {
+		return err
+	}
+	if _, err := c.bootRemainingV2(record); err != nil {
 		return err
 	}
 	completed := c.recoveryNow()
@@ -250,16 +325,60 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 	st := clone(s.state)
 	st.Configuration = &target
 	st.Generation = intent.TargetGeneration
-	st.ReservedBytes -= v2OperationReserveBytes
-	st.ReservedInodes -= v2OperationReserveInodes
+	if st.SystemBundle != nil {
+		st.SystemBundle.CanonicalHeld = true
+	} else {
+		st.ReservedBytes -= v2OperationReserveBytes
+		st.ReservedInodes -= v2OperationReserveInodes
+	}
 	st.Clock = completed
 	if err := c.point("before_boot_completion"); err != nil {
+		return err
+	}
+	if _, err := c.bootRemainingV2(record); err != nil {
 		return err
 	}
 	if err := s.publish(st); err != nil {
 		return err
 	}
+	if s.reserves != nil {
+		if err = s.reserves.maintainWork(s, record.ID); err != nil {
+			return err
+		}
+	}
 	return c.point("after_boot_completion")
+}
+
+func (c *v2Coordinator) bootRemainingV2(record v2RecoveryRecord) (time.Duration, error) {
+	if c.store.reserves == nil {
+		return 10 * time.Second, nil
+	}
+	now := c.now()
+	deadline := record.Started.Add(10 * time.Second)
+	if now.Before(record.Started) || now.Before(c.store.state.Clock) || !now.Before(deadline) {
+		return 0, ErrRecovery
+	}
+	return deadline.Sub(now), nil
+}
+
+func (c *v2Coordinator) armBootGuardV2(ctx context.Context, guard ActivationGuard, record v2RecoveryRecord, previous, target Revision) error {
+	remaining, err := c.bootRemainingV2(record)
+	if err != nil {
+		return err
+	}
+	if c.store.reserves != nil {
+		absolute, ok := guard.(startupDeadlineGuardV2)
+		if !ok {
+			return ErrRecovery
+		}
+		if err = absolute.ArmUntil(ctx, record.ID, previous, target, record.Started.Add(10*time.Second)); err != nil {
+			return ErrRecovery
+		}
+	} else if err = guard.Arm(ctx, record.ID, previous, target, remaining); err != nil {
+		return ErrRecovery
+	}
+	_, err = c.bootRemainingV2(record)
+	return err
 }
 
 func bootTargetV2(previous v2Configuration) (v2Configuration, error) {

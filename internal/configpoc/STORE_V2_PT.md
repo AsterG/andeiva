@@ -104,3 +104,5 @@ livres com 111.476.736 bytes ainda disponíveis. O arquivo removido, mas aberto,
 manteve disponibilidade zero até ser fechado; depois foram observados 111.075.328
 bytes. São medidas do filesystem desta execução em cópias. O pico cgroup inclui
 cache; não é RSS do processo, heap da aplicação ou dimensionamento de produção.
+
+Consulte as [reservas de recuperação transacional](RECOVERY_RESERVES_V2_PT.md) para a integração interna de pools/coordenador e sua qualificação pendente.

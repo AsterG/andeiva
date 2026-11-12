@@ -10,6 +10,7 @@ import (
 )
 
 type v2Store struct {
+	reserves   *v2ReserveManager
 	mu         sync.Mutex
 	root       *os.Root
 	lock       *os.File
@@ -218,6 +219,9 @@ func (s *v2Store) close() error {
 }
 
 func v2ValidState(st v2State) bool {
+	if st.RecoveryReserveVersion == 1 && !reserveMetadataStateFitsV2(st) {
+		return false
+	}
 	if st.ReclamationVersion > 1 {
 		return false
 	}
@@ -265,7 +269,12 @@ func v2ValidState(st v2State) bool {
 	if st.Configuration != nil && st.Configuration.Intent != nil && st.Configuration.Intent.Kind == v2BootKind {
 		reserved++
 	}
-	return st.ReservedBytes == reserved*v2OperationReserveBytes && st.ReservedInodes == reserved*v2OperationReserveInodes
+	held, ok := reserveHeldReservationsV2(st)
+	if !ok {
+		return false
+	}
+	reserved += held
+	return validClosingStateV2(st, reserved)
 }
 
 func (s *v2Store) readObject(hash string, value any) error {
@@ -342,6 +351,11 @@ func (s *v2Store) objectClass(value any, indexPage bool) (string, error) {
 		return hash, nil
 	} else if !os.IsNotExist(err) {
 		return "", errV2Unavailable
+	}
+	// Historical immutable objects retain their existing read/dedup contract.
+	// New reserve-profile writes must fit the per-object lifecycle envelope.
+	if s.state.RecoveryReserveVersion == 1 && len(data) > reserveMetadataObjectLimitV2 {
+		return "", errV2Limited
 	}
 	reservedBytes := s.state.ReservedBytes - s.allowance.Bytes
 	reservedInodes := s.state.ReservedInodes - s.allowance.Inodes
@@ -423,7 +437,7 @@ func (s *v2Store) readSelection() error {
 			return errV2Unavailable
 		}
 		var state v2State
-		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage || !preservesFeaturesV2(state, currentState) || !preservesReclamationV2(state, currentState) {
+		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage || !preservesFeaturesV2(state, currentState) || !preservesReclamationV2(state, currentState) || !preservesRecoveryReserveV2(state, currentState) {
 			return errV2Unavailable
 		}
 		if current.Checkpoint {
@@ -465,8 +479,16 @@ func v2ValidSelection(selection v2Selection) bool {
 }
 
 func (s *v2Store) publish(state v2State) (result error) {
-	if s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) {
+	if s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) {
 		return errV2Unavailable
+	}
+	// Registry growth must leave room for both outcomes of an outstanding
+	// confirmation. Reject pressure before writes without fencing the store.
+	if err := reserveMetadataFutureFitsV2(state, s.readObject); err != nil {
+		if err != errV2Limited {
+			s.blocked = true
+		}
+		return err
 	}
 	defer func() {
 		if result != nil {

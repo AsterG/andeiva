@@ -37,7 +37,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 			release()
 			return errV2Unavailable
 		}
-		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !preservesFeaturesV2(state, previousState) || !preservesReclamationV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
+		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !preservesFeaturesV2(state, previousState) || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
 			release()
 			return errV2Unavailable
 		}
@@ -58,13 +58,16 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		previousSelection = selection
 		// Only the preceding feature set is needed by the selection edge. Do not
 		// retain every decoded state while traversing historical selections.
-		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion}
+		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration)}
 		hash = selection.Previous
 	}
 	return errV2InspectionBudget
 }
 
 func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error {
+	if err := reserveMetadataFutureFitsV2(state, r.object); err != nil {
+		return err
+	}
 	if state.Migration != "" {
 		var held []func()
 		var readErr error
@@ -87,8 +90,28 @@ func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error
 			return err
 		}
 	}
+	ordinary := uint64(0)
 	if state.Index != "" {
-		if err := r.index(state.Index, 2, 0, key, state, depth); err != nil {
+		if err := r.index(state.Index, 2, 0, key, state, depth, &ordinary); err != nil {
+			return err
+		}
+	}
+	if state.RecoveryReserveVersion == 1 {
+		closing := uint64(0)
+		if state.ClosingIndexRoot != "" {
+			if err := r.closingIndex(state.ClosingIndexRoot, 0, "", key, state, depth, &closing); err != nil {
+				return err
+			}
+		}
+		if ordinary != state.OccupiedOrdinary || closing != state.OccupiedClosing {
+			return errV2Unavailable
+		}
+		if state.ReserveArchiveRoot != "" {
+			if err := r.reserveArchiveTree(state.ReserveArchiveRoot, 0, "", key, state, depth); err != nil {
+				return err
+			}
+		}
+		if err := r.activeReserves(key, state, depth); err != nil {
 			return err
 		}
 	}
@@ -96,7 +119,7 @@ func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error
 		return r.configuration(*state.Configuration, key, state, depth, true)
 	}
 	for _, ns := range state.Namespaces {
-		for _, id := range ns.Open {
+		for _, id := range namespaceOpenIDsV2(ns) {
 			op, err := r.lookup(state, ns.Subject, id)
 			if err != nil {
 				return err
@@ -107,7 +130,7 @@ func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error
 	return nil
 }
 
-func (r *v2ReachabilityReader) index(hash string, level int, prefix uint64, key string, state v2State, depth int) error {
+func (r *v2ReachabilityReader) index(hash string, level int, prefix uint64, key string, state v2State, depth int, count *uint64) error {
 	return r.walk(fmt.Sprintf("index:%s:%s:%d:%d", key, hash, level, prefix), depth, func() error {
 		var page v2Page
 		release, err := r.load(hash, &page)
@@ -124,7 +147,7 @@ func (r *v2ReachabilityReader) index(hash string, level int, prefix uint64, key 
 			}
 			position := prefix*64 + uint64(i)
 			if level > 0 {
-				if err := r.index(child, level-1, position, key, state, depth+1); err != nil {
+				if err := r.index(child, level-1, position, key, state, depth+1, count); err != nil {
 					return err
 				}
 				continue
@@ -134,13 +157,21 @@ func (r *v2ReachabilityReader) index(hash string, level int, prefix uint64, key 
 			if err != nil {
 				return err
 			}
-			valid := (&v2Store{state: state}).validOperation(op) && op.Sequence <= state.HighWater && state.HighWater-op.Sequence < state.LiveSlots && (op.Sequence-1)%state.LiveSlots == position && op.Lineage == state.Lineage
+			valid := (&v2Store{state: state}).validOperation(op) && op.Sequence <= state.HighWater && (op.Sequence-1)%state.LiveSlots == position && op.Lineage == state.Lineage
+			if state.RecoveryReserveVersion == 0 {
+				valid = valid && state.HighWater-op.Sequence < state.LiveSlots
+			} else {
+				valid = valid && op.ClosingCredit == ""
+			}
 			if !valid {
 				release()
 				return errV2Unavailable
 			}
 			if op.Outcome != nil {
 				err = r.operationAudit(op, state, depth+1)
+			}
+			if !op.Retired {
+				*count++
 			}
 			release()
 			if err != nil {
@@ -159,6 +190,22 @@ func (r *v2ReachabilityReader) lookup(state v2State, subject, id string) (v2Oper
 	seq, err := strconv.ParseUint(parts[2], 10, 64)
 	if err != nil || strconv.FormatUint(seq, 10) != parts[2] || seq == 0 || seq > state.HighWater {
 		return v2Operation{}, errV2Unavailable
+	}
+	if state.RecoveryReserveVersion == 1 && state.ClosingIndexRoot != "" {
+		hash, found, err := r.closingObject(state, seq)
+		if err != nil {
+			return v2Operation{}, err
+		}
+		if found {
+			var op v2Operation
+			if err := r.object(hash, &op); err != nil {
+				return op, err
+			}
+			if !(&v2Store{state: state}).validOperation(op) || op.ID != id || op.Sequence != seq || op.Subject != subject || op.Lineage != state.Lineage || op.ClosingCredit == "" {
+				return op, errV2Unavailable
+			}
+			return op, nil
+		}
 	}
 	position := (seq - 1) % state.LiveSlots
 	hash := state.Index
@@ -536,6 +583,9 @@ func (r *v2ReachabilityReader) witness(hash string, level int, prefix string, re
 }
 
 func (r *v2ReachabilityReader) recovery(hash, id, key string, state v2State, depth int) error {
+	return r.recoveryWithOrigin(hash, id, key, state, depth, nil)
+}
+func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2State, depth int, archived *v2Operation) error {
 	return r.walk("recovery:"+key+":"+id+":"+hash, depth, func() error {
 		var record v2RecoveryRecord
 		release, err := r.load(hash, &record)
@@ -576,9 +626,18 @@ func (r *v2ReachabilityReader) recovery(hash, id, key string, state v2State, dep
 			}
 		}
 		if record.Kind != v2BootKind {
-			op, err := r.lookup(state, record.Subject, record.Origin)
-			if err != nil {
-				return err
+			var op v2Operation
+			if archived != nil {
+				op = *archived
+				if op.Subject != record.Subject || op.ID != record.Origin || op.Lineage != state.Lineage {
+					return errV2Unavailable
+				}
+			} else {
+				var err error
+				op, err = r.lookup(state, record.Subject, record.Origin)
+				if err != nil {
+					return err
+				}
 			}
 			if op.Outcome == nil || op.Outcome.ConfirmationLease != record.Lease {
 				return errV2Unavailable

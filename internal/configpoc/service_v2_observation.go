@@ -46,7 +46,8 @@ func (s *ServiceV2) currentLocked(domain string) (CurrentV2, error) {
 func (s *ServiceV2) Observe(binding adminauth.SessionBinding, id string) (ObservationV2, error) {
 	var result ObservationV2
 	err := s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
-		result.Operation, err = store.lookupLocked(p.Subject, id)
+		op, lookupErr := store.lookupLocked(p.Subject, id)
+		result.Operation, err = operationDTOv2(op), lookupErr
 		if err != nil {
 			return err
 		}
@@ -78,7 +79,8 @@ func (s *ServiceV2) AdmitObserved(binding adminauth.SessionBinding, namespace st
 		if store.state.Namespaces[i].Domain != "firewall" {
 			return ErrDenied
 		}
-		result.Operation, err = store.admitLocked(p.Subject, namespace, expected, request, s.coordinator.now())
+		op, admitErr := store.admitLocked(p.Subject, namespace, expected, request, s.coordinator.now())
+		result.Operation, err = operationDTOv2(op), admitErr
 		if err != nil {
 			return err
 		}
@@ -97,7 +99,7 @@ func (s *ServiceV2) ExecuteObserved(ctx context.Context, binding adminauth.Sessi
 		if executed.GlobalGeneration == 0 {
 			return executeErr
 		}
-		result.Operation = executed.Operation
+		result.Operation = operationDTOv2(executed.Operation)
 		result.Current, err = s.currentLocked(executed.Operation.Domain)
 		if err != nil {
 			return err
@@ -129,7 +131,7 @@ func (s *ServiceV2) ObserveList(binding adminauth.SessionBinding, namespace, sta
 		result.Operations = []OperationV2{}
 		for _, op := range ops {
 			if state == "" || op.State == state {
-				result.Operations = append(result.Operations, op)
+				result.Operations = append(result.Operations, operationDTOv2(op))
 			}
 		}
 		result.Cursor = cursor

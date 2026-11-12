@@ -42,12 +42,14 @@ type v2Subject struct {
 	Retired            bool   `json:"retired"`
 }
 type v2Namespace struct {
-	ID         string    `json:"id"`
-	Subject    string    `json:"subject"`
-	Domain     string    `json:"domain"`
-	Closed     bool      `json:"closed"`
-	AdmitUntil time.Time `json:"admit_until"`
-	Open       []string  `json:"open"`
+	ClosingOrigin string          `json:"closing_origin,omitempty"`
+	ClosingOpen   []v2ClosingOpen `json:"closing_open,omitempty"`
+	ID            string          `json:"id"`
+	Subject       string          `json:"subject"`
+	Domain        string          `json:"domain"`
+	Closed        bool            `json:"closed"`
+	AdmitUntil    time.Time       `json:"admit_until"`
+	Open          []string        `json:"open"`
 }
 type v2Request struct {
 	Kind           string  `json:"kind"`
@@ -71,45 +73,55 @@ type v2Outcome struct {
 	AuditLast            uint64     `json:"audit_last_sequence,string,omitempty"`
 }
 type v2Operation struct {
-	ID            string     `json:"id"`
-	Namespace     string     `json:"namespace_id"`
-	Subject       string     `json:"subject"`
-	Lineage       string     `json:"lineage"`
-	Domain        string     `json:"domain"`
-	Sequence      uint64     `json:"sequence,string"`
-	Expected      uint64     `json:"expected_generation,string"`
-	Request       v2Request  `json:"request"`
-	Fingerprint   string     `json:"fingerprint"`
-	State         string     `json:"state"`
-	Accepted      time.Time  `json:"accepted_at"`
-	ExecuteBefore time.Time  `json:"execute_before"`
-	Completed     *time.Time `json:"completed_at,omitempty"`
-	RetainUntil   *time.Time `json:"retain_until,omitempty"`
-	Outcome       *v2Outcome `json:"outcome,omitempty"`
-	Pinned        bool       `json:"pinned"`
-	Retired       bool       `json:"retired"`
+	Reserve       *v2ReserveBundle `json:"reserve,omitempty"`
+	ClosingCredit string           `json:"closing_credit,omitempty"`
+	ID            string           `json:"id"`
+	Namespace     string           `json:"namespace_id"`
+	Subject       string           `json:"subject"`
+	Lineage       string           `json:"lineage"`
+	Domain        string           `json:"domain"`
+	Sequence      uint64           `json:"sequence,string"`
+	Expected      uint64           `json:"expected_generation,string"`
+	Request       v2Request        `json:"request"`
+	Fingerprint   string           `json:"fingerprint"`
+	State         string           `json:"state"`
+	Accepted      time.Time        `json:"accepted_at"`
+	ExecuteBefore time.Time        `json:"execute_before"`
+	Completed     *time.Time       `json:"completed_at,omitempty"`
+	RetainUntil   *time.Time       `json:"retain_until,omitempty"`
+	Outcome       *v2Outcome       `json:"outcome,omitempty"`
+	Pinned        bool             `json:"pinned"`
+	Retired       bool             `json:"retired"`
 }
 type v2State struct {
-	RequiredFeatures   []string         `json:"required_features,omitempty"`
-	ReclamationVersion uint8            `json:"reclamation_version,omitempty"`
-	Format             string           `json:"format"`
-	Lineage            string           `json:"lineage"`
-	Generation         uint64           `json:"generation,string"`
-	HighWater          uint64           `json:"operation_high_water,string"`
-	LiveSlots          uint64           `json:"live_slots,string"`
-	SubjectSlots       uint64           `json:"subject_slots,string"`
-	NamespaceSlots     uint64           `json:"namespace_slots,string"`
-	NamespaceSequence  uint64           `json:"namespace_sequence,string"`
-	SubjectSequence    uint64           `json:"subject_sequence,string"`
-	Index              string           `json:"index"`
-	Subjects           []v2Subject      `json:"subjects"`
-	Namespaces         []v2Namespace    `json:"namespaces"`
-	ReservedBytes      uint64           `json:"reserved_bytes,string"`
-	ReservedInodes     uint64           `json:"reserved_inodes,string"`
-	Clock              time.Time        `json:"clock"`
-	Migration          string           `json:"migration,omitempty"`
-	Operational        bool             `json:"operational"`
-	Configuration      *v2Configuration `json:"configuration,omitempty"`
+	ActiveReserves         []v2ActiveReserve `json:"active_reserves,omitempty"`
+	SystemBundle           *v2ActiveReserve  `json:"system_bundle,omitempty"`
+	RecoveryReserveVersion uint8             `json:"recovery_reserve_version,omitempty"`
+	ReserveArchiveRoot     string            `json:"reserve_archive_root,omitempty"`
+	ClosingCredits         []v2ClosingCredit `json:"closing_credits,omitempty"`
+	ClosingIndexRoot       string            `json:"closing_index_root,omitempty"`
+	OccupiedOrdinary       uint64            `json:"occupied_ordinary,string,omitempty"`
+	OccupiedClosing        uint64            `json:"occupied_closing,string,omitempty"`
+	RequiredFeatures       []string          `json:"required_features,omitempty"`
+	ReclamationVersion     uint8             `json:"reclamation_version,omitempty"`
+	Format                 string            `json:"format"`
+	Lineage                string            `json:"lineage"`
+	Generation             uint64            `json:"generation,string"`
+	HighWater              uint64            `json:"operation_high_water,string"`
+	LiveSlots              uint64            `json:"live_slots,string"`
+	SubjectSlots           uint64            `json:"subject_slots,string"`
+	NamespaceSlots         uint64            `json:"namespace_slots,string"`
+	NamespaceSequence      uint64            `json:"namespace_sequence,string"`
+	SubjectSequence        uint64            `json:"subject_sequence,string"`
+	Index                  string            `json:"index"`
+	Subjects               []v2Subject       `json:"subjects"`
+	Namespaces             []v2Namespace     `json:"namespaces"`
+	ReservedBytes          uint64            `json:"reserved_bytes,string"`
+	ReservedInodes         uint64            `json:"reserved_inodes,string"`
+	Clock                  time.Time         `json:"clock"`
+	Migration              string            `json:"migration,omitempty"`
+	Operational            bool              `json:"operational"`
+	Configuration          *v2Configuration  `json:"configuration,omitempty"`
 }
 type v2Page struct {
 	Format string              `json:"format"`

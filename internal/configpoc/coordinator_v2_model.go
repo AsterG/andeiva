@@ -99,22 +99,23 @@ type v2CoordinatorAudit struct {
 	Startup      string    `json:"startup_revision"`
 }
 type v2RecoveryRecord struct {
-	BootID      *v2BootID  `json:"boot_id,omitempty"`
-	Format      string     `json:"format"`
-	ID          string     `json:"id"`
-	Origin      string     `json:"origin_commit_operation_id"`
-	Lease       string     `json:"lease"`
-	Kind        string     `json:"kind"`
-	State       string     `json:"state"`
-	Previous    string     `json:"previous_snapshot"`
-	Target      string     `json:"target_snapshot"`
-	Audit       string     `json:"audit_hash,omitempty"`
-	Subject     string     `json:"subject"`
-	Lineage     string     `json:"lineage"`
-	Started     time.Time  `json:"started_at"`
-	Completed   *time.Time `json:"completed_at,omitempty"`
-	RetainUntil *time.Time `json:"retain_until,omitempty"`
-	Pinned      bool       `json:"pinned"`
+	Reserve     *v2ReserveBundle `json:"reserve,omitempty"`
+	BootID      *v2BootID        `json:"boot_id,omitempty"`
+	Format      string           `json:"format"`
+	ID          string           `json:"id"`
+	Origin      string           `json:"origin_commit_operation_id"`
+	Lease       string           `json:"lease"`
+	Kind        string           `json:"kind"`
+	State       string           `json:"state"`
+	Previous    string           `json:"previous_snapshot"`
+	Target      string           `json:"target_snapshot"`
+	Audit       string           `json:"audit_hash,omitempty"`
+	Subject     string           `json:"subject"`
+	Lineage     string           `json:"lineage"`
+	Started     time.Time        `json:"started_at"`
+	Completed   *time.Time       `json:"completed_at,omitempty"`
+	RetainUntil *time.Time       `json:"retain_until,omitempty"`
+	Pinned      bool             `json:"pinned"`
 }
 
 // A trusted transport must verify the durable subject incarnation. Usernames,

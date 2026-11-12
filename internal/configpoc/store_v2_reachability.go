@@ -102,6 +102,13 @@ func (r *v2ReachabilityReader) object(hash string, target any) error {
 }
 
 func (r *v2ReachabilityReader) load(hash string, target any) (func(), error) {
+	return r.loadBound(hash, target, v2ObjectLimit)
+}
+
+func (r *v2ReachabilityReader) loadBound(hash string, target any, limit int64) (func(), error) {
+	if limit <= 0 || limit > v2ObjectLimit {
+		return nil, errV2InspectionBudget
+	}
 	if r.report.Edges >= r.budget.Edges {
 		return nil, errV2InspectionBudget
 	}
@@ -117,7 +124,7 @@ func (r *v2ReachabilityReader) load(hash string, target any) (func(), error) {
 		r.objects[hash] = true
 		r.report.Objects++
 	}
-	data, release, err := r.read(name, v2ObjectLimit)
+	data, release, err := r.read(name, limit)
 	if err != nil {
 		return nil, err
 	}

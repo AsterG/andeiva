@@ -221,3 +221,5 @@ bytes remained available. The open-deleted case retained zero available bytes
 until close, then reported 111,075,328. These are filesystem observations for this
 copied-volume run. The cgroup peak includes filesystem cache; it is not process
 RSS, application heap or a production memory-sizing result.
+
+See [transaction recovery reserves](RECOVERY_RESERVES_V2.md) for the separate internal pool/coordinator integration and its remaining qualification gates.
