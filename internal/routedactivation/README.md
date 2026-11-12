@@ -38,7 +38,16 @@ verified absence. Unknown or foreign readback fences instead of blind deletion.
 This assumes exclusive writers in the retained namespace; it is not atomic against
 an unrelated CAP_NET_ADMIN writer. Subsequent edits require the same network plan.
 
-No runtime flag, endpoint proof, durable recovery or host manager takeover is
+Trusted helper-startup `RecoverPlan` resolves the authenticated original Work and
+calls RecoverPrepared with its exact UID/GID/boot/run/target/host identity. Root
+must verify lineage/generation, selected intent, finality and original lease/
+deadline before returning artifacts. Only the same retained namespace incarnation
+and exact baseline or full target are accepted after two network observations.
+Mixed/foreign state fences without deletion. No fresh timer is armed and no
+decision to undo a confirmed operation is made here. Reboot or a new namespace
+requires controlled Boot establishment, never reuse of old ifindex authority.
+
+No runtime flag, endpoint proof, complete durable recovery or host manager takeover is
 provided. Trusted assembly must authenticate manager metadata and retained
 descriptors. Helper restart cannot reconstruct executor ownership from the stored
 snapshot alone. The module adds no database, workers or processes; it uses the
