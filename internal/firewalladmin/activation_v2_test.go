@@ -17,6 +17,7 @@ type preparedGuardAuthority struct {
 	denyArm, denyConfirm                   bool
 	failState, failStateAfterDeniedConfirm bool
 	wrongID                                bool
+	armDeadline                            *time.Time
 	afterConfirm                           func() error
 }
 
@@ -56,6 +57,9 @@ func (a *preparedGuardAuthority) State(context.Context) (LeaseState, error) {
 		return LeaseState{}, errors.New("state unavailable")
 	}
 	s := a.g.Status()
+	if s.Phase == "armed" && a.armDeadline != nil {
+		s.Deadline = *a.armDeadline
+	}
 	if a.wrongID {
 		s.ID = "unrelated-lease"
 	}
@@ -152,5 +156,30 @@ func TestPreparedGuardRecoveryCannotClearForeignLease(t *testing.T) {
 	}
 	if guard.Current() != old.Hash || a.g.Status().Phase != "idle" {
 		t.Fatal("previous revision not verified")
+	}
+}
+
+func TestPreparedGuardRejectsInvalidArmDeadline(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		deadline time.Time
+	}{
+		{"zero", time.Time{}},
+		{"expired", time.Now().Add(-time.Hour)},
+		{"beyond-requested-ttl", time.Now().Add(time.Hour)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			guard, authority, previous, target := preparedGuardFixture(t)
+			authority.armDeadline = &test.deadline
+			if err := guard.Arm(context.Background(), "invalid-deadline", previous, target, 10*time.Second); !errors.Is(err, configpoc.ErrRecovery) {
+				t.Fatalf("invalid receipt accepted: %v", err)
+			}
+			if guard.Current() != previous.Hash || authority.g.Status().Phase != "armed" {
+				t.Fatal("receipt rejection changed effective policy or cleared lease")
+			}
+			if guard.Apply(context.Background(), target) == nil {
+				t.Fatal("rejected receipt authorized apply")
+			}
+		})
 	}
 }
