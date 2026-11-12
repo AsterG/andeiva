@@ -44,3 +44,5 @@ A ativação do runtime, as regras efetivas, a compatibilidade do estado importa
 e a recuperação precisam de validação própria. Testes de transporte e telas com
 fixtures não comprovam esses requisitos. Não altere enlaces administrativos com
 um runtime não validado. Web/CLI/API compartilham admissão e execução.
+
+Consulte o histórico protegido com `andeiva configuration audit --limit 50` e os mesmos parâmetros de conexão. `--before SEQUENCE` é um cursor exclusivo. Os limites da consulta não implicam um histórico completo; `truncated` indica uma busca incompleta. A leitura não admite nem executa operações de configuração.

@@ -67,3 +67,15 @@ test('routed administrative copy has complete EN ES PT keys', () => {
   const keys = Object.keys(workspaceMessages.en).sort();
   for (const locale of ['es', 'pt']) assert.deepEqual(Object.keys(workspaceMessages[locale]).sort(), keys);
 });
+
+test('verified no-effect finality remains consultable without accepting mismatched reasons', () => {
+  for (const [code, reason] of [['profile_changed_without_effects', 'ANDEIVA_RESERVE_PROFILE_CHANGED'], ['confirmation_resolved_without_effects', 'ANDEIVA_CONFIRMATION_RESOLVED']]) {
+    const reply = { ...structuredClone(fixtures.routed), operation: { id: 'v2.op.1.fixture', namespace_id: 'v2.ns.1.fixture', domain: 'routed', kind: 'stage', state: 'final', expected_generation: '18446744073709551615', outcome: { code, error_code: reason } } };
+    assert.equal(operationResponse(reply).operation.outcome.code, code);
+    reply.operation.outcome.error_code = 'ANDEIVA_UNRELATED';
+    assert.throws(() => operationResponse(reply));
+    reply.operation.outcome.error_code = reason;
+    reply.operation.state = 'pending';
+    assert.throws(() => operationResponse(reply));
+  }
+});

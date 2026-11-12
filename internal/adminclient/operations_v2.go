@@ -190,6 +190,14 @@ func validOperationV2(op adminapi.OperationV2) bool {
 	if op.Outcome != nil {
 		switch op.Outcome.Code {
 		case "applied", "applied_pending_confirmation", "rejected", "failed_rolled_back", "expired_without_effects":
+		case "profile_changed_without_effects":
+			if op.State != "final" || op.Outcome.ErrorCode != "ANDEIVA_RESERVE_PROFILE_CHANGED" {
+				return false
+			}
+		case "confirmation_resolved_without_effects":
+			if op.State != "final" || op.Outcome.ErrorCode != "ANDEIVA_CONFIRMATION_RESOLVED" {
+				return false
+			}
 		default:
 			return false
 		}

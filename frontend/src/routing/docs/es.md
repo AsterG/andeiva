@@ -24,3 +24,9 @@ Las pruebas de navegador utilizan respuestas ficticias identificadas en sus
 fixtures. Cubren EN/ES/PT, Light/Dark, teclado, accesibilidad y diseño responsive.
 No prueban el tráfico ni sustituyen la validación nativa. Los comandos de
 reproducción están en [README](../README.md).
+
+La auditoría protegida requiere administrador. Sus filtros se combinan sobre la
+página cargada. La consulta tiene límites de 1024 registros y 2 MiB e informa si
+queda incompleta. Los nombres proceden del registro actual; el ID del actor es
+duradero. No se inventa el origen Web/CLI/API de registros históricos sin esa
+procedencia, ni se presentan cambios de configuración como eventos de tráfico.

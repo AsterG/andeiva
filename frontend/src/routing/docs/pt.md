@@ -24,3 +24,9 @@ Os testes do navegador usam respostas fictícias identificadas nos seus fixtures
 Cobrem EN/ES/PT, Light/Dark, teclado, acessibilidade e layout responsivo. Não
 provam tráfego nem substituem a validação nativa. Os comandos de reprodução
 estão no [README](../README.md).
+
+A auditoria protegida exige administrador. Os filtros combinam-se sobre a página
+carregada. A consulta tem limites de 1024 registos e 2 MiB e informa se ficar
+incompleta. Os nomes vêm do registo atual; o ID do ator é durável. Não se inventa
+a origem Web/CLI/API de registos históricos sem essa proveniência, nem se
+apresentam alterações de configuração como eventos de tráfego.

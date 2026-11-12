@@ -25,7 +25,7 @@ var configurationText = map[string][3]string{
 
 func configurationCommand(input string) (string, bool) {
 	match := ""
-	for _, command := range []string{"status", "stage", "validate", "commit", "confirm", "save", "rollback", "operation", "execute", "help"} {
+	for _, command := range []string{"status", "stage", "validate", "commit", "confirm", "save", "rollback", "operation", "execute", "audit", "help"} {
 		if command == input {
 			return command, true
 		}
@@ -59,11 +59,12 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 	}
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] != "" && strings.HasPrefix("help", args[0])) {
 		fmt.Fprintln(stdout, copy[0])
-		fmt.Fprintln(stdout, "andeiva configuration <status|stage|validate|commit|confirm|save|rollback|operation|execute>")
+		fmt.Fprintln(stdout, "andeiva configuration <status|stage|validate|commit|confirm|save|rollback|operation|execute|audit>")
 		fmt.Fprintln(stdout, "  --url https://HOST:PORT --ca-file FILE --credentials-file FILE")
 		fmt.Fprintln(stdout, "  stage --request-file - | commit [--confirm-seconds 30..120]")
 		fmt.Fprintln(stdout, "  confirm --origin OPERATION --target REVISION | rollback --target REVISION [--confirm-seconds 30..120]")
 		fmt.Fprintln(stdout, "  operation --operation-id ID | execute --operation-id ID")
+		fmt.Fprintln(stdout, "  audit [--before SEQUENCE] [--limit 1..100]")
 		fmt.Fprintln(stdout, copy[2])
 		return 0
 	}
@@ -78,7 +79,7 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 		}
 		key := args[i]
 		switch key {
-		case "--url", "--ca-file", "--credentials-file", "--request-file", "--confirm-seconds", "--target", "--origin", "--operation-id":
+		case "--url", "--ca-file", "--credentials-file", "--request-file", "--confirm-seconds", "--target", "--origin", "--operation-id", "--before", "--limit":
 		default:
 			return fail(nil)
 		}
@@ -94,10 +95,27 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 		"--request-file": command == "stage", "--confirm-seconds": command == "commit" || command == "rollback",
 		"--target": command == "confirm" || command == "rollback", "--origin": command == "confirm",
 		"--operation-id": command == "operation" || command == "execute",
+		"--before":       command == "audit", "--limit": command == "audit",
 	} {
 		if options[flag] != "" && !allowed {
 			return fail(nil)
 		}
+	}
+	var before uint64
+	limit := 50
+	if text := options["--before"]; text != "" {
+		value, err := strconv.ParseUint(text, 10, 64)
+		if err != nil || strconv.FormatUint(value, 10) != text {
+			return fail(nil)
+		}
+		before = value
+	}
+	if text := options["--limit"]; text != "" {
+		value, err := strconv.Atoi(text)
+		if err != nil || value < 1 || value > 100 || strconv.Itoa(value) != text {
+			return fail(nil)
+		}
+		limit = value
 	}
 	request := adminapi.OperationRequestV2{Operation: command}
 	if command == "stage" {
@@ -159,7 +177,9 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 	var result any
 	var operation adminapi.OperationResponseV2
 	createdNamespace := ""
-	if command == "operation" {
+	if command == "audit" {
+		result, err = client.ConfigurationAuditV2(ctx, before, limit)
+	} else if command == "operation" {
 		operation, err = client.OperationV2(ctx, options["--operation-id"])
 		result = operation
 	} else if command == "execute" {

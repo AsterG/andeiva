@@ -14,6 +14,7 @@ import type { ProductInfoState } from '../firewall/productInfo.js';
 import { admitOperation, closeOperationNamespace, executeOperation, operationID, queryOperation, readCurrent } from './configuration.js';
 import type { ConfigurationCurrent, ConfigurationOperation, OperationRequest, RoutedConfig, RoutedPath } from './configuration.js';
 import { NetworkEditor } from './NetworkEditor.js';
+import { ConfigurationAudit } from './ConfigurationAudit.js';
 import { NetworkInterfaces } from './NetworkInterfaces.js';
 import { networkInventoryResponse } from './inventory.js';
 import type { NetworkInventory } from './inventory.js';
@@ -185,7 +186,7 @@ export function RoutingWorkspace({ locale, session, page, product, onProductRefr
         {last && <p>{copy.result}: <StatusBadge tone={last.outcome?.code === 'applied' || last.outcome?.code === 'applied_pending_confirmation' ? 'success' : 'info'}>{outcomeLabel}</StatusBadge> <code>{last.id}</code></p>}
         <details><summary>{copy.details}</summary><dl className="fw-review"><dt>{copy.running}</dt><dd><code className="fw-hash">{current.global.running_revision}</code></dd><dt>{copy.startup}</dt><dd><code className="fw-hash">{current.global.startup_revision}</code></dd><dt>{copy.candidate}</dt><dd><code className="fw-hash">{current.routed.candidate?.hash ?? '—'}</code></dd></dl></details>
       </Surface>
-      {page === 'system' ? <SystemInfoView locale={locale} state={product} refresh={onProductRefresh} /> : page === 'network' ? <>
+      {page === 'audit' ? <ConfigurationAudit locale={locale} admin={admin} onFailure={onFailure} /> : page === 'system' ? <SystemInfoView locale={locale} state={product} refresh={onProductRefresh} /> : page === 'network' ? <>
         <Surface title={copy.network} description={copy.editHint}><div className="ds-actions">{admin && <Button disabled={!editable || editing || !inventory} onClick={() => setNetworkEditor(true)}>{copy.editNetwork}</Button>}</div>{draft && <DataTable caption={copy.network}><thead><tr><th>{copy.name}</th><th>{copy.path}</th><th>{copy.address}</th><th>{copy.gateway}</th></tr></thead><tbody>{draft.routed.network.config.interfaces.map((iface) => <tr key={iface.id}><th scope="row">{iface.binding.name}</th><td>{iface.role.toUpperCase()} · {iface.zone}</td><td>{iface.ipv4.address ?? '—'}</td><td>{iface.ipv4.gateway ?? '—'}</td></tr>)}</tbody></DataTable>}</Surface><NetworkInterfaces locale={locale} />
       </> : page === 'nat' ? <Surface title={copy.nat} description={copy.natHint}>
         {admin && <Button disabled={!editable || editing || !draft || draft.routed.nat.length >= 32} onClick={() => setNATEditor(true)}>{copy.addNAT}</Button>}

@@ -44,3 +44,5 @@ Runtime activation, kernel enforcement, imported-state compatibility and recover
 require their own qualification. Transport tests and browser fixtures alone do
 not prove them. Do not change an appliance's management links using an unqualified
 runtime. API/Web/CLI use the same admission and execution contracts.
+
+Read protected history with `andeiva configuration audit --limit 50` and the same connection flags. `--before SEQUENCE` is an exclusive cursor. Filtering and scan bounds do not imply complete history; `truncated` explicitly reports an incomplete scan. This read does not admit or execute configuration operations.

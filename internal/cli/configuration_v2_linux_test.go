@@ -42,7 +42,7 @@ func TestConfigurationCLIUsesDurableIDsWithoutRetryingUncertainExecution(t *test
 		Snapshot:          adminapi.SnapshotV2{Generation: 2, Running: firewall, Startup: firewall, LastGood: firewall, Revoked: []string{}},
 		Routed:            &adminapi.RoutedCurrentV2{SchemaVersion: 7, Running: bundle.Composite, Startup: bundle.Composite, LastGood: bundle.Composite, LocalServices: adminapi.SnapshotV2{Generation: 3, Running: local, Startup: local, LastGood: local, Revoked: []string{}}},
 	}
-	for _, scenario := range []string{"status", "stage", "validate", "commit", "operation", "uncertain"} {
+	for _, scenario := range []string{"status", "stage", "validate", "commit", "operation", "uncertain", "audit"} {
 		t.Run(scenario, func(t *testing.T) {
 			secret, token := strings.Repeat("b", 64), strings.Repeat("a", 64)
 			now := time.Now().UTC()
@@ -69,6 +69,11 @@ func TestConfigurationCLIUsesDurableIDsWithoutRetryingUncertainExecution(t *test
 					_, _ = fmt.Fprintf(w, `{"username":"alice","role":"admin","token":%q}`, token)
 				case "/api/v1/auth/logout":
 					_, _ = w.Write([]byte(`{"logged_out":true}`))
+				case "/api/v2/config/audit":
+					if r.URL.Query().Get("limit") != "50" || r.URL.Query().Get("before") != "0" {
+						t.Error("audit bounds missing")
+					}
+					_ = json.NewEncoder(w).Encode(configpoc.AuditPageV2{SchemaVersion: 1, Events: []configpoc.AuditEventV2{}})
 				case "/api/v2/config/current":
 					_ = json.NewEncoder(w).Encode(struct {
 						Schema  int                `json:"schema_version"`
@@ -153,6 +158,10 @@ func TestConfigurationCLIUsesDurableIDsWithoutRetryingUncertainExecution(t *test
 				if code != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), "ANDEIVA_OPERATION_ACCEPTED: v2.op.1.accepted") {
 					t.Fatal("uncertain execution lost its durable ID")
 				}
+			} else if scenario == "audit" {
+				if code != 0 || !strings.Contains(out.String(), `"events":[]`) {
+					t.Fatal("audit query failed", out.String(), errOut.String())
+				}
 			} else if code != 0 || !strings.Contains(out.String(), `"18446744073709551615"`) {
 				t.Fatal("v2 CLI lost selected generation", out.String(), errOut.String())
 			}
@@ -160,6 +169,9 @@ func TestConfigurationCLIUsesDurableIDsWithoutRetryingUncertainExecution(t *test
 			defer mu.Unlock()
 			if paths[len(paths)-1] != "/api/v1/auth/logout" {
 				t.Fatal("session not closed")
+			}
+			if scenario == "audit" && (len(paths) != 3 || paths[1] != "/api/v2/config/audit") {
+				t.Fatal("audit query issued configuration writes", paths)
 			}
 			count := 0
 			for _, path := range paths {

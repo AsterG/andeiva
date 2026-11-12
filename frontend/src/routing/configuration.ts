@@ -132,7 +132,8 @@ export function operationResponse(value: unknown, expectedID?: string): Operatio
   if (data.schema_version !== 2 || !operationID(operation.id) || !operationID(operation.namespace_id) || operation.domain !== 'routed' || !['accepted', 'pending', 'final', 'uncertain'].includes(typeof operation.state === 'string' ? operation.state : '') || !['stage', 'validate', 'commit', 'confirm', 'save', 'rollback'].includes(typeof operation.kind === 'string' ? operation.kind : '') || !decimalGeneration(operation.expected_generation) || (expectedID !== undefined && operation.id !== expectedID)) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
   if (operation.outcome !== undefined) {
     const outcome = object(operation.outcome);
-    if (!['applied', 'applied_pending_confirmation', 'rejected', 'failed_rolled_back', 'expired_without_effects'].includes(typeof outcome.code === 'string' ? outcome.code : '')) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+    if (!['applied', 'applied_pending_confirmation', 'rejected', 'failed_rolled_back', 'expired_without_effects', 'profile_changed_without_effects', 'confirmation_resolved_without_effects'].includes(typeof outcome.code === 'string' ? outcome.code : '')) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+    if (outcome.code === 'profile_changed_without_effects' && (operation.state !== 'final' || outcome.error_code !== 'ANDEIVA_RESERVE_PROFILE_CHANGED') || outcome.code === 'confirmation_resolved_without_effects' && (operation.state !== 'final' || outcome.error_code !== 'ANDEIVA_CONFIRMATION_RESOLVED')) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
   }
   if (operation.state === 'final' && !operation.outcome) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
   return { schema_version: 2, operation: structuredClone(operation) as ConfigurationOperation, current: currentResponse(data) };

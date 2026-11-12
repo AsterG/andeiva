@@ -27,6 +27,13 @@ evidence. They cover EN/ES/PT, Light/Dark, responsive layouts, keyboard interact
 accessibility and interrupted execution. Native runtime and traffic qualification
 remain separate requirements.
 
+The audit view uses administrator-only protected records. Filters combine on the
+loaded page; pagination preserves exact decimal sequences. A scan is bounded to
+1024 records and 2 MiB, and incomplete scans are explicitly reported. Display names
+come from the current registry; durable actor IDs remain available in details.
+Historical records without channel provenance are not assigned a Web/CLI/API
+origin. The view does not infer traffic events from configuration audit records.
+
 ```sh
 npm run lint
 npm run typecheck

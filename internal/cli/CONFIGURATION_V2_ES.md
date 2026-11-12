@@ -46,3 +46,5 @@ importado y la recuperación necesitan pruebas independientes. Los tests de
 transporte y las pantallas con fixtures no las demuestran. No cambie enlaces de
 administración con un runtime sin validar. Web/CLI/API comparten los contratos
 de admisión y ejecución.
+
+Consulte el historial protegido con `andeiva configuration audit --limit 50` y los mismos parámetros de conexión. `--before SEQUENCE` es un cursor exclusivo. Los límites de consulta no implican un historial completo; `truncated` indica una búsqueda incompleta. Esta lectura no admite ni ejecuta operaciones de configuración.

@@ -124,6 +124,25 @@ test('accepted request resumes only on explicit action and closes its terminal n
   expect(calls.some((call) => call.path.endsWith('/admit'))).toBe(false);
 });
 
+test('routed audit uses protected records with combined filters in both themes', async ({ page }, testInfo) => {
+  const calls = await setup(page);
+  const event = { sequence: '10', at: '2026-11-12T12:00:00Z', actor_id: 'subject-a', actor_name: 'alice', operation_id: 'operation-a', operation: 'save', result: 'applied', generation: '18446744073709551615', running_revision: 'a'.repeat(64), startup_revision: 'b'.repeat(64) };
+  await page.route('**/api/v2/config/audit?**', (route) => route.fulfill({ json: { schema_version: 1, events: [event], next_before: '0', truncated: false } }));
+  await page.goto('/firewall#audit');
+  await expect(page.getByRole('cell', { name: 'alice', exact: true })).toBeVisible();
+  await page.getByLabel('Actor', { exact: true }).fill('alice');
+  await page.getByRole('combobox', { name: 'Operation', exact: true }).selectOption('save');
+  await page.getByRole('button', { name: 'Inspect event', exact: true }).click();
+  await expect(page.getByText('operation-a', { exact: true })).toBeVisible();
+  for (const theme of ['light', 'dark'] as const) {
+    await selectTheme(page, theme);
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze()).violations).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`audit-${theme}.png`), fullPage: true });
+  }
+  expect(calls.some((call) => call.path.startsWith('/api/v1/firewall'))).toBe(false);
+  expect(calls.some((call) => call.path.endsWith('/admit'))).toBe(false);
+});
+
 test('viewer cannot open network, rule or NAT editors', async ({ page }) => {
   await setup(page, 'viewer');
   for (const view of ['network', 'rules', 'nat']) {

@@ -18,6 +18,7 @@ func TestConfigurationV2GrammarRejectsAmbiguousAndMixedFlags(t *testing.T) {
 		{"commit", "--confirm-seconds", "0"}, {"commit", "--confirm-seconds", "121"},
 		{"commit", "--confirm-seconds", "060"}, {"stage", "--request-file", "/arbitrary/path"},
 		{"confirm", "--target", strings.Repeat("a", 64)}, {"operation"}, {"execute"}, {"status", "--token", "private-value"},
+		{"audit", "--limit", "101"}, {"audit", "--before", "01"}, {"status", "--limit", "5"},
 	} {
 		var out, errOut bytes.Buffer
 		full := append([]string{"configuration"}, args...)

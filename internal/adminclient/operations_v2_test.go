@@ -27,6 +27,28 @@ func wireFixtureV2(t *testing.T) (adminapi.OperationResponseV2, adminapi.Namespa
 	response := adminapi.OperationResponseV2{SchemaVersion: 2, Operation: adminapi.OperationV2{ID: "v2.op.1.fixture", Namespace: ns.Namespace, Domain: "firewall", Kind: "validate", State: "accepted", Expected: 1, Fingerprint: strings.Repeat("b", 64), Accepted: now, ExecuteBefore: until}, Current: adminapi.CurrentV2{Global: adminapi.GlobalV2{Lineage: "fixture-lineage", Generation: 1, Running: strings.Repeat("a", 64), Startup: strings.Repeat("a", 64)}, Domain: "firewall", Snapshot: adminapi.SnapshotV2{Generation: 17, Running: revision, Startup: revision, LastGood: revision, Revoked: []string{}}}}
 	return response, ns
 }
+func TestOperationsV2ClientRecognizesVerifiedNoEffectFinality(t *testing.T) {
+	for code, reason := range map[string]string{"profile_changed_without_effects": "ANDEIVA_RESERVE_PROFILE_CHANGED", "confirmation_resolved_without_effects": "ANDEIVA_CONFIRMATION_RESOLVED"} {
+		t.Run(code, func(t *testing.T) {
+			response, _ := wireFixtureV2(t)
+			op := response.Operation
+			now, until := time.Now().UTC(), time.Now().UTC().Add(30*24*time.Hour)
+			op.State, op.Completed, op.RetainUntil = "final", &now, &until
+			op.Outcome = &adminapi.OutcomeV2{Code: code, ErrorCode: reason}
+			if !validOperationV2(op) {
+				t.Fatal("verified no-effect finality refused")
+			}
+			op.Outcome.ErrorCode = "ANDEIVA_UNRELATED"
+			if validOperationV2(op) {
+				t.Fatal("mismatched finality reason accepted")
+			}
+			op.Outcome.ErrorCode, op.State = reason, "pending"
+			if validOperationV2(op) {
+				t.Fatal("unfinished operation advertised no effects")
+			}
+		})
+	}
+}
 func TestOperationsV2ClientWireLifecycle(t *testing.T) {
 	op, ns := wireFixtureV2(t)
 	calls := 0
