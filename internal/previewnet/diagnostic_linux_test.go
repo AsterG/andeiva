@@ -128,6 +128,32 @@ func TestLifecycleHealthDiagnosticsPreserveCheckOrderAndCause(t *testing.T) {
 	}
 }
 
+func TestWrappedListenerContextUsesExistingRedactedDiagnostics(t *testing.T) {
+	for _, sample := range []struct {
+		cause error
+		code  string
+	}{{context.Canceled, "canceled"}, {context.DeadlineExceeded, "deadline"}} {
+		cause := fmt.Errorf("ANDEIVA_NFT_FIXTURE_REVERSE_LISTENER: tcp/18080: %w", errors.Join(errors.New("private child output"), sample.cause))
+		f := &diagnosticFixture{failAt: "listeners", cause: cause}
+		err := checkRuntimeHealth(context.Background(), f)
+		if !errors.Is(err, sample.cause) || err.Error() != ErrRuntime.Error() {
+			t.Fatal("listener context or public error identity changed", err)
+		}
+		d := diagnosticFor("periodic_check", err)
+		if d.Code != sample.code || d.Check != "listeners" || d.Phase != "periodic_check" {
+			t.Fatal(d)
+		}
+		data, marshalErr := json.Marshal(d)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		var fields map[string]string
+		if json.Unmarshal(data, &fields) != nil || len(fields) != 3 || strings.Contains(string(data), "private") || strings.Contains(string(data), "18080") || strings.Contains(string(data), "ANDEIVA_NFT_FIXTURE") {
+			t.Fatal("listener detail escaped diagnostic contract", string(data))
+		}
+	}
+}
+
 func TestLifecycleDiagnosticsAreAllowlistedAndBounded(t *testing.T) {
 	for _, sample := range []struct {
 		err  error
