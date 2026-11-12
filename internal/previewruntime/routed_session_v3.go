@@ -1,0 +1,220 @@
+package previewruntime
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/firewallipc"
+)
+
+// RoutedSelectionSourceV3 belongs to trusted helper assembly. Its implementation
+// independently reads selected configuration, G1 and reserve banks; request data
+// is only correlation. It must reject an action inconsistent with current
+// Intent/finality, even if the same original Work also appears in another phase.
+type RoutedSelectionSourceV3 interface {
+	Resolve(context.Context, firewallipc.RoutedReferenceV3, string) (configpoc.RoutedSelectedPlanV1, error)
+	PrepareView(context.Context) (RoutedPreparationViewV3, error)
+}
+
+type RoutedPreparationViewV3 struct {
+	Baseline *configpoc.RoutedBaselineV1
+	Startup  configpoc.RoutedActivationBundleV1
+	Saved    configpoc.RoutedActivationBundleV1
+}
+
+type RoutedSessionV3 struct {
+	controller sync.Mutex
+	authority  configpoc.RoutedAuthorityV1
+	source     RoutedSelectionSourceV3
+	epoch      uint64
+}
+
+func NewRoutedSessionV3(authority configpoc.RoutedAuthorityV1, source RoutedSelectionSourceV3) (*RoutedSessionV3, error) {
+	if authority == nil || source == nil {
+		return nil, ErrIdentity
+	}
+	identity := authority.Identity()
+	if identity.UID == 0 || identity.GID == 0 || identity.Namespace == 0 || identity.Host == 0 || identity.Namespace == identity.Host || !bootPattern.MatchString(identity.BootID) || !ValidRun(identity.RunID) {
+		return nil, ErrIdentity
+	}
+	return &RoutedSessionV3{authority: authority, source: source}, nil
+}
+
+// ServeRoutedV3 must receive an assembly-authenticated Unix channel. Controller
+// ownership covers the entire call and reply, not merely connection liveness.
+// Disconnect does not cancel an effect already in progress or its guardian.
+// A replacement writer may open its store only after this handshake succeeds.
+func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCloser, runtimeRun string) error {
+	if s == nil || ctx == nil || conn == nil || ctx.Err() != nil || !ValidRun(runtimeRun) {
+		if conn != nil {
+			_ = conn.Close()
+		}
+		return ErrIdentity
+	}
+	if !s.controller.TryLock() {
+		_ = conn.Close()
+		return ErrUnavailable
+	}
+	defer s.controller.Unlock()
+	defer conn.Close()
+	identity := s.authority.Identity()
+	if runtimeRun != identity.RunID || s.epoch == 0xffffffff {
+		return ErrIdentity
+	}
+	s.epoch++
+	epoch := s.epoch
+	last := epoch << 32
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	reader := bufio.NewReaderSize(conn, firewallipc.RoutedFrameMaxV3)
+	read := func(first bool) ([]byte, error) {
+		if d, ok := conn.(interface{ SetReadDeadline(time.Time) error }); ok {
+			if !first {
+				_ = d.SetReadDeadline(time.Time{})
+				if _, e := reader.Peek(1); e != nil {
+					return nil, e
+				}
+			}
+			_ = d.SetReadDeadline(time.Now().Add(3 * time.Second))
+		}
+		data, e := reader.ReadSlice('\n')
+		if e != nil || len(data) > firewallipc.RoutedFrameMaxV3 {
+			return nil, ErrUnavailable
+		}
+		return data, nil
+	}
+	write := func(value any) error {
+		data, e := json.Marshal(value)
+		if e != nil || len(data)+1 > firewallipc.RoutedFrameMaxV3 {
+			return ErrUnavailable
+		}
+		if d, ok := conn.(interface{ SetWriteDeadline(time.Time) error }); ok {
+			_ = d.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		}
+		data = append(data, '\n')
+		n, e := conn.Write(data)
+		if e == nil && n != len(data) {
+			return io.ErrShortWrite
+		}
+		return e
+	}
+	data, e := read(true)
+	if e != nil {
+		return ErrUnavailable
+	}
+	hello, e := firewallipc.DecodeRoutedHelloV3(data, false)
+	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace {
+		return ErrIdentity
+	}
+	hello.Run = runtimeRun
+	hello.Epoch = epoch
+	if write(hello) != nil {
+		return ErrUnavailable
+	}
+	for {
+		data, e = read(false)
+		if e != nil {
+			return ErrUnavailable
+		}
+		request, command, e := firewallipc.DecodeRoutedRequestV3(data, runtimeRun, identity.Namespace, last)
+		if e != nil || request.Sequence>>32 != epoch || request.Sequence&0xffffffff == 0 {
+			return ErrIdentity
+		}
+		last = request.Sequence
+		call, cancel := context.WithTimeout(ctx, 3*time.Second)
+		payload, operationErr := s.dispatch(call, command)
+		cancel()
+		reply := firewallipc.RoutedReplyV3{ProtocolVersion: firewallipc.RoutedProtocolV3, Run: runtimeRun, Sequence: last, Namespace: identity.Namespace, Domain: "routed", Verb: command.Verb}
+		if operationErr != nil {
+			reply.Error = "ANDEIVA_CONFIG_RECOVERY_REQUIRED"
+			if errors.Is(operationErr, configpoc.ErrConflict) {
+				reply.Error = "ANDEIVA_CONFIG_CONFLICT"
+			}
+			payload = struct{}{}
+		}
+		reply.Payload, e = json.Marshal(payload)
+		if e != nil || write(reply) != nil {
+			return ErrUnavailable
+		}
+	}
+}
+
+func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedCommandV3) (any, error) {
+	switch c.Verb {
+	case "observe":
+		receipt, revision, e := s.authority.Observe(ctx)
+		return firewallipc.RoutedObservedV3{Receipt: firewallipc.RoutedReceiptV3{Phase: receipt.Phase, ID: receipt.ID, Previous: receipt.Previous, Target: receipt.Target, Deadline: receipt.Deadline}, Revision: revision}, e
+	case "prepare", "prepare_boot":
+		view, e := s.source.PrepareView(ctx)
+		if e != nil {
+			return nil, e
+		}
+		var preparation configpoc.RoutedPreparationV1
+		actualBaseline := ""
+		if view.Baseline != nil {
+			actualBaseline = view.Baseline.Saved.Composite.Hash
+		}
+		if c.Verb == "prepare_boot" {
+			// Startup is independently selected. The requester cannot choose a second
+			// saved baseline or use this verb to apply anything.
+			if c.Target.Composite.Hash != view.Startup.Composite.Hash {
+				return nil, configpoc.ErrConflict
+			}
+			if c.Baseline != view.Saved.Composite.Hash {
+				return nil, configpoc.ErrConflict
+			}
+			preparation, e = s.authority.PrepareBoot(ctx, c.Target, view.Saved)
+		} else {
+			if c.Baseline != actualBaseline {
+				return nil, configpoc.ErrConflict
+			}
+			preparation, e = s.authority.Prepare(ctx, c.Target, view.Baseline)
+		}
+		return firewallipc.RoutedPreparedV3{Preparation: preparation}, e
+	}
+	purpose := c.Verb
+	if purpose == "match" {
+		purpose += "_" + c.Side
+	}
+	plan, e := s.source.Resolve(ctx, c.Reference, purpose)
+	if e != nil {
+		return nil, e
+	}
+	reference := plan.Reference()
+	if !plan.Valid() || reference.Work != c.Reference.Work || reference.Lineage != c.Reference.Lineage || strconv.FormatUint(reference.Generation, 10) != c.Reference.Generation || plan.Scope().Identity != s.authority.Identity() {
+		return nil, configpoc.ErrRecovery
+	}
+	switch c.Verb {
+	case "match":
+		e = s.authority.Match(ctx, plan, c.Side)
+	case "resume":
+		e = s.authority.Resume(ctx, plan)
+	case "arm":
+		e = s.authority.Arm(ctx, plan)
+	case "apply":
+		e = s.authority.Apply(ctx, plan)
+	case "confirm":
+		e = s.authority.Confirm(ctx, plan)
+	case "recover":
+		e = s.authority.Recover(ctx, plan)
+	case "bootstrap":
+		e = s.authority.Bootstrap(ctx, plan, plan.Deadline().Add(-10*time.Second))
+	default:
+		e = ErrIdentity
+	}
+	return struct{}{}, e
+}

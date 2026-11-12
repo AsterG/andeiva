@@ -107,7 +107,11 @@ func validRevisionV2(r configpoc.Revision) bool {
 // exactV2 preserves strict duplicate/depth/unknown checks and rejects Go's
 // otherwise case-insensitive matching of the security envelope and payload.
 func exactV2(data []byte, out any, required []string, optional ...string) error {
-	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) || decodeBounded(data, out, LocalReplyMaxFrame) != nil {
+	return exactFrame(data, out, LocalReplyMaxFrame, required, optional...)
+}
+
+func exactFrame(data []byte, out any, limit int, required []string, optional ...string) error {
+	if limit < 1 || len(data) > limit || bytes.Equal(bytes.TrimSpace(data), []byte("null")) || decodeBounded(data, out, limit) != nil {
 		return ErrChannel
 	}
 	if !canonicalKeysV2(data, reflect.TypeOf(out)) {
