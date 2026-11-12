@@ -264,3 +264,19 @@ jobs:
             dist/preview/build-info.txt
           if-no-files-found: error
           retention-days: 3
+
+  configuration-v2-endurance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      ANDEIVA_CONFIG_V2_ENDURANCE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Durable catalogue endurance without engines or privileged operations
+        run: go test -race -count=1 ./internal/configpoc -run '^TestV2DurableCatalogue5000Lifecycles$' -v -timeout 30m

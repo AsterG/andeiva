@@ -1,0 +1,422 @@
+package configpoc
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"os"
+	"strings"
+	"sync"
+)
+
+type v2Store struct {
+	mu        sync.Mutex
+	root      *os.Root
+	lock      *os.File
+	state     v2State
+	selection v2Selection
+	selector  v2Selector
+	budget    v2Budget
+	used      v2Budget
+	blocked   bool
+	hook      func(string) error
+	allowance v2Budget
+}
+
+// The caller owns the directory lifetime. No directory, legacy layout or engine
+// is created or changed here. A failed ambiguous publication fences this handle.
+func openV2(area *os.Root, budget v2Budget) (*v2Store, error) {
+	return openV2BeforeLock(area, budget, nil)
+}
+
+func openV2BeforeLock(area *os.Root, budget v2Budget, beforeLock func() error) (*v2Store, error) {
+	s, err := v2AreaBeforeLock(area, budget, beforeLock)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.readSelection(); err != nil {
+		_ = s.lock.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func createV2(area *os.Root, budget v2Budget, initial v2State) (*v2Store, error) {
+	s, err := prepareV2(area, budget, initial)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.publish(s.state); err != nil {
+		_ = s.lock.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func prepareV2(area *os.Root, budget v2Budget, initial v2State) (*v2Store, error) {
+	return prepareV2BeforeLock(area, budget, initial, nil)
+}
+
+func prepareV2BeforeLock(area *os.Root, budget v2Budget, initial v2State, beforeLock func() error) (*v2Store, error) {
+	if area == nil {
+		return nil, errV2Invalid
+	}
+	// Refuse unknown/legacy entries before creating the lock.
+	dir, err := area.Open(".")
+	if err != nil {
+		return nil, errV2Unavailable
+	}
+	entries, readErr := dir.ReadDir(1)
+	closeErr := dir.Close()
+	if len(entries) != 0 || readErr != io.EOF || closeErr != nil {
+		return nil, errV2Unavailable
+	}
+	s, err := v2AreaBeforeLock(area, budget, beforeLock)
+	if err != nil {
+		return nil, err
+	}
+	// The empty preflight is not a creation lease. Another initializer may
+	// publish before this lock is acquired; never replace its selected state.
+	lockedDirectory, err := area.Open(".")
+	if err != nil {
+		_ = s.lock.Close()
+		return nil, errV2Unavailable
+	}
+	lockedEntries, lockedReadErr := lockedDirectory.ReadDir(2)
+	lockedCloseErr := lockedDirectory.Close()
+	if (lockedReadErr != nil && lockedReadErr != io.EOF) || lockedCloseErr != nil || len(lockedEntries) != 1 || lockedEntries[0].Name() != "checkpoint.lock" {
+		_ = s.lock.Close()
+		return nil, errV2Unavailable
+	}
+	if initial.SubjectSlots == 0 {
+		initial.SubjectSlots = v2MaximumSubjects
+	}
+	if initial.NamespaceSlots == 0 {
+		initial.NamespaceSlots = v2MaximumNamespaces
+	}
+	if initial.SubjectSequence == 0 {
+		initial.SubjectSequence = uint64(len(initial.Subjects))
+	}
+	if initial.Format != v2Format || initial.Generation != 1 || initial.HighWater != 0 || initial.Index != "" || initial.Operational || !v2ValidState(initial) {
+		_ = s.lock.Close()
+		return nil, errV2Invalid
+	}
+	s.state = initial
+	return s, nil
+}
+
+func v2Area(area *os.Root, budget v2Budget) (*v2Store, error) {
+	return v2AreaBeforeLock(area, budget, nil)
+}
+
+func v2AreaBeforeLock(area *os.Root, budget v2Budget, beforeLock func() error) (*v2Store, error) {
+	if area == nil || budget.Bytes < 4*v2OperationReserveBytes || budget.Bytes > 1<<40 || budget.Inodes < 256 || budget.Inodes > 1<<26 {
+		return nil, errV2Invalid
+	}
+	s := &v2Store{root: area, budget: budget}
+	// This preflight prevents creating a lock in a foreign layout. Its counts
+	// are not authoritative: an active writer can change the store afterwards.
+	if err := s.scanV2Area(); err != nil {
+		return nil, err
+	}
+	if beforeLock != nil {
+		if err := beforeLock(); err != nil {
+			return nil, err
+		}
+	}
+	var err error
+	s.lock, err = lockCheckpoint(area)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.scanV2Area(); err != nil {
+		_ = s.lock.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *v2Store) scanV2Area() error {
+	dir, err := v2Directory(s.root)
+	if err != nil {
+		return errV2Unavailable
+	}
+	s.used = v2Budget{}
+	s.blocked = false
+	for {
+		entries, readErr := dir.ReadDir(128)
+		for _, entry := range entries {
+			name := entry.Name()
+			if name != "checkpoint.lock" && name != "selected.json" && name != "selection.pending" && !(strings.HasPrefix(name, "object-") && strings.HasSuffix(name, ".json") && len(name) == 76 && v2HashPattern.MatchString(name[7:71])) {
+				_ = dir.Close()
+				return errV2Unavailable
+			}
+			info, statErr := s.root.Lstat(name)
+			if statErr != nil || !regularOwned(info, v2ObjectLimit) {
+				_ = dir.Close()
+				return errV2Unavailable
+			}
+			size := info.Size()
+			if size < 0 {
+				_ = dir.Close()
+				return errV2Unavailable
+			}
+			s.used.Bytes += uint64(size)
+			s.used.Inodes++
+			if name == "selection.pending" {
+				s.blocked = true
+			}
+			if s.used.Bytes > s.budget.Bytes || s.used.Inodes > s.budget.Inodes {
+				_ = dir.Close()
+				return errV2Unavailable
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			_ = dir.Close()
+			return errV2Unavailable
+		}
+	}
+	if dir.Close() != nil {
+		return errV2Unavailable
+	}
+	return nil
+}
+
+func (s *v2Store) close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.blocked = true
+	return s.lock.Close()
+}
+
+func v2ValidState(st v2State) bool {
+	if st.Format != v2Format || st.Lineage == "" || len(st.Lineage) > 128 || st.Generation == 0 || (st.LiveSlots != 64 && st.LiveSlots != 4096 && st.LiveSlots != v2MaximumOperations) || st.SubjectSlots == 0 || st.SubjectSlots > v2MaximumSubjects || st.NamespaceSlots == 0 || st.NamespaceSlots > v2MaximumNamespaces || uint64(len(st.Subjects)) > st.SubjectSlots || uint64(len(st.Namespaces)) > st.NamespaceSlots || st.Clock.IsZero() || st.Clock.Location().String() != "UTC" || st.Operational {
+		return false
+	}
+	if st.Index != "" && !v2HashPattern.MatchString(st.Index) {
+		return false
+	}
+	if (st.HighWater == 0) != (st.Index == "") || (st.Migration != "" && !v2HashPattern.MatchString(st.Migration)) {
+		return false
+	}
+	ids, logins := map[string]bool{}, map[string]bool{}
+	for _, sub := range st.Subjects {
+		if sub.ID == "" || len(sub.ID) > 128 || sub.Login == "" || len(sub.Login) > 128 || !v2HashPattern.MatchString(sub.CredentialRevision) || ids[sub.ID] || (!sub.Retired && logins[sub.Login]) {
+			return false
+		}
+		ids[sub.ID] = true
+		if !sub.Retired {
+			logins[sub.Login] = true
+		}
+	}
+	names := map[string]bool{}
+	var reserved uint64
+	for _, ns := range st.Namespaces {
+		if ns.ID == "" || len(ns.ID) > 128 || names[ns.ID] || !ids[ns.Subject] || (ns.Domain != "firewall" && ns.Domain != "local_services") || ns.AdmitUntil.IsZero() || len(ns.Open) > v2MaximumOpen {
+			return false
+		}
+		names[ns.ID] = true
+		seen := map[string]bool{}
+		for _, id := range ns.Open {
+			if id == "" || len(id) > 128 || seen[id] {
+				return false
+			}
+			seen[id] = true
+			reserved++
+		}
+	}
+	return st.ReservedBytes == reserved*v2OperationReserveBytes && st.ReservedInodes == reserved*v2OperationReserveInodes
+}
+
+func (s *v2Store) readObject(hash string, value any) error {
+	name, err := v2ObjectName(hash)
+	if err != nil {
+		s.blocked = true
+		return err
+	}
+	data, err := checkpointRead(s.root, name, v2ObjectLimit)
+	if err != nil || checkpointDigest(data) != hash || checkpointDecode(data, value) != nil {
+		s.blocked = true
+		return errV2Unavailable
+	}
+	return nil
+}
+
+func (s *v2Store) point(name string) error {
+	if s.hook != nil {
+		if err := s.hook(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Content addressing permits safe deduplication only after exact readback.
+// O_EXCL prevents replacing another writer's object, even after a guard race.
+func (s *v2Store) object(value any) (string, error) {
+	data, hash, err := v2Canonical(value)
+	if err != nil {
+		return "", err
+	}
+	name, _ := v2ObjectName(hash)
+	if _, err = s.root.Lstat(name); err == nil {
+		prior, e := checkpointRead(s.root, name, v2ObjectLimit)
+		if e != nil || !bytes.Equal(prior, data) {
+			return "", errV2Unavailable
+		}
+		// An orphan from a prior process may have complete bytes without a
+		// successful fsync. Exact readback alone does not establish durability.
+		file, e := openRecordFile(s.root, name)
+		if e != nil {
+			return "", errV2Unavailable
+		}
+		expected, statErr := file.Stat()
+		syncErr := file.Sync()
+		closeErr := file.Close()
+		if statErr != nil || syncErr != nil || closeErr != nil {
+			return "", errV2Unavailable
+		}
+		verified, e := checkpointReadPinned(s.root, name, v2ObjectLimit, expected)
+		if e != nil || !bytes.Equal(verified, data) {
+			return "", errV2Unavailable
+		}
+		return hash, nil
+	} else if !os.IsNotExist(err) {
+		return "", errV2Unavailable
+	}
+	reservedBytes := s.state.ReservedBytes - s.allowance.Bytes
+	reservedInodes := s.state.ReservedInodes - s.allowance.Inodes
+	if s.used.Bytes+reservedBytes+uint64(len(data)) > s.budget.Bytes || s.used.Inodes+reservedInodes+1 > s.budget.Inodes {
+		return "", errV2Limited
+	}
+	f, err := s.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return "", errV2Unavailable
+	}
+	s.used.Inodes++
+	s.used.Bytes += uint64(len(data))
+	n, writeErr := f.Write(data)
+	if writeErr == nil && n != len(data) {
+		writeErr = io.ErrShortWrite
+	}
+	if writeErr == nil {
+		writeErr = s.point("object_written")
+	}
+	if writeErr == nil {
+		writeErr = f.Sync()
+	}
+	if writeErr == nil {
+		writeErr = s.point("object_synced")
+	}
+	info, statErr := f.Stat()
+	closeErr := f.Close()
+	if writeErr != nil || statErr != nil || closeErr != nil {
+		return "", errV2Unavailable
+	}
+	verified, err := checkpointReadPinned(s.root, name, v2ObjectLimit, info)
+	if err != nil || !bytes.Equal(verified, data) {
+		return "", errV2Unavailable
+	}
+	return hash, nil
+}
+
+func (s *v2Store) readSelection() error {
+	data, err := checkpointRead(s.root, "selected.json", 4096)
+	if err != nil || checkpointDecode(data, &s.selector) != nil || s.selector.Format != v2Format {
+		return errV2Unavailable
+	}
+	if err = s.readObject(s.selector.Current, &s.selection); err != nil {
+		return err
+	}
+	if s.selection.Format != v2Format || s.selection.Sequence == 0 || s.selection.Segment == 0 || s.selection.Segment > 64 || s.selection.Previous != s.selector.Previous {
+		return errV2Unavailable
+	}
+	if err = s.readObject(s.selection.State, &s.state); err != nil || !v2ValidState(s.state) || s.state.Lineage != s.selection.Lineage {
+		return errV2Unavailable
+	}
+	// Verify the bounded active delta segment and previous complete selection.
+	current := s.selection
+	for i := uint64(1); current.Previous != "" && i <= 64; i++ {
+		var prior v2Selection
+		if err = s.readObject(current.Previous, &prior); err != nil || prior.Format != v2Format || prior.Lineage != current.Lineage || prior.Sequence+1 != current.Sequence {
+			return errV2Unavailable
+		}
+		var state v2State
+		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) {
+			return errV2Unavailable
+		}
+		if current.Checkpoint {
+			break
+		}
+		if prior.Segment+1 != current.Segment {
+			return errV2Unavailable
+		}
+		current = prior
+	}
+	if s.state.Index != "" {
+		var page v2Page
+		if s.readObject(s.state.Index, &page) != nil || !v2ValidPage(page, 2) {
+			return errV2Unavailable
+		}
+	}
+	if s.state.Migration != "" && s.validateMigration() != nil {
+		return errV2Unavailable
+	}
+	return nil
+}
+
+func (s *v2Store) publish(state v2State) (result error) {
+	if s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) {
+		return errV2Unavailable
+	}
+	defer func() {
+		if result != nil {
+			s.blocked = true
+		}
+	}()
+	stateHash, err := s.object(state)
+	if err != nil {
+		return err
+	}
+	next := v2Selection{Format: v2Format, Lineage: state.Lineage, Sequence: s.selection.Sequence + 1, State: stateHash, Previous: s.selector.Current, Segment: s.selection.Segment + 1}
+	if next.Segment > 64 {
+		next.Segment = 1
+		next.Checkpoint = true
+	}
+	selectionHash, err := s.object(next)
+	if err != nil {
+		return err
+	}
+	if checkpointSync(s.root, nil, "") != nil || s.point("objects_durable") != nil {
+		return errV2Unavailable
+	}
+	selector := v2Selector{Format: v2Format, Current: selectionHash, Previous: s.selector.Current}
+	data, err := json.Marshal(selector)
+	if err != nil {
+		return errV2Unavailable
+	}
+	info, err := checkpointWrite(s.root, "selection.pending", data, nil, "")
+	if err != nil {
+		return errV2Unavailable
+	}
+	if s.point("before_select") != nil {
+		return errV2Unavailable
+	}
+	verified, err := checkpointReadPinned(s.root, "selection.pending", 4096, info)
+	if err != nil || !bytes.Equal(data, verified) {
+		return errV2Unavailable
+	}
+	if s.root.Rename("selection.pending", "selected.json") != nil {
+		return errV2Unavailable
+	}
+	if s.point("after_select") != nil || checkpointSync(s.root, nil, "") != nil {
+		return errV2Uncertain
+	}
+	s.state = state
+	s.selection = next
+	s.selector = selector
+	return nil
+}

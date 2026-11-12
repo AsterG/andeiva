@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — inactive configuration storage v2 foundations
+
+- Prepare immutable selected storage, a bounded durable operation catalogue and
+  cold schema 3/4 migration without activating engines or administrative endpoints.
+- Preserve legacy configuration and replay provenance; test interruptions, registry
+  retirement, concurrency and exact lookup. Physical reclamation and cutover remain
+  unavailable.
+
 ## Unreleased — internal read-only network inventory
 
 - Observe real interfaces, IPv4/IPv6 addresses, masks and link flags through an
