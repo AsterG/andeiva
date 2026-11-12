@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — isolated storage volume qualification
+
+- Prepare inactive, preallocated filesystem images through a fixed descriptor-only
+  formatter and a bounded laboratory profile; never mount or activate live data.
+- Extend the existing opt-in harness to test copied volumes for byte/inode
+  exhaustion, read-only failures and open-deleted files without changing originals.
+- Require actual test execution/completion evidence and preserve failure logs.
+
 ## Unreleased — custom CA platform safety
 
 - Reject custom CA files before filesystem access on platforms without a qualified
