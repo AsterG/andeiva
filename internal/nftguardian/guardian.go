@@ -187,10 +187,24 @@ func (g *Guardian) RecoverPrevious() error {
 func (g *Guardian) RecoverLease(id, previous, target string, deadline time.Time) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closed || id == "" || len(id) > 64 || deadline.IsZero() || g.state.ID != id || g.state.Previous != previous || g.state.Target != target || !g.state.Deadline.Equal(deadline) || !g.deadline.Equal(deadline) || g.previous.Hash != previous || g.target.Hash != target || (g.state.Phase != "armed" && g.state.Phase != "pending" && g.state.Phase != "expired") {
+	if g.closed || id == "" || len(id) > 64 || deadline.IsZero() {
 		return ErrLease
 	}
-	return g.recoverPreviousLocked()
+	if g.state.ID != id || g.state.Previous != previous || g.state.Target != target {
+		return ErrLease
+	}
+	if !g.state.Deadline.Equal(deadline) || !g.deadline.Equal(deadline) {
+		return ErrLease
+	}
+	if g.previous.Hash != previous || g.target.Hash != target {
+		return ErrLease
+	}
+	switch g.state.Phase {
+	case "armed", "pending", "expired":
+		return g.recoverPreviousLocked()
+	default:
+		return ErrLease
+	}
 }
 
 func (g *Guardian) recoverPreviousLocked() error {
