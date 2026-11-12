@@ -71,7 +71,7 @@ func (s *v2Store) indexPut(root string, level int, sequence uint64, operation st
 		}
 	}
 	page.Refs[position] = next
-	return s.object(page)
+	return s.objectClass(page, true)
 }
 
 func (s *v2Store) subject(id string) bool {
