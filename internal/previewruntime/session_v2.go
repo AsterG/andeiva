@@ -201,6 +201,22 @@ func (s *SessionV2) handleV2(ctx context.Context, epoch uint64, m firewallipc.Re
 			} else {
 				err = b.guardian.Arm(p.Arm.ID, p.Arm.Previous, p.Arm.Target, p.Arm.TTL)
 			}
+		case "arm_until":
+			if !b.validRevision(p.ArmUntil.Previous) || !b.validRevision(p.ArmUntil.Target) {
+				err = errHelper
+			} else {
+				err = b.guardian.ArmUntil(p.ArmUntil.ID, p.ArmUntil.Previous, p.ArmUntil.Target, p.ArmUntil.Deadline)
+			}
+		case "apply_scoped":
+			scope := p.ApplyScoped.Scope
+			if !b.validRevision(p.ApplyScoped.Revision) {
+				err = errHelper
+			} else {
+				err = b.guardian.ApplyLease(ctx, p.ApplyScoped.Revision, nftguardian.State{ID: scope.ID, Previous: scope.Previous, Target: scope.Target, Deadline: scope.Deadline})
+			}
+		case "confirm_scoped":
+			scope := p.Recovery
+			err = b.guardian.ConfirmLease(nftguardian.State{ID: scope.ID, Previous: scope.Previous, Target: scope.Target, Deadline: scope.Deadline})
 		case "confirm":
 			err = b.guardian.Confirm(p.Confirm.ID, p.Confirm.Target)
 		case "recover_scoped":
@@ -238,10 +254,16 @@ func (s *SessionV2) handleV2(ctx context.Context, epoch uint64, m firewallipc.Re
 			result.Hash = hash
 		}
 	}
-	if err == nil && (m.Verb == "apply" || m.Verb == "bootstrap" || m.Verb == "arm") {
+	if err == nil && (m.Verb == "apply" || m.Verb == "bootstrap" || m.Verb == "arm" || m.Verb == "arm_until" || m.Verb == "apply_scoped") {
 		r := p.Revision
 		if m.Verb == "arm" {
 			r = p.Arm.Target
+		}
+		if m.Verb == "arm_until" {
+			r = p.ArmUntil.Target
+		}
+		if m.Verb == "apply_scoped" {
+			r = p.ApplyScoped.Revision
 		}
 		result.Artifact, err = b.digest(r.Config)
 	}

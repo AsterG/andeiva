@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"sort"
 	"time"
 )
 
@@ -22,16 +23,19 @@ func validBootIDV2(id v2BootID) bool {
 }
 
 func validBootIntentV2(intent *v2CoordinatorIntent) bool {
-	return intent != nil && intent.Kind == v2BootKind && intent.Recovery && intent.BootID != nil && validBootIDV2(*intent.BootID) && intent.Subject == "" && intent.OriginCommit == "" && intent.Lease == ""
+	return intent != nil && intent.GuardDeadline == nil && intent.Kind == v2BootKind && intent.Recovery && intent.BootID != nil && validBootIDV2(*intent.BootID) && intent.Subject == "" && intent.OriginCommit == "" && intent.Lease == ""
 }
 
 func validFeaturesV2(state v2State) bool {
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2BootFeature && feature != v2LocalFeature) || feature <= last {
+		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature) || feature <= last {
 			return false
 		}
 		last = feature
+	}
+	if !validGuardDeadlineFeatureV2(state) {
+		return false
 	}
 	if state.Configuration != nil && (state.Configuration.LastCompletedBoot != "" || (state.Configuration.Intent != nil && state.Configuration.Intent.Kind == v2BootKind)) {
 		if !hasFeatureV2(state, v2BootFeature) {
@@ -57,12 +61,13 @@ func addFeatureV2(state *v2State, feature string) {
 		return
 	}
 	state.RequiredFeatures = append(state.RequiredFeatures, feature)
-	if len(state.RequiredFeatures) == 2 && state.RequiredFeatures[0] > state.RequiredFeatures[1] {
-		state.RequiredFeatures[0], state.RequiredFeatures[1] = state.RequiredFeatures[1], state.RequiredFeatures[0]
-	}
+	sort.Strings(state.RequiredFeatures)
 }
 
 func preservesFeaturesV2(previous, next v2State) bool {
+	if !preservesGuardDeadlineV2(previous, next) {
+		return false
+	}
 	for _, feature := range previous.RequiredFeatures {
 		if !hasFeatureV2(next, feature) {
 			return false

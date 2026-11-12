@@ -299,7 +299,8 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 		if in.TargetGeneration < state.Generation || (in.TargetGeneration != state.Generation && (state.Generation == ^uint64(0) || in.TargetGeneration != state.Generation+1)) {
 			return errV2Unavailable
 		}
-		for _, hash := range []string{in.Previous, in.Target} {
+		var sides [2]v2Configuration
+		for i, hash := range []string{in.Previous, in.Target} {
 			var snapshot v2Configuration
 			if err := r.object(hash, &snapshot); err != nil {
 				return err
@@ -307,9 +308,13 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 			if snapshot.Intent != nil {
 				return errV2Unavailable
 			}
+			sides[i] = snapshot
 			if err := r.snapshot(hash, key, state, depth+1); err != nil {
 				return err
 			}
+		}
+		if validateGuardDeadlineContextV2(in, sides[0], sides[1], hasFeatureV2(state, v2GuardDeadlineFeature), live) != nil {
+			return errV2Unavailable
 		}
 		if in.Recovery && cfg.LastRecovery == "" {
 			return errV2Unavailable

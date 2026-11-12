@@ -42,6 +42,9 @@ func terminalReserveOperationV2(op v2Operation, state v2State) bool {
 // This proves immutable canonical facts only. The caller separately verifies
 // the live selected closure and the exact physical binding before retirement.
 func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load func(string, any) error) error {
+	if validateArchiveGuardDeadlinesV2(archive, state, load) != nil {
+		return errV2Unavailable
+	}
 	var facts v2ReserveFinality
 	if validateArchiveCapsulesV2(archive) != nil || load == nil || load(archive.FinalWork, &facts) != nil || facts.Format != v2Format || facts.Version != 1 || facts.Lineage != state.Lineage || archive.Lineage != state.Lineage || !validReserveWorkRefV2(facts.Origin) || facts.Origin.ID != archive.Origin || facts.Resolution != archive.LeaseResolution {
 		return errV2Unavailable

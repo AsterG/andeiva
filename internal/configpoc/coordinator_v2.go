@@ -8,11 +8,12 @@ import (
 )
 
 type v2CoordinatorOptions struct {
-	Reserves    *v2ReserveManager
-	LocalPolicy LocalPolicyV2
-	BootID      *v2BootID
-	Now         func() time.Time
-	Hook        func(string) error
+	GuardDeadlines bool
+	Reserves       *v2ReserveManager
+	LocalPolicy    LocalPolicyV2
+	BootID         *v2BootID
+	Now            func() time.Time
+	Hook           func(string) error
 	// Tests may drive deadlines explicitly; appliance integration must not opt
 	// out of the independent timeout worker. There is no runtime caller yet.
 	ManualTimeout bool
@@ -75,6 +76,9 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	}
 	if !validV2Configuration(store.state.Configuration) {
 		return nil, errV2Unavailable
+	}
+	if err := c.guardDeadlineOpenV2(); err != nil {
+		return nil, err
 	}
 	if err := c.validateReferencesLocked(); err != nil {
 		return nil, err
@@ -426,6 +430,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	if err != nil {
 		return result(op), err
 	}
+	if err = c.absoluteGuardPreflightV2(op, state, target); err != nil {
+		return result(op), err
+	}
 	if err = c.persistRevisions(target); err != nil {
 		s.blocked = true
 		return result(op), err
@@ -455,6 +462,11 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	st.Clock = now
 	st.Configuration.Intent = &v2CoordinatorIntent{Operation: op.ID, Subject: op.Subject, Domain: op.Domain, Kind: op.Request.Kind, Previous: previousHash, Target: targetHash, TargetGeneration: generation}
+	if c.options.GuardDeadlines && immediateGuardIntentV2(st.Configuration.Intent, state, target) {
+		deadline := c.now().Add(10 * time.Second).UTC()
+		st.Configuration.Intent.GuardDeadline = &deadline
+		addFeatureV2(&st, v2GuardDeadlineFeature)
+	}
 	if s.reserves != nil {
 		if err = s.reserves.selectedPlan(s, &op, &st, *st.Configuration.Intent, target); err != nil {
 			return result(op), err

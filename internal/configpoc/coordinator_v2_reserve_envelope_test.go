@@ -35,8 +35,10 @@ func TestReserveEnvelopeMaximumDescriptors(t *testing.T) {
 	admission, plan := binding(claims.Admission), binding(claims.Plan)
 	boot := v2BootID("ffffffff-ffff-ffff-ffff-ffffffffffff")
 	intent := v2CoordinatorIntent{Operation: id, Subject: id, Domain: "local_services", Kind: strings.Repeat("k", 128), Previous: hash, Target: hash, TargetGeneration: high, Recovery: false, OriginCommit: id, Lease: id, BootID: &boot}
+	intent.GuardDeadline = &stamp // Deliberately incompatible fields overapproximate all optional bytes.
 	pending := v2Confirmation{OriginCommit: id, Lease: id, Owner: id, Domain: "local_services", Previous: hash, Target: hash, Deadline: stamp}
 	state := v2State{Configuration: &v2Configuration{Intent: &intent, Pending: &pending}}
+	addFeatureV2(&state, v2GuardDeadlineFeature)
 	for i := range 16 {
 		bundle := &v2ReserveBundle{Scope: scope, Claims: claims, Admission: admission, Plan: &plan, PlanScope: &scope, PlanIntent: &intent}
 		if i < 8 {
