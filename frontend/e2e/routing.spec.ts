@@ -143,6 +143,21 @@ test('routed audit uses protected records with combined filters in both themes',
   expect(calls.some((call) => call.path.endsWith('/admit'))).toBe(false);
 });
 
+test('preserved historical Candidate remains visible but cannot validate or apply', async ({ page }) => {
+  const calls = await setup(page), restored = structuredClone(fixtures.pre), old = fixtures.routed.current;
+  restored.current.snapshot.candidate = { owner: 'subject', base: old.snapshot.running.hash, revision: structuredClone(old.snapshot.running) };
+  restored.current.routed.local_services.candidate = { owner: 'subject', base: old.routed.local_services.running.hash, revision: structuredClone(old.routed.local_services.running) };
+  restored.current.routed.candidate = structuredClone(old.routed.running);
+  restored.current.routed.candidate_group = { stage_operation_id: 'stage-original', owner: 'subject', base: old.routed.running.hash, domains: ['firewall', 'local_services'] };
+  await page.route('**/api/v2/config/current', (route) => route.fulfill({ json: restored }));
+  await page.goto('/firewall#rules');
+  await expect(page.getByText(workspaceMessages.en.candidateStale, { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: workspaceMessages.en.validate, exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: workspaceMessages.en.commit, exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'tcp-test', exact: true })).toBeVisible();
+  expect(calls.some((call) => call.path.endsWith('/admit') || call.path.endsWith('/execute'))).toBe(false);
+});
+
 test('viewer cannot open network, rule or NAT editors', async ({ page }) => {
   await setup(page, 'viewer');
   for (const view of ['network', 'rules', 'nat']) {

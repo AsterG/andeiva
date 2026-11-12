@@ -23,10 +23,9 @@ func (c *Client) ConfigurationAuditV2(ctx context.Context, before uint64, limit 
 	if page.SchemaVersion != 1 || page.Events == nil || len(page.Events) > limit {
 		return configpoc.AuditPageV2{}, ErrResponse
 	}
-	hash := func(value string) bool { return len(value) == 64 && strings.Trim(value, "0123456789abcdef") == "" }
 	previous := before
 	for _, event := range page.Events {
-		if event.Sequence == 0 || previous != 0 && event.Sequence >= previous || event.Generation == 0 || event.At.IsZero() || !clientIDv2(event.ActorID) || !clientIDv2(event.OperationID) || !clientIDv2(event.Operation) || !clientIDv2(event.Result) || !hash(event.Running) || !hash(event.Startup) || len(event.ActorName) > 128 || !utf8.ValidString(event.ActorName) || strings.IndexFunc(event.ActorName, unicode.IsControl) >= 0 {
+		if event.Sequence == 0 || previous != 0 && event.Sequence >= previous || event.Generation == 0 || event.At.IsZero() || !clientIDv2(event.ActorID) || !clientIDv2(event.OperationID) || !clientIDv2(event.Operation) || !clientIDv2(event.Result) || !clientHashV2(event.Running) || !clientHashV2(event.Startup) || len(event.ActorName) > 128 || !utf8.ValidString(event.ActorName) || strings.IndexFunc(event.ActorName, unicode.IsControl) >= 0 {
 			return configpoc.AuditPageV2{}, ErrResponse
 		}
 		previous = event.Sequence

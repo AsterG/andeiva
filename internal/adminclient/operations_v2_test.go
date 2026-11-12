@@ -173,8 +173,8 @@ func TestOperationsV2ClientCorrelatesAdmissionAndCandidatePending(t *testing.T) 
 			op.Current.Snapshot.Candidate = &configpoc.Candidate{Owner: "subject", Base: op.Current.Snapshot.Running.Hash, Revision: op.Current.Snapshot.Running}
 			op.Current.Snapshot.Candidate.Revision.Hash = strings.Repeat("f", 64)
 		},
-		"candidate_base": func(op *adminapi.OperationResponseV2) {
-			op.Current.Snapshot.Candidate = &configpoc.Candidate{Owner: "subject", Base: strings.Repeat("f", 64), Revision: op.Current.Snapshot.Running}
+		"malformed_candidate_base": func(op *adminapi.OperationResponseV2) {
+			op.Current.Snapshot.Candidate = &configpoc.Candidate{Owner: "subject", Base: "not-a-revision", Revision: op.Current.Snapshot.Running}
 		},
 		"pending_previous": func(op *adminapi.OperationResponseV2) {
 			op.Current.Snapshot.Pending = &configpoc.Pending{Owner: "subject", Lease: "v2.lease.1.fixture", Previous: op.Current.Snapshot.Running, Deadline: time.Now().UTC().Add(time.Minute)}

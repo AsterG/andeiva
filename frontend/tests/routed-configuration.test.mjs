@@ -68,6 +68,23 @@ test('routed administrative copy has complete EN ES PT keys', () => {
   for (const locale of ['es', 'pt']) assert.deepEqual(Object.keys(workspaceMessages[locale]).sort(), keys);
 });
 
+test('historical Candidate stays readable after Startup restoration without rebasing', () => {
+  const value = structuredClone(fixtures.pre), previous = fixtures.routed.current;
+  value.current.snapshot.candidate = { owner: 'subject', base: previous.snapshot.running.hash, revision: structuredClone(previous.snapshot.running) };
+  value.current.routed.local_services.candidate = { owner: 'subject', base: previous.routed.local_services.running.hash, revision: structuredClone(previous.routed.local_services.running) };
+  value.current.routed.candidate = structuredClone(previous.routed.running);
+  value.current.routed.candidate_group = { stage_operation_id: 'stage-original', owner: 'subject', base: previous.routed.running.hash, domains: ['firewall', 'local_services'] };
+  const result = currentResponse(value);
+  assert.notEqual(result.snapshot.candidate.base, result.snapshot.running.hash);
+  assert.equal(result.routed.candidate_group.base, previous.routed.running.hash);
+  for (const mutate of [
+    (v) => { v.current.routed.candidate_group.owner = 'foreign'; },
+    (v) => { v.current.routed.candidate_group.base = 'invalid'; },
+    (v) => { v.current.routed.local_services.candidate.owner = 'foreign'; },
+    (v) => { v.current.routed.candidate.config.domains.firewall.revision = '0'.repeat(64); },
+  ]) { const invalid = structuredClone(value); mutate(invalid); assert.throws(() => currentResponse(invalid)); }
+});
+
 test('verified no-effect finality remains consultable without accepting mismatched reasons', () => {
   for (const [code, reason] of [['profile_changed_without_effects', 'ANDEIVA_RESERVE_PROFILE_CHANGED'], ['confirmation_resolved_without_effects', 'ANDEIVA_CONFIRMATION_RESOLVED']]) {
     const reply = { ...structuredClone(fixtures.routed), operation: { id: 'v2.op.1.fixture', namespace_id: 'v2.ns.1.fixture', domain: 'routed', kind: 'stage', state: 'final', expected_generation: '18446744073709551615', outcome: { code, error_code: reason } } };

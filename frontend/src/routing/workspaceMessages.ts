@@ -1,7 +1,7 @@
 import type { Locale } from '../messages.js';
 const en = {
   auditIdentityHint: 'Display names reflect the current account registry; the durable actor ID is retained.', auditBoundedTitle: 'History scan limit', auditBounded: 'The protected history scan reached its limit. This page does not represent the entire retained audit.', title: 'Firewall and routing', refresh: 'Refresh state', network: 'Network', nat: 'Source NAT', rules: 'Firewall rules', editNetwork: 'Configure interfaces',
-  state: 'Configuration state', candidate: 'Pending changes', running: 'Active configuration', startup: 'Saved for restart', saved: 'Active configuration saved', unsaved: 'Active changes not saved',
+  state: 'Configuration state', candidate: 'Pending changes', candidateStale: 'These pending changes were preserved from an older active configuration. Validation and application remain blocked; no automatic rebase occurs.', running: 'Active configuration', startup: 'Saved for restart', saved: 'Active configuration saved', unsaved: 'Active changes not saved',
   stage: 'Prepare changes', validate: 'Validate', commit: 'Apply with confirmation', confirm: 'Confirm access', save: 'Save for restart', rollback: 'Restore saved configuration', discard: 'Discard local edits',
   localDraft: 'Local edits', noNetwork: 'No routed network is selected. Configure WAN and LAN before adding forwarding rules.',
   error: 'Operation unavailable', errorHint: 'Refresh the state. If an operation was accepted, check its status before submitting another change.',
@@ -21,7 +21,7 @@ export const workspaceMessages: Record<Locale, Copy> = {
   en,
   es: {
     auditIdentityHint: 'Los nombres corresponden al registro actual de cuentas; se conserva el ID duradero del actor.', auditBoundedTitle: 'Límite de consulta del historial', auditBounded: 'La consulta alcanzó su límite. Esta página no representa toda la auditoría conservada.', title: 'Firewall y enrutamiento', refresh: 'Actualizar estado', network: 'Red', nat: 'NAT de origen', rules: 'Reglas de firewall', editNetwork: 'Configurar interfaces',
-    state: 'Estado de configuración', candidate: 'Cambios pendientes', running: 'Configuración activa', startup: 'Guardada para reiniciar', saved: 'Configuración activa guardada', unsaved: 'Cambios activos sin guardar',
+    state: 'Estado de configuración', candidate: 'Cambios pendientes', candidateStale: 'Estos cambios se conservaron desde una configuración activa anterior. Validar y aplicar permanecen bloqueados; no se actualiza su base automáticamente.', running: 'Configuración activa', startup: 'Guardada para reiniciar', saved: 'Configuración activa guardada', unsaved: 'Cambios activos sin guardar',
     stage: 'Preparar cambios', validate: 'Validar', commit: 'Aplicar con confirmación', confirm: 'Confirmar acceso', save: 'Guardar para reiniciar', rollback: 'Restaurar configuración guardada', discard: 'Descartar ediciones locales',
     localDraft: 'Ediciones locales', noNetwork: 'No hay una red enrutada seleccionada. Configure WAN y LAN antes de añadir reglas de tránsito.',
     error: 'Operación no disponible', errorHint: 'Actualice el estado. Si se aceptó una operación, consulte su resultado antes de enviar otro cambio.',
@@ -38,7 +38,7 @@ export const workspaceMessages: Record<Locale, Copy> = {
   },
   pt: {
     auditIdentityHint: 'Os nomes correspondem ao registo atual de contas; o ID durável do ator é conservado.', auditBoundedTitle: 'Limite da consulta do histórico', auditBounded: 'A consulta atingiu o limite. Esta página não representa toda a auditoria conservada.', title: 'Firewall e roteamento', refresh: 'Atualizar estado', network: 'Rede', nat: 'NAT de origem', rules: 'Regras de firewall', editNetwork: 'Configurar interfaces',
-    state: 'Estado da configuração', candidate: 'Alterações pendentes', running: 'Configuração ativa', startup: 'Salva para reiniciar', saved: 'Configuração ativa salva', unsaved: 'Alterações ativas não salvas',
+    state: 'Estado da configuração', candidate: 'Alterações pendentes', candidateStale: 'Estas alterações foram conservadas de uma configuração ativa anterior. Validar e aplicar continuam bloqueados; a base não é atualizada automaticamente.', running: 'Configuração ativa', startup: 'Salva para reiniciar', saved: 'Configuração ativa salva', unsaved: 'Alterações ativas não salvas',
     stage: 'Preparar alterações', validate: 'Validar', commit: 'Aplicar com confirmação', confirm: 'Confirmar acesso', save: 'Salvar para reiniciar', rollback: 'Restaurar configuração salva', discard: 'Descartar edições locais',
     localDraft: 'Edições locais', noNetwork: 'Nenhuma rede roteada está selecionada. Configure WAN e LAN antes de adicionar regras de trânsito.',
     error: 'Operação indisponível', errorHint: 'Atualize o estado. Se uma operação foi aceita, consulte o resultado antes de enviar outra alteração.',

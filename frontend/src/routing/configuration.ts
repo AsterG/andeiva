@@ -33,7 +33,7 @@ export type ConfigurationCurrent = {
     running: Revision; startup: Revision; last_good: Revision;
     pending: { lease?: string; owner: string; previous: Revision; deadline: string } | null; recovery_required: boolean; revoked: string[];
   };
-  routed: { schema_version: 7; running: Composite; startup: Composite; last_good: Composite; candidate?: Composite; local_services: unknown; candidate_group?: unknown; confirmation?: { origin_commit_operation_id: string; target_revision: string; confirmation_deadline: string } };
+  routed: { schema_version: 7; running: Composite; startup: Composite; last_good: Composite; candidate?: Composite; local_services: unknown; candidate_group?: { stage_operation_id: string; owner: string; base: string; domains: string[] }; confirmation?: { origin_commit_operation_id: string; target_revision: string; confirmation_deadline: string } };
 };
 export type OperationRequest = { operation: 'stage' | 'validate' | 'commit' | 'confirm' | 'save' | 'rollback'; config?: RoutedConfig; confirm_seconds?: string; target_revision?: string; origin_commit_operation_id?: string };
 export type ConfigurationOperation = {
@@ -110,8 +110,12 @@ export function currentResponse(value: unknown): ConfigurationCurrent {
   }
   if (snapshot.candidate !== null) {
     const candidate = object(snapshot.candidate);
-    revision(candidate.revision);
-    if (!operationID(candidate.owner) || candidate.base !== object(snapshot.running).hash || !routed.candidate || !routed.candidate_group) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+    const candidateRevision = revision(candidate.revision), group = object(routed.candidate_group), composite = object(routed.candidate), config = object(composite.config), domains = object(config.domains), firewall = object(domains.firewall), local = object(domains.local_services), localCandidate = object(object(routed.local_services).candidate), localRevision = object(localCandidate.revision);
+    if (!operationID(candidate.owner) || !hash(candidate.base) || !operationID(group.stage_operation_id) || group.owner !== candidate.owner || !hash(group.base) || !Array.isArray(group.domains) || group.domains.length !== 2 || group.domains[0] !== 'firewall' || group.domains[1] !== 'local_services' || localCandidate.owner !== candidate.owner || !hash(localCandidate.base) || !hash(localRevision.hash) || object(localRevision.config).schema_version !== 3 || !hash(composite.hash) || config.schema_version !== 7 || firewall.config_schema !== candidateRevision.config.schema_version || firewall.revision !== candidateRevision.hash || local.config_schema !== 3 || local.revision !== localRevision.hash) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+    if (candidateRevision.config.schema_version === 6) {
+      const network = object(domains.network);
+      if (network.config_schema !== 1 || network.revision !== candidateRevision.config.routed.network.hash) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+    } else if (domains.network !== null) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
   } else if (routed.candidate || routed.candidate_group) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
   if (snapshot.pending !== null) {
     const pending = object(snapshot.pending);

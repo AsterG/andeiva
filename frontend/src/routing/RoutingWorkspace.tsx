@@ -50,6 +50,7 @@ export function RoutingWorkspace({ locale, session, page, product, onProductRefr
   const admin = session.role === 'admin';
   const editing = !!editor || networkEditor || natEditor;
   const stale = dirty && draftBase !== current?.global.generation;
+  const candidateStale = !!current?.snapshot.candidate && (current.snapshot.candidate.base !== current.snapshot.running.hash || current.routed.candidate_group?.base !== current.global.running_revision);
   const writable = admin && !!current && !busy && !current.snapshot.recovery_required && !uncertainID && !stale;
   const editable = writable && !current?.snapshot.pending;
   const verified = !!current && effective?.consistent === true && effective.generation === current.global.generation && effective.running_revision === current.global.running_revision && effective.observed_revision === current.global.running_revision;
@@ -167,6 +168,7 @@ export function RoutingWorkspace({ locale, session, page, product, onProductRefr
   const outcomeLabel = last?.outcome?.code === 'applied' || last?.outcome?.code === 'applied_pending_confirmation' ? copy.applied : last?.outcome?.code === 'failed_rolled_back' ? copy.rolledBack : last?.outcome?.code === 'expired_without_effects' ? copy.expired : last?.outcome ? copy.rejected : copy.accepted;
   return <div className="fw-stack" aria-busy={busy}>
     {error && <Notice title={copy.error} live>{copy.errorHint} <code>{error}</code></Notice>}
+    {candidateStale && <Notice title={copy.candidate} live>{copy.candidateStale}</Notice>}
     {uncertainID && <Notice title={copy.uncertain} live><code>{uncertainID}</code> <Button variant="secondary" disabled={busy} onClick={() => void query()}>{copy.query}</Button>{admin && last?.id === uncertainID && last.state === 'accepted' && <Button variant="secondary" disabled={busy || editing} onClick={() => void resumeAccepted()}>{copy.resume}</Button>}</Notice>}
     <div className="ds-actions"><Button variant="secondary" disabled={busy || !!editor || networkEditor || natEditor} onClick={() => setRefresh((value) => value + 1)}>{copy.refresh}</Button>{!admin && <StatusBadge tone="info">{copy.readonly}</StatusBadge>}</div>
     {!current ? <Notice title={busy ? copy.checking : copy.error}>{copy.errorHint}</Notice> : <>
@@ -175,9 +177,9 @@ export function RoutingWorkspace({ locale, session, page, product, onProductRefr
         {current.snapshot.pending && <p>{copy.pending} <time dateTime={current.snapshot.pending.deadline}>{new Date(current.snapshot.pending.deadline).toLocaleString(locale)}</time></p>}
         {admin && <div className="console-transaction-actions">
           <Button variant="secondary" disabled={!editable || editing || !dirty || !draft} onClick={() => setReview({ operation: 'stage', config: draft! })}>{copy.stage}</Button>
-          <Button variant="secondary" disabled={!editable || editing || dirty || !current.snapshot.candidate} onClick={() => void transact({ operation: 'validate' })}>{copy.validate}</Button>
+          <Button variant="secondary" disabled={!editable || candidateStale || editing || dirty || !current.snapshot.candidate} onClick={() => void transact({ operation: 'validate' })}>{copy.validate}</Button>
           <Field id={`${prefix}-confirm-seconds`} label={copy.seconds}><TextInput id={`${prefix}-confirm-seconds`} type="number" min={30} max={120} value={seconds} disabled={busy} onChange={(event) => setSeconds(event.target.value)} /></Field>
-          <Button disabled={!editable || editing || dirty || !current.snapshot.candidate || !/^(?:[3-9][0-9]|1[01][0-9]|120)$/.test(seconds)} onClick={() => setReview({ operation: 'commit', confirm_seconds: seconds })}>{copy.commit}</Button>
+          <Button disabled={!editable || candidateStale || editing || dirty || !current.snapshot.candidate || !/^(?:[3-9][0-9]|1[01][0-9]|120)$/.test(seconds)} onClick={() => setReview({ operation: 'commit', confirm_seconds: seconds })}>{copy.commit}</Button>
           {current.routed.confirmation && <Button disabled={!writable || editing || !verified || Date.parse(current.routed.confirmation.confirmation_deadline) <= Date.now()} onClick={() => setReview({ operation: 'confirm', target_revision: current.routed.confirmation!.target_revision, origin_commit_operation_id: current.routed.confirmation!.origin_commit_operation_id })}>{copy.confirm}</Button>}
           <Button variant="secondary" disabled={!editable || editing || !verified || dirty || !!current.snapshot.candidate || current.global.running_revision === current.global.startup_revision} onClick={() => setReview({ operation: 'save' })}>{copy.save}</Button>
           <Button variant="secondary" disabled={!editable || editing || dirty || !!current.snapshot.candidate || current.global.running_revision === current.global.startup_revision} onClick={() => setReview({ operation: 'rollback', target_revision: current.global.startup_revision, confirm_seconds: '60' })}>{copy.rollback}</Button>

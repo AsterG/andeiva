@@ -11,6 +11,7 @@ import (
 	"github.com/AsterG/andeiva/internal/adminapi"
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/localpolicy"
+	"github.com/AsterG/andeiva/internal/routednft"
 )
 
 func TestCurrentAndInventoryV2UseVerifiedTransportWithoutDowngrade(t *testing.T) {
@@ -127,6 +128,61 @@ func TestInventoryV2ClientRejectsMalformedOrPrivateData(t *testing.T) {
 		client.token = strings.Repeat("a", 64)
 		if _, err := client.NetworkInterfacesV2(context.Background()); !errors.Is(err, ErrResponse) {
 			t.Fatal("invalid inventory accepted", err)
+		}
+	}
+}
+
+func TestRoutedCurrentPreservesReadableHistoricalCandidate(t *testing.T) {
+	base, _ := wireFixtureV2(t)
+	local, err := configpoc.Canonical(configpoc.Config{SchemaVersion: 3, DefaultAction: "deny", LocalServices: &localpolicy.Config{SchemaVersion: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := routednft.LabPolicy()
+	oldFirewall, err := configpoc.CanonicalRouted(configpoc.Config{SchemaVersion: 6, DefaultAction: "deny", Routed: &policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := configpoc.NewRoutedActivationBundleV1(oldFirewall, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boot, err := configpoc.NewRoutedActivationBundleV1(base.Current.Snapshot.Running, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := base.Current
+	current.Domain = "routed"
+	current.Global.Running, current.Global.Startup = boot.Composite.Hash, boot.Composite.Hash
+	current.DomainGenerations = &adminapi.DomainGenerationsV2{Firewall: 17, Network: 17, LocalServices: 19}
+	current.Snapshot.Candidate = &configpoc.Candidate{Owner: "subject", Base: oldFirewall.Hash, Revision: oldFirewall}
+	current.Routed = &adminapi.RoutedCurrentV2{SchemaVersion: 7, Running: boot.Composite, Startup: boot.Composite, LastGood: boot.Composite, Candidate: &old.Composite, CandidateGroup: &configpoc.CandidateGroupV2{Operation: "stage-original", Owner: "subject", Base: old.Composite.Hash, Domains: []string{"firewall", "local_services"}}, LocalServices: adminapi.SnapshotV2{Generation: 19, Running: local, Startup: local, LastGood: local, Candidate: &configpoc.Candidate{Owner: "subject", Base: local.Hash, Revision: local}}}
+	if !validCurrentV2(current) {
+		t.Fatal("historical Candidate made valid Boot state unreadable")
+	}
+	if current.Snapshot.Candidate.Base != oldFirewall.Hash || current.Routed.CandidateGroup.Base != old.Composite.Hash {
+		t.Fatal("reader rebased Candidate")
+	}
+	for _, mutate := range []func(*adminapi.CurrentV2){
+		func(c *adminapi.CurrentV2) { c.Snapshot.Candidate.Base = "../../invalid" },
+		func(c *adminapi.CurrentV2) { c.Routed.CandidateGroup.Base = "invalid" },
+		func(c *adminapi.CurrentV2) { c.Routed.CandidateGroup.Owner = "foreign" },
+		func(c *adminapi.CurrentV2) { c.Routed.LocalServices.Candidate.Owner = "foreign" },
+		func(c *adminapi.CurrentV2) {
+			c.Routed.Candidate.Config.Domains.Firewall.Revision = strings.Repeat("0", 64)
+		},
+	} {
+		data, err := json.Marshal(current)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var invalid adminapi.CurrentV2
+		if json.Unmarshal(data, &invalid) != nil {
+			t.Fatal("fixture")
+		}
+		mutate(&invalid)
+		if validCurrentV2(invalid) {
+			t.Fatal("corrupt historical Candidate accepted")
 		}
 	}
 }

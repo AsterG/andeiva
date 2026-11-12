@@ -81,12 +81,16 @@ func (c *Client) callV2(ctx context.Context, method, path string, body, out any,
 	}
 	return nil
 }
+func clientHashV2(value string) bool {
+	return len(value) == 64 && strings.Trim(value, "0123456789abcdef") == ""
+}
+
 func validCurrentV2(current adminapi.CurrentV2) bool {
 	if !clientIDv2(current.Global.Lineage) || current.Global.Generation == 0 {
 		return false
 	}
 	for _, hash := range []string{current.Global.Running, current.Global.Startup} {
-		if len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" {
+		if !clientHashV2(hash) {
 			return false
 		}
 	}
@@ -117,7 +121,7 @@ func validCurrentV2(current adminapi.CurrentV2) bool {
 		return routed.CandidateGroup == nil && current.Snapshot.Candidate == nil && routed.LocalServices.Candidate == nil
 	}
 	firewall, local, group := current.Snapshot.Candidate, routed.LocalServices.Candidate, routed.CandidateGroup
-	if firewall == nil || local == nil || group == nil || firewall.Revision.Config.SchemaVersion != 6 || !clientIDv2(group.Operation) || group.Owner != firewall.Owner || group.Owner != local.Owner || group.Base != routed.Running.Hash || len(group.Domains) != 2 || group.Domains[0] != "firewall" || group.Domains[1] != "local_services" {
+	if firewall == nil || local == nil || group == nil || firewall.Revision.Config.SchemaVersion != 6 || !clientIDv2(group.Operation) || group.Owner != firewall.Owner || group.Owner != local.Owner || !clientHashV2(group.Base) || len(group.Domains) != 2 || group.Domains[0] != "firewall" || group.Domains[1] != "local_services" {
 		return false
 	}
 	bundle, err := configpoc.NewRoutedActivationBundleV1(firewall.Revision, local.Revision)
@@ -151,7 +155,7 @@ func validSnapshotV2(snapshot adminapi.SnapshotV2, routed, local bool) bool {
 		}
 	}
 	if candidate := snapshot.Candidate; candidate != nil {
-		if !validRevision(candidate.Revision) || candidate.Base != snapshot.Running.Hash || !clientIDv2(candidate.Owner) {
+		if !validRevision(candidate.Revision) || !clientHashV2(candidate.Base) || !clientIDv2(candidate.Owner) {
 			return false
 		}
 	}
