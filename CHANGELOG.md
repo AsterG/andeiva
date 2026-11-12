@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — scoped helper transport v2
+
+- Add an explicitly versioned private protocol for atomic observed-state attachment and exact-lease recovery.
+- Keep legacy frames unchanged and reject mixed versions, stale scopes and unverified recovery receipts.
+- Bound controller admission, preserve uncertain-result fencing and document independent runtime activation requirements.
+
 ## Unreleased — read-only configuration reference inspection
 
 - Inspect typed configuration v2 object references with bounded I/O and existing-lock identity checks.
