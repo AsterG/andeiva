@@ -101,6 +101,12 @@
 - Document un-attributed resolver results and loopback failure cases in EN/ES/PT.
   The tool does not configure networking or establish NAT or firewall enforcement.
 
+## Unreleased — prepared configuration operations transport
+
+- Prepare strict HTTPS operation contracts and a bounded client with atomic global/domain observations.
+- Add explicit cold-migration inspection and fingerprint checks without changing legacy sources.
+- Qualify real-store transport tests with simulated engines; production routes and capabilities remain disabled.
+
 ## Unreleased — checkpoint publication safety
 
 - Publish checkpoint images atomically without replacing an existing destination,

@@ -249,6 +249,11 @@ func (c *v2Coordinator) execute(ctx context.Context, principal v2TrustedPrincipa
 	s := c.store
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return c.executeLocked(ctx, principal, id)
+}
+
+func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPrincipal, id string) (v2CoordinatorResult, error) {
+	s := c.store
 	result := func(op v2Operation) v2CoordinatorResult {
 		return v2CoordinatorResult{Operation: clone(op), Current: clone(*s.state.Configuration), GlobalGeneration: s.state.Generation}
 	}
