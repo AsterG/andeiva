@@ -19,10 +19,32 @@ instancia y verifica restauración exacta con contexto independiente y acotado.
 Ni el snapshot ni su hash conceden propiedad. Un ifindex sólo es testigo local;
 no autoriza adoptar enlaces después de reiniciar.
 
-Estos artefactos aún no proporcionan activación física del grupo, recuperación
-durable, pruebas de endpoints ni habilitación runtime. El ensamblaje autentica
-metadata y descriptores retenidos; el coordinador valida Intent seleccionado,
-contexto de objetos y reservas antes de efectos. No se agrega otra base de datos.
+`New(Kernel, Network, localengine.Listeners, Options)` proporciona el motor Group.
+Kernel es un transporte confiable del namespace limitado a las tres tablas;
+los listeners se observan y retiran exclusivamente dentro del manager propio.
+Prepare devuelve `PreparationV1{Before, Target, Dependencies}` sin efectos.
+Options.ResolvePlan resuelve esos artefactos desde Intent durable seleccionado y
+valida deadline original, referencias contextuales y reservas. La forma o un
+resolver que siempre acepta no bastan. `ObserveOwned` y `MatchOwned` sólo devuelven
+o verifican referencias seleccionadas después del readback semántico físico.
+
+El arranque exige tabla schema-4 deny vacía realmente conocida, tabla routed
+ausente, IPv4 vacío y tabla local ausente o vacía conocida. Una transacción nft
+instala deny routed/local y retira legacy antes de configurar rutas. El target
+sustituye deny después de verificar red y listeners propios. La recuperación
+instala deny, restaura o retira listeners propios, restaura el memento de red y
+restablece tablas previas atómicamente, incluida ausencia comprobada. Estado ajeno
+o desconocido bloquea en vez de borrarse a ciegas. Se exigen escritores exclusivos;
+no hay atomicidad frente a CAP_NET_ADMIN ajeno. Ediciones posteriores exigen el
+mismo plan de red.
+
+No se habilita runtime ni se proporcionan pruebas de endpoints, recuperación
+durable o adopción del manager del host. El ensamblaje autentica metadata y FDs.
+Reiniciar el helper no reconstruye propiedad del ejecutor desde el snapshot.
+No se agregan base de datos, workers ni procesos: se usa una lease Group, hasta
+tres estados por tabla y batches nft de 512 KiB. Las pruebas controladas ejercitan
+compiladores y fallos. Helper/tráfico nativos, recuperación tras crash, continuidad
+de endpoints y mediciones de recursos siguen pendientes.
 
 ```sh
 go test -race ./internal/networkexecutor ./internal/routedactivation -count=3

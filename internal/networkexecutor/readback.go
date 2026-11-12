@@ -111,7 +111,11 @@ func CanonicalPreparedSnapshot(input PreparedSnapshot) (PreparedSnapshot, error)
 	for i := range s.Links {
 		l := &s.Links[i]
 		mac, err := net.ParseMAC(l.MAC)
-		if !linkName.MatchString(l.Name) || l.Index <= 0 || l.MTU < 68 || l.MTU > 65535 || names[l.Name] || indexes[l.Index] || err != nil || len(mac) != 6 || mac.String() != l.MAC || len(l.Addresses) != 0 || len(l.Flags) > 8 {
+		maxMTU := 65535
+		if l.Name == "lo" {
+			maxMTU = 65536
+		}
+		if !linkName.MatchString(l.Name) || l.Index <= 0 || l.MTU < 68 || l.MTU > maxMTU || names[l.Name] || indexes[l.Index] || err != nil || len(mac) != 6 || mac.String() != l.MAC || len(l.Addresses) != 0 || len(l.Flags) > 8 {
 			return PreparedSnapshot{}, ErrScope
 		}
 		names[l.Name], indexes[l.Index] = true, true

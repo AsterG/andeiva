@@ -61,6 +61,21 @@ func TestPreparedSnapshotExactDetachedReadbackAndRestore(t *testing.T) {
 	}
 }
 
+func TestPreparedSnapshotRetainsNativeLoopbackMTUAndFlags(t *testing.T) {
+	e, f := fakeExecutor()
+	f.state.Links = append(f.state.Links, link{Index: 3, Name: "lo", MAC: "00:00:00:00:00:00", MTU: 65536, Flags: []string{"LOOPBACK", "UP", "LOWER_UP"}, Addresses: []address{}})
+	prepared, err := e.Prepare(context.Background(), fixturePlan())
+	if err != nil {
+		t.Fatal("native loopback rejected", err)
+	}
+	if len(prepared.Links) != 3 || prepared.Links[1].Name != "lo" || prepared.Links[1].MTU != 65536 || len(prepared.Links[1].Flags) != 3 {
+		t.Fatal("loopback facts discarded")
+	}
+	if e.ApplyPrepared(context.Background(), fixturePlan(), prepared) != nil || e.RestorePrepared(context.Background(), prepared) != nil || e.VerifyPrepared(context.Background(), prepared) != nil {
+		t.Fatal("loopback baseline was not preserved")
+	}
+}
+
 func TestPreparedSnapshotRejectsForeignAndUnsupportedBaseline(t *testing.T) {
 	for _, mutate := range []func(*fakeKernel){
 		func(f *fakeKernel) {

@@ -28,6 +28,12 @@ func artifactFixture(t testing.TB) (OwnedV1, DependenciesV1, configpoc.RoutedAct
 		{Name: "lan0", Zone: localpolicy.LAN, Addresses: []string{"198.18.0.1"}},
 		{Name: "wan0", Zone: localpolicy.WAN, Addresses: []string{"198.19.0.1"}},
 	}, Services: []localpolicy.Service{}}
+	service, err := localpolicy.DefaultManagement("management", "https", localConfig.Interfaces[0], "198.18.0.1", []string{"198.18.0.2/32"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.Endpoints[0].FirstPort, service.Endpoints[0].LastPort = 18443, 18443
+	localConfig.Services = []localpolicy.Service{service}
 	local, err := configpoc.Canonical(configpoc.Config{SchemaVersion: 3, DefaultAction: "deny", LocalServices: &localConfig})
 	if err != nil {
 		t.Fatal(err)

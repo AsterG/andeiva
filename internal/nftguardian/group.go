@@ -50,6 +50,14 @@ func ownedDigest(hash string) bool {
 }
 
 func (g *Group) ownedMatches(ctx context.Context, want string) bool {
+	// Contextual store refs may differ for equal physical payloads. A concrete
+	// engine can verify the exact selected ref without inventing one digest for
+	// both roles. Existing engines retain their literal digest comparison.
+	if matcher, ok := g.engine.(interface {
+		MatchOwned(context.Context, string) error
+	}); ok {
+		return ownedDigest(want) && matcher.MatchOwned(ctx, want) == nil
+	}
 	actual, err := g.engine.ObserveOwned(ctx)
 	return err == nil && ownedDigest(want) && actual == want
 }
