@@ -252,6 +252,12 @@ func inspectReachabilityV2(ctx context.Context, area *os.Root, budget v2Reachabi
 			report.Complete = false
 		}
 	}()
+	return reader.traceLocked(lock)
+}
+
+// The caller retains the exclusive writer lease and serializes all store access.
+// This seam neither acquires a second flock nor grants deletion authority.
+func (reader *v2ReachabilityReader) traceLocked(lock *os.File) (report v2ReachabilityReport, result error) {
 	if err := reader.census(); err != nil {
 		return report, err
 	}

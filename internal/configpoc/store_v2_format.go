@@ -90,25 +90,26 @@ type v2Operation struct {
 	Retired       bool       `json:"retired"`
 }
 type v2State struct {
-	RequiredFeatures  []string         `json:"required_features,omitempty"`
-	Format            string           `json:"format"`
-	Lineage           string           `json:"lineage"`
-	Generation        uint64           `json:"generation,string"`
-	HighWater         uint64           `json:"operation_high_water,string"`
-	LiveSlots         uint64           `json:"live_slots,string"`
-	SubjectSlots      uint64           `json:"subject_slots,string"`
-	NamespaceSlots    uint64           `json:"namespace_slots,string"`
-	NamespaceSequence uint64           `json:"namespace_sequence,string"`
-	SubjectSequence   uint64           `json:"subject_sequence,string"`
-	Index             string           `json:"index"`
-	Subjects          []v2Subject      `json:"subjects"`
-	Namespaces        []v2Namespace    `json:"namespaces"`
-	ReservedBytes     uint64           `json:"reserved_bytes,string"`
-	ReservedInodes    uint64           `json:"reserved_inodes,string"`
-	Clock             time.Time        `json:"clock"`
-	Migration         string           `json:"migration,omitempty"`
-	Operational       bool             `json:"operational"`
-	Configuration     *v2Configuration `json:"configuration,omitempty"`
+	RequiredFeatures   []string         `json:"required_features,omitempty"`
+	ReclamationVersion uint8            `json:"reclamation_version,omitempty"`
+	Format             string           `json:"format"`
+	Lineage            string           `json:"lineage"`
+	Generation         uint64           `json:"generation,string"`
+	HighWater          uint64           `json:"operation_high_water,string"`
+	LiveSlots          uint64           `json:"live_slots,string"`
+	SubjectSlots       uint64           `json:"subject_slots,string"`
+	NamespaceSlots     uint64           `json:"namespace_slots,string"`
+	NamespaceSequence  uint64           `json:"namespace_sequence,string"`
+	SubjectSequence    uint64           `json:"subject_sequence,string"`
+	Index              string           `json:"index"`
+	Subjects           []v2Subject      `json:"subjects"`
+	Namespaces         []v2Namespace    `json:"namespaces"`
+	ReservedBytes      uint64           `json:"reserved_bytes,string"`
+	ReservedInodes     uint64           `json:"reserved_inodes,string"`
+	Clock              time.Time        `json:"clock"`
+	Migration          string           `json:"migration,omitempty"`
+	Operational        bool             `json:"operational"`
+	Configuration      *v2Configuration `json:"configuration,omitempty"`
 }
 type v2Page struct {
 	Format string              `json:"format"`

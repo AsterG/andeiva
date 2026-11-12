@@ -23,6 +23,7 @@ type v2Store struct {
 	allowance  v2Budget
 	physical   v2PhysicalUsage
 	spaceProbe func(*os.File) (storageSpace, error)
+	reclaim    *v2ReclaimSession
 }
 
 // The caller owns the directory lifetime. No directory, legacy layout or engine
@@ -217,6 +218,9 @@ func (s *v2Store) close() error {
 }
 
 func v2ValidState(st v2State) bool {
+	if st.ReclamationVersion > 1 {
+		return false
+	}
 	if !validFeaturesV2(st) {
 		return false
 	}
@@ -290,12 +294,31 @@ func (s *v2Store) point(name string) error {
 // Content addressing permits safe deduplication only after exact readback.
 // O_EXCL prevents replacing another writer's object, even after a guard race.
 func (s *v2Store) object(value any) (string, error) {
+	return s.objectClass(value, false)
+}
+
+func (s *v2Store) objectClass(value any, indexPage bool) (string, error) {
+	if !indexPage {
+		s.revokeReclaimGeneric(value)
+	}
 	data, hash, err := v2Canonical(value)
 	if err != nil {
 		return "", err
 	}
+	// A promoted parent can retain descendants outside the selected closure.
+	// Revoke the whole session authority rather than guessing a partial closure.
+	if !indexPage && s.reclaim != nil {
+		if _, tracked := s.reclaim.pages[hash]; tracked {
+			s.revokeReclaimAuthority()
+		}
+	}
 	name, _ := v2ObjectName(hash)
 	if _, err = s.root.Lstat(name); err == nil {
+		if indexPage && s.reclaim != nil {
+			// The parent itself may have been untracked at the ledger cap while
+			// its newly created children are still tracked.
+			s.revokeReclaimAuthority()
+		}
 		prior, e := checkpointRead(s.root, name, v2ObjectLimit)
 		if e != nil || !bytes.Equal(prior, data) {
 			return "", errV2Unavailable
@@ -366,6 +389,9 @@ func (s *v2Store) object(value any) (string, error) {
 		s.blocked = true
 		return "", err
 	}
+	if indexPage {
+		s.rememberReclaimPage(hash, info)
+	}
 	return hash, nil
 }
 
@@ -397,7 +423,7 @@ func (s *v2Store) readSelection() error {
 			return errV2Unavailable
 		}
 		var state v2State
-		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage || !preservesFeaturesV2(state, currentState) {
+		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage || !preservesFeaturesV2(state, currentState) || !preservesReclamationV2(state, currentState) {
 			return errV2Unavailable
 		}
 		if current.Checkpoint {
@@ -439,7 +465,7 @@ func v2ValidSelection(selection v2Selection) bool {
 }
 
 func (s *v2Store) publish(state v2State) (result error) {
-	if s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) {
+	if s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) {
 		return errV2Unavailable
 	}
 	defer func() {
