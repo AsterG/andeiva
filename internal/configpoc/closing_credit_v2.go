@@ -90,6 +90,9 @@ func (s *v2Store) enableClosingCreditsLocked() error {
 		return err
 	}
 	st.RecoveryReserveVersion = 1
+	if !reserveMetadataStateFitsV2(st) {
+		return errV2Limited
+	}
 	return s.publish(st)
 }
 
