@@ -250,6 +250,31 @@ func (c *ClientV2) RecoverScoped(ctx context.Context, s firewalladmin.LeaseState
 
 type AuthorityV2 struct{ Client *ClientV2 }
 
+func (c *ClientV2) ArmUntil(ctx context.Context, id string, p, t configpoc.Revision, deadline time.Time) error {
+	_, e := c.call(ctx, "arm_until", ArmUntilPayloadV2{id, p, t, deadline})
+	return e
+}
+func (c *ClientV2) ApplyLease(ctx context.Context, r configpoc.Revision, s firewalladmin.LeaseState) error {
+	_, e := c.call(ctx, "apply_scoped", ApplyScopedPayloadV2{r, RecoveryScope{s.ID, s.Previous, s.Target, s.Deadline}})
+	return e
+}
+func (c *ClientV2) ConfirmLease(ctx context.Context, s firewalladmin.LeaseState) error {
+	_, e := c.call(ctx, "confirm_scoped", RecoveryScope{s.ID, s.Previous, s.Target, s.Deadline})
+	return e
+}
+func (a AuthorityV2) ArmUntil(ctx context.Context, id string, p, t configpoc.Revision, deadline time.Time) error {
+	return a.Client.ArmUntil(ctx, id, p, t, deadline)
+}
+func (a AuthorityV2) ApplyLease(ctx context.Context, r configpoc.Revision, s firewalladmin.LeaseState) error {
+	return a.Client.ApplyLease(ctx, r, s)
+}
+func (a AuthorityV2) ConfirmLease(ctx context.Context, s firewalladmin.LeaseState) error {
+	return a.Client.ConfirmLease(ctx, s)
+}
+func (a AuthorityV2) RecoverScoped(ctx context.Context, s firewalladmin.LeaseState) error {
+	return a.Client.RecoverScoped(ctx, s)
+}
+
 func (a AuthorityV2) Arm(ctx context.Context, id string, p, t configpoc.Revision, ttl time.Duration) error {
 	return a.Client.Arm(ctx, id, p, t, ttl)
 }

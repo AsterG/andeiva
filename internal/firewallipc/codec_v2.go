@@ -60,6 +60,16 @@ type ConfirmPayloadV2 struct {
 	ID     string `json:"id"`
 	Target string `json:"target"`
 }
+type ArmUntilPayloadV2 struct {
+	ID       string             `json:"id"`
+	Previous configpoc.Revision `json:"previous"`
+	Target   configpoc.Revision `json:"target"`
+	Deadline time.Time          `json:"deadline"`
+}
+type ApplyScopedPayloadV2 struct {
+	Revision configpoc.Revision `json:"revision"`
+	Scope    RecoveryScope      `json:"recovery_scope"`
+}
 type ResultV2 struct {
 	State         firewalladmin.LeaseState `json:"state"`
 	Hash          string                   `json:"hash"`
@@ -71,11 +81,13 @@ type ResultV2 struct {
 	ObservedScope *ObservedScope           `json:"observed_scope,omitempty"`
 }
 type CommandV2 struct {
-	Revision configpoc.Revision
-	Arm      ArmPayloadV2
-	Confirm  ConfirmPayloadV2
-	Recovery RecoveryScope
-	Observed ObservedScope
+	Revision    configpoc.Revision
+	Arm         ArmPayloadV2
+	Confirm     ConfirmPayloadV2
+	Recovery    RecoveryScope
+	Observed    ObservedScope
+	ArmUntil    ArmUntilPayloadV2
+	ApplyScoped ApplyScopedPayloadV2
 }
 
 func hashV2(s string) bool {
@@ -239,11 +251,24 @@ func DecodeRequestV2(data []byte) (RequestV2, CommandV2, error) {
 		if exactV2(m.Payload, &p.Arm, []string{"id", "previous", "target", "ttl_ns"}) != nil || !leaseV2.MatchString(p.Arm.ID) || !validRevisionV2(p.Arm.Previous) || !validRevisionV2(p.Arm.Target) || p.Arm.TTL < 500*time.Millisecond || p.Arm.TTL > 120*time.Second {
 			return m, p, ErrChannel
 		}
+	case "arm_until":
+		if exactV2(m.Payload, &p.ArmUntil, []string{"id", "previous", "target", "deadline"}) != nil || !leaseV2.MatchString(p.ArmUntil.ID) || !validRevisionV2(p.ArmUntil.Previous) || !validRevisionV2(p.ArmUntil.Target) || p.ArmUntil.Deadline.IsZero() || !canonicalTimeV2(m.Payload, "deadline", p.ArmUntil.Deadline) {
+			return m, p, ErrChannel
+		}
+	case "apply_scoped":
+		if exactV2(m.Payload, &p.ApplyScoped, []string{"revision", "recovery_scope"}) != nil || !validRevisionV2(p.ApplyScoped.Revision) {
+			return m, p, ErrChannel
+		}
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(m.Payload, &raw)
+		if exactV2(raw["recovery_scope"], &p.ApplyScoped.Scope, []string{"id", "previous", "target", "deadline"}) != nil || !validRecoveryV2(p.ApplyScoped.Scope) || !canonicalTimeV2(raw["recovery_scope"], "deadline", p.ApplyScoped.Scope.Deadline) || p.ApplyScoped.Revision.Hash != p.ApplyScoped.Scope.Target {
+			return m, p, ErrChannel
+		}
 	case "confirm":
 		if exactV2(m.Payload, &p.Confirm, []string{"id", "target"}) != nil || !leaseV2.MatchString(p.Confirm.ID) || !hashV2(p.Confirm.Target) {
 			return m, p, ErrChannel
 		}
-	case "recover_scoped":
+	case "recover_scoped", "confirm_scoped":
 		if exactV2(m.Payload, &p.Recovery, []string{"id", "previous", "target", "deadline"}) != nil || !validRecoveryV2(p.Recovery) || !canonicalTimeV2(m.Payload, "deadline", p.Recovery.Deadline) {
 			return m, p, ErrChannel
 		}
@@ -275,7 +300,7 @@ func DecodeReplyV2(data []byte, request RequestV2) (ResultV2, error) {
 	}
 	optional := []string{}
 	switch request.Verb {
-	case "bootstrap", "apply", "arm":
+	case "bootstrap", "apply", "arm", "arm_until", "apply_scoped":
 		optional = []string{"artifact"}
 	case "recover_scoped":
 		optional = []string{"recovery_scope"}
@@ -297,7 +322,7 @@ func DecodeReplyV2(data []byte, request RequestV2) (ResultV2, error) {
 	if decodeObservedV2(observed, &ObservedScope{}) != nil {
 		return ResultV2{}, ErrChannel
 	}
-	if (request.Verb == "bootstrap" || request.Verb == "apply" || request.Verb == "arm") && !hashV2(result.Artifact) {
+	if (request.Verb == "bootstrap" || request.Verb == "apply" || request.Verb == "arm" || request.Verb == "arm_until" || request.Verb == "apply_scoped") && !hashV2(result.Artifact) {
 		return ResultV2{}, ErrChannel
 	}
 	if request.Verb == "observe" {
@@ -340,6 +365,33 @@ func DecodeReplyV2(data []byte, request RequestV2) (ResultV2, error) {
 		var p ConfirmPayloadV2
 		_ = json.Unmarshal(request.Payload, &p)
 		if result.State.Phase != "idle" || result.State.ID != p.ID || result.State.Target != p.Target || result.Hash != p.Target {
+			return ResultV2{}, ErrChannel
+		}
+	}
+	if request.Verb == "arm_until" || request.Verb == "apply_scoped" || request.Verb == "confirm_scoped" {
+		var expected RecoveryScope
+		switch request.Verb {
+		case "arm_until":
+			var p ArmUntilPayloadV2
+			_ = json.Unmarshal(request.Payload, &p)
+			expected = RecoveryScope{p.ID, p.Previous.Hash, p.Target.Hash, p.Deadline}
+		case "apply_scoped":
+			var p ApplyScopedPayloadV2
+			_ = json.Unmarshal(request.Payload, &p)
+			expected = p.Scope
+		case "confirm_scoped":
+			_ = json.Unmarshal(request.Payload, &expected)
+		}
+		actual := RecoveryScope{result.State.ID, result.State.Previous, result.State.Target, result.State.Deadline}
+		phase := map[string]string{"arm_until": "armed", "apply_scoped": "pending", "confirm_scoped": "idle"}[request.Verb]
+		if !sameRecoveryV2(expected, actual) || result.State.Phase != phase {
+			return ResultV2{}, ErrChannel
+		}
+		want := expected.Target
+		if request.Verb == "arm_until" {
+			want = expected.Previous
+		}
+		if result.Hash != want {
 			return ResultV2{}, ErrChannel
 		}
 	}
