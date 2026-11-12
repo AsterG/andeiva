@@ -115,9 +115,15 @@ func (c *v2Coordinator) compensateLocked(_ context.Context, op v2Operation, prev
 	// Rollback must not inherit a request's cancelled context.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	for _, engine := range c.firewall {
-		if err := engine.Apply(ctx, previous.Firewall.Running); err != nil {
+	if c.hasPreparedGuard() {
+		if err := c.compensationGuardsLocked(ctx, op, previous); err != nil {
 			return c.uncertainLocked(op, ErrRecovery)
+		}
+	} else {
+		for _, engine := range c.firewall {
+			if err := engine.Apply(ctx, previous.Firewall.Running); err != nil {
+				return c.uncertainLocked(op, ErrRecovery)
+			}
 		}
 	}
 	if !c.readback(previous) {
@@ -280,7 +286,12 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 			return c.fenceRecoveryLocked()
 		}
 	}
-	if err = c.applyLocked(ctx, previous, target); err != nil {
+	if c.hasPreparedGuard() {
+		err = c.restoreGuardsLocked(ctx, intent.Lease, target, previous)
+	} else {
+		err = c.applyLocked(ctx, previous, target)
+	}
+	if err != nil {
 		return c.fenceRecoveryLocked()
 	}
 	if !c.readback(target) {
@@ -415,6 +426,23 @@ func (c *v2Coordinator) reconcileStorageFailureLocked(ctx context.Context, previ
 	// Failure to journal it remains unavailable; never manufacture a final result.
 	rollback, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if c.hasPreparedGuard() {
+		intent := s.state.Configuration.Intent
+		if intent == nil {
+			return ErrRecovery
+		}
+		op, err := s.lookupRetained(intent.Subject, intent.Operation)
+		if err != nil {
+			return ErrRecovery
+		}
+		if c.compensationGuardsLocked(rollback, op, previous) != nil {
+			return ErrRecovery
+		}
+		if !c.readback(previous) {
+			return ErrRecovery
+		}
+		return errV2Unavailable
+	}
 	for _, engine := range c.firewall {
 		if engine.Apply(rollback, previous.Firewall.Running) != nil {
 			return ErrRecovery
