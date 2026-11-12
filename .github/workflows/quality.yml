@@ -296,3 +296,19 @@ jobs:
           cache: false
       - name: Durable catalogue endurance without engines or privileged operations
         run: go test -race -count=1 ./internal/configpoc -run '^TestV2DurableCatalogue5000Lifecycles$' -v -timeout 30m
+
+  configuration-coordinator-endurance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Five thousand simulated transaction cycles without privileges
+        env:
+          ANDEIVA_CONFIG_V2_ENGINE_ENDURANCE: '1'
+        run: go test -race ./internal/configpoc -run '^TestCoordinatorV2EngineEndurance5000$' -count=1 -timeout 45m -v

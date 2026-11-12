@@ -295,7 +295,11 @@ func (s *v2Store) legacyReplay(subject, domain, actor, key, fingerprint string) 
 	if receipt.Fingerprint != fingerprint {
 		return Snapshot{}, 0, ErrReplay
 	}
-	return clone(image.Snapshot), receipt.Generation, nil
+	projection, err := s.currentLegacyProjectionV2(domain, image.Snapshot)
+	if err != nil {
+		return Snapshot{}, 0, err
+	}
+	return projection, receipt.Generation, nil
 }
 
 func (s *v2Store) validateMigration() error {

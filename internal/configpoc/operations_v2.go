@@ -284,6 +284,9 @@ func (s *v2Store) validOperation(op v2Operation) bool {
 func (s *v2Store) begin(subject, id string, now time.Time) (v2Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.state.Configuration != nil {
+		return v2Operation{}, errV2Invalid
+	}
 	if s.blocked {
 		return v2Operation{}, errV2Unavailable
 	}
@@ -342,6 +345,9 @@ func (s *v2Store) begin(subject, id string, now time.Time) (v2Operation, error) 
 func (s *v2Store) finish(subject, id string, outcome v2Outcome, audit []byte, now time.Time, pin bool) (v2Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.state.Configuration != nil {
+		return v2Operation{}, errV2Invalid
+	}
 	if s.blocked {
 		return v2Operation{}, errV2Unavailable
 	}

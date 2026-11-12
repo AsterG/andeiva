@@ -14,6 +14,12 @@
   exhaustion, read-only failures and open-deleted files without changing originals.
 - Require actual test execution/completion evidence and preserve failure logs.
 
+## Unreleased — internal composite transaction coordinator
+
+- Coordinate firewall changes against durable operations with atomic outcome/state/audit selection and verified component readback.
+- Preserve independent domain projections, explicit Startup, confirmed-commit recovery and verified rollback targets.
+- Add simulated-engine interruption and endurance tests; runtime activation and administrative transport integration remain disabled.
+
 ## Unreleased — inactive routed network configuration model
 
 - Report a single stable field path for schema, collection and field-size validation errors.
@@ -31,6 +37,7 @@
 - Test Linux FIFO/symlink substitutions and non-Linux refusal.
 
 ## Unreleased — inactive configuration storage v2 foundations
+
 
 - Reject invalid checkpoint/segment boundaries and mismatched historical state lineages during reopen.
 
