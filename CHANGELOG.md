@@ -13,6 +13,8 @@
 - Preserve legacy configuration and replay provenance; test interruptions, registry
   retirement, concurrency and exact lookup. Physical reclamation and cutover remain
   unavailable.
+- Finalize expired/closed operations and linked pins from their own released
+  reservations, preserving other pending reservations through write failures.
 
 ## Unreleased — internal read-only network inventory
 
