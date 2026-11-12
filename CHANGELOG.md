@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — custom CA platform safety
+
+- Reject custom CA files before filesystem access on platforms without a qualified
+  nonblocking, no-follow opener. Keep verified system-trust HTTPS available.
+- Test Linux FIFO/symlink substitutions and non-Linux refusal.
+
 ## Unreleased — inactive configuration storage v2 foundations
 
 - Prepare immutable selected storage, a bounded durable operation catalogue and

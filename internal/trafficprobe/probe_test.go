@@ -276,7 +276,11 @@ func TestHTTPSVerifiesCAAndHostname(t *testing.T) {
 				cfg.URL = "https://wrong.invalid:" + strings.Split(server.Listener.Addr().String(), ":")[1] + "/"
 			}
 			result := Run(context.Background(), cfg)
-			if mode == "trusted" {
+			if cfg.CAFile != "" && !customCASupported {
+				if result.Outcome != "invalid_ca_file" || result.TLSVerified || len(result.Transports) != 0 {
+					t.Fatalf("unsupported custom CA did not fail closed: %+v", result)
+				}
+			} else if mode == "trusted" {
 				if result.Outcome != "http_response" || !result.TLSVerified || result.HTTPStatus != http.StatusNoContent {
 					t.Fatalf("verified HTTPS failed: %+v", result)
 				}
@@ -461,6 +465,9 @@ func TestDNSLocalResolutionWithoutIODoesNotProveServer(t *testing.T) {
 }
 
 func TestCAPermissionsLinksAndBoundsFailBeforeDial(t *testing.T) {
+	if !customCASupported {
+		t.Skip("custom trust file loading is disabled on this platform")
+	}
 	server := tlsServer(t)
 	trusted := certificateFile(t, server)
 	for _, mode := range []string{"invalid", "oversized", "writable", "symlink", "ancestor-symlink", "directory"} {

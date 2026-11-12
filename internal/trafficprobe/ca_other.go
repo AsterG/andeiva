@@ -4,6 +4,10 @@ package trafficprobe
 
 import "os"
 
-func openCAFile(path string) (*os.File, error) {
-	return os.Open(path) // #nosec G304 -- explicit operator CA path; regular-file/ancestor/descriptor checks surround this read.
+const customCASupported = false
+
+// Refuse custom trust files until this platform has a qualified safe opener.
+// In particular, never fall back to a potentially blocking os.Open.
+func openCAFile(string) (*os.File, error) {
+	return nil, errInvalid
 }
