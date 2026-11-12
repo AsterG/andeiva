@@ -89,9 +89,14 @@ func (b SessionBinding) Verify() (VerifiedSubject, error) {
 	}
 	a, exists := m.accounts[s.identity.Username]
 	if !exists || !now.Before(s.identity.ExpiresAt) || now.Sub(s.last) >= 5*time.Minute ||
-		a.subjectID == "" || a.subjectID != s.identity.SubjectID || a.role != s.identity.Role ||
+		a.subjectID != s.identity.SubjectID || a.role != s.identity.Role ||
 		a.credentialRevision != s.credentialRevision {
 		delete(m.sessions, b.key)
+		return VerifiedSubject{}, ErrDenied
+	}
+	// A valid legacy session has no v2 identity. Reject this operation without
+	// revoking or extending the independently valid legacy session.
+	if a.subjectID == "" {
 		return VerifiedSubject{}, ErrDenied
 	}
 	s.last = now
