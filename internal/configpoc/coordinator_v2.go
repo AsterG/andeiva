@@ -107,6 +107,9 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 			return c, err
 		}
 	}
+	if err := c.resumeRoutedLockedV2(ctx); err != nil {
+		return c, err
+	}
 	if !c.readback(*store.state.Configuration) {
 		return c, ErrRecovery
 	}
@@ -263,6 +266,10 @@ func (c *v2Coordinator) readback(state v2Configuration) bool {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
+		if in := c.store.state.Configuration.Intent; in != nil && in.Domain == "routed" && in.Recovery && in.RoutedWork != "" {
+			plan, err := c.selectedRoutedPlanV2()
+			return err == nil && plan.previous.Composite.Hash == state.Running.Hash && c.options.Routed.Match(ctx, plan, "before") == nil
+		}
 		_, hash, err := c.options.Routed.Observe(ctx)
 		if err != nil {
 			return false

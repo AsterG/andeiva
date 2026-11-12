@@ -236,6 +236,9 @@ func (c *v2Coordinator) selectedRoutedPlanV2() (RoutedSelectedPlanV1, error) {
 	if plan.work.Scope.Identity != c.options.RoutedIdentity {
 		return plan, ErrRecovery
 	}
+	if intent.Recovery {
+		plan.resolution = "recovery-before"
+	}
 	return plan, nil
 }
 

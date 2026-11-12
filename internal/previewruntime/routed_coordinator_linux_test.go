@@ -202,6 +202,33 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	if err != nil || receipt.Phase != "idle" || hash != committed.Current.RunningRevision {
 		t.Fatalf("API close changed dataplane: %+v %s %v", receipt, hash, err)
 	}
+	if err = authority.group.Close(); err != nil {
+		t.Fatal(err)
+	}
+	foreignIdentity := identity
+	foreignIdentity.RunID = "fedcba9876543210fedcba9876543210"
+	foreign, e := NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, foreignIdentity)
+	if e != nil {
+		t.Fatal(e)
+	}
+	foreignOptions := options
+	foreignOptions.Routed = foreign
+	foreignOptions.RoutedIdentity = foreignIdentity
+	batches, calls := len(kernel.batches), network.calls
+	if opened, e := configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, foreignOptions); e == nil {
+		_ = opened.Close()
+		t.Fatal("foreign helper incarnation adopted durable work")
+	}
+	if len(kernel.batches) != batches || network.calls != calls {
+		t.Fatal("foreign recovery changed physical state")
+	}
+	_ = foreign.group.Close()
+	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = authority.group.Close() })
+	options.Routed = authority
 	service, err = configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, options)
 	if err != nil {
 		t.Fatal("controller restart", err)
@@ -230,6 +257,17 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	if err != nil || receipt.Phase != "pending" || hash != last.Current.RunningRevision {
 		t.Fatal("pending helper lease lost", err)
 	}
+	// An orderly helper stop restores its own pending lease independently. A
+	// fresh helper still needs selected recovery authority before becoming idle.
+	if err = authority.group.Close(); err != nil {
+		t.Fatal(err)
+	}
+	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = authority.group.Close() })
+	options.Routed = authority
 	service, err = configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, options)
 	if err != nil {
 		t.Fatal("pending controller restart", err)

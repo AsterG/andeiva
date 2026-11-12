@@ -18,8 +18,11 @@ um prazo novo.
 
 `TestRoutedPhysicalCoordinatorConfirmedLifecycle` usa armazenamento,
 autenticação, reservas físicas, compiladores e guardian reais com transporte
-kernel/rede simulado. Não comprova tráfego real, recuperação de um helper novo
-ou boot. Boot agrupado e IPC produtivo continuam bloqueados até validar a
+kernel/rede simulado. Também substitui o helper na mesma instância autenticada
+de namespace: preserva o estado confirmado e reconcilia a parada ordenada de um
+helper pendente por Intent de recuperação. Outra identidade de execução é
+recusada antes dos efeitos. Não comprova tráfego real, falta de energia ou boot.
+Boot agrupado e IPC produtivo continuam bloqueados até validar a
 integração. O router V2 recusa mutações V1; o despacho de tentativas V1 migradas
 conhecidas ainda requer integração. Consumo de recursos pendente de medição;
 estas provas não demonstram capacidade do appliance.

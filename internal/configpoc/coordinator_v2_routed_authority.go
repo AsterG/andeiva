@@ -28,6 +28,7 @@ type RoutedAuthorityV1 interface {
 	Prepare(context.Context, RoutedActivationBundleV1, *RoutedBaselineV1) (RoutedPreparationV1, error)
 	Observe(context.Context) (RoutedReceiptV1, string, error)
 	Match(context.Context, RoutedSelectedPlanV1, string) error
+	Resume(context.Context, RoutedSelectedPlanV1) error
 	Arm(context.Context, RoutedSelectedPlanV1) error
 	Apply(context.Context, RoutedSelectedPlanV1) error
 	Confirm(context.Context, RoutedSelectedPlanV1) error
@@ -44,6 +45,7 @@ type RoutedSelectedPlanV1 struct {
 	previous    RoutedActivationBundleV1
 	target      RoutedActivationBundleV1
 	baseline    *RoutedBaselineV1
+	resolution  string
 }
 
 func (p RoutedSelectedPlanV1) Transition() RoutedTransitionV1 { return p.work.Transition }
@@ -93,6 +95,7 @@ func validRoutedIdentityV1(identity networkexecutor.OwnedNamespaceIdentity) bool
 }
 
 func (p RoutedSelectedPlanV1) Scope() RoutedWorkScopeV1 { return p.work.Scope }
+func (p RoutedSelectedPlanV1) Resolution() string       { return p.resolution }
 
 type v2RoutedOwned struct {
 	Version   int     `json:"version"`

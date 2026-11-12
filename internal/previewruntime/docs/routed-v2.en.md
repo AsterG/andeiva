@@ -20,7 +20,11 @@ identity or manufacture a fresh confirmation lease.
 `TestRoutedPhysicalCoordinatorConfirmedLifecycle` exercises real configuration
 objects, authentication, reserve files, compilers, semantic readback and guardian
 leases with simulated kernel/network transports. It does not establish real
-packet forwarding, fresh-helper recovery or boot acceptance. Group boot and the
+packet forwarding or boot acceptance. A further scenario replaces the helper
+instance within the same authenticated namespace incarnation: confirmed state
+is retained, and an orderly stop of a pending helper is reconciled through a
+selected recovery intent. A foreign run identity is refused before effects.
+This does not simulate abrupt power loss. Group boot and the
 production IPC assembly remain gated until their complete integration tests.
 The V2 router currently refuses V1 mutation routes; known migrated V1 replay
 dispatch still requires integration and is not claimed as available here.
