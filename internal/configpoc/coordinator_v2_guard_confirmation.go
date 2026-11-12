@@ -8,7 +8,7 @@ import "context"
 func (c *v2Coordinator) compensateConfirmationLocked(ctx context.Context, op v2Operation, previous v2Configuration) (v2CoordinatorResult, error) {
 	s := c.store
 	pending := previous.Pending
-	if pending == nil || pending.Owner != op.Subject || pending.OriginCommit != op.Request.Origin || pending.Target != op.Request.Target {
+	if pending == nil || pending.Domain != op.Domain || pending.Owner != op.Subject || pending.OriginCommit != op.Request.Origin || pending.Target != op.Request.Target {
 		return c.uncertainLocked(op, ErrRecovery)
 	}
 	origin, err := s.lookupRetained(pending.Owner, pending.OriginCommit)
@@ -24,17 +24,19 @@ func (c *v2Coordinator) compensateConfirmationLocked(ctx context.Context, op v2O
 	target.Pending = nil
 	target.Candidate = nil
 	target.RecoveryRequired = false
-	target.Firewall.Running = original.Firewall.Running
-	target.Firewall.LastGood = original.Firewall.LastGood
-	target.Firewall.Candidate = nil
-	if target.Firewall.Generation == ^uint64(0) || s.state.Generation == ^uint64(0) {
+	domain := domainSnapshotV2(&target, op.Domain)
+	prior := domainSnapshotV2(&original, op.Domain)
+	domain.Running = prior.Running
+	domain.LastGood = prior.LastGood
+	domain.Candidate = nil
+	if domain.Generation == ^uint64(0) || s.state.Generation == ^uint64(0) {
 		return c.uncertainLocked(op, errV2Limited)
 	}
-	target.Firewall.Generation++
+	domain.Generation++
 	if target.refresh() != nil {
 		return c.uncertainLocked(op, ErrRecovery)
 	}
-	if c.restoreGuardsLocked(ctx, pending.Lease, target, previous) != nil || !c.readback(target) {
+	if c.restoreGuardsLocked(ctx, pending.Lease, target, previous, op.Domain) != nil || !c.readback(target) {
 		return c.uncertainLocked(op, ErrRecovery)
 	}
 	final, err := c.completeLocked(op, target, s.state.Generation+1, "failed_rolled_back", ErrRecovery.Error(), false, c.recoveryNow())

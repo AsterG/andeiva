@@ -44,7 +44,7 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 	if state.Pending != nil {
 		pending := state.Pending
 		origin, err := s.lookupRetained(pending.Owner, pending.OriginCommit)
-		if err != nil || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.Code != "applied_pending_confirmation" || origin.Outcome.ConfirmationLease != pending.Lease || origin.Outcome.RunningRevision != pending.Target || origin.Outcome.ConfirmationDeadline == nil || !origin.Outcome.ConfirmationDeadline.Equal(pending.Deadline) {
+		if err != nil || origin.Domain != pending.Domain || (origin.Request.Kind != OpCommit && origin.Request.Kind != OpRollback) || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.Code != "applied_pending_confirmation" || origin.Outcome.ConfirmationLease != pending.Lease || origin.Outcome.RunningRevision != pending.Target || origin.Outcome.ConfirmationDeadline == nil || !origin.Outcome.ConfirmationDeadline.Equal(pending.Deadline) {
 			return errV2Unavailable
 		}
 		var previous v2Configuration
@@ -64,7 +64,7 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 		if record.State == "pending" && (state.Intent == nil || !state.Intent.Recovery || state.Intent.Operation != record.ID || state.Intent.Lease != record.Lease || state.Intent.OriginCommit != record.Origin) {
 			return errV2Unavailable
 		}
-		if record.Kind == v2BootKind && (len(s.state.RequiredFeatures) != 1 || (record.State == "pending" && (state.Intent.Kind != v2BootKind || state.Intent.BootID == nil || *state.Intent.BootID != *record.BootID))) {
+		if record.Kind == v2BootKind && (!hasFeatureV2(s.state, v2BootFeature) || (record.State == "pending" && (state.Intent.Kind != v2BootKind || state.Intent.BootID == nil || *state.Intent.BootID != *record.BootID))) {
 			return errV2Unavailable
 		}
 	}

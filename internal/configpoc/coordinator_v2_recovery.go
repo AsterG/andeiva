@@ -51,7 +51,7 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 	}
 	completed := at.UTC()
 	until := completed.Add(30 * 24 * time.Hour)
-	outcome := v2Outcome{Code: code, ErrorCode: errorCode, Generation: generation, AuditHash: audit, DomainGeneration: target.Firewall.Generation, RunningRevision: target.Running.Hash, StartupRevision: target.Startup.Hash, AuditFirst: target.AuditSequence, AuditLast: target.AuditSequence}
+	outcome := v2Outcome{Code: code, ErrorCode: errorCode, Generation: generation, AuditHash: audit, DomainGeneration: domainSnapshotV2(&target, op.Domain).Generation, RunningRevision: target.Running.Hash, StartupRevision: target.Startup.Hash, AuditFirst: target.AuditSequence, AuditLast: target.AuditSequence}
 	if target.Pending != nil {
 		deadline := target.Pending.Deadline
 		outcome.ConfirmationDeadline = &deadline
@@ -87,10 +87,15 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 	if err = s.publish(st); err != nil {
 		return v2Operation{}, err
 	}
+	if err = c.publishLocalLocked(); err != nil {
+		c.armLocked()
+		return op, ErrRecovery
+	}
 	return op, nil
 }
 
 func (c *v2Coordinator) uncertainLocked(op v2Operation, cause error) (v2CoordinatorResult, error) {
+	c.invalidateLocalLocked()
 	s := c.store
 	st := clone(s.state)
 	state := st.Configuration
@@ -115,16 +120,19 @@ func (c *v2Coordinator) compensateLocked(_ context.Context, op v2Operation, prev
 	// Rollback must not inherit a request's cancelled context.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if c.hasPreparedGuard() && op.Request.Kind == OpConfirm {
+	if metadataOperationV2(op.Request.Kind) {
+		if !c.readback(previous) {
+			return c.uncertainLocked(op, ErrRecovery)
+		}
+	} else if c.hasPreparedGuard(op.Domain) && op.Request.Kind == OpConfirm {
 		return c.compensateConfirmationLocked(ctx, op, previous)
-	}
-	if c.hasPreparedGuard() {
+	} else if c.hasPreparedGuard(op.Domain) {
 		if err := c.compensationGuardsLocked(ctx, op, previous); err != nil {
 			return c.uncertainLocked(op, ErrRecovery)
 		}
 	} else {
-		for _, engine := range c.firewall {
-			if err := engine.Apply(ctx, previous.Firewall.Running); err != nil {
+		for _, engine := range c.enginesV2(op.Domain) {
+			if err := engine.Apply(ctx, domainSnapshotV2(&previous, op.Domain).Running); err != nil {
 				return c.uncertainLocked(op, ErrRecovery)
 			}
 		}
@@ -220,13 +228,15 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 	target.Intent = nil
 	target.Candidate = nil
 	target.RecoveryRequired = false
-	target.Firewall.Running = previous.Firewall.Running
-	target.Firewall.LastGood = previous.Firewall.LastGood
-	target.Firewall.Candidate = nil
-	if target.Firewall.Generation == ^uint64(0) || s.state.Generation == ^uint64(0) {
+	domain := domainSnapshotV2(&target, pending.Domain)
+	prior := domainSnapshotV2(&previous, pending.Domain)
+	domain.Running = prior.Running
+	domain.LastGood = prior.LastGood
+	domain.Candidate = nil
+	if domain.Generation == ^uint64(0) || s.state.Generation == ^uint64(0) {
 		return errV2Limited
 	}
-	target.Firewall.Generation++
+	domain.Generation++
 	if target.refresh() != nil {
 		return errV2Invalid
 	}
@@ -259,11 +269,12 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 		s.blocked = true
 		return err
 	}
-	st.Configuration.Intent = &v2CoordinatorIntent{Operation: id, Subject: origin.Subject, Domain: "firewall", Kind: kind, Previous: previousHash, Target: targetHash, TargetGeneration: st.Generation + 1, Recovery: true, OriginCommit: origin.ID, Lease: pending.Lease}
+	st.Configuration.Intent = &v2CoordinatorIntent{Operation: id, Subject: origin.Subject, Domain: pending.Domain, Kind: kind, Previous: previousHash, Target: targetHash, TargetGeneration: st.Generation + 1, Recovery: true, OriginCommit: origin.ID, Lease: pending.Lease}
 	st.Clock = c.recoveryNow()
 	if err = s.publish(st); err != nil {
 		return err
 	}
+	c.invalidateLocalLocked()
 	if err = c.point("after_recovery_intent"); err != nil {
 		return err
 	}
@@ -277,20 +288,20 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 		return errV2Invalid
 	}
 	origin, err := s.lookupRetained(intent.Subject, intent.OriginCommit)
-	if err != nil || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.ConfirmationLease != intent.Lease {
+	if err != nil || origin.Domain != intent.Domain || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.ConfirmationLease != intent.Lease {
 		return ErrRecovery
 	}
 	var previous, target v2Configuration
 	if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validV2Configuration(&previous) || !validV2Configuration(&target) || target.Intent != nil {
 		return errV2Unavailable
 	}
-	for _, engine := range c.firewall {
-		if engine.Validate(target.Firewall.Running.Config) != nil {
+	for _, engine := range c.enginesV2(intent.Domain) {
+		if engine.Validate(domainSnapshotV2(&target, intent.Domain).Running.Config) != nil {
 			return c.fenceRecoveryLocked()
 		}
 	}
-	if c.hasPreparedGuard() {
-		err = c.restoreGuardsLocked(ctx, intent.Lease, target, previous)
+	if c.hasPreparedGuard(intent.Domain) {
+		err = c.restoreGuardsLocked(ctx, intent.Lease, target, previous, intent.Domain)
 	} else {
 		err = c.applyLocked(ctx, previous, target)
 	}
@@ -346,11 +357,15 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 	if err = s.publish(st); err != nil {
 		return err
 	}
+	if err = c.publishLocalLocked(); err != nil {
+		return err
+	}
 	c.armLocked()
 	return nil
 }
 
 func (c *v2Coordinator) fenceRecoveryLocked() error {
+	c.invalidateLocalLocked()
 	st := clone(c.store.state)
 	st.Configuration.RecoveryRequired = true
 	st.Clock = c.recoveryNow()
@@ -414,8 +429,11 @@ func (c *v2Coordinator) reconcileLocked(ctx context.Context, reason string) erro
 	return err
 }
 
-func (c *v2Coordinator) reconcileStorageFailureLocked(ctx context.Context, previous v2Configuration) error {
+func (c *v2Coordinator) reconcileStorageFailureLocked(ctx context.Context, previous v2Configuration, operation v2Operation) error {
 	s := c.store
+	// Keep the validated operation's purpose across selector reload. A newly
+	// selected final state has no Intent; that must not permit kernel repair.
+	domain := operation.Domain
 	// Clear a storage fence only after the selected protocol is independently
 	// reconciled under the same exclusive store lock. Unknown staging is retained.
 	if s.scanV2Area() == nil && !s.blocked && s.readSelection() == nil && c.validateReferencesLocked() == nil && checkpointSync(s.root, nil, "") == nil {
@@ -432,7 +450,13 @@ func (c *v2Coordinator) reconcileStorageFailureLocked(ctx context.Context, previ
 	// Failure to journal it remains unavailable; never manufacture a final result.
 	rollback, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if c.hasPreparedGuard() {
+	if metadataOperationV2(operation.Request.Kind) {
+		if !c.readback(previous) {
+			return ErrRecovery
+		}
+		return errV2Unavailable
+	}
+	if c.hasPreparedGuard(domain) {
 		intent := s.state.Configuration.Intent
 		if intent == nil {
 			return ErrRecovery
@@ -449,8 +473,8 @@ func (c *v2Coordinator) reconcileStorageFailureLocked(ctx context.Context, previ
 		}
 		return errV2Unavailable
 	}
-	for _, engine := range c.firewall {
-		if engine.Apply(rollback, previous.Firewall.Running) != nil {
+	for _, engine := range c.enginesV2(domain) {
+		if engine.Apply(rollback, domainSnapshotV2(&previous, domain).Running) != nil {
 			return ErrRecovery
 		}
 	}

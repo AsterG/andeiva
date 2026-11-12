@@ -8,9 +8,10 @@ import (
 )
 
 type v2CoordinatorOptions struct {
-	BootID *v2BootID
-	Now    func() time.Time
-	Hook   func(string) error
+	LocalPolicy LocalPolicyV2
+	BootID      *v2BootID
+	Now         func() time.Time
+	Hook        func(string) error
 	// Tests may drive deadlines explicitly; appliance integration must not opt
 	// out of the independent timeout worker. There is no runtime caller yet.
 	ManualTimeout bool
@@ -83,6 +84,9 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 		return c, ErrRecovery
 	}
 	c.armLocked()
+	if err := c.publishLocalLocked(); err != nil {
+		return c, err
+	}
 	return c, nil
 }
 
@@ -105,6 +109,7 @@ func (c *v2Coordinator) close() {
 	c.store.mu.Lock()
 	defer c.store.mu.Unlock()
 	c.closed = true
+	c.invalidateLocalLocked()
 	if c.timer != nil {
 		c.timer.Stop()
 		c.timer = nil
@@ -266,6 +271,9 @@ func (c *v2Coordinator) execute(ctx context.Context, principal v2TrustedPrincipa
 }
 
 func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPrincipal, id string) (v2CoordinatorResult, error) {
+	return c.executeLocalLocked(ctx, principal, id, nil)
+}
+func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2TrustedPrincipal, id string, handle LocalHandleV2) (v2CoordinatorResult, error) {
 	s := c.store
 	result := func(op v2Operation) v2CoordinatorResult {
 		return v2CoordinatorResult{Operation: clone(op), Current: clone(*s.state.Configuration), GlobalGeneration: s.state.Generation}
@@ -286,13 +294,34 @@ func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPr
 	if ctx.Err() != nil {
 		return result(op), ErrInterrupted
 	}
-	// No Local Service write reaches any engine until the existing proof book's
-	// exact subject/session/listener/lease mapper has been implemented and tested.
-	if op.Domain != "firewall" {
-		return result(op), ErrDenied
-	}
-	if err = c.tickLocked(ctx, c.now()); err != nil {
-		return result(op), err
+	consume := false
+	reservationFinished := false
+	var localReservation LocalReservationV2
+	if op.Domain == "local_services" {
+		if handle == nil || c.options.LocalPolicy == nil {
+			return result(op), ErrDenied
+		}
+		scope, e := c.localScopeLocked(op, principal)
+		if e != nil {
+			return result(op), e
+		}
+		reservation, e := c.options.LocalPolicy.Reserve(handle, scope)
+		if e != nil {
+			return result(op), e
+		}
+		if reservation == nil {
+			return result(op), ErrDenied
+		}
+		localReservation = reservation
+		defer func() {
+			if !reservationFinished {
+				reservation.Finish(consume)
+			}
+		}()
+	} else {
+		if err = c.tickLocked(ctx, c.now()); err != nil {
+			return result(op), err
+		}
 	}
 	now := c.now()
 	state := clone(*s.state.Configuration)
@@ -321,6 +350,18 @@ func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPr
 		}
 	} else if !c.readback(state) {
 		return result(op), ErrRecovery
+	}
+	if op.Domain == "local_services" {
+		if ctx.Err() != nil {
+			return result(op), ErrInterrupted
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		if requested, ok := ctx.Deadline(); ok && requested.Before(deadline) {
+			deadline = requested
+		}
+		bounded, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+		defer cancel()
+		ctx = bounded
 	}
 	s.allowance = v2Budget{Bytes: v2OperationReserveBytes, Inodes: v2OperationReserveInodes}
 	defer func() { s.allowance = v2Budget{} }()
@@ -352,28 +393,43 @@ func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPr
 	op.State = "pending"
 	op.Pinned = true
 	st := clone(s.state)
+	if op.Domain == "local_services" {
+		addFeatureV2(&st, v2LocalFeature)
+	}
 	st.Clock = now
 	st.Configuration.Intent = &v2CoordinatorIntent{Operation: op.ID, Subject: op.Subject, Domain: op.Domain, Kind: op.Request.Kind, Previous: previousHash, Target: targetHash, TargetGeneration: generation}
 	if err = s.putOperation(&st, op); err != nil {
 		s.blocked = true
 		return result(op), err
 	}
+	consume = true
 	if err = s.publish(st); err != nil {
 		return result(op), err
 	}
+	if localReservation != nil {
+		localReservation.Finish(true)
+		reservationFinished = true
+	}
+	c.invalidateLocalLocked()
 	if err = c.point("after_intent"); err != nil {
 		return result(op), err
 	}
 	if err = c.prepareGuardsLocked(ctx, op, state, target); err != nil {
 		return c.compensateLocked(ctx, op, state, err)
 	}
-	if err = c.applyGuardedLocked(ctx, state, target, op.Request.Kind == OpCommit); err != nil {
+	if err = c.applyGuardedLocked(ctx, state, target, op.Request.Kind == OpCommit || (op.Request.Kind == OpRollback && target.Pending != nil), op.Request.Kind == OpRecover, op.Domain); err != nil {
+		if metadataOperationV2(op.Request.Kind) {
+			return c.uncertainLocked(op, ErrRecovery)
+		}
 		if errors.Is(err, ErrInterrupted) {
 			return result(op), err
 		}
 		return c.compensateLocked(ctx, op, state, err)
 	}
 	if !c.readback(target) {
+		if metadataOperationV2(op.Request.Kind) {
+			return c.uncertainLocked(op, ErrRecovery)
+		}
 		return c.compensateLocked(ctx, op, state, ErrEngine)
 	}
 	if err = c.point("after_readback"); err != nil {
@@ -393,13 +449,13 @@ func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPr
 	}
 	code := "applied"
 	pin := false
-	if op.Request.Kind == OpCommit && target.Pending != nil {
+	if target.Pending != nil && target.Pending.OriginCommit == op.ID {
 		code = "applied_pending_confirmation"
 		pin = true
 	}
 	final, err := c.completeLocked(op, target, generation, code, "", pin, c.now())
 	if err != nil {
-		_ = c.reconcileStorageFailureLocked(ctx, state)
+		_ = c.reconcileStorageFailureLocked(ctx, state, op)
 		return result(op), err
 	}
 	c.armLocked()
@@ -409,18 +465,18 @@ func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPr
 func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now time.Time) (v2Configuration, bool, error) {
 	target := clone(state)
 	target.Intent = nil
-	domain := &target.Firewall
+	domain := domainSnapshotV2(&target, op.Domain)
 	changed := true
 	switch op.Request.Kind {
 	case OpStage:
-		if state.Firewall.Candidate != nil && state.Firewall.Candidate.Owner != op.Subject {
+		if domain.Candidate != nil && domain.Candidate.Owner != op.Subject {
 			return target, false, ErrConflict
 		}
 		canonical, err := Canonical(*op.Request.Config)
 		if err != nil {
 			return target, false, err
 		}
-		for _, engine := range c.firewall {
+		for _, engine := range c.enginesV2(op.Domain) {
 			if engine.Validate(canonical.Config) != nil {
 				return target, false, ErrInvalid
 			}
@@ -430,7 +486,7 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 		if domain.Candidate == nil || domain.Candidate.Owner != op.Subject {
 			return target, false, ErrConflict
 		}
-		for _, engine := range c.firewall {
+		for _, engine := range c.enginesV2(op.Domain) {
 			if engine.Validate(domain.Candidate.Revision.Config) != nil {
 				return target, false, ErrInvalid
 			}
@@ -440,7 +496,7 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 		if domain.Candidate == nil || domain.Candidate.Owner != op.Subject || domain.Candidate.Base != domain.Running.Hash {
 			return target, false, ErrConflict
 		}
-		for _, engine := range c.firewall {
+		for _, engine := range c.enginesV2(op.Domain) {
 			if engine.Validate(domain.Candidate.Revision.Config) != nil {
 				return target, false, ErrInvalid
 			}
@@ -451,7 +507,7 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 			return target, false, ErrInvalid
 		}
 		seconds := *op.Request.ConfirmSeconds
-		if seconds > 120 || (seconds != 0 && seconds < 30) {
+		if seconds > 120 || (seconds != 0 && seconds < 30) || (op.Domain == "local_services" && seconds == 0) {
 			return target, false, ErrInvalid
 		}
 		if seconds > 0 {
@@ -469,7 +525,7 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 		}
 	case OpConfirm:
 		pending := state.Pending
-		if pending == nil || pending.Owner != op.Subject || pending.OriginCommit != op.Request.Origin || pending.Target != op.Request.Target || !now.Before(pending.Deadline) {
+		if pending == nil || pending.Domain != op.Domain || pending.Owner != op.Subject || pending.OriginCommit != op.Request.Origin || pending.Target != op.Request.Target || !now.Before(pending.Deadline) {
 			return target, false, ErrConflict
 		}
 		origin, err := c.store.lookupRetained(op.Subject, pending.OriginCommit)
@@ -482,19 +538,34 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 		changed = domain.Startup.Hash != domain.Running.Hash
 		domain.Startup = domain.Running
 	case OpRollback:
-		revision, err := c.loadFirewallRevision(op.Request.Target)
+		revision, err := c.loadDomainRevision(op.Request.Target, op.Domain)
 		if err != nil {
 			return target, false, err
 		}
-		for _, engine := range c.firewall {
+		for _, engine := range c.enginesV2(op.Domain) {
 			if engine.Validate(revision.Config) != nil {
 				return target, false, ErrInvalid
 			}
 		}
 		domain.Running = revision
-		domain.LastGood = revision
 		domain.Candidate = nil
+		if op.Domain == "local_services" {
+			previous, err := c.store.object(state)
+			if err != nil {
+				return target, false, err
+			}
+			lease, err := v2ID("lease", op.Sequence)
+			if err != nil {
+				return target, false, err
+			}
+			target.Pending = &v2Confirmation{OriginCommit: op.ID, Lease: lease, Owner: op.Subject, Domain: op.Domain, Previous: previous, Deadline: now.Add(30 * time.Second)}
+		} else {
+			domain.LastGood = revision
+		}
 	case OpRecover:
+		if op.Domain != "firewall" {
+			return target, false, ErrDenied
+		}
 		domain.Running = domain.LastGood
 		domain.Candidate = nil
 		target.RecoveryRequired = false
@@ -518,6 +589,9 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 }
 
 func (c *v2Coordinator) loadFirewallRevision(hash string) (Revision, error) {
+	return c.loadDomainRevision(hash, "firewall")
+}
+func (c *v2Coordinator) loadDomainRevision(hash, domain string) (Revision, error) {
 	if !validHash(hash) {
 		return Revision{}, ErrInvalid
 	}
@@ -549,32 +623,45 @@ func (c *v2Coordinator) loadFirewallRevision(hash string) (Revision, error) {
 		return Revision{}, ErrInvalid
 	}
 	current := c.store.state.Configuration
-	if composite.Domains.LocalServices.Revision != current.LocalServices.Running.Hash {
+	if (domain == "firewall" && composite.Domains.LocalServices.Revision != current.LocalServices.Running.Hash) || (domain == "local_services" && composite.Domains.Firewall.Revision != current.Firewall.Running.Hash) {
 		return Revision{}, ErrDenied
 	}
+	reference, schema := composite.Domains.Firewall.Revision, 4
+	if domain == "local_services" {
+		reference, schema = composite.Domains.LocalServices.Revision, 3
+	}
 	var config Config
-	if c.store.readObject(composite.Domains.Firewall.Revision, &config) != nil {
+	if c.store.readObject(reference, &config) != nil {
 		return Revision{}, errV2Unavailable
 	}
 	revision, err := Canonical(config)
-	if err != nil || config.SchemaVersion != 4 || revision.Hash != composite.Domains.Firewall.Revision {
+	if err != nil || config.SchemaVersion != schema || revision.Hash != reference {
 		return Revision{}, ErrInvalid
 	}
 	return revision, nil
 }
 
 func (c *v2Coordinator) applyLocked(ctx context.Context, previous, target v2Configuration) error {
-	return c.applyGuardedLocked(ctx, previous, target, false)
+	return c.applyGuardedLocked(ctx, previous, target, false, false)
 }
-func (c *v2Coordinator) applyGuardedLocked(ctx context.Context, previous, target v2Configuration, forceGuard bool) error {
-	if target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash {
+func (c *v2Coordinator) applyGuardedLocked(ctx context.Context, previous, target v2Configuration, forceGuard, recoverDrift bool, domains ...string) error {
+	domain := effectDomainV2(previous, target)
+	if len(domains) == 1 {
+		domain = domains[0]
+	}
+	if target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash && target.Firewall.Running.Hash != previous.Firewall.Running.Hash {
 		return ErrDenied
 	}
-	if target.Firewall.Running.Hash == previous.Firewall.Running.Hash && c.readback(target) {
+	applied := domainSnapshotV2(&target, domain).Running
+	prior := domainSnapshotV2(&previous, domain).Running
+	if applied.Hash == prior.Hash && !recoverDrift {
+		if !c.readback(target) {
+			return ErrRecovery
+		}
 		if forceGuard {
-			for _, engine := range c.firewall {
+			for _, engine := range c.enginesV2(domain) {
 				if _, ok := engine.(ActivationGuard); ok {
-					if err := engine.Apply(ctx, target.Firewall.Running); err != nil {
+					if err := engine.Apply(ctx, applied); err != nil {
 						return err
 					}
 				}
@@ -582,8 +669,8 @@ func (c *v2Coordinator) applyGuardedLocked(ctx context.Context, previous, target
 		}
 		return nil
 	}
-	for _, engine := range c.firewall {
-		if err := engine.Apply(ctx, target.Firewall.Running); err != nil {
+	for _, engine := range c.enginesV2(domain) {
+		if err := engine.Apply(ctx, applied); err != nil {
 			return err
 		}
 		if err := c.point("after_component_apply"); err != nil {
