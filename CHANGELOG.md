@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — prepared routed configuration contracts
+
+- Separate the pure routed policy model from kernel execution while preserving
+  compiler output and existing error identities.
+- Validate routed envelopes through an explicit preparation entry point; existing
+  configuration readers and engines continue to reject them before activation.
+
 ## Unreleased — isolated storage volume qualification
 
 - Inspect inactive volumes through read-only lock descriptors while retaining exclusive locking and identity checks.
