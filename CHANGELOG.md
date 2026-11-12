@@ -1,16 +1,10 @@
 # Changelog
 
-## Unreleased — bounded conntrack laboratory observation
+## Unreleased — internal composite transaction coordinator
 
-- Observe current-namespace IPv4 TCP/UDP original, reply and translated tuples through bounded read-only netlink dumps.
-- Preserve unavailable counters and encode present 64-bit counters as exact decimal strings.
-- Qualify observed SNAT tuples with the isolated routing runner, without enabling an administrative endpoint or changing host policies.
-
-## Unreleased — isolated stateful routing and SNAT
-
-- Compile typed ordered TCP/UDP forwarding and masquerade policies with strict effective-state readback.
-- Exercise isolated IPv4 routing/SNAT, stateful revocation, related ICMP and IPv6 denial without changing host networking.
-- Preserve disabled rules in configuration and keep administrative/runtime integration separate.
+- Coordinate firewall changes against durable operations with atomic outcome/state/audit selection and verified component readback.
+- Preserve independent domain projections, explicit Startup, confirmed-commit recovery and verified rollback targets.
+- Add simulated-engine interruption and endurance tests; runtime activation and administrative transport integration remain disabled.
 
 ## Unreleased — inactive routed network configuration model
 
@@ -22,6 +16,12 @@
 - Add strict JSON control-field validation and reuse exact JSON checks for nft
   observations. No interface, route, DNS or forwarding changes are activated.
 
+## Unreleased — isolated stateful routing and SNAT
+
+- Compile typed ordered TCP/UDP forwarding and masquerade policies with strict effective-state readback.
+- Exercise isolated IPv4 routing/SNAT, stateful revocation, related ICMP and IPv6 denial without changing host networking.
+- Preserve disabled rules in configuration and keep administrative/runtime integration separate.
+
 ## Unreleased — custom CA platform safety
 
 - Reject custom CA files before filesystem access on platforms without a qualified
@@ -29,6 +29,7 @@
 - Test Linux FIFO/symlink substitutions and non-Linux refusal.
 
 ## Unreleased — inactive configuration storage v2 foundations
+
 
 - Reject invalid checkpoint/segment boundaries and mismatched historical state lineages during reopen.
 
@@ -54,6 +55,12 @@
   verified directory descriptors; refuse unsupported operations without fallback.
 - Preserve competing destinations and reject changed staging identity before
   publication. Cover publication races, process exits and v1 reopening.
+
+## Unreleased — bounded conntrack laboratory observation
+
+- Observe current-namespace IPv4 TCP/UDP original, reply and translated tuples through bounded read-only netlink dumps.
+- Preserve unavailable counters and encode present 64-bit counters as exact decimal strings.
+- Qualify observed SNAT tuples with the isolated routing runner, without enabling an administrative endpoint or changing host policies.
 
 ## Unreleased — bounded client traffic observations
 

@@ -58,10 +58,17 @@ type v2Request struct {
 	Subject        string  `json:"target_subject_id,omitempty"`
 }
 type v2Outcome struct {
-	Code       string `json:"code"`
-	ErrorCode  string `json:"error_code,omitempty"`
-	Generation uint64 `json:"generation,string"`
-	AuditHash  string `json:"audit_hash"`
+	Code                 string     `json:"code"`
+	ErrorCode            string     `json:"error_code,omitempty"`
+	Generation           uint64     `json:"generation,string"`
+	AuditHash            string     `json:"audit_hash"`
+	DomainGeneration     uint64     `json:"domain_generation,string,omitempty"`
+	RunningRevision      string     `json:"running_revision,omitempty"`
+	StartupRevision      string     `json:"startup_revision,omitempty"`
+	ConfirmationDeadline *time.Time `json:"confirmation_deadline,omitempty"`
+	ConfirmationLease    string     `json:"confirmation_lease,omitempty"`
+	AuditFirst           uint64     `json:"audit_first_sequence,string,omitempty"`
+	AuditLast            uint64     `json:"audit_last_sequence,string,omitempty"`
 }
 type v2Operation struct {
 	ID            string     `json:"id"`
@@ -83,23 +90,24 @@ type v2Operation struct {
 	Retired       bool       `json:"retired"`
 }
 type v2State struct {
-	Format            string        `json:"format"`
-	Lineage           string        `json:"lineage"`
-	Generation        uint64        `json:"generation,string"`
-	HighWater         uint64        `json:"operation_high_water,string"`
-	LiveSlots         uint64        `json:"live_slots,string"`
-	SubjectSlots      uint64        `json:"subject_slots,string"`
-	NamespaceSlots    uint64        `json:"namespace_slots,string"`
-	NamespaceSequence uint64        `json:"namespace_sequence,string"`
-	SubjectSequence   uint64        `json:"subject_sequence,string"`
-	Index             string        `json:"index"`
-	Subjects          []v2Subject   `json:"subjects"`
-	Namespaces        []v2Namespace `json:"namespaces"`
-	ReservedBytes     uint64        `json:"reserved_bytes,string"`
-	ReservedInodes    uint64        `json:"reserved_inodes,string"`
-	Clock             time.Time     `json:"clock"`
-	Migration         string        `json:"migration,omitempty"`
-	Operational       bool          `json:"operational"`
+	Format            string           `json:"format"`
+	Lineage           string           `json:"lineage"`
+	Generation        uint64           `json:"generation,string"`
+	HighWater         uint64           `json:"operation_high_water,string"`
+	LiveSlots         uint64           `json:"live_slots,string"`
+	SubjectSlots      uint64           `json:"subject_slots,string"`
+	NamespaceSlots    uint64           `json:"namespace_slots,string"`
+	NamespaceSequence uint64           `json:"namespace_sequence,string"`
+	SubjectSequence   uint64           `json:"subject_sequence,string"`
+	Index             string           `json:"index"`
+	Subjects          []v2Subject      `json:"subjects"`
+	Namespaces        []v2Namespace    `json:"namespaces"`
+	ReservedBytes     uint64           `json:"reserved_bytes,string"`
+	ReservedInodes    uint64           `json:"reserved_inodes,string"`
+	Clock             time.Time        `json:"clock"`
+	Migration         string           `json:"migration,omitempty"`
+	Operational       bool             `json:"operational"`
+	Configuration     *v2Configuration `json:"configuration,omitempty"`
 }
 type v2Page struct {
 	Format string              `json:"format"`
