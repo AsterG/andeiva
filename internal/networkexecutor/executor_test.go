@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -321,5 +322,84 @@ func TestZeroAndClosedExecutors(t *testing.T) {
 	}
 	if !errors.Is(e.Apply(context.Background(), fixturePlan()), ErrScope) {
 		t.Fatal("closed executor admitted")
+	}
+}
+
+func TestNilContextRejectsBeforeCommand(t *testing.T) {
+	for _, method := range []string{"apply", "verify"} {
+		t.Run(method, func(t *testing.T) {
+			e, _ := fakeExecutor()
+			calls := 0
+			e.run = func(context.Context, operation) ([]byte, error) { calls++; return nil, ErrCommand }
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Errorf("nil context panicked: %v", recovered)
+				}
+			}()
+			var err error
+			if method == "apply" {
+				err = e.Apply(nil, fixturePlan())
+			} else {
+				err = e.Verify(nil)
+			}
+			if !errors.Is(err, ErrScope) || calls != 0 {
+				t.Fatal("nil context accepted or issued commands", err, calls)
+			}
+		})
+	}
+}
+
+func TestDuplicateObservationFieldsReject(t *testing.T) {
+	for _, field := range []string{"ifname", "escaped-ifname", "addr_info", "dst"} {
+		t.Run(field, func(t *testing.T) {
+			e, f := fakeExecutor()
+			e.run = func(ctx context.Context, op operation) ([]byte, error) {
+				data, err := f.run(ctx, op)
+				if err != nil {
+					return nil, err
+				}
+				if op.kind == "addresses" {
+					switch field {
+					case "ifname":
+						data = []byte(strings.Replace(string(data), `"ifname":"lan0"`, `"ifname":"old0","ifname":"lan0"`, 1))
+					case "escaped-ifname":
+						data = []byte(strings.Replace(string(data), `"ifname":"lan0"`, `"\u0069fname":"old0","ifname":"lan0"`, 1))
+					case "addr_info":
+						data = []byte(strings.Replace(string(data), `"addr_info":[]`, `"addr_info":[],"addr_info":[]`, 1))
+					}
+				}
+				if op.kind == "routes" && field == "dst" {
+					data = []byte(`[{"dst":"default","dst":"203.0.113.0/24"}]`)
+				}
+				return data, nil
+			}
+			if _, err := e.observe(context.Background()); !errors.Is(err, ErrObservation) {
+				t.Fatal("duplicate member accepted", err)
+			}
+			if f.mutations != 0 {
+				t.Fatal("readback mutated state")
+			}
+		})
+	}
+}
+
+func TestRestoreChecksLinkBeforeEveryDeletion(t *testing.T) {
+	e, f := fakeExecutor()
+	if err := e.Apply(context.Background(), fixturePlan()); err != nil {
+		t.Fatal(err)
+	}
+	before := f.mutations
+	e.run = func(ctx context.Context, op operation) ([]byte, error) {
+		data, err := f.run(ctx, op)
+		if op.kind == "route-delete" && err == nil {
+			f.state.Links[1].Index = 99
+		}
+		return data, err
+	}
+	if err := e.Restore(); !errors.Is(err, ErrUncertain) {
+		t.Fatal(err)
+	}
+	if f.mutations != before+1 || len(f.state.Links[1].Addresses) != 1 || !e.fenced {
+		t.Fatal("compensation touched a replaced link", f.mutations-before)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/AsterG/andeiva/internal/jsoncheck"
 	"github.com/AsterG/andeiva/internal/networkinventory"
 	"github.com/AsterG/andeiva/internal/networkplan"
 )
@@ -53,7 +54,7 @@ type observation struct {
 }
 
 func decode(data []byte, target any, strict bool) error {
-	if len(data) == 0 || len(data) > maxOutput {
+	if len(data) == 0 || len(data) > maxOutput || !jsoncheck.UniqueFields(data) {
 		return ErrObservation
 	}
 	d := json.NewDecoder(bytes.NewReader(data))

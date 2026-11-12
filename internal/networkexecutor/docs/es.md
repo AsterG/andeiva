@@ -30,6 +30,7 @@ Vincula observaciones confiables mediante `networkplan.Bind`, verifica identidad
 antes de cada cambio y comprueba semánticamente direcciones y todas las rutas,
 incluidas las conectadas/locales del kernel. Rechaza atributos desconocidos en
 direcciones/rutas. No demuestra conectividad ni activa forwarding o inspección.
+Rechaza miembros JSON duplicados con semántica exacta de nombres JSON.
 Nunca libera tráfico desconocido para capturarlo ni permite eludir inspección.
 `Verify` repite la lectura del plan activo sin cambios: una deriva o lectura no
 disponible bloquea permanentemente la instancia.
@@ -37,8 +38,11 @@ disponible bloquea permanentemente la instancia.
 Llamar `Restore` antes de `Close`. La compensación usa la vida del supervisor,
 independiente de la solicitud, elimina sólo adiciones exactas intentadas y verifica
 el snapshot controlado original. Cambio de identidad, fallo de comando o
-restauración diferente bloquean permanentemente la instancia. No abrir otra para
-reintentar admisión: conservar evidencia y destruir únicamente el fixture
+restauración diferente bloquean permanentemente la instancia. Verifica la
+identidad antes de cada eliminación; no es una
+comprobación atómica frente a escritores ajenos con CAP_NET_ADMIN, excluidos por
+la propiedad exclusiva. No abrir otra instancia para reintentar admisión:
+conservar evidencia y destruir únicamente el fixture
 desechable propio. `Close` sólo cierra el descriptor; no acredita restauración
 ni persistencia. Rollback de código: mantener sin conectar o revertir el commit;
 no cambian formatos persistentes, servicios ni configuración del host.

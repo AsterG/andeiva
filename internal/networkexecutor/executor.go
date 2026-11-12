@@ -179,13 +179,14 @@ func (e *Executor) restore() error {
 	ctx, cancel := context.WithTimeout(e.lifetime, 15*time.Second)
 	defer cancel()
 	tx := e.active
-	// Recheck identity before deletion; never remove state on a replacement link.
-	observed, err := e.observe(ctx)
-	if err != nil || !sameLinks(observed, tx.baseline) {
-		e.fenced = true
-		return ErrUncertain
-	}
 	for n := len(tx.operations) - 1; n >= 0; n-- {
+		// Each compensation gets a fresh identity check. Ownership excludes other
+		// writers; this observation is not atomic against foreign CAP_NET_ADMIN.
+		observed, err := e.observe(ctx)
+		if err != nil || !sameLinks(observed, tx.baseline) {
+			e.fenced = true
+			return ErrUncertain
+		}
 		op := tx.operations[n]
 		// An unsuccessful add can leave no object. Confirm absence before skipping.
 		if !observed.contains(op) {
@@ -201,7 +202,7 @@ func (e *Executor) restore() error {
 			return ErrUncertain
 		}
 	}
-	observed, err = e.observe(ctx)
+	observed, err := e.observe(ctx)
 	if err != nil || !reflect.DeepEqual(observed, tx.baseline) {
 		e.fenced = true
 		return ErrUncertain
@@ -210,7 +211,7 @@ func (e *Executor) restore() error {
 	return nil
 }
 func (e *Executor) ready(ctx context.Context) error {
-	if e.closed || e.run == nil || e.lifetime == nil {
+	if ctx == nil || e.closed || e.run == nil || e.lifetime == nil {
 		return ErrScope
 	}
 	if e.fenced {

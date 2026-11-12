@@ -31,6 +31,7 @@ link identity is checked again before each mutation and during final semantic
 readback. All controlled IPv4 addresses and all route tables must match the plan,
 including kernel-derived connected/local routes. Unknown route/address attributes
 are rejected. This neither proves reachability nor enables forwarding/inspection.
+Duplicate JSON member names are rejected with exact JSON name semantics.
 Unknown traffic is never released for evidence or granted an inspection bypass.
 `Verify` repeats this read-only check for the active plan; drift or unavailable
 readback fences the instance without attempting further network changes.
@@ -38,8 +39,11 @@ readback fences the instance without attempting further network changes.
 Call `Restore` before `Close`. Compensation uses the supervisor lifetime rather
 than the request context, removes only exact attempted additions, and verifies the
 original controlled snapshot. Identity change, command failure or mismatched
-restoration permanently fences the instance. Do not retry admission through a new
-instance: retain evidence and destroy only the supervisor-owned disposable fixture.
+restoration permanently fences the instance. Link identity is rechecked before
+every deletion; these checks are not
+atomic against a foreign writer with CAP_NET_ADMIN, which ownership excludes.
+Do not retry admission through a new instance: retain evidence and destroy only
+the supervisor-owned disposable fixture.
 `Close` only releases the descriptor; it does not claim restoration or durability.
 
 Rollback of this source-only change: leave the package unconnected or revert its
