@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — isolated stateful routing and SNAT
+
+- Compile typed ordered TCP/UDP forwarding and masquerade policies with strict effective-state readback.
+- Exercise isolated IPv4 routing/SNAT, stateful revocation, related ICMP and IPv6 denial without changing host networking.
+- Preserve disabled rules in configuration and keep administrative/runtime integration separate.
+
 ## Unreleased — inactive routed network configuration model
 
 - Validate bounded WAN/LAN/management IPv4 configuration, interface bindings, zones,
