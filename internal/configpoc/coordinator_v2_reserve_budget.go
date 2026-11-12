@@ -8,7 +8,7 @@ import (
 
 const reserveMetadataObjectLimitV2 = 256 * 1024
 
-func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, target v2Configuration, owner string) error {
+func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, target v2Configuration, owner string, boundary ...*v2RoutedBootBoundary) error {
 	if raw, _, err := v2Canonical(s.state); err != nil || len(raw) > 128*1024 {
 		return errV2Limited
 	}
@@ -16,6 +16,17 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 		return errV2Limited
 	}
 	projected := reserveProjectedEnvelopeV2(s.state, target, "firewall")
+	boundaryObjects := uint64(0)
+	if len(boundary) > 0 && boundary[0] != nil {
+		if !validRoutedBootBoundaryShapeV2(boundary[0]) {
+			return ErrRecovery
+		}
+		projected.RoutedBootBoundary = clone(boundary[0])
+		addFeatureV2(&projected, v2RoutedBootBoundaryFeature)
+		// Source configuration, preserved origin and the terminal supersession
+		// record/audit/index allowance are additional to ordinary boot work.
+		boundaryObjects = 12
+	}
 	if target.Running.Config.SchemaVersion == 7 {
 		addFeatureV2(&projected, v2RoutedBootFeature)
 		if target.Firewall.Running.Config.SchemaVersion == 4 {
@@ -49,7 +60,7 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 	if target.Running.Config.SchemaVersion == 7 {
 		routedObjects = 5
 	}
-	if 18+8+archive+2*initial+verified+routedObjects > v2OperationReserveInodes {
+	if 18+8+archive+2*initial+verified+routedObjects+boundaryObjects > v2OperationReserveInodes {
 		return errV2Limited
 	}
 	return nil

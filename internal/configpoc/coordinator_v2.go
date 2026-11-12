@@ -23,14 +23,15 @@ type v2CoordinatorOptions struct {
 	ManualTimeout bool
 }
 type v2Coordinator struct {
-	store       *v2Store
-	firewall    []Engine
-	local       []Engine
-	options     v2CoordinatorOptions
-	timer       *time.Timer
-	timerLease  string
-	timerOrigin string
-	closed      bool
+	bootBoundary *v2RoutedBootBoundary
+	store        *v2Store
+	firewall     []Engine
+	local        []Engine
+	options      v2CoordinatorOptions
+	timer        *time.Timer
+	timerLease   string
+	timerOrigin  string
+	closed       bool
 }
 
 func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []Engine, options v2CoordinatorOptions) (*v2Coordinator, error) {
@@ -87,6 +88,9 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	if err := c.validateReferencesLocked(); err != nil {
 		return nil, err
 	}
+	if handled, err := c.openRoutedBootBoundaryV2(ctx); handled {
+		return c, err
+	}
 	if store.state.Configuration.Intent != nil {
 		if err := c.reconcileLocked(ctx, "restart"); err != nil {
 			return c, err
@@ -94,6 +98,11 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	}
 	if store.state.Configuration.Pending != nil {
 		if err := c.revertLocked(ctx, "restart"); err != nil {
+			return c, err
+		}
+	}
+	if store.state.RoutedBootBoundary != nil && store.state.Configuration.Intent == nil && store.state.Configuration.Pending == nil {
+		if err := c.finishRoutedBootBoundaryV2(); err != nil {
 			return c, err
 		}
 	}

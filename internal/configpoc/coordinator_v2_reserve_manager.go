@@ -194,6 +194,9 @@ func reserveAdmissionScopeV2(s *v2Store, st v2State, op v2Operation, owner strin
 }
 
 func (s *v2Store) reserveMaintenanceReadyV2(exceptOrigin string) error {
+	if s.state.RoutedBootBoundary != nil {
+		return ErrRecovery
+	}
 	closing := exceptOrigin != "" && s.state.Configuration != nil && s.state.Configuration.Pending != nil && s.state.Configuration.Pending.OriginCommit == exceptOrigin
 	for _, active := range s.state.ActiveReserves {
 		if active.Work == exceptOrigin {
@@ -274,6 +277,17 @@ func (m *v2ReserveManager) verifySelected(s *v2Store) error {
 	}
 	if err := reserveMetadataFutureFitsV2(s.state, s.readObject); err != nil {
 		return err
+	}
+	if b := s.state.RoutedBootBoundary; b != nil {
+		if validateRoutedBootBoundaryV2(s.state, s.readObject) != nil {
+			return ErrRecovery
+		}
+		if b.OldBoot != nil {
+			var old v2RecoveryRecord
+			if s.readObject(b.OldBoot.Object, &old) != nil || m.verifyBundle(s, old.Reserve) != nil {
+				return ErrRecovery
+			}
+		}
 	}
 	seen := map[string]bool{}
 	for _, active := range s.state.ActiveReserves {

@@ -58,13 +58,21 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		previousSelection = selection
 		// Only the preceding feature set is needed by the selection edge. Do not
 		// retain every decoded state while traversing historical selections.
-		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration)}
+		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary)}
 		hash = selection.Previous
 	}
 	return errV2InspectionBudget
 }
 
 func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error {
+	if validateRoutedBootBoundaryV2(state, r.object) != nil {
+		return errV2Unavailable
+	}
+	if state.RoutedBootBoundary != nil {
+		if err := r.routedBootBoundary(state.RoutedBootBoundary, key, state, depth+1); err != nil {
+			return err
+		}
+	}
 	if err := reserveMetadataFutureFitsV2(state, r.object); err != nil {
 		return err
 	}
@@ -409,7 +417,7 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 						return errV2Unavailable
 					}
 				case "final":
-					if !op.Pinned || cfg.Pending == nil || cfg.Pending.OriginCommit != op.ID || cfg.Pending.Owner != op.Subject {
+					if (!op.Pinned || cfg.Pending == nil || cfg.Pending.OriginCommit != op.ID || cfg.Pending.Owner != op.Subject) && !boundaryRetainsOriginV2(state, op) {
 						return errV2Unavailable
 					}
 				default:
@@ -630,7 +638,18 @@ func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2
 		if !validRecoveryRecordV2(record, state.Lineage) || (id != "" && record.ID != id) {
 			return errV2Unavailable
 		}
+		if record.SupersededBy != "" {
+			if !hasFeatureV2(state, v2RoutedBootBoundaryFeature) || validateRoutedBootSupersessionV2(record, state.Lineage, r.object) != nil {
+				return errV2Unavailable
+			}
+			if err := r.routedBootBoundary(record.BootBoundary, key, state, depth+1); err != nil {
+				return err
+			}
+		}
 		for _, snapshot := range []string{record.Previous, record.Target} {
+			if record.SupersededBy != "" && snapshot == record.Previous {
+				continue
+			}
 			if err := r.snapshot(snapshot, key, state, depth+1); err != nil {
 				return err
 			}
@@ -643,7 +662,7 @@ func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2
 			if audit.Operation != record.ID || audit.Kind != record.Kind {
 				return errV2Unavailable
 			}
-			if record.Kind == v2BootKind && record.State == "final" {
+			if record.Kind == v2BootKind && record.State == "final" && record.SupersededBy == "" {
 				var previous, target v2Configuration
 				if err := r.object(record.Previous, &previous); err != nil {
 					return err

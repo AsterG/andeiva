@@ -41,15 +41,10 @@ func reserveNormalizeEnvelopeScalarsV2(st *v2State) {
 	st.ReservedBytes, st.ReservedInodes, st.OccupiedOrdinary, st.OccupiedClosing = high, high, high, high
 	st.Clock = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	st.Index, st.ClosingIndexRoot, st.ReserveArchiveRoot, st.Migration = hash, hash, hash, hash
-	guardDeadline := hasFeatureV2(*st, v2GuardDeadlineFeature)
-	routed := hasFeatureV2(*st, v2RoutedFeature)
-	st.RequiredFeatures = []string{v2BootFeature, v2LocalFeature}
-	if guardDeadline {
-		addFeatureV2(st, v2GuardDeadlineFeature)
-	}
-	if routed {
-		addFeatureV2(st, v2RoutedFeature)
-	}
+	// Preserve all selected sticky features in the byte forecast.
+	st.RequiredFeatures = append([]string(nil), st.RequiredFeatures...)
+	addFeatureV2(st, v2BootFeature)
+	addFeatureV2(st, v2LocalFeature)
 	if st.Configuration != nil {
 		cfg := *st.Configuration
 		cfg.AuditSequence = high

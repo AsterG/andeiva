@@ -30,7 +30,7 @@ func (m *v2ReserveManager) prepareBoot(s *v2Store, st *v2State, record *v2Recove
 	if s.readObject(record.Target, &target) != nil {
 		return ErrRecovery
 	}
-	if err = m.bootProfile(s, *record, target, owner); err != nil {
+	if err = m.bootProfile(s, *record, target, owner, st.RoutedBootBoundary); err != nil {
 		return err
 	}
 	claims, err := m.claimOwner(recoveryreserve.SystemV2, owner)
