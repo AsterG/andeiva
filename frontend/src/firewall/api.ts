@@ -4,10 +4,21 @@ export class ApiError extends Error {
 
 // Authentication stays in a Secure HttpOnly cookie. CSRF is held only in React memory.
 export async function request<T>(path: string, body?: unknown, csrf?: string): Promise<T> {
+  return requestAt<T>('/api/v1/', path, body, csrf);
+}
+
+export async function configurationRequest<T>(path: string, body?: unknown, csrf?: string, signal?: AbortSignal): Promise<T> {
+  return requestAt<T>('/api/v2/', path, body, csrf, signal);
+}
+
+async function requestAt<T>(prefix: '/api/v1/' | '/api/v2/', path: string, body?: unknown, csrf?: string, signal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) controller.abort();
   const timeout = window.setTimeout(() => controller.abort(), 15_000);
   try {
-    const response = await fetch(`/api/v1/${path}`, {
+    const response = await fetch(`${prefix}${path}`, {
       method: body === undefined ? 'GET' : 'POST',
       credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal,
       headers: { Accept: 'application/json', 'X-ANDEIVA-Client': 'web', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
@@ -23,5 +34,5 @@ export async function request<T>(path: string, body?: unknown, csrf?: string): P
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError('ANDEIVA_CONNECTION_UNAVAILABLE');
-  } finally { window.clearTimeout(timeout); }
+  } finally { window.clearTimeout(timeout); signal?.removeEventListener('abort', abort); }
 }
