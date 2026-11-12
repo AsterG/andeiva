@@ -20,7 +20,7 @@ no fabricated user, admission receipt or confirmation origin. Completion selects
 Running, the linked audit and a validated completed-boot reference together.
 Reopening the same completed boot verifies effective state without repeating
 effects or publication, including the completion-before-external-marker gap.
-Old strict readers reject the required feature; it remains present after journal
+Older strict v2 readers reject the required feature; it remains present after journal
 checkpoints. Nil optional fields preserve the previous encoding and hashes.
 
 The prepared bootstrap adapter uses the existing one-time guardian operation;
@@ -52,6 +52,11 @@ and selection. They cover repeated boot, pending confirmation, inactive Candidat
 UUID/record errors, a missing completion reference, logical budget rejection and
 old-reader rejection beyond 64 selections. They do not test real nftables,
 listeners, IPC, reboot, power loss or physical storage reservation. No privileged
-operation is required. Resource measurement of this slice is pending native
-qualification; test-process measurements are not appliance runtime overhead.
+operation is required. Native Debian 13 qualification as UID 1000 passed every
+selected test without skips: coordinator elapsed 2.764573 s, CPU 1.307027 s,
+cgroup peak 23,281,664 B; startup adapter elapsed 0.042477 s, CPU 0.014056 s,
+cgroup peak 5,341,184 B. These are test-process measurements, not RSS or appliance
+runtime overhead. Boot UUIDs were injected test inputs; real journals and actual
+child-process exits used persistent simulated engines. No OS reboot, real IPC
+or power-loss behavior was qualified.
 AND-01/02 and production activation remain open.

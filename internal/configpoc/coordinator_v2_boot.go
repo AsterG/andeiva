@@ -66,6 +66,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	if s.state.Generation == ^uint64(0) || current.Firewall.Generation == ^uint64(0) || s.used.Bytes+s.state.ReservedBytes+2*v2OperationReserveBytes > s.budget.Bytes || s.used.Inodes+s.state.ReservedInodes+2*v2OperationReserveInodes > s.budget.Inodes {
 		return errV2Limited
 	}
+	if err := s.physicalCapacity(2*v2OperationReserveBytes, 2*v2OperationReserveInodes); err != nil {
+		return err
+	}
 	target, err := bootTargetV2(current)
 	if err != nil {
 		return ErrInvalid
@@ -130,6 +133,11 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) error {
 	}
 	if !c.localReadback(target) {
 		return ErrRecovery
+	}
+	// Recheck observed space on resumed work as well. The boot allowance is
+	// owned by this intent; other operations' reservations remain protected.
+	if err := s.physicalCapacity(v2OperationReserveBytes, v2OperationReserveInodes); err != nil {
+		return err
 	}
 	for _, engine := range c.firewall {
 		if engine.Validate(target.Firewall.Running.Config) != nil {

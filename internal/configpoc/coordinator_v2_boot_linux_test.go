@@ -373,6 +373,58 @@ func TestV2BootReadSelectionRejectsStrippedFeatureEdge(t *testing.T) {
 	}
 }
 
+func TestV2BootPhysicalPreflightBeforeIntentAndEffects(t *testing.T) {
+	for _, scenario := range []string{"bytes", "inodes", "readonly", "probe-error", "after-intent"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, area, engines, _ := bootFixtureV2(t)
+			before := clone(c.store.state)
+			files := journalFiles(t, area.Name())
+			probe := func(*os.File) (storageSpace, error) {
+				space := storageSpace{AvailableBytes: 1 << 40, AvailableInodes: 1 << 30, BlockSize: 4096}
+				switch scenario {
+				case "inodes":
+					space.AvailableInodes = 1
+				case "readonly":
+					space.ReadOnly = true
+				case "probe-error":
+					return storageSpace{}, errors.New("injected probe failure")
+				default:
+					space.AvailableBytes = 1
+				}
+				return space, nil
+			}
+			c.options.BootID = ptrBootV2(testBootIDV2)
+			if scenario == "after-intent" {
+				c.options.Hook = func(point string) error {
+					if point == "after_boot_intent" {
+						c.store.spaceProbe = probe
+					}
+					return nil
+				}
+			} else {
+				c.store.spaceProbe = probe
+			}
+			c.store.mu.Lock()
+			err := c.bootStartupLocked(context.Background(), testBootIDV2)
+			c.store.mu.Unlock()
+			if err == nil || c.store.blocked || c.store.state.Generation != before.Generation || c.store.state.Configuration.Running.Hash != before.Configuration.Running.Hash {
+				t.Fatal("physical rejection changed verified state", err)
+			}
+			if scenario != "after-intent" && (!reflect.DeepEqual(before, c.store.state) || !reflect.DeepEqual(files, journalFiles(t, area.Name()))) {
+				t.Fatal("preflight mutated store")
+			}
+			if scenario == "after-intent" && (c.store.state.Configuration.Intent == nil || c.store.state.ReservedBytes < before.ReservedBytes+v2OperationReserveBytes) {
+				t.Fatal("recovery allowance not retained")
+			}
+			for _, engine := range engines {
+				if engine.applies.Load() != 0 {
+					t.Fatal("effect before physical preflight")
+				}
+			}
+		})
+	}
+}
+
 func oldStateDecoderV2(data []byte) error {
 	// Exact pre-feature v2State shape: preserve every field/type/order except
 	// the newly added top-level discriminator. This decoder existed before

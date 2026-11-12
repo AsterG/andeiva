@@ -20,7 +20,7 @@ obligatoria permanente `boot_startup.v1`. No se fabrica un usuario, recibo de
 admisión ni origen de confirmación. Running, auditoría y referencia validada de
 arranque completado se seleccionan juntos. Reabrir el mismo arranque comprueba
 el estado efectivo sin repetir efectos o selección, incluso si el proceso cayó
-antes de escribir un marcador externo. Los lectores antiguos estrictos rechazan
+antes de escribir un marcador externo. Los lectores v2 antiguos estrictos rechazan
 el indicador, que persiste después de checkpoints. Los campos opcionales nulos
 conservan la codificación y hashes anteriores.
 
@@ -53,6 +53,11 @@ de intent, efectos, lectura y selección. Cubren arranque repetido, confirmació
 pendiente, Candidate inactivo, UUID y registros inválidos, referencia ausente,
 presupuesto lógico y rechazo de lectores antiguos después de 64 selecciones.
 No prueban nftables, listeners, IPC, reinicio del sistema, pérdida de energía ni
-reserva física. No necesitan privilegios. La medición de recursos de esta etapa
-está pendiente de validación nativa; consumo de pruebas no equivale al runtime.
+reserva física. No necesitan privilegios. La validación nativa Debian 13 como
+UID 1000 aprobó todos los tests seleccionados sin omisiones: coordinador
+2.764573 s, CPU 1.307027 s, pico cgroup 23,281,664 B; adaptador de arranque
+0.042477 s, CPU 0.014056 s, pico cgroup 5,341,184 B. Son medidas del proceso de
+prueba, no RSS ni consumo del appliance. Los UUID fueron entradas inyectadas;
+los journals reales y las salidas de procesos hijos usaron motores simulados
+persistentes. No se validó reboot del sistema, IPC real ni pérdida de energía.
 AND-01/02 y la activación de producción siguen abiertos.

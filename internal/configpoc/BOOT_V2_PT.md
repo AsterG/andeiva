@@ -20,7 +20,7 @@ obrigatório permanente `boot_startup.v1`. Não há usuário, recibo de admissã
 origem de confirmação fabricados. Running, auditoria e referência validada da
 inicialização concluída são selecionados juntos. Reabrir a mesma inicialização
 verifica o estado efetivo sem repetir efeitos ou publicação, inclusive após
-falha anterior ao marcador externo. Leitores antigos estritos rejeitam o recurso,
+falha anterior ao marcador externo. Leitores v2 antigos estritos rejeitam o recurso,
 que persiste após checkpoints. Campos opcionais nulos preservam os bytes e hashes
 anteriores.
 
@@ -52,6 +52,11 @@ processo. Saídas de processos filhos verificam interrupções em intent, efeito
 leitura e seleção. Cobrem repetição, confirmação pendente, Candidate inativo,
 UUID/registros inválidos, referência ausente, orçamento lógico e rejeição de
 leitores antigos após 64 seleções. Não testam nftables, listeners, IPC, reboot,
-falta de energia ou reserva física. Não exigem privilégios. A medição de recursos
-aguarda qualificação nativa; consumo do processo de testes não é consumo do
-runtime. AND-01/02 e ativação de produção continuam abertos.
+falta de energia ou reserva física. Não exigem privilégios. A qualificação nativa
+Debian 13 como UID 1000 aprovou todos os testes selecionados sem omissões:
+coordenador 2.764573 s, CPU 1.307027 s, pico cgroup 23,281,664 B; adaptador de
+inicialização 0.042477 s, CPU 0.014056 s, pico cgroup 5,341,184 B. São medidas do
+processo de testes, não RSS nem consumo do appliance. Os UUIDs foram entradas
+injetadas; journals reais e saídas de processos filhos usaram motores simulados
+persistentes. Não foram qualificados reboot do sistema, IPC real ou falta de
+energia. AND-01/02 e ativação de produção continuam abertos.
