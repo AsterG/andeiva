@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"reflect"
 
 	"github.com/AsterG/andeiva/internal/localpolicy"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
@@ -39,6 +40,7 @@ type NetworkState string
 const (
 	Baseline   NetworkState = "baseline"
 	Configured NetworkState = "configured"
+	NoNetwork  NetworkState = "no-network"
 )
 
 // An absent table has no Revision. Presence is proved by a successful fixed-table
@@ -49,20 +51,23 @@ type TableStateV1 struct {
 }
 
 type OwnedV1 struct {
-	Version        int                              `json:"version"`
-	Network        networkexecutor.PreparedSnapshot `json:"network"`
-	NetworkState   NetworkState                     `json:"network_state"`
-	LegacyFirewall TableStateV1                     `json:"legacy_firewall"`
-	RoutedFirewall TableStateV1                     `json:"routed_firewall"`
-	LocalServices  TableStateV1                     `json:"local_services"`
+	Version        int                               `json:"version"`
+	Network        networkexecutor.PreparedSnapshot  `json:"network,omitzero"`
+	NetworkState   NetworkState                      `json:"network_state"`
+	LegacyFirewall TableStateV1                      `json:"legacy_firewall"`
+	RoutedFirewall TableStateV1                      `json:"routed_firewall"`
+	LocalServices  TableStateV1                      `json:"local_services"`
+	Observed       *networkexecutor.ObservedSnapshot `json:"observed,omitempty"`
 }
 
 type DependenciesV1 struct {
-	Version         int                              `json:"version"`
-	Network         networkplan.Revision             `json:"network"`
-	Prepared        networkexecutor.PreparedSnapshot `json:"prepared"`
-	LocalInterfaces []localpolicy.Interface          `json:"local_interfaces"`
-	Neighbors       []localpolicy.NeighborLink       `json:"neighbors"`
+	Version         int                               `json:"version"`
+	Network         networkplan.Revision              `json:"network,omitzero"`
+	Prepared        networkexecutor.PreparedSnapshot  `json:"prepared,omitzero"`
+	LocalInterfaces []localpolicy.Interface           `json:"local_interfaces"`
+	Neighbors       []localpolicy.NeighborLink        `json:"neighbors"`
+	NetworkMode     string                            `json:"network_mode,omitempty"`
+	Observed        *networkexecutor.ObservedSnapshot `json:"observed,omitempty"`
 }
 
 func CanonicalRoutedTable(input TableStateV1, schema int) (TableStateV1, error) {
@@ -91,7 +96,10 @@ func CanonicalRoutedTable(input TableStateV1, schema int) (TableStateV1, error) 
 }
 
 func CanonicalOwned(input OwnedV1) (OwnedV1, error) {
-	if input.Version != 1 || (input.NetworkState != Baseline && input.NetworkState != Configured) {
+	if input.Version == 2 {
+		return canonicalNoNetworkOwnedV2(input)
+	}
+	if input.Version != 1 || input.Observed != nil || (input.NetworkState != Baseline && input.NetworkState != Configured) {
 		return OwnedV1{}, ErrRoutedArtifact
 	}
 	network, err := networkexecutor.CanonicalPreparedSnapshot(input.Network)
@@ -110,7 +118,7 @@ func CanonicalOwned(input OwnedV1) (OwnedV1, error) {
 	if err != nil {
 		return OwnedV1{}, err
 	}
-	out := OwnedV1{1, network, input.NetworkState, legacy, routed, local}
+	out := OwnedV1{Version: 1, Network: network, NetworkState: input.NetworkState, LegacyFirewall: legacy, RoutedFirewall: routed, LocalServices: local}
 	if routed.Revision != nil && routed.Revision.Config.Routed.Network.Hash != network.PlanHash {
 		return OwnedV1{}, ErrRoutedArtifact
 	}
@@ -122,7 +130,10 @@ func CanonicalOwned(input OwnedV1) (OwnedV1, error) {
 }
 
 func CanonicalDependencies(input DependenciesV1) (DependenciesV1, error) {
-	if input.Version != 1 || len(input.Network.Config.Interfaces) != 2 || len(input.LocalInterfaces) != 2 || len(input.Neighbors) > localpolicy.MaxNeighborInterfaces {
+	if input.Version == 2 {
+		return canonicalNoNetworkDependenciesV2(input)
+	}
+	if input.Version != 1 || input.NetworkMode != "" || input.Observed != nil || len(input.Network.Config.Interfaces) != 2 || len(input.LocalInterfaces) != 2 || len(input.Neighbors) > localpolicy.MaxNeighborInterfaces {
 		return DependenciesV1{}, ErrRoutedArtifact
 	}
 	network, err := networkplan.Canonical(input.Network.Config)
@@ -168,7 +179,7 @@ func CanonicalDependencies(input DependenciesV1) (DependenciesV1, error) {
 	if err != nil {
 		return DependenciesV1{}, ErrRoutedArtifact
 	}
-	out := DependenciesV1{1, network, prepared, local.Config.Interfaces, neighbors}
+	out := DependenciesV1{Version: 1, Network: network, Prepared: prepared, LocalInterfaces: local.Config.Interfaces, Neighbors: neighbors}
 	data, err := json.Marshal(out)
 	if err != nil || len(data) > RoutedArtifactLimit {
 		return DependenciesV1{}, ErrRoutedArtifact
@@ -178,6 +189,42 @@ func CanonicalDependencies(input DependenciesV1) (DependenciesV1, error) {
 		return DependenciesV1{}, ErrRoutedArtifact
 	}
 	return detached, nil
+}
+
+// Version 2 explicitly describes observed inventory without a desired L3 plan.
+// A zero desired plan is never accepted as a schema6 forwarding dependency.
+func canonicalNoNetworkOwnedV2(input OwnedV1) (OwnedV1, error) {
+	if input.NetworkState != NoNetwork || input.Observed == nil || !reflect.DeepEqual(input.Network, networkexecutor.PreparedSnapshot{}) || input.RoutedFirewall.Presence != Absent || input.RoutedFirewall.Revision != nil || input.LocalServices.Presence != Absent || input.LocalServices.Revision != nil {
+		return OwnedV1{}, ErrRoutedArtifact
+	}
+	observed, err := networkexecutor.CanonicalObservedSnapshot(*input.Observed)
+	if err != nil {
+		return OwnedV1{}, ErrRoutedArtifact
+	}
+	legacy, err := CanonicalRoutedTable(input.LegacyFirewall, 4)
+	if err != nil {
+		return OwnedV1{}, ErrRoutedArtifact
+	}
+	result := OwnedV1{Version: 2, NetworkState: NoNetwork, LegacyFirewall: legacy, RoutedFirewall: TableStateV1{Presence: Absent}, LocalServices: TableStateV1{Presence: Absent}, Observed: &observed}
+	if raw, err := json.Marshal(result); err != nil || len(raw) > RoutedArtifactLimit {
+		return OwnedV1{}, ErrRoutedArtifact
+	}
+	return result, nil
+}
+
+func canonicalNoNetworkDependenciesV2(input DependenciesV1) (DependenciesV1, error) {
+	if input.NetworkMode != "none" || input.Observed == nil || !reflect.DeepEqual(input.Network, networkplan.Revision{}) || !reflect.DeepEqual(input.Prepared, networkexecutor.PreparedSnapshot{}) || len(input.LocalInterfaces) != 0 || len(input.Neighbors) != 0 {
+		return DependenciesV1{}, ErrRoutedArtifact
+	}
+	observed, err := networkexecutor.CanonicalObservedSnapshot(*input.Observed)
+	if err != nil {
+		return DependenciesV1{}, ErrRoutedArtifact
+	}
+	result := DependenciesV1{Version: 2, NetworkMode: "none", Observed: &observed, LocalInterfaces: []localpolicy.Interface{}, Neighbors: []localpolicy.NeighborLink{}}
+	if raw, err := json.Marshal(result); err != nil || len(raw) > RoutedArtifactLimit {
+		return DependenciesV1{}, ErrRoutedArtifact
+	}
+	return result, nil
 }
 
 func OwnedBytes(input OwnedV1) ([]byte, error) {
