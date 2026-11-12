@@ -28,7 +28,7 @@ valida deadline original, referencias contextuales y reservas. La forma o un
 resolver que siempre acepta no bastan. `ObserveOwned` y `MatchOwned` sólo devuelven
 o verifican referencias seleccionadas después del readback semántico físico.
 
-El arranque exige tabla schema-4 canónica default-deny realmente conocida, tabla routed
+La activación de la fixture legacy exige tabla schema-4 canónica default-deny realmente conocida, tabla routed
 ausente, IPv4 vacío y tabla local ausente o vacía conocida. Una transacción nft
 instala deny routed/local y retira legacy antes de configurar rutas. El target
 sustituye deny después de verificar red y listeners propios. La recuperación
@@ -76,3 +76,18 @@ de helper, recuperación tras crash o continuidad de endpoints, aún sin cualifi
 go test -race ./internal/networkexecutor ./internal/routedactivation -count=3
 go vet ./internal/networkexecutor ./internal/routedactivation
 ```
+
+Boot schema4 sin red usa `Options.ObservedBindings` del inventario autenticado del
+supervisor y `PrepareColdBoot(target4, saved4)`. Captura `ObservedSnapshot` sin
+plan deseado ni hash de plan, con ausencia real de las tres tablas. Boot/SystemBundle
+y el plazo original Started+10s deben quedar seleccionados antes de aplicar.
+Apply/rollback schema4 sólo modifica la tabla legacy: no direcciones, rutas,
+listeners ni forwarding. La expiración restaura la ausencia real, no la política
+Saved prospectiva. Una edición schema4 confirmada puede diferir del Saved original
+conservando el baseline observado exacto. La primera activación schema6 compara
+todo ese baseline con su PreparedSnapshot real; la inversa schema6→4 sigue
+exigiendo el Saved/baseline original autenticado. Un helper nuevo verifica scope
+y estado exactos mediante RecoverObserved, sin adoptar namespaces encontrados ni
+reiniciar temporizadores. Las pruebas usan compiladores/readback, Group y
+coordinador/reservas durables reales con I/O kernel/red simulado. No califican
+Boot4 nativo, gestión de interfaces existentes, DHCP ni control del host.

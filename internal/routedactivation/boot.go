@@ -21,11 +21,17 @@ func (e *Engine) PrepareColdBoot(ctx context.Context, target, saved configpoc.Ro
 		return PreparationV1{}, ErrState
 	}
 	target, err := configpoc.CanonicalRoutedActivationBundleV1(target)
-	if err != nil || target.Firewall.Config.SchemaVersion != 6 || target.LocalServices.Config.LocalServices == nil || localnft.ValidateManaged(*target.LocalServices.Config.LocalServices) != nil {
+	if err != nil {
 		return PreparationV1{}, ErrState
 	}
 	saved, err = configpoc.CanonicalRoutedActivationBundleV1(saved)
 	if err != nil || saved.Firewall.Config.SchemaVersion != 4 || saved.Firewall.Hash != e.options.Legacy.Hash {
+		return PreparationV1{}, ErrState
+	}
+	if target.Firewall.Config.SchemaVersion == 4 {
+		return e.prepareNoNetworkBoot(ctx, target, saved)
+	}
+	if target.Firewall.Config.SchemaVersion != 6 || target.LocalServices.Config.LocalServices == nil || localnft.ValidateManaged(*target.LocalServices.Config.LocalServices) != nil {
 		return PreparationV1{}, ErrState
 	}
 	if local := saved.LocalServices.Config.LocalServices; local != nil {

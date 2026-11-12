@@ -28,7 +28,7 @@ referências contextuais e reservas. Forma ou resolver que sempre aceita não ba
 `ObserveOwned` e `MatchOwned` retornam/verificam apenas referências selecionadas
 após readback semântico físico.
 
-A ativação inicial exige tabela schema-4 canônica default-deny realmente conhecida, tabela
+A ativação da fixture legacy exige tabela schema-4 canônica default-deny realmente conhecida, tabela
 routed ausente, IPv4 vazio e tabela local ausente ou vazia conhecida. Uma transação
 nft instala deny routed/local e remove legacy antes de configurar rotas. Target
 substitui deny após verificar rede e listeners próprios. A recuperação instala
@@ -75,3 +75,18 @@ recuperação após crash ou continuidade de endpoints, ainda pendentes.
 go test -race ./internal/networkexecutor ./internal/routedactivation -count=3
 go vet ./internal/networkexecutor ./internal/routedactivation
 ```
+
+Boot schema4 sem rede usa `Options.ObservedBindings` do inventário autenticado do
+supervisor e `PrepareColdBoot(target4, saved4)`. Captura `ObservedSnapshot` sem
+plano desejado nem hash de plano, com ausência real das três tabelas. Boot/SystemBundle
+e o prazo original Started+10s devem estar selecionados antes de aplicar.
+Apply/rollback schema4 altera somente a tabela legacy: não altera endereços,
+rotas, listeners ou forwarding. A expiração restaura a ausência real, não a
+política Saved prospectiva. Uma edição schema4 confirmada pode diferir do Saved
+original preservando o baseline observado exato. A primeira ativação schema6
+compara todo o baseline com seu PreparedSnapshot real; a inversa schema6→4 ainda
+exige o Saved/baseline original autenticado. Um helper novo verifica scope e
+estado exatos por RecoverObserved, sem adotar namespaces encontrados ou reiniciar
+temporizadores. Os testes usam compiladores/readback, Group e coordenador/reservas
+duráveis reais com I/O kernel/rede simulado. Não qualificam Boot4 nativo, gestão
+de interfaces existentes, DHCP ou controle do host.
