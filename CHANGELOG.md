@@ -6,6 +6,16 @@
 - Preserve independent domain projections, explicit Startup, confirmed-commit recovery and verified rollback targets.
 - Add simulated-engine interruption and endurance tests; runtime activation and administrative transport integration remain disabled.
 
+## Unreleased — inactive routed network configuration model
+
+- Report a single stable field path for schema, collection and field-size validation errors.
+
+- Validate bounded WAN/LAN/management IPv4 configuration, interface bindings, zones,
+  default route and DNS before execution. Preserve host bits and deterministic
+  revisions; never infer DHCP leases from observed addresses.
+- Add strict JSON control-field validation and reuse exact JSON checks for nft
+  observations. No interface, route, DNS or forwarding changes are activated.
+
 ## Unreleased — custom CA platform safety
 
 - Reject custom CA files before filesystem access on platforms without a qualified
@@ -13,6 +23,9 @@
 - Test Linux FIFO/symlink substitutions and non-Linux refusal.
 
 ## Unreleased — inactive configuration storage v2 foundations
+
+
+- Reject invalid checkpoint/segment boundaries and mismatched historical state lineages during reopen.
 
 - Prepare immutable selected storage, a bounded durable operation catalogue and
   cold schema 3/4 migration without activating engines or administrative endpoints.
