@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,50 @@ import (
 	"github.com/AsterG/andeiva/internal/routedactivation"
 	"github.com/AsterG/andeiva/internal/routednft"
 )
+
+type savedLegacyFault struct {
+	stage string
+	cause error
+	calls []string
+}
+
+func (f *savedLegacyFault) step(stage string) error {
+	f.calls = append(f.calls, stage)
+	if f.stage == stage {
+		return f.cause
+	}
+	return nil
+}
+func (f *savedLegacyFault) Check(context.Context, []byte) error { return f.step("check") }
+func (f *savedLegacyFault) Apply(context.Context, []byte) error { return f.step("apply") }
+func (f *savedLegacyFault) Observe(_ context.Context, table routedactivation.Table) ([]byte, bool, error) {
+	if table != routedactivation.LegacyTable {
+		return nil, false, errors.New("wrong table")
+	}
+	return []byte(`{}`), f.stage != "absent", f.step("observe")
+}
+
+func TestSavedLegacyProvisionPreservesStageAndCause(t *testing.T) {
+	legacy, err := configpoc.Canonical(configpoc.Config{SchemaVersion: 4, DefaultAction: "deny"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("controlled kernel rejection")
+	for _, stage := range []string{"check", "apply", "observe", "absent", "verify"} {
+		t.Run(stage, func(t *testing.T) {
+			fake := &savedLegacyFault{stage: stage, cause: cause}
+			err := provisionSavedLegacy(context.Background(), fake, legacy)
+			if err == nil || !strings.Contains(err.Error(), "saved schema4 "+stage) {
+				t.Fatal("lost failing stage", err)
+			}
+			if stage == "check" || stage == "apply" || stage == "observe" {
+				if !errors.Is(err, cause) || fake.calls[len(fake.calls)-1] != stage {
+					t.Fatal("lost cause or continued after failure", err, fake.calls)
+				}
+			}
+		})
+	}
+}
 
 func TestGroupPresenceRequiresSuccessfulCompleteUniqueTableListing(t *testing.T) {
 	listing := `{"nftables":[{"metainfo":{"version":"1.1.3","release_name":"fixture","json_schema_version":1}},{"table":{"family":"inet","name":"` + routednft.TableName + `"}}]}`

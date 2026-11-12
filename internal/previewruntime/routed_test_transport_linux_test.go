@@ -5,6 +5,8 @@ package previewruntime
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewallnft"
@@ -108,6 +110,40 @@ type routedTestNetwork struct {
 	before   func() error
 	cancel   context.CancelFunc
 	identity networkexecutor.OwnedNamespaceIdentity
+}
+
+func (n *routedTestNetwork) PrepareObserved(ctx context.Context, bindings []networkplan.Binding) (networkexecutor.ObservedSnapshot, error) {
+	if ctx.Err() != nil || n.active || len(bindings) != 2 {
+		return networkexecutor.ObservedSnapshot{}, routedactivation.ErrState
+	}
+	expected := map[string]string{}
+	for _, binding := range bindings {
+		expected[binding.Name] = binding.HardwareAddress
+	}
+	for _, link := range n.snapshot.Links {
+		if expected[link.Name] != link.MAC {
+			return networkexecutor.ObservedSnapshot{}, routedactivation.ErrState
+		}
+	}
+	observed := networkexecutor.ObservedSnapshot{Version: 1, Links: n.snapshot.Links, Routes: n.snapshot.Routes}
+	raw, _ := json.Marshal(observed)
+	sum := sha256.Sum256(raw)
+	observed.Hash = hex.EncodeToString(sum[:])
+	return networkexecutor.CanonicalObservedSnapshot(observed)
+}
+
+func (n *routedTestNetwork) VerifyObserved(ctx context.Context, snapshot networkexecutor.ObservedSnapshot) error {
+	if ctx.Err() != nil || n.active || !networkexecutor.ObservedMatchesPrepared(snapshot, n.snapshot) {
+		return routedactivation.ErrState
+	}
+	return nil
+}
+
+func (n *routedTestNetwork) RecoverObserved(ctx context.Context, snapshot networkexecutor.ObservedSnapshot, original networkexecutor.OwnedNamespaceIdentity) error {
+	if original != n.identity {
+		return routedactivation.ErrState
+	}
+	return n.VerifyObserved(ctx, snapshot)
 }
 
 func (n *routedTestNetwork) RecoverPrepared(ctx context.Context, revision networkplan.Revision, snapshot networkexecutor.PreparedSnapshot, original networkexecutor.OwnedNamespaceIdentity) error {

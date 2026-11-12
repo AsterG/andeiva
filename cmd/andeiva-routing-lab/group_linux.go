@@ -229,17 +229,8 @@ func newGroupLab(ctx context.Context, network *networkexecutor.Executor, t trans
 	// Fixture-only trusted supervisor provisioning establishes the actual known
 	// saved4 baseline. Production Boot preparation remains read-only until its
 	// SystemBundle/Intent is selected; this runner does not qualify that store.
-	artifact, err := firewallnft.Compile(legacy.Config)
-	if err != nil || t.Check(ctx, artifact.Create) != nil || t.Apply(ctx, artifact.Create) != nil {
-		return nil, errLab
-	}
-	data, present, err := b.kernel.Observe(ctx, routedactivation.LegacyTable)
-	if err != nil || !present {
-		return nil, errLab
-	}
-	observed, err := firewallnft.VerifyObservation(data, legacy)
-	if err != nil || len(observed.Revision.Config.Rules) != 2 {
-		return nil, errLab
+	if err := provisionSavedLegacy(ctx, b.kernel, legacy); err != nil {
+		return nil, err
 	}
 	fmt.Println("PASS typed group initial schema4 has exact two saved rules")
 	if err := b.cold(ctx); err != nil {
@@ -247,6 +238,41 @@ func newGroupLab(ctx context.Context, network *networkexecutor.Executor, t trans
 		return nil, err
 	}
 	return b, nil
+}
+
+type savedLegacyKernel interface {
+	Check(context.Context, []byte) error
+	Apply(context.Context, []byte) error
+	Observe(context.Context, routedactivation.Table) ([]byte, bool, error)
+}
+
+// Fault tests use this fixture-local seam without global subprocess hooks.
+func provisionSavedLegacy(ctx context.Context, kernel savedLegacyKernel, legacy configpoc.Revision) error {
+	artifact, err := firewallnft.Compile(legacy.Config)
+	if err != nil {
+		return fmt.Errorf("saved schema4 compile: %w", err)
+	}
+	if err := kernel.Check(ctx, artifact.Create); err != nil {
+		return fmt.Errorf("saved schema4 check: %w", err)
+	}
+	if err := kernel.Apply(ctx, artifact.Create); err != nil {
+		return fmt.Errorf("saved schema4 apply: %w", err)
+	}
+	data, present, err := kernel.Observe(ctx, routedactivation.LegacyTable)
+	if err != nil {
+		return fmt.Errorf("saved schema4 observe: %w", err)
+	}
+	if !present {
+		return fmt.Errorf("saved schema4 absent after apply: %w", errLab)
+	}
+	observed, err := firewallnft.VerifyObservation(data, legacy)
+	if err != nil {
+		return fmt.Errorf("saved schema4 verify: %w", err)
+	}
+	if len(observed.Revision.Config.Rules) != 2 {
+		return fmt.Errorf("saved schema4 rule count: %w", errLab)
+	}
+	return nil
 }
 
 func (b *groupLab) resolveBaseline(ctx context.Context, saved configpoc.RoutedActivationBundleV1) (routedactivation.BaselineV1, error) {
