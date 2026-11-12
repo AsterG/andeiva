@@ -148,6 +148,9 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 	if s.blocked {
 		return v2Operation{}, errV2Unavailable
 	}
+	if err := s.reserveBeforeAdmissionV2(); err != nil {
+		return v2Operation{}, err
+	}
 	i := s.namespaceIndex(subject, namespace)
 	if i < 0 || !s.subject(subject) {
 		return v2Operation{}, errV2NotFound
@@ -255,6 +258,9 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 			st.ReservedBytes += closingBytes
 			st.ReservedInodes += closingInodes
 		}
+	}
+	if err = s.reserveAdmissionV2(&st, &op); err != nil {
+		return v2Operation{}, err
 	}
 	if err = s.putOperation(&st, op); err != nil {
 		s.blocked = true
@@ -518,6 +524,9 @@ func v2Release(st *v2State, op v2Operation) {
 			for j, id := range st.Namespaces[i].Open {
 				if id == op.ID {
 					st.Namespaces[i].Open = append(st.Namespaces[i].Open[:j], st.Namespaces[i].Open[j+1:]...)
+					if holdReserveCanonicalV2(st, op) {
+						return
+					}
 					st.ReservedBytes -= v2OperationReserveBytes
 					st.ReservedInodes -= v2OperationReserveInodes
 					return

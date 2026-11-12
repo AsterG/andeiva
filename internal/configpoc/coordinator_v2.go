@@ -8,6 +8,7 @@ import (
 )
 
 type v2CoordinatorOptions struct {
+	Reserves    *v2ReserveManager
 	LocalPolicy LocalPolicyV2
 	BootID      *v2BootID
 	Now         func() time.Time
@@ -53,6 +54,14 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	defer store.mu.Unlock()
 	if store.blocked {
 		return nil, errV2Unavailable
+	}
+	if store.state.RecoveryReserveVersion == 1 {
+		if options.Reserves == nil || options.Reserves.verifySelected(store) != nil {
+			return nil, ErrRecovery
+		}
+		store.reserves = options.Reserves
+	} else if options.Reserves != nil {
+		return nil, ErrInvalid
 	}
 	if store.state.Configuration == nil {
 		if err := c.initializeLocked(); err != nil {

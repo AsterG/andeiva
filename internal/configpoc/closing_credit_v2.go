@@ -430,6 +430,9 @@ func (s *v2Store) admitClosingLocked(subject, namespace string, expected uint64,
 	st.ClosingCredits[creditIndex].Child = id
 	st.ClosingCredits[creditIndex].ChildNamespace = namespace
 	st.Namespaces[i].ClosingOpen = append(st.Namespaces[i].ClosingOpen, v2ClosingOpen{Operation: id, Origin: origin.ID, Credit: credit.ID})
+	if err = s.reserveAdmissionV2(&st, &op); err != nil {
+		return v2Operation{}, err
+	}
 	previous := s.allowance
 	s.allowance = v2Budget{Bytes: v2ClosingReserveBytes, Inodes: v2ClosingReserveInodes}
 	defer func() { s.allowance = previous }()

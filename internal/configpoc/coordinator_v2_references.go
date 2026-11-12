@@ -78,7 +78,7 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 
 func (c *v2Coordinator) pendingReferencesLocked(state *v2Configuration) error {
 	for _, namespace := range c.store.state.Namespaces {
-		for _, id := range namespace.Open {
+		for _, id := range namespaceOpenIDsV2(namespace) {
 			op, err := c.store.lookupRetained(namespace.Subject, id)
 			if err != nil {
 				return err

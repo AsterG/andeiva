@@ -73,26 +73,29 @@ type v2Outcome struct {
 	AuditLast            uint64     `json:"audit_last_sequence,string,omitempty"`
 }
 type v2Operation struct {
-	ClosingCredit string     `json:"closing_credit,omitempty"`
-	ID            string     `json:"id"`
-	Namespace     string     `json:"namespace_id"`
-	Subject       string     `json:"subject"`
-	Lineage       string     `json:"lineage"`
-	Domain        string     `json:"domain"`
-	Sequence      uint64     `json:"sequence,string"`
-	Expected      uint64     `json:"expected_generation,string"`
-	Request       v2Request  `json:"request"`
-	Fingerprint   string     `json:"fingerprint"`
-	State         string     `json:"state"`
-	Accepted      time.Time  `json:"accepted_at"`
-	ExecuteBefore time.Time  `json:"execute_before"`
-	Completed     *time.Time `json:"completed_at,omitempty"`
-	RetainUntil   *time.Time `json:"retain_until,omitempty"`
-	Outcome       *v2Outcome `json:"outcome,omitempty"`
-	Pinned        bool       `json:"pinned"`
-	Retired       bool       `json:"retired"`
+	Reserve       *v2ReserveBundle `json:"reserve,omitempty"`
+	ClosingCredit string           `json:"closing_credit,omitempty"`
+	ID            string           `json:"id"`
+	Namespace     string           `json:"namespace_id"`
+	Subject       string           `json:"subject"`
+	Lineage       string           `json:"lineage"`
+	Domain        string           `json:"domain"`
+	Sequence      uint64           `json:"sequence,string"`
+	Expected      uint64           `json:"expected_generation,string"`
+	Request       v2Request        `json:"request"`
+	Fingerprint   string           `json:"fingerprint"`
+	State         string           `json:"state"`
+	Accepted      time.Time        `json:"accepted_at"`
+	ExecuteBefore time.Time        `json:"execute_before"`
+	Completed     *time.Time       `json:"completed_at,omitempty"`
+	RetainUntil   *time.Time       `json:"retain_until,omitempty"`
+	Outcome       *v2Outcome       `json:"outcome,omitempty"`
+	Pinned        bool             `json:"pinned"`
+	Retired       bool             `json:"retired"`
 }
 type v2State struct {
+	ActiveReserves         []v2ActiveReserve `json:"active_reserves,omitempty"`
+	SystemBundle           *v2ActiveReserve  `json:"system_bundle,omitempty"`
 	RecoveryReserveVersion uint8             `json:"recovery_reserve_version,omitempty"`
 	ReserveArchiveRoot     string            `json:"reserve_archive_root,omitempty"`
 	ClosingCredits         []v2ClosingCredit `json:"closing_credits,omitempty"`
