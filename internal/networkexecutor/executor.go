@@ -55,6 +55,22 @@ type transaction struct {
 func (e *Executor) Apply(ctx context.Context, revision networkplan.Revision) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.applyLocked(ctx, revision, nil)
+}
+
+// ApplyPrepared requires this exact observed baseline, including link identity
+// and flags, immediately before the first effect. A digest alone is not authority.
+func (e *Executor) ApplyPrepared(ctx context.Context, revision networkplan.Revision, prepared PreparedSnapshot) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	snapshot, err := CanonicalPreparedSnapshot(prepared)
+	if err != nil || snapshot.PlanHash != revision.Hash {
+		return ErrScope
+	}
+	return e.applyLocked(ctx, revision, &snapshot)
+}
+
+func (e *Executor) applyLocked(ctx context.Context, revision networkplan.Revision, prepared *PreparedSnapshot) error {
 	if err := e.ready(ctx); err != nil {
 		return err
 	}
@@ -82,6 +98,9 @@ func (e *Executor) Apply(ctx context.Context, revision networkplan.Revision) err
 	}
 	if !baseline.empty() {
 		return ErrUnsupported
+	}
+	if prepared != nil && !reflect.DeepEqual(baseline, prepared.observation()) {
+		return ErrObservation
 	}
 	binding, err := networkplan.Bind(canonical, baseline.inventory())
 	if err != nil {
@@ -173,11 +192,42 @@ func (e *Executor) Restore() error {
 	return e.restore()
 }
 func (e *Executor) restore() error {
+	ctx, cancel := context.WithTimeout(e.lifetime, 15*time.Second)
+	defer cancel()
+	return e.restoreUnder(ctx)
+}
+
+// RestorePrepared restores only this executor's recorded additions whose exact
+// baseline matches the memento. It does not reconstruct ownership after restart.
+// The caller supplies an independent compensation context, not the lost request.
+func (e *Executor) RestorePrepared(ctx context.Context, prepared PreparedSnapshot) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := e.ready(ctx); err != nil {
+		return err
+	}
+	snapshot, err := CanonicalPreparedSnapshot(prepared)
+	if err != nil {
+		return err
+	}
+	if e.active != nil && (e.active.revision.Hash != snapshot.PlanHash || !reflect.DeepEqual(e.active.baseline, snapshot.observation())) {
+		return ErrScope
+	}
+	if err := e.restoreUnder(ctx); err != nil {
+		return err
+	}
+	actual, err := e.observe(ctx)
+	if err != nil || !reflect.DeepEqual(actual, snapshot.observation()) {
+		e.fenced = true
+		return ErrUncertain
+	}
+	return nil
+}
+
+func (e *Executor) restoreUnder(ctx context.Context) error {
 	if e.active == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(e.lifetime, 15*time.Second)
-	defer cancel()
 	tx := e.active
 	for n := len(tx.operations) - 1; n >= 0; n-- {
 		// Each compensation gets a fresh identity check. Ownership excludes other

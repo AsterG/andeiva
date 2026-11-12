@@ -25,6 +25,106 @@ func fixturePlan() networkplan.Revision {
 	return r
 }
 
+func TestPreparedSnapshotExactDetachedReadbackAndRestore(t *testing.T) {
+	e, f := fakeExecutor()
+	plan := fixturePlan()
+	s, err := e.Prepare(context.Background(), plan)
+	if err != nil || f.mutations != 0 || len(s.Links) != 2 || len(s.Routes) != 0 || s.Hash == "" {
+		t.Fatal("prepare", s, err)
+	}
+	bytes, err := PreparedSnapshotBytes(s)
+	if err != nil || len(bytes) > MaxPreparedSnapshot {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalPreparedSnapshot(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Links[0].Flags[0] = "foreign"
+	if canonical.Links[0].Flags[0] != "UP" {
+		t.Fatal("snapshot aliases caller")
+	}
+	if err := e.VerifyPrepared(context.Background(), canonical); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ApplyPrepared(context.Background(), plan, canonical); err != nil {
+		t.Fatal(err)
+	}
+	if e.VerifyPrepared(context.Background(), canonical) == nil || e.Verify(context.Background()) != nil {
+		t.Fatal("target confused with baseline")
+	}
+	if err := e.RestorePrepared(context.Background(), canonical); err != nil || e.VerifyPrepared(context.Background(), canonical) != nil {
+		t.Fatal("exact restore", err)
+	}
+	if f.mutations != 6 {
+		t.Fatal("unexpected operations", f.mutations)
+	}
+}
+
+func TestPreparedSnapshotRejectsForeignAndUnsupportedBaseline(t *testing.T) {
+	for _, mutate := range []func(*fakeKernel){
+		func(f *fakeKernel) {
+			f.state.Links[0].Addresses = []address{{Family: "inet", Local: "198.18.0.1", Bits: 24}}
+		},
+		func(f *fakeKernel) {
+			f.state.Routes = []route{{Destination: "default", Device: "wan0", Gateway: "198.19.0.2"}}
+		},
+		func(f *fakeKernel) {
+			f.state.Links = append(f.state.Links, link{Index: 3, Name: "foreign0", MAC: "02:00:00:00:03:01", MTU: 1500, Flags: []string{"UP"}, Addresses: []address{}})
+		},
+		func(f *fakeKernel) { f.state.Links[0].MAC = "02:00:00:00:09:01" },
+		func(f *fakeKernel) { f.state.Links[0].Flags = []string{"UP", "PROMISC"} },
+	} {
+		e, f := fakeExecutor()
+		mutate(f)
+		if _, err := e.Prepare(context.Background(), fixturePlan()); err == nil || f.mutations != 0 {
+			t.Fatal("foreign baseline admitted", err, f.mutations)
+		}
+	}
+}
+
+func TestPreparedSnapshotRejectsTamperAndLinkReplacementBeforeEffects(t *testing.T) {
+	for _, mutate := range []func(*fakeKernel){
+		func(f *fakeKernel) { f.state.Links[0].Index = 99 },
+		func(f *fakeKernel) { f.state.Links[0].MTU = 1400 },
+		func(f *fakeKernel) { f.state.Links[0].Flags = []string{"UP", "LOWER_UP"} },
+	} {
+		e, f := fakeExecutor()
+		s, err := e.Prepare(context.Background(), fixturePlan())
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(f)
+		if e.VerifyPrepared(context.Background(), s) == nil || e.ApplyPrepared(context.Background(), fixturePlan(), s) == nil || f.mutations != 0 {
+			t.Fatal("changed physical snapshot admitted")
+		}
+	}
+	e, f := fakeExecutor()
+	s, err := e.Prepare(context.Background(), fixturePlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*PreparedSnapshot){
+		func(s *PreparedSnapshot) { s.Hash = strings.Repeat("0", 64) },
+		func(s *PreparedSnapshot) { s.PlanHash = strings.Repeat("f", 64) },
+		func(s *PreparedSnapshot) { s.Links[0].Index++ },
+		func(s *PreparedSnapshot) { s.Links[0].Flags = append(s.Links[0].Flags, "UP") },
+		func(s *PreparedSnapshot) { s.Routes = []route{{Destination: "default"}} },
+	} {
+		copy, err := CanonicalPreparedSnapshot(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(&copy)
+		if _, err := CanonicalPreparedSnapshot(copy); err == nil || e.ApplyPrepared(context.Background(), fixturePlan(), copy) == nil || f.mutations != 0 {
+			t.Fatal("tampered snapshot admitted")
+		}
+	}
+	if _, err := e.Prepare(nil, fixturePlan()); !errors.Is(err, ErrScope) || e.VerifyPrepared(nil, s) == nil {
+		t.Fatal("nil context admitted", err)
+	}
+}
+
 type fakeKernel struct {
 	state       observation
 	mutations   int
