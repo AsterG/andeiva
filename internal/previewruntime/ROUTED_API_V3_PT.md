@@ -13,6 +13,13 @@ são necessários; não há negociação, repetição automática ou fallback. A
 remota fica vinculada aos metadados confiáveis; uma autoridade fornecida pelo
 chamador é rejeitada. As verificações canônicas continuam no coordenador.
 
+O lançamento agrupado deve criar o servidor de compatibilidade com
+`NewRoutedCompatibilitySessionV2`. Permite apenas consultar estado, vincular a
+observação e lê-la durante toda sua vida, inclusive após reconexão. Rejeita todas
+as mutações antes do guardião anterior. Os efeitos agrupados usam autorização
+do estado selecionado v3; um helper anterior irrestrito não é aceito.
+O handshake v2 sozinho não comprova essa política de lançamento.
+
 Os sockets são transferidos na entrada e fechados em falhas. Roots, pools e motores
 locais continuam pertencendo ao chamador. Fechar a administração libera escritor
 e canais; não remove regras, namespaces, listeners ou o guardião independente.

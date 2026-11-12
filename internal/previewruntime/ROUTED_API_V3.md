@@ -13,6 +13,13 @@ v2 handshake, snapshot attachment or configuration writer opens. Both channels
 are required: v2 is retained only for existing schema4 engine compatibility;
 there is no negotiation, automatic replay or fallback.
 
+Grouped launch must construct the compatibility server with
+`NewRoutedCompatibilitySessionV2`. It permits only state, attachment and
+observation for its entire lifetime, including reconnects. Every mutation verb
+is rejected before reaching the legacy guardian. All grouped effects use v3
+selected-state authorization; an unrestricted legacy helper is not an acceptable
+replacement. The v2 handshake alone does not attest this launch policy.
+
 The factory injects a remote grouped authority bound to trusted boot/run/namespace
 metadata. Caller-provided grouped authority is rejected. Canonical store and pool
 checks remain in the existing coordinator. Their roots/pools/local engines stay

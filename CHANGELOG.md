@@ -9,6 +9,7 @@
 - Retain schema4 rule editing without fabricating routed network configuration.
 - Label startup recovery audit events in English, Spanish and Portuguese, and keep long revision details within the responsive audit panel.
 - Keep runtime migration, privileged helper activation and native appliance qualification independently gated.
+- Restrict the grouped helper's legacy compatibility session to observation; policy changes remain subject to selected-state authorization.
 
 ## Unreleased — prepared routed composite references
 

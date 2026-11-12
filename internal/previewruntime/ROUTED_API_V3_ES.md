@@ -14,6 +14,13 @@ La autoridad remota se vincula a metadatos confiables. Se rechaza una autoridad
 proporcionada por el llamador. El coordinador conserva sus comprobaciones de
 almacenamiento y pools.
 
+El lanzamiento agrupado debe crear el servidor de compatibilidad mediante
+`NewRoutedCompatibilitySessionV2`. Sólo permite consultar estado, vincular la
+observación y leerla durante toda su vida, incluso al reconectar. Rechaza todas
+las mutaciones antes de llegar al guardián anterior. Los efectos agrupados usan
+la autorización de estado seleccionado v3; no se admite un helper anterior sin
+restricciones. El handshake v2 por sí solo no acredita esta política de lanzamiento.
+
 Los sockets se transfieren al entrar y se cierran ante errores. Roots, pools y
 motores locales siguen siendo del llamador. Cerrar administración libera escritor
 y canales; no elimina reglas, namespaces, listeners ni el guardián independiente.

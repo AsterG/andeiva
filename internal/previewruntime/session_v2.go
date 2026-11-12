@@ -23,6 +23,7 @@ type SessionV2 struct {
 	domain                 string
 	epoch, last            uint64
 	active, attached, cold bool
+	readOnly               bool
 }
 
 func NewSessionV2(run string, namespace uint64, engine Engine, guardian *nftguardian.Guardian, observe Observer) (*SessionV2, error) {
@@ -30,6 +31,18 @@ func NewSessionV2(run string, namespace uint64, engine Engine, guardian *nftguar
 		return nil, errHelper
 	}
 	return &SessionV2{base: NewSession(run, namespace, engine, guardian, observe), domain: "firewall"}, nil
+}
+
+// NewRoutedCompatibilitySessionV2 exposes only observation to a grouped writer.
+// All effects belong to the independently selected v3 authority. This choice
+// is fixed for the session lifetime and cannot be changed by a wire request.
+func NewRoutedCompatibilitySessionV2(run string, namespace uint64, engine Engine, guardian *nftguardian.Guardian, observe Observer) (*SessionV2, error) {
+	s, err := NewSessionV2(run, namespace, engine, guardian, observe)
+	if err != nil {
+		return nil, err
+	}
+	s.readOnly = true
+	return s, nil
 }
 func NewLocalSessionV2(run string, namespace uint64, engine Engine, guardian *nftguardian.Guardian, compile firewallipc.Compiler, observe func(context.Context) (string, localpolicy.Observation, error)) (*SessionV2, error) {
 	b, e := NewLocalSession(run, namespace, engine, guardian, compile, observe)
@@ -164,6 +177,9 @@ func (s *SessionV2) handleV2(ctx context.Context, epoch uint64, m firewallipc.Re
 	reply := firewallipc.ReplyV2{ProtocolVersion: 2, Run: m.Run, Sequence: m.Sequence, Namespace: m.Namespace, Domain: m.Domain, Verb: m.Verb}
 	result := firewallipc.ResultV2{}
 	var err error
+	if s.readOnly && m.Verb != "state" && m.Verb != "observe" && m.Verb != "attach_observed" {
+		err = errHelper
+	}
 	if m.Verb != "state" && m.Verb != "observe" && m.Verb != "attach_observed" && (!s.attached || (s.cold && m.Verb != "bootstrap")) {
 		err = errHelper
 	}
