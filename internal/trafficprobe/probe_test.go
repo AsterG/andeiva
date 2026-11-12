@@ -330,15 +330,11 @@ func dnsResponse(query []byte, truncated bool) []byte {
 func TestDNSExplicitServerAndObservedTCPFallback(t *testing.T) {
 	for _, fallback := range []bool{false, true} {
 		t.Run(map[bool]string{false: "udp", true: "udp-then-tcp"}[fallback], func(t *testing.T) {
-			tcp, err := net.Listen("tcp4", "127.0.0.1:0")
+			tcp, udp, err := listenDNSPair(net.ListenPacket, net.Listen)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer tcp.Close()
-			udp, err := net.ListenPacket("udp4", tcp.Addr().String())
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer udp.Close()
 			go func() {
 				var b [4096]byte
