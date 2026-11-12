@@ -239,7 +239,7 @@ func (c *v2Coordinator) status(principal v2TrustedPrincipal) (v2Configuration, u
 	if c.closed || c.store.blocked {
 		return v2Configuration{}, 0, errV2Unavailable
 	}
-	if !c.store.subject(principal.Subject) || (principal.Role != RoleAdmin && principal.Role != RoleViewer) {
+	if !c.store.principalV2Locked(principal) || (principal.Role != RoleAdmin && principal.Role != RoleViewer) {
 		return v2Configuration{}, 0, ErrDenied
 	}
 	return clone(*c.store.state.Configuration), c.store.state.Generation, nil
@@ -249,13 +249,18 @@ func (c *v2Coordinator) execute(ctx context.Context, principal v2TrustedPrincipa
 	s := c.store
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return c.executeLocked(ctx, principal, id)
+}
+
+func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPrincipal, id string) (v2CoordinatorResult, error) {
+	s := c.store
 	result := func(op v2Operation) v2CoordinatorResult {
 		return v2CoordinatorResult{Operation: clone(op), Current: clone(*s.state.Configuration), GlobalGeneration: s.state.Generation}
 	}
 	if c.closed || s.blocked {
 		return v2CoordinatorResult{}, errV2Unavailable
 	}
-	if principal.Role != RoleAdmin || !s.subject(principal.Subject) {
+	if principal.Role != RoleAdmin || !s.principalV2Locked(principal) {
 		return v2CoordinatorResult{}, ErrDenied
 	}
 	op, err := s.lookupLocked(principal.Subject, id)

@@ -155,6 +155,10 @@ func prepareMigrationV2(destination, firewall, local *os.Root, subjects []v2Subj
 }
 
 func prepareMigrationV2WithHook(destination, firewall, local *os.Root, subjects []v2Subject, bindings []v2LegacyBinding, budget v2Budget, now time.Time, hook func(string) error) (*v2Store, error) {
+	return prepareMigrationExpectedV2(destination, firewall, local, subjects, bindings, budget, now, hook, nil)
+}
+
+func prepareMigrationExpectedV2(destination, firewall, local *os.Root, subjects []v2Subject, bindings []v2LegacyBinding, budget v2Budget, now time.Time, hook func(string) error, expected *[2]LegacyFingerprintV2) (*v2Store, error) {
 	if destination == nil || firewall == nil || local == nil {
 		return nil, errV2Invalid
 	}
@@ -192,6 +196,9 @@ func prepareMigrationV2WithHook(destination, firewall, local *os.Root, subjects 
 	}
 	if fw.Source == ls.Source {
 		return nil, errV2Invalid
+	}
+	if expected != nil && (fingerprintLegacyV2(fw) != expected[0] || fingerprintLegacyV2(ls) != expected[1]) {
+		return nil, ErrConflict
 	}
 	lineage, err := v2ID("lineage", 1)
 	if err != nil {

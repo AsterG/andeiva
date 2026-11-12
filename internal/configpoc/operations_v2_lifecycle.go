@@ -64,6 +64,10 @@ func (s *v2Store) changeSubject(id, login, credentialRevision string, retire boo
 func (s *v2Store) closeNamespace(subject, id string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.closeNamespaceLocked(subject, id, now)
+}
+
+func (s *v2Store) closeNamespaceLocked(subject, id string, now time.Time) error {
 	if s.blocked || now.Before(s.state.Clock) {
 		return errV2Unavailable
 	}
