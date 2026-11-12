@@ -24,6 +24,7 @@ type NetworkState = configpoc.NetworkState
 const (
 	Baseline   = configpoc.Baseline
 	Configured = configpoc.Configured
+	NoNetwork  = configpoc.NoNetwork
 )
 
 type TableStateV1 = configpoc.TableStateV1

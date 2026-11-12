@@ -12,6 +12,9 @@ func (r *v2ReachabilityReader) routedWork(hash, key string, state v2State, depth
 		if plan.work.Kind == v2BootKind && !hasFeatureV2(state, v2RoutedBootFeature) {
 			return errV2Unavailable
 		}
+		if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(state, v2RoutedNoNetworkFeature) {
+			return errV2Unavailable
+		}
 		if err = routedBootHistoryV2(plan, state, r.object); err != nil {
 			return err
 		}

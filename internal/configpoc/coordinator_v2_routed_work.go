@@ -15,11 +15,18 @@ func routedPreparationV2(input RoutedPreparationV1, previous, target RoutedActiv
 		return RoutedPreparationV1{}, err
 	}
 	deps, err := CanonicalDependencies(input.Dependencies)
-	if err != nil || before.Network.Hash != deps.Prepared.Hash || after.Network.Hash != deps.Prepared.Hash {
+	if err != nil || !RoutedOwnershipMatchesDependencies(before, deps) || !RoutedOwnershipMatchesDependencies(after, deps) {
 		return RoutedPreparationV1{}, ErrRecovery
 	}
 	if target.Firewall.Config.SchemaVersion == 4 {
-		if cold || previous.Firewall.Config.Routed == nil || deps.Network.Hash != previous.Firewall.Config.Routed.Network.Hash || after.NetworkState != Baseline || after.RoutedFirewall.Presence != Absent || after.LegacyFirewall.Revision == nil || after.LegacyFirewall.Revision.Hash != target.Firewall.Hash || after.LocalServices.Revision != nil && after.LocalServices.Revision.Hash != target.LocalServices.Hash {
+		if cold || (after.NetworkState != Baseline && after.NetworkState != NoNetwork) || after.RoutedFirewall.Presence != Absent || after.LegacyFirewall.Revision == nil || after.LegacyFirewall.Revision.Hash != target.Firewall.Hash || after.LocalServices.Revision != nil && after.LocalServices.Revision.Hash != target.LocalServices.Hash {
+			return RoutedPreparationV1{}, ErrRecovery
+		}
+		if previous.Firewall.Config.SchemaVersion == 4 {
+			if deps.Version != 2 || before.NetworkState != NoNetwork || after.NetworkState != NoNetwork {
+				return RoutedPreparationV1{}, ErrRecovery
+			}
+		} else if previous.Firewall.Config.Routed == nil || deps.Network.Hash != previous.Firewall.Config.Routed.Network.Hash {
 			return RoutedPreparationV1{}, ErrRecovery
 		}
 		if after.LocalServices.Presence == Absent {
@@ -33,7 +40,7 @@ func routedPreparationV2(input RoutedPreparationV1, previous, target RoutedActiv
 		return RoutedPreparationV1{}, ErrRecovery
 	}
 	if previous.Firewall.Config.SchemaVersion == 4 {
-		if previous.Firewall.Config.SchemaVersion != 4 || before.NetworkState != Baseline || before.RoutedFirewall.Presence != Absent || (before.LegacyFirewall.Revision != nil && before.LegacyFirewall.Revision.Hash != previous.Firewall.Hash) || (before.LocalServices.Revision != nil && before.LocalServices.Revision.Hash != previous.LocalServices.Hash) {
+		if (before.NetworkState != Baseline && before.NetworkState != NoNetwork) || before.RoutedFirewall.Presence != Absent || (before.LegacyFirewall.Revision != nil && before.LegacyFirewall.Revision.Hash != previous.Firewall.Hash) || (before.LocalServices.Revision != nil && before.LocalServices.Revision.Hash != previous.LocalServices.Hash) {
 			return RoutedPreparationV1{}, ErrRecovery
 		}
 		if before.LegacyFirewall.Presence == Absent && len(previous.Firewall.Config.Rules) != 0 {
@@ -114,6 +121,9 @@ func (c *v2Coordinator) publishRoutedWorkV2(ctx context.Context, op v2Operation,
 	}
 	work := v2RoutedWork{Version: 1, Lineage: c.store.state.Lineage, Operation: op.ID, Subject: op.Subject, Generation: intent.TargetGeneration, Lease: target.Pending.Lease, Deadline: target.Pending.Deadline, Cold: cold, Transition: RoutedTransitionV1{Version: 1, Operation: op.ID, Previous: intent.Previous, Target: intent.Target}}
 	work.Scope = RoutedWorkScopeV1{Version: 1, Identity: c.options.RoutedIdentity, Lineage: work.Lineage, Generation: work.Generation}
+	if hasFeatureV2(c.store.state, v2RoutedNoNetworkFeature) {
+		work.Kind = op.Request.Kind
+	}
 	if !cold {
 		baselineHash, _, err := c.routedBaselineV2()
 		if err != nil {
@@ -158,7 +168,7 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	boot := work.Kind == v2BootKind
-	if work.Kind != "" && !boot || boot && (work.Subject != "" || !work.Cold || !validHash(work.BootRecord) || work.Lease != work.Operation || work.BootBaseline == nil) || !boot && (work.Subject == "" || work.BootRecord != "" || work.BootBaseline != nil) {
+	if work.Kind != "" && work.Kind != OpCommit && work.Kind != OpRollback && !boot || boot && (work.Subject != "" || !work.Cold || !validHash(work.BootRecord) || work.Lease != work.Operation || work.BootBaseline == nil) || !boot && (work.Subject == "" || work.BootRecord != "" || work.BootBaseline != nil) {
 		return plan, errV2Unavailable
 	}
 	if work.Version != 1 || work.Lineage != lineage || work.Operation == "" || work.Generation == 0 || work.Lease == "" || work.Deadline.IsZero() || work.Deadline.Location() != time.UTC || !work.Transition.ValidShape() || work.Transition.Operation != work.Operation || work.Scope.Version != 1 || work.Scope.Lineage != lineage || work.Scope.Generation != work.Generation || !validRoutedIdentityV1(work.Scope.Identity) {
@@ -218,10 +228,10 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 			plan.baseline = clone(work.BootBaseline)
 		}
 	}
-	if plan.preparation.Dependencies.Prepared.Hash != plan.baseline.Dependencies.Prepared.Hash || plan.preparation.Dependencies.Network.Hash != plan.baseline.Dependencies.Network.Hash {
+	if !routedBaselineDependenciesMatchV2(plan.preparation.Dependencies, plan.baseline.Dependencies) {
 		return plan, errV2Unavailable
 	}
-	if plan.target.Firewall.Config.SchemaVersion == 4 {
+	if plan.target.Firewall.Config.SchemaVersion == 4 && !(work.Kind == OpCommit && plan.preparation.Dependencies.Version == 2) {
 		_, expected, e1 := v2Canonical(plan.baseline.Owned)
 		_, actual, e2 := v2Canonical(plan.preparation.Target)
 		if e1 != nil || e2 != nil || expected != actual || plan.target.Composite.Hash != plan.baseline.Saved.Composite.Hash {
@@ -268,6 +278,9 @@ func (c *v2Coordinator) selectedRoutedPlanV2() (RoutedSelectedPlanV1, error) {
 	if plan.work.Scope.Identity != c.options.RoutedIdentity {
 		return plan, ErrRecovery
 	}
+	if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(s.state, v2RoutedNoNetworkFeature) {
+		return plan, ErrRecovery
+	}
 	if plan.work.Kind == v2BootKind {
 		var record v2RecoveryRecord
 		if c.store.readObject(c.store.state.Configuration.LastRecovery, &record) != nil || !routedBootRecordMatchesV2(plan, record) {
@@ -289,6 +302,9 @@ func validateRoutedWorkIntentV2(intent *v2CoordinatorIntent, plan RoutedSelected
 			return ErrRecovery
 		}
 		return nil
+	}
+	if !intent.Recovery && intent.Kind != OpConfirm && plan.work.Kind != "" && plan.work.Kind != intent.Kind {
+		return ErrRecovery
 	}
 	if intent.Kind == OpConfirm || intent.Recovery {
 		if intent.Recovery && (intent.OriginCommit != plan.work.Operation || intent.Lease != plan.work.Lease) {

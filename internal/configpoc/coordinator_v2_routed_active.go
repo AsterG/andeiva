@@ -17,6 +17,9 @@ func validateRoutedActiveV2(state v2State, load func(string, any) error) error {
 	if plan.work.Kind == v2BootKind && !hasFeatureV2(state, v2RoutedBootFeature) {
 		return errV2Unavailable
 	}
+	if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(state, v2RoutedNoNetworkFeature) {
+		return errV2Unavailable
+	}
 	if err = routedBootHistoryV2(plan, state, load); err != nil {
 		return err
 	}

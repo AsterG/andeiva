@@ -42,3 +42,21 @@ A candidata é preservada sem rebase silencioso se Startup mudar Running.
 O transporte kernel/rede é simulado. Startup4 inicial sem plano L3 continua
 recusado até integrar o perfil explícito sem rede; nenhum plano padrão é
 inventado para contornar essa limitação.
+
+O perfil de artefatos sem rede distingue os enlaces observados de um plano de
+rede desejado. A candidata schema4, habilitada por capacidade, captura ambos os
+domínios; o proprietário do grupo rejeita escritas independentes de firewall e
+serviços locais. A validação da inicialização exige o testemunho protegido da
+revisão salva, uma observação exata e a política legada prospectiva identificada
+separadamente. Não implementa o adaptador físico sem rede nem ativa uma opção
+do instalador.
+
+As candidatas agrupadas próprias possuem as operações explícitas
+`replace_candidate` e `discard_candidate`. Ambas exigem a geração global atual e
+`expected_candidate_stage_operation_id`. A substituição recebe a configuração
+completa do firewall e preserva a candidata local selecionada; recusa alterar o
+acesso local sem a prova existente. Descartar retira apenas as candidatas
+selecionadas, preservando a auditoria protegida e os resultados históricos.
+Stage continua exigindo ausência de candidata. Essas operações não aplicam
+alterações de rede nem firewall; o marcador selecionado impede interpretações
+silenciosas por leitores anteriores.

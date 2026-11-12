@@ -102,6 +102,10 @@ func validRoutedIdentityV1(identity networkexecutor.OwnedNamespaceIdentity) bool
 func (p RoutedSelectedPlanV1) Scope() RoutedWorkScopeV1 { return p.work.Scope }
 func (p RoutedSelectedPlanV1) Resolution() string       { return p.resolution }
 
+func routedWorkUsesNoNetworkV2(p RoutedSelectedPlanV1) bool {
+	return p.work.Kind == OpCommit || p.work.Kind == OpRollback || p.preparation.Before.Version == 2 || p.preparation.Target.Version == 2 || p.preparation.Dependencies.Version == 2
+}
+
 type v2RoutedOwned struct {
 	Version   int     `json:"version"`
 	Lineage   string  `json:"lineage"`

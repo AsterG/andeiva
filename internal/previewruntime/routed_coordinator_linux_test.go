@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -169,6 +170,11 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	binding, err := auth.ResolveSession(token)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, domain := range []string{"firewall", "local_services"} {
+		if _, e := service.Namespace(binding, domain, time.Hour); !errors.Is(e, configpoc.ErrDenied) {
+			t.Fatal("independent legacy writer allowed beside group", domain, e)
+		}
 	}
 	initial, err := service.Status(binding)
 	if err != nil {

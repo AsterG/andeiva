@@ -518,6 +518,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	st.Clock = now
 	st.Configuration.Intent = &v2CoordinatorIntent{Operation: op.ID, Subject: op.Subject, Domain: op.Domain, Kind: op.Request.Kind, Previous: previousHash, Target: targetHash, TargetGeneration: generation}
+	if op.Request.Kind == OpReplaceCandidate || op.Request.Kind == OpDiscardCandidate {
+		addFeatureV2(&st, v2OwnedCandidateFeature)
+	}
 	if err = c.publishRoutedWorkV2(ctx, op, state, target, st.Configuration.Intent); err != nil {
 		return result(op), err
 	}
@@ -622,7 +625,7 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 		}
 		return routedTargetV2(c.store, op, state, now, lease)
 	}
-	if state.CandidateGroup != nil || state.Firewall.Running.Config.SchemaVersion == 6 {
+	if state.CandidateGroup != nil || state.Firewall.Running.Config.SchemaVersion == 6 || c.options.Routed != nil && hasFeatureV2(c.store.state, v2RoutedFeature) {
 		return state, false, ErrConflict
 	}
 	target := clone(state)
