@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 )
 
 // GroupEngine is supplied by trusted assembly, never by an administrative body.
@@ -23,6 +24,25 @@ type GroupEngine interface {
 	RestoreOwned(context.Context, string) error
 }
 
+type RecoveredFinality string
+
+const (
+	BeforeRestored  RecoveredFinality = "before-restored"
+	TargetConfirmed RecoveredFinality = "confirmed-target"
+)
+
+// RecoveredIdleV1 is an internal trusted-engine witness, never a caller/wire DTO.
+// The engine must authenticate original Work scope and durable selected finality;
+// field shape or a supplied enum does not confer that authority.
+type RecoveredIdleV1 struct {
+	Plan     configpoc.RoutedTransitionV1
+	Bundle   *configpoc.RoutedActivationBundleV1
+	OwnedRef string
+	Deadline time.Time
+	Scope    networkexecutor.OwnedNamespaceIdentity
+	Finality RecoveredFinality
+}
+
 // Group uses the same receipt/timer/CAS core as Guardian for one complete bundle.
 // It owns no journal or storage. Assembly must not enable it without a real
 // selected-plan validator and exclusive component writers under this authority.
@@ -32,6 +52,7 @@ type Group struct {
 	plan             configpoc.RoutedTransitionV1
 	previous, target configpoc.RoutedActivationBundleV1
 	cold             bool
+	recoveredOwned   string
 }
 
 func NewGroup(engine GroupEngine) (*Group, error) {
@@ -86,6 +107,7 @@ func (g *Group) BootstrapStartup(ctx context.Context, plan configpoc.RoutedTrans
 	}
 	if err := g.armUntilLocked(plan.Operation, "", target.Composite.Hash, deadline, func() {
 		g.plan, g.target, g.cold = plan, target, true
+		g.recoveredOwned = ""
 	}, g.expire); err != nil {
 		return err
 	}
@@ -122,6 +144,7 @@ func (g *Group) ArmUntilLease(ctx context.Context, plan configpoc.RoutedTransiti
 	}
 	return g.armUntilLocked(leaseID, previous.Composite.Hash, target.Composite.Hash, deadline, func() {
 		g.plan, g.previous, g.target, g.cold = plan, previous, target, false
+		g.recoveredOwned = ""
 	}, g.expire)
 }
 
@@ -135,7 +158,8 @@ func (g *Group) ArmBootstrapUntilLease(ctx context.Context, plan configpoc.Route
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closed || g.engine == nil || g.state.Phase != "bootstrap" || !plan.ValidShape() || len(leaseID) < 1 || len(leaseID) > 64 || deadline.IsZero() || deadline.Location() != time.UTC || deadline.Sub(time.Now()) > g.maxTTL {
+	newCold := g.state.Phase == "bootstrap" || (g.state.Phase == "idle" && g.state.ID == "" && plan.Operation != g.plan.Operation)
+	if g.closed || g.engine == nil || !newCold || !plan.ValidShape() || len(leaseID) < 1 || len(leaseID) > 64 || deadline.IsZero() || deadline.Location() != time.UTC || deadline.Sub(time.Now()) > g.maxTTL {
 		return ErrLease
 	}
 	target, err := configpoc.CanonicalRoutedActivationBundleV1(target)
@@ -149,7 +173,56 @@ func (g *Group) ArmBootstrapUntilLease(ctx context.Context, plan configpoc.Route
 	}
 	return g.armUntilLocked(leaseID, "", target.Composite.Hash, deadline, func() {
 		g.plan, g.previous, g.target, g.cold = plan, configpoc.RoutedActivationBundleV1{}, target, true
+		g.recoveredOwned = ""
 	}, g.expire)
+}
+
+// RecoverIdle initializes only a fresh helper's finalized idle state. It never
+// recreates a pending receipt or starts a replacement confirmation window.
+func (g *Group) RecoverIdle(ctx context.Context, plan configpoc.RoutedTransitionV1) error {
+	if g == nil || ctx == nil {
+		return ErrLease
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed || g.engine == nil || g.state.Phase != "bootstrap" || g.state.ID != "" || g.timer != nil || !plan.ValidShape() || ctx.Err() != nil {
+		return ErrLease
+	}
+	provider, ok := g.engine.(interface {
+		RecoveredIdle(context.Context, configpoc.RoutedTransitionV1) (RecoveredIdleV1, error)
+	})
+	if !ok {
+		return ErrLease
+	}
+	witness, err := provider.RecoveredIdle(ctx, plan)
+	if err != nil || witness.Plan != plan || witness.Deadline.IsZero() || witness.Deadline.Location() != time.UTC || !ownedDigest(witness.OwnedRef) {
+		return ErrLease
+	}
+	switch witness.Finality {
+	case BeforeRestored:
+		if witness.OwnedRef != plan.BeforeOwned {
+			return ErrLease
+		}
+	case TargetConfirmed:
+		if witness.OwnedRef != plan.TargetOwned || witness.Bundle == nil {
+			return ErrLease
+		}
+	default:
+		return ErrLease
+	}
+	var bundle configpoc.RoutedActivationBundleV1
+	if witness.Bundle != nil {
+		bundle, err = configpoc.CanonicalRoutedActivationBundleV1(*witness.Bundle)
+		if err != nil {
+			return ErrLease
+		}
+	}
+	if g.engine.Current() != bundle.Composite.Hash || !g.ownedMatches(ctx, witness.OwnedRef) || ctx.Err() != nil {
+		return ErrLease
+	}
+	g.plan, g.previous, g.target = plan, bundle, bundle
+	g.cold, g.recoveredOwned, g.state = witness.Bundle == nil, witness.OwnedRef, State{Phase: "idle"}
+	return nil
 }
 
 func (g *Group) previousHash() string {
@@ -251,6 +324,12 @@ func (g *Group) observedLocked() (State, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	hash := g.engine.Current()
+	if g.state.Phase == "idle" && g.state.ID == "" && g.recoveredOwned != "" {
+		if !g.ownedMatches(ctx, g.recoveredOwned) {
+			return State{}, "", ErrLease
+		}
+		return g.snapshotLocked(hash, g.cold && hash == "")
+	}
 	before := g.cold && g.state.Phase != "pending" && hash == "" && g.ownedMatches(ctx, g.plan.BeforeOwned)
 	if g.state.Phase == "bootstrap" {
 		owned, err := g.engine.ObserveOwned(ctx)
