@@ -31,7 +31,7 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 			return errV2Unavailable
 		}
 		if intent.Recovery {
-			if intent.OriginCommit == "" || intent.Lease == "" || state.LastRecovery == "" {
+			if state.LastRecovery == "" || (intent.Kind != v2BootKind && (intent.OriginCommit == "" || intent.Lease == "")) {
 				return errV2Unavailable
 			}
 		} else {
@@ -63,6 +63,14 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 		}
 		if record.State == "pending" && (state.Intent == nil || !state.Intent.Recovery || state.Intent.Operation != record.ID || state.Intent.Lease != record.Lease || state.Intent.OriginCommit != record.Origin) {
 			return errV2Unavailable
+		}
+		if record.Kind == v2BootKind && (len(s.state.RequiredFeatures) != 1 || (record.State == "pending" && (state.Intent.Kind != v2BootKind || state.Intent.BootID == nil || *state.Intent.BootID != *record.BootID))) {
+			return errV2Unavailable
+		}
+	}
+	if state.LastCompletedBoot != "" {
+		if err := c.validateCompletedBootLocked(state.LastCompletedBoot); err != nil {
+			return err
 		}
 	}
 	return nil

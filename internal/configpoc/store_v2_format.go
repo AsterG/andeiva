@@ -90,6 +90,7 @@ type v2Operation struct {
 	Retired       bool       `json:"retired"`
 }
 type v2State struct {
+	RequiredFeatures  []string         `json:"required_features,omitempty"`
 	Format            string           `json:"format"`
 	Lineage           string           `json:"lineage"`
 	Generation        uint64           `json:"generation,string"`
