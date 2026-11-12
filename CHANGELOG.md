@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — prepared routed composite references
+
+- Validate schema 7 references against canonical firewall and local-service payloads, deriving network identity from the routed firewall revision.
+- Keep existing schema 5 behavior unchanged; runtime migration, administrative operations and grouped activation remain separately gated.
+
 ## Unreleased — internal transaction recovery reserves
 
 - Bind preallocated admission, plan and emergency pools to the selected v2 transaction lifecycle; retain uncertain operations without publishing unverified Running state.
