@@ -329,6 +329,11 @@
 - Keep runtime selectors, shared-schema migration, kernel enforcement and
   administrative recovery outside this compiler-only change.
 
+## Unreleased — lifecycle failure diagnostics
+
+- Preserve bounded, allowlisted failure categories for privileged preview lifecycle diagnostics without exposing raw errors, paths, addresses or secrets.
+- Release owned runtime resources before emitting diagnostic output, so a blocked logger cannot retain fixture resources. Keep health checks and recovery restrictions unchanged.
+- Document diagnostics and limitations in EN/ES/PT. These changes do not establish the cause of earlier runtime failures.
 ## Unreleased — persistent Firewall Alpha Preview
 
 - Package the existing administrative workflow for Debian 13 AMD64 with separate
