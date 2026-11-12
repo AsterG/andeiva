@@ -104,11 +104,23 @@ func (s *v2Store) namespaceLocked(subject, domain string, now time.Time, lifetim
 		return v2Namespace{}, errV2Invalid
 	}
 	for _, ns := range s.state.Namespaces {
-		if ns.Subject == subject && ns.Domain == domain && !ns.Closed && now.Before(ns.AdmitUntil) {
+		if ns.Subject == subject && ns.Domain == domain && ns.ClosingOrigin == "" && !ns.Closed && now.Before(ns.AdmitUntil) {
 			return clone(ns), nil
 		}
 	}
-	if uint64(len(s.state.Namespaces)) >= s.state.NamespaceSlots || s.state.NamespaceSequence == ^uint64(0) {
+	if s.state.RecoveryReserveVersion == 1 {
+		for _, ns := range s.state.Namespaces {
+			if ns.Subject == subject && ns.Domain == domain && ns.ClosingOrigin != "" && !ns.Closed && now.Before(ns.AdmitUntil) {
+				return clone(ns), nil
+			}
+		}
+		if ns, err := s.closingNamespaceLocked(subject, domain, now, lifetime); err == nil {
+			return ns, nil
+		} else if err != errV2Limited {
+			return v2Namespace{}, err
+		}
+	}
+	if uint64(len(s.state.Namespaces))+closingRegistryReservedV2(s.state) >= s.state.NamespaceSlots || s.state.NamespaceSequence == ^uint64(0) {
 		return v2Namespace{}, errV2Limited
 	}
 	id, err := v2ID("ns", s.state.NamespaceSequence+1)
@@ -164,15 +176,49 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 	if err != nil || len(data) > 8192 {
 		return v2Operation{}, errV2Invalid
 	}
+	if s.state.RecoveryReserveVersion == 1 && request.Kind == OpConfirm {
+		return s.admitClosingLocked(subject, namespace, expected, request, now)
+	}
+	if ns.ClosingOrigin != "" {
+		return v2Operation{}, errV2Invalid
+	}
+	closingBytes, closingInodes := uint64(0), uint64(0)
+	if s.state.RecoveryReserveVersion == 1 {
+		entries := s.state.OccupiedOrdinary + s.state.OccupiedClosing + closingEntriesReservedV2(s.state) + 1
+		if closingPotentialV2(request) {
+			if len(s.state.ClosingCredits) >= v2MaximumClosingCredits || uint64(len(s.state.Namespaces))+closingRegistryReservedV2(s.state) >= s.state.NamespaceSlots {
+				return v2Operation{}, errV2Limited
+			}
+			closingBytes, closingInodes = v2ClosingReserveBytes, v2ClosingReserveInodes
+			entries++
+		}
+		if entries > s.state.LiveSlots {
+			return v2Operation{}, errV2Limited
+		}
+	}
 	// Worst-case lifecycle plus a separate double-selection margin. These are
 	// accounting checks, not a filesystem quota or a physical reservation.
-	if len(ns.Open) >= v2MaximumOpen || s.state.HighWater == ^uint64(0) || s.used.Bytes+s.state.ReservedBytes+2*v2OperationReserveBytes > s.budget.Bytes || s.used.Inodes+s.state.ReservedInodes+2*v2OperationReserveInodes > s.budget.Inodes {
+	if len(ns.Open) >= v2MaximumOpen || s.state.HighWater == ^uint64(0) || !closingBudgetFitsV2(s.used.Bytes, s.state.ReservedBytes, 2*v2OperationReserveBytes+closingBytes, s.budget.Bytes) || !closingBudgetFitsV2(s.used.Inodes, s.state.ReservedInodes, 2*v2OperationReserveInodes+closingInodes, s.budget.Inodes) {
 		return v2Operation{}, errV2Limited
 	}
-	if err := s.physicalCapacity(2*v2OperationReserveBytes, 2*v2OperationReserveInodes); err != nil {
+	if err := s.physicalCapacity(2*v2OperationReserveBytes+closingBytes, 2*v2OperationReserveInodes+closingInodes); err != nil {
 		return v2Operation{}, err
 	}
-	if s.state.HighWater >= s.state.LiveSlots {
+	if s.state.RecoveryReserveVersion == 1 {
+		hash, e := s.ordinarySlotHashV2(s.state.HighWater % s.state.LiveSlots)
+		if e != nil && e != errV2NotFound {
+			return v2Operation{}, e
+		}
+		if e == nil {
+			var old v2Operation
+			if s.readObject(hash, &old) != nil || !s.validOperation(old) {
+				return v2Operation{}, errV2Unavailable
+			}
+			if !old.Retired || old.State != "final" || old.Pinned || old.RetainUntil == nil || now.Before(*old.RetainUntil) {
+				return v2Operation{}, errV2Limited
+			}
+		}
+	} else if s.state.HighWater >= s.state.LiveSlots {
 		hash, e := s.indexGet(s.state.Index, s.state.HighWater+1-s.state.LiveSlots)
 		var old v2Operation
 		if e != nil || s.readObject(hash, &old) != nil || !s.validOperation(old) {
@@ -198,6 +244,18 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 	st.Namespaces[i].Open = append(st.Namespaces[i].Open, id)
 	st.ReservedBytes += v2OperationReserveBytes
 	st.ReservedInodes += v2OperationReserveInodes
+	if st.RecoveryReserveVersion == 1 {
+		st.OccupiedOrdinary++
+		if closingBytes != 0 {
+			creditID, e := v2ID("closing", op.Sequence)
+			if e != nil {
+				return v2Operation{}, e
+			}
+			st.ClosingCredits = append(st.ClosingCredits, v2ClosingCredit{ID: creditID, Origin: op.ID, Subject: subject, Domain: ns.Domain, Namespace: ns.ID})
+			st.ReservedBytes += closingBytes
+			st.ReservedInodes += closingInodes
+		}
+	}
 	if err = s.putOperation(&st, op); err != nil {
 		s.blocked = true
 		return v2Operation{}, err
@@ -211,6 +269,16 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 func (s *v2Store) putOperation(st *v2State, op v2Operation) error {
 	hash, err := s.object(op)
 	if err != nil {
+		return err
+	}
+	if op.ClosingCredit != "" {
+		if st.RecoveryReserveVersion != 1 {
+			return errV2Invalid
+		}
+		if op.Retired {
+			hash = ""
+		}
+		st.ClosingIndexRoot, err = s.closingIndexPut(st.ClosingIndexRoot, 0, op.Sequence, hash)
 		return err
 	}
 	st.Index, err = s.indexPut(st.Index, 2, op.Sequence, hash)
@@ -244,7 +312,7 @@ func (s *v2Store) lookupRetained(subject, id string) (v2Operation, error) {
 	if err != nil || strconv.FormatUint(seq, 10) != parts[2] {
 		return v2Operation{}, errV2NotFound
 	}
-	hash, err := s.indexGet(s.state.Index, seq)
+	hash, err := s.catalogueHashV2(seq)
 	if err != nil {
 		return v2Operation{}, err
 	}
@@ -278,6 +346,17 @@ func (s *v2Store) validOperation(op v2Operation) bool {
 			open = true
 		}
 	}
+	for _, child := range s.state.Namespaces[i].ClosingOpen {
+		if child.Operation == op.ID {
+			if open || op.ClosingCredit == "" || op.ClosingCredit != child.Credit || op.Request.Kind != OpConfirm || op.Request.Origin != child.Origin {
+				return false
+			}
+			open = true
+		}
+	}
+	if op.ClosingCredit != "" && s.state.RecoveryReserveVersion != 1 {
+		return false
+	}
 	if open != (op.State != "final" || op.Pinned) {
 		return false
 	}
@@ -309,7 +388,7 @@ func (s *v2Store) begin(subject, id string, now time.Time) (v2Operation, error) 
 		return op, nil
 	}
 	for _, namespace := range s.state.Namespaces {
-		for _, otherID := range namespace.Open {
+		for _, otherID := range namespaceOpenIDsV2(namespace) {
 			if otherID == id {
 				continue
 			}
@@ -339,6 +418,11 @@ func (s *v2Store) begin(subject, id string, now time.Time) (v2Operation, error) 
 	op.Pinned = true
 	s.allowance = v2Budget{Bytes: v2OperationReserveBytes, Inodes: v2OperationReserveInodes}
 	defer func() { s.allowance = v2Budget{} }()
+	restore, err := s.closingOperationAllowanceLocked(op)
+	if err != nil {
+		return v2Operation{}, err
+	}
+	defer restore()
 	st := clone(s.state)
 	st.Clock = now.UTC()
 	if err = s.putOperation(&st, op); err != nil {
@@ -379,6 +463,11 @@ func (s *v2Store) finish(subject, id string, outcome v2Outcome, audit []byte, no
 	}
 	s.allowance = v2Budget{Bytes: v2OperationReserveBytes, Inodes: v2OperationReserveInodes}
 	defer func() { s.allowance = v2Budget{} }()
+	restore, err := s.closingOperationAllowanceLocked(op)
+	if err != nil {
+		return v2Operation{}, err
+	}
+	defer restore()
 	auditHash, err := s.object(struct {
 		Format    string `json:"format"`
 		Operation string `json:"operation"`
@@ -413,6 +502,17 @@ func (s *v2Store) finish(subject, id string, outcome v2Outcome, audit []byte, no
 }
 
 func v2Release(st *v2State, op v2Operation) {
+	if op.ClosingCredit != "" {
+		for i := range st.Namespaces {
+			for j, child := range st.Namespaces[i].ClosingOpen {
+				if child.Operation == op.ID && child.Credit == op.ClosingCredit {
+					st.Namespaces[i].ClosingOpen = append(st.Namespaces[i].ClosingOpen[:j], st.Namespaces[i].ClosingOpen[j+1:]...)
+					return
+				}
+			}
+		}
+		return
+	}
 	for i := range st.Namespaces {
 		if st.Namespaces[i].ID == op.Namespace {
 			for j, id := range st.Namespaces[i].Open {
@@ -445,7 +545,10 @@ func (s *v2Store) listLocked(subject, namespace string, after uint64, limit int)
 	// an authorization assertion; every resulting record is checked.
 	for count := 0; after < s.state.HighWater && count < 1000; count++ {
 		after++
-		hash, err := s.indexGet(s.state.Index, after)
+		hash, err := s.catalogueHashV2(after)
+		if s.state.RecoveryReserveVersion == 1 && err == errV2NotFound {
+			continue
+		}
 		if err != nil {
 			return nil, 0, err
 		}

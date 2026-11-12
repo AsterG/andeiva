@@ -265,7 +265,7 @@ func v2ValidState(st v2State) bool {
 	if st.Configuration != nil && st.Configuration.Intent != nil && st.Configuration.Intent.Kind == v2BootKind {
 		reserved++
 	}
-	return st.ReservedBytes == reserved*v2OperationReserveBytes && st.ReservedInodes == reserved*v2OperationReserveInodes
+	return validClosingStateV2(st, reserved)
 }
 
 func (s *v2Store) readObject(hash string, value any) error {

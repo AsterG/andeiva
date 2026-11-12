@@ -81,7 +81,12 @@ func (s *v2Store) closeNamespaceLocked(subject, id string, now time.Time) error 
 	st := clone(s.state)
 	st.Namespaces[i].Closed = true
 	st.Clock = now.UTC()
-	for _, opID := range append([]string{}, st.Namespaces[i].Open...) {
+	closingRestore, err := s.closingBatchAllowanceLocked(st.Namespaces[i].ClosingOpen, nil)
+	if err != nil {
+		return err
+	}
+	defer closingRestore()
+	for _, opID := range namespaceOpenIDsV2(st.Namespaces[i]) {
 		op, err := s.lookupLocked(subject, opID)
 		if err != nil {
 			return err
@@ -105,6 +110,11 @@ func (s *v2Store) withoutEffects(st *v2State, op v2Operation, code string, now t
 	if st == nil || op.State != "accepted" {
 		return errV2Invalid
 	}
+	closingRestore, err := s.closingOperationAllowanceLocked(op)
+	if err != nil {
+		return err
+	}
+	defer closingRestore()
 	v2Release(st, op)
 	restore, err := s.releasedAllowance(st)
 	if err != nil {
@@ -137,8 +147,17 @@ func (s *v2Store) expire(now time.Time) error {
 	}
 	st := clone(s.state)
 	changed := false
+	children := []v2ClosingOpen{}
 	for _, ns := range s.state.Namespaces {
-		for _, id := range ns.Open {
+		children = append(children, ns.ClosingOpen...)
+	}
+	closingRestore, err := s.closingBatchAllowanceLocked(children, &now)
+	if err != nil {
+		return err
+	}
+	defer closingRestore()
+	for _, ns := range s.state.Namespaces {
+		for _, id := range namespaceOpenIDsV2(ns) {
 			op, err := s.lookupRetained(ns.Subject, id)
 			if err != nil {
 				return err
@@ -186,6 +205,11 @@ func (s *v2Store) releasePin(subject, id, reconciliation string, now time.Time) 
 	if !op.Pinned {
 		return nil
 	}
+	closingRestore, err := s.closingOperationAllowanceLocked(linked)
+	if err != nil {
+		return err
+	}
+	defer closingRestore()
 	st := clone(s.state)
 	op.Pinned = false
 	v2Release(&st, op)
@@ -218,8 +242,27 @@ func (s *v2Store) retire(subject, id string, now time.Time) error {
 	if op.State != "final" || op.Pinned || op.RetainUntil == nil || now.Before(*op.RetainUntil) {
 		return errV2Invalid
 	}
+	for _, credit := range s.state.ClosingCredits {
+		if credit.Origin == id || credit.Child == id {
+			return errV2Limited
+		}
+	}
+	wasRetired := op.Retired
 	op.Retired = true
 	st := clone(s.state)
+	if st.RecoveryReserveVersion == 1 && !wasRetired {
+		if op.ClosingCredit != "" {
+			if st.OccupiedClosing == 0 {
+				return errV2Unavailable
+			}
+			st.OccupiedClosing--
+		} else {
+			if st.OccupiedOrdinary == 0 {
+				return errV2Unavailable
+			}
+			st.OccupiedOrdinary--
+		}
+	}
 	st.Clock = now.UTC()
 	if err = s.putOperation(&st, op); err != nil {
 		s.blocked = true
@@ -241,25 +284,49 @@ func (s *v2Store) retireNamespace(subject, id string, now time.Time) error {
 		return errV2NotFound
 	}
 	ns := s.state.Namespaces[i]
-	if !ns.Closed || len(ns.Open) != 0 || now.Before(ns.AdmitUntil.Add(30*24*time.Hour)) {
+	if !ns.Closed || len(namespaceOpenIDsV2(ns)) != 0 || now.Before(ns.AdmitUntil.Add(30*24*time.Hour)) {
 		return errV2Invalid
 	}
-	count := s.state.HighWater
-	if count > s.state.LiveSlots {
-		count = s.state.LiveSlots
+	for _, credit := range s.state.ClosingCredits {
+		if credit.Namespace == id || credit.ChildNamespace == id || credit.ClosingNamespace == id {
+			return errV2Limited
+		}
 	}
-	for offset := uint64(0); offset < count; offset++ {
-		seq := s.state.HighWater - offset
-		hash, err := s.indexGet(s.state.Index, seq)
-		if err != nil {
+	if s.state.RecoveryReserveVersion == 1 {
+		if err := s.visitOrdinaryIndexV2(s.state.Index, 2, 0, func(op v2Operation) error {
+			if op.Namespace == id && (!op.Retired || op.State != "final" || op.Pinned || op.RetainUntil == nil || now.Before(*op.RetainUntil)) {
+				return errV2Limited
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
-		var op v2Operation
-		if s.readObject(hash, &op) != nil || !s.validOperation(op) {
-			return errV2Unavailable
+		if err := s.closingIndexVisit(s.state.ClosingIndexRoot, 0, func(op v2Operation) error {
+			if op.Namespace == id {
+				return errV2Limited
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
-		if op.Namespace == id && (!op.Retired || op.State != "final" || op.Pinned || op.RetainUntil == nil || now.Before(*op.RetainUntil)) {
-			return errV2Limited
+	} else {
+		count := s.state.HighWater
+		if count > s.state.LiveSlots {
+			count = s.state.LiveSlots
+		}
+		for offset := uint64(0); offset < count; offset++ {
+			seq := s.state.HighWater - offset
+			hash, err := s.indexGet(s.state.Index, seq)
+			if err != nil {
+				return err
+			}
+			var op v2Operation
+			if s.readObject(hash, &op) != nil || !s.validOperation(op) {
+				return errV2Unavailable
+			}
+			if op.Namespace == id && (!op.Retired || op.State != "final" || op.Pinned || op.RetainUntil == nil || now.Before(*op.RetainUntil)) {
+				return errV2Limited
+			}
 		}
 	}
 	st := clone(s.state)
@@ -291,6 +358,11 @@ func (s *v2Store) retireSubjectRecord(id string, now time.Time) error {
 			return errV2Limited
 		}
 	}
+	for _, credit := range s.state.ClosingCredits {
+		if credit.Subject == id {
+			return errV2Limited
+		}
+	}
 	if s.state.Migration != "" {
 		var migration v2Migration
 		if s.readObject(s.state.Migration, &migration) != nil {
@@ -315,6 +387,6 @@ func (s *v2Store) releasedAllowance(st *v2State) (func(), error) {
 		return nil, errV2Invalid
 	}
 	previous := s.allowance
-	s.allowance = v2Budget{Bytes: s.state.ReservedBytes - st.ReservedBytes, Inodes: s.state.ReservedInodes - st.ReservedInodes}
+	s.allowance = v2Budget{Bytes: max(previous.Bytes, s.state.ReservedBytes-st.ReservedBytes), Inodes: max(previous.Inodes, s.state.ReservedInodes-st.ReservedInodes)}
 	return func() { s.allowance = previous }, nil
 }
