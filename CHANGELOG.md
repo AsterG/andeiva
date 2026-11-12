@@ -5,6 +5,8 @@
 - Add authenticated Web and CLI consumers for grouped network, forwarding and source NAT configuration, with confirmed application, explicit persistence and durable operation lookup.
 - Preserve exact revision identities, block writes after uncertain execution and support explicit resumption of accepted requests without duplicate admission.
 - Expose bounded administrator-only v2 audit history and retain unbound reserve claims during reachability inspection without treating them as written plans.
+- Preserve historical candidates without automatic rebasing, and add explicit owner-checked replacement/discard with exact stage and generation guards.
+- Retain schema4 rule editing without fabricating routed network configuration.
 - Keep runtime migration, privileged helper activation and native appliance qualification independently gated.
 
 ## Unreleased — prepared routed composite references

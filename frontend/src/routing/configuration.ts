@@ -1,5 +1,5 @@
 import { ApiError, configurationRequest } from '../firewall/api.js';
-import type { PortRange } from '../firewall/model.js';
+import type { PortRange, Rule } from '../firewall/model.js';
 import { canonicalIPv4 } from '../firewall/model.js';
 import { interfaceAddress } from './networkPlan.js';
 
@@ -23,7 +23,8 @@ export type RoutedPolicy = {
 };
 export type RoutedConfig = { schema_version: 6; default_action: 'deny'; rules: []; routed: RoutedPolicy };
 type WireRoutedConfig = Omit<RoutedConfig, 'routed'> & { routed: Omit<RoutedPolicy, 'rules' | 'nat'> & { rules: RoutedRule[] | null; nat: RoutedPolicy['nat'] | null } };
-type Revision = { hash: string; config: WireRoutedConfig | { schema_version: 4; default_action: 'deny'; rules: unknown[] } };
+export type RetainedConfig = { schema_version: 4; default_action: 'deny'; rules: Rule[] };
+type Revision = { hash: string; config: WireRoutedConfig | RetainedConfig };
 type Composite = { hash: string; config: { schema_version: 7; domains: { firewall: { config_schema: number; revision: string }; local_services: { config_schema: 3; revision: string }; network: { config_schema: 1; revision: string } | null } } };
 export type ConfigurationCurrent = {
   global: { lineage_id: string; generation: string; running_revision: string; startup_revision: string }; domain: 'routed';
@@ -35,7 +36,7 @@ export type ConfigurationCurrent = {
   };
   routed: { schema_version: 7; running: Composite; startup: Composite; last_good: Composite; candidate?: Composite; local_services: unknown; candidate_group?: { stage_operation_id: string; owner: string; base: string; domains: string[] }; confirmation?: { origin_commit_operation_id: string; target_revision: string; confirmation_deadline: string } };
 };
-export type OperationRequest = { operation: 'stage' | 'validate' | 'commit' | 'confirm' | 'save' | 'rollback'; config?: RoutedConfig; confirm_seconds?: string; target_revision?: string; origin_commit_operation_id?: string };
+export type OperationRequest = { operation: 'stage' | 'validate' | 'commit' | 'confirm' | 'save' | 'rollback' | 'replace_candidate' | 'discard_candidate'; config?: RoutedConfig | RetainedConfig; expected_candidate_stage_operation_id?: string; confirm_seconds?: string; target_revision?: string; origin_commit_operation_id?: string };
 export type ConfigurationOperation = {
   id: string; namespace_id: string; domain: 'routed'; kind: OperationRequest['operation']; state: 'accepted' | 'pending' | 'final' | 'uncertain';
   expected_generation: string; outcome?: { code: string; error_code?: string; confirmation_deadline?: string };
@@ -93,6 +94,15 @@ function revision(value: unknown): Revision {
     const routed = object(config.routed), network = object(routed.network), plan = object(network.config);
     if (config.rules.length || routed.schema_version !== 1 || routed.lab_only !== true || routed.require_identification !== false || routed.require_inspection !== false || !hash(network.hash) || plan.schema_version !== 1 || plan.ipv6_forwarding !== 'deny' || !Array.isArray(plan.interfaces) || plan.interfaces.length < 2 || plan.interfaces.length > 32 || !Array.isArray(plan.zones) || plan.zones.length > 32 || !(routed.rules === null || Array.isArray(routed.rules) && routed.rules.length <= 128) || !(routed.nat === null || Array.isArray(routed.nat) && routed.nat.length <= 32)) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
     validatePolicy(plan, routed);
+  } else {
+    if (config.routed !== undefined || config.local_services !== undefined) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+    const ids = new Set<string>();
+    for (const value of config.rules) {
+      const rule = object(value), match = object(rule.match), sourcePorts = object(match.source_ports), destinationPorts = object(match.destination_ports);
+      const ports = (range: Record<string, unknown>) => Number.isInteger(range.from) && Number.isInteger(range.to) && Number(range.from) >= 1 && Number(range.to) >= Number(range.from) && Number(range.to) <= 65535;
+      if (!identifier(rule.id) || ids.has(rule.id) || typeof rule.enabled !== 'boolean' || !['allow', 'deny'].includes(typeof rule.action === 'string' ? rule.action : '') || !['tcp', 'udp'].includes(typeof match.protocol === 'string' ? match.protocol : '') || typeof match.source !== 'string' || canonicalIPv4(match.source) !== match.source || typeof match.destination !== 'string' || canonicalIPv4(match.destination) !== match.destination || !ports(sourcePorts) || !ports(destinationPorts)) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+      ids.add(rule.id);
+    }
   }
   return entry as Revision;
 }
@@ -133,7 +143,7 @@ export async function readCurrent(signal?: AbortSignal): Promise<ConfigurationCu
 }
 export function operationResponse(value: unknown, expectedID?: string): OperationResult {
   const data = object(value), operation = object(data.operation);
-  if (data.schema_version !== 2 || !operationID(operation.id) || !operationID(operation.namespace_id) || operation.domain !== 'routed' || !['accepted', 'pending', 'final', 'uncertain'].includes(typeof operation.state === 'string' ? operation.state : '') || !['stage', 'validate', 'commit', 'confirm', 'save', 'rollback'].includes(typeof operation.kind === 'string' ? operation.kind : '') || !decimalGeneration(operation.expected_generation) || (expectedID !== undefined && operation.id !== expectedID)) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+  if (data.schema_version !== 2 || !operationID(operation.id) || !operationID(operation.namespace_id) || operation.domain !== 'routed' || !['accepted', 'pending', 'final', 'uncertain'].includes(typeof operation.state === 'string' ? operation.state : '') || !['stage', 'validate', 'commit', 'confirm', 'save', 'rollback', 'replace_candidate', 'discard_candidate'].includes(typeof operation.kind === 'string' ? operation.kind : '') || !decimalGeneration(operation.expected_generation) || (expectedID !== undefined && operation.id !== expectedID)) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
   if (operation.outcome !== undefined) {
     const outcome = object(operation.outcome);
     if (!['applied', 'applied_pending_confirmation', 'rejected', 'failed_rolled_back', 'expired_without_effects', 'profile_changed_without_effects', 'confirmation_resolved_without_effects'].includes(typeof outcome.code === 'string' ? outcome.code : '')) throw new ApiError('ANDEIVA_RESPONSE_INVALID');

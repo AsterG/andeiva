@@ -65,11 +65,15 @@ Não há ativação runtime, provas de endpoints, recuperação durável complet
 manager do host. A montagem autentica metadata e FDs. Reiniciar o helper não
 reconstrói propriedade do executor a partir do snapshot. Não há novo banco,
 workers ou processos: usa-se uma lease Group, até três estados por tabela e
-batches nft de 512 KiB. Testes controlados exercitam compiladores e falhas.
-A fonte exata `3918ad8` passou tráfego/Confirm/expiry/recovery nativos em três
-namespaces: wall 46.166222 s, CPU 13.259767 s e pico 31,281,152 bytes. A medição não
-qualifica a extensão posterior inverse/regras legacy, reinício do helper,
-recuperação após crash ou continuidade de endpoints, ainda pendentes.
+batches nft de 512 KiB. A qualificação nativa Debian13 `f6a474f` passou TCP/UDP
+SNAT, ICMP relacionado, negação IPv6 e de conexões inversas não solicitadas,
+revogação de fluxos, routing sem NAT e NAT sem autorização de forwarding.
+Restaurou duas regras schema4 salvas, reativou schema6, reconciliou uma resposta
+Confirm perdida e reverteu schema4 no prazo original. Limpou os três namespaces;
+endereços, rotas, forwarding e nftables externos permaneceram iguais. Ensaio
+completo: aproximadamente45s, CPU12.890886s e pico cgroup33,546,240bytes com
+filhos/cache. Não é RSS de serviço ou throughput. A seleção usa uma fixture:
+não prova IPC entre processos, Boot4 nativo, interfaces do host ou Internet.
 
 ```sh
 go test -race ./internal/networkexecutor ./internal/routedactivation -count=3

@@ -30,3 +30,10 @@ carregada. A consulta tem limites de 1024 registos e 2 MiB e informa se ficar
 incompleta. Os nomes vêm do registo atual; o ID do ator é durável. Não se inventa
 a origem Web/CLI/API de registos históricos sem essa proveniência, nem se
 apresentam alterações de configuração como eventos de tráfego.
+
+Regras schema4 preservadas reutilizam tabela e editor sem inventar plano de rede.
+Substituir ou descartar candidata exige revisão, ID anterior de Stage e geração
+exatos. Stage nunca substitui candidata existente. O servidor verifica o dono
+durável; controles não concedem permissão. Estas operações não alteram tráfego.
+Bases históricas permanecem visíveis; Validate e Commit ficam bloqueados até uma
+substituição explícita.
