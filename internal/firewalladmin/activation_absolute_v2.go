@@ -116,11 +116,41 @@ func (g *PreparedAbsoluteGuardedEngine) RecoverPrevious(ctx context.Context, id 
 	if !guardRevision(p) || !guardRevision(t) || id == "" || id != g.receipt.ID || p.Hash != g.receipt.Previous || t.Hash != g.receipt.Target {
 		return configpoc.ErrRecovery
 	}
-	if err := g.authority.RecoverScoped(ctx, g.receipt); err != nil {
+	return g.recoverUntilLocked(ctx, id, p, t, g.receipt.Deadline)
+}
+
+// RecoverPreviousUntil can reconstruct only a caller's durable exact receipt.
+// It never adopts a helper-selected replacement deadline after restart.
+func (g *PreparedAbsoluteGuardedEngine) RecoverPreviousUntil(ctx context.Context, id string, p, t configpoc.Revision, deadline time.Time) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !guardRevision(p) || !guardRevision(t) || id == "" || len(id) > 64 || deadline.IsZero() || deadline.Location() != time.UTC {
+		return configpoc.ErrInvalid
+	}
+	return g.recoverUntilLocked(ctx, id, p, t, deadline)
+}
+func (g *PreparedAbsoluteGuardedEngine) recoverUntilLocked(ctx context.Context, id string, p, t configpoc.Revision, deadline time.Time) error {
+	expected := LeaseState{ID: id, Previous: p.Hash, Target: t.Hash, Deadline: deadline}
+	if g.receipt.ID != "" && !sameAbsoluteReceipt(g.receipt, expected) {
 		return configpoc.ErrRecovery
 	}
 	s, err := g.authority.State(ctx)
 	current, e := g.authority.Current(ctx)
+	if err != nil || e != nil || current != g.engine.Current() {
+		return configpoc.ErrRecovery
+	}
+	if s.Phase == "idle" && s.ID == "" && s.Previous == "" && s.Target == "" && s.Deadline.IsZero() && current == p.Hash {
+		g.receipt = LeaseState{}
+		return nil
+	}
+	if !sameAbsoluteReceipt(s, expected) || (s.Phase != "armed" && s.Phase != "pending" && s.Phase != "expired") || (current != p.Hash && current != t.Hash) {
+		return configpoc.ErrRecovery
+	}
+	if err := g.authority.RecoverScoped(ctx, expected); err != nil {
+		return configpoc.ErrRecovery
+	}
+	s, err = g.authority.State(ctx)
+	current, e = g.authority.Current(ctx)
 	if err != nil || e != nil || s.Phase != "idle" || s.ID != "" || current != p.Hash || g.engine.Current() != p.Hash {
 		return configpoc.ErrRecovery
 	}

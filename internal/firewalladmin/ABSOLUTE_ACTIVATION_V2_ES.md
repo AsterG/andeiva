@@ -21,3 +21,11 @@ Reproducción: ejecutar `go test -race` y `go vet` sobre `./internal/nftguardian
 `./internal/firewalladmin`, `./internal/firewallipc`, `./internal/previewruntime`,
 y `go build ./...`. Las pruebas Linux usan sockets sin privilegios y motores SIM.
 No acreditan nftables real, cortes eléctricos, integración Boot ni producción.
+
+El coordinador transmite `Pending.Deadline` seleccionado sin reconstruirlo.
+`RecoverPreviousUntil` permite recuperar el recibo caducado exacto tras reiniciar
+el adaptador. Commit/Rollback/Recover inmediatos con guard absoluto permanecen
+bloqueados antes de escribir objetos, publicar Intent o ejecutar Arm/Apply:
+el formato actual no conserva su plazo de efectos. La admisión puede estar
+registrada; la operación sigue aceptada y el almacén permanece disponible.
+Stage, Validate y Save siguen disponibles. No se reutilizan Accepted ni Clock.

@@ -369,6 +369,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	if err != nil {
 		return result(op), err
 	}
+	if err = c.absoluteGuardPreflightV2(op, state, target); err != nil {
+		return result(op), err
+	}
 	if err = c.persistRevisions(target); err != nil {
 		s.blocked = true
 		return result(op), err

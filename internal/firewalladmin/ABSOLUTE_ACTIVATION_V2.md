@@ -25,3 +25,13 @@ and `go build ./...`. Linux socket tests use unprivileged socket pairs and SIM
 engines. They do not qualify real nftables, power loss, boot integration or
 production deployment. Integration with the prepared storage v2 Boot deadline
 gate remains separate.
+
+The coordinator passes the selected `Pending.Deadline` directly for Commit
+Confirmed, Confirm and scoped restart/expiry recovery. A restarted adapter can
+recover an expired receipt only with `RecoverPreviousUntil` and that exact
+durable scope. Immediate guarded Commit/Rollback/Recover lack a durable effect
+deadline in the current format and remain explicitly gated before new objects,
+Intent publication and helper Arm/Apply. Admission may already have been
+journaled: the operation stays accepted and the store remains available.
+Stage, Validate and Save metadata remain available.
+Neither admission timestamps nor mutable store clocks are repurposed.
