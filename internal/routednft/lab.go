@@ -11,7 +11,7 @@ func LabPolicy() Policy {
 	path := Path{FromZone: "inside", ToZone: "outside", FromInterface: "lan", ToInterface: "wan"}
 	activeTCP, activeUDP := true, true
 	return Policy{SchemaVersion: 1, LabOnly: true, Network: n, Rules: []Rule{
-		{ID: "tcp-test", Enabled: &activeTCP, Path: path, Action: "allow", Source: "198.18.0.0/24", Destination: "198.19.0.2/32", Protocol: "tcp", SourcePorts: Ports{1024, 65535}, DestinationPorts: Ports{18080, 18080}},
-		{ID: "udp-test", Enabled: &activeUDP, Path: path, Action: "allow", Source: "198.18.0.0/24", Destination: "198.19.0.2/32", Protocol: "udp", SourcePorts: Ports{1024, 65535}, DestinationPorts: Ports{18081, 18082}},
+		{ID: "tcp-test", Enabled: &activeTCP, Path: path, Action: "allow", Source: "198.18.0.0/24", Destination: "198.19.0.2/32", Protocol: "tcp", SourcePorts: Ports{From: 1024, To: 65535}, DestinationPorts: Ports{From: 18080, To: 18080}},
+		{ID: "udp-test", Enabled: &activeUDP, Path: path, Action: "allow", Source: "198.18.0.0/24", Destination: "198.19.0.2/32", Protocol: "udp", SourcePorts: Ports{From: 1024, To: 65535}, DestinationPorts: Ports{From: 18081, To: 18082}},
 	}, NAT: []Masquerade{{ID: "lan-wan", Path: path, Source: "198.18.0.0/24"}}}
 }

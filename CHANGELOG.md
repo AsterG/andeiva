@@ -32,6 +32,13 @@
 - Preserve independent domain projections, explicit Startup, confirmed-commit recovery and verified rollback targets.
 - Add simulated-engine interruption and endurance tests; runtime activation and administrative transport integration remain disabled.
 
+## Unreleased — prepared routed configuration contracts
+
+- Separate the pure routed policy model from kernel execution while preserving
+  compiler output and existing error identities.
+- Validate routed envelopes through an explicit preparation entry point; existing
+  configuration readers and engines continue to reject them before activation.
+
 ## Unreleased — inactive routed network configuration model
 
 - Report a single stable field path for schema, collection and field-size validation errors.
@@ -219,6 +226,12 @@
   authenticated retry behavior, revision history or recovery reservations.
 - Keep lifetime capacity and full-volume recovery as unresolved limitations;
   this preparation does not compact, expire or delete protected records.
+
+## Unreleased — bounded anonymous authentication observations
+
+- Separate explicitly selected new anonymous login failures from protected administrative audit.
+- Aggregate bounded peer/minute observations with visible uncertainty and degraded collection; preserve historic protected records.
+- Keep verified authentication audited when only the observation area is unavailable; runtime selection and physical isolation remain explicit integration gates.
 
 ## Unreleased — bounded login admission
 
