@@ -76,6 +76,110 @@ func TestPreparedSnapshotRetainsNativeLoopbackMTUAndFlags(t *testing.T) {
 	}
 }
 
+func recoveryIdentityFixture() OwnedNamespaceIdentity {
+	return OwnedNamespaceIdentity{UID: 1001, GID: 1002, Namespace: 200, Host: 100, BootID: "12345678-1234-1234-1234-123456789abc", RunID: strings.Repeat("a", 32)}
+}
+
+func TestRecoverPreparedReconstructsOnlySameOwnedBaselineOrFullTarget(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		old, kernel := fakeExecutor()
+		plan := fixturePlan()
+		prepared, err := old.Prepare(context.Background(), plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if configured && old.ApplyPrepared(context.Background(), plan, prepared) != nil {
+			t.Fatal("initial apply")
+		}
+		// A replacement process retains only authenticated manager scope and the
+		// same kernel namespace. It cannot reuse the old process's transaction.
+		identity := recoveryIdentityFixture()
+		restarted := &Executor{lifetime: context.Background(), run: kernel.run, identity: &identity}
+		before := kernel.mutations
+		if err := restarted.RecoverPrepared(context.Background(), plan, prepared, identity); err != nil || kernel.mutations != before || (restarted.active != nil) != configured {
+			t.Fatal("read-only reconstruction", configured, err)
+		}
+		if configured && restarted.Verify(context.Background()) != nil {
+			t.Fatal("reconstructed target failed independent readback")
+		}
+		if restarted.RestorePrepared(context.Background(), prepared) != nil || restarted.VerifyPrepared(context.Background(), prepared) != nil {
+			t.Fatal("reconstructed exact restore")
+		}
+	}
+}
+
+func TestRecoverPreparedRejectsForeignScopeWithoutObservingOrEffects(t *testing.T) {
+	for _, field := range []string{"uid", "gid", "boot", "run", "target", "host", "constructor"} {
+		e, kernel := fakeExecutor()
+		plan := fixturePlan()
+		prepared, err := e.Prepare(context.Background(), plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity := recoveryIdentityFixture()
+		e.identity = &identity
+		original := identity
+		switch field {
+		case "uid":
+			original.UID++
+		case "gid":
+			original.GID++
+		case "boot":
+			original.BootID = "87654321-1234-1234-1234-123456789abc"
+		case "run":
+			original.RunID = strings.Repeat("b", 32)
+		case "target":
+			original.Namespace++
+		case "host":
+			original.Host++
+		case "constructor":
+			e.identity = nil
+		}
+		reads := 0
+		e.run = func(ctx context.Context, op operation) ([]byte, error) { reads++; return kernel.run(ctx, op) }
+		if !errors.Is(e.RecoverPrepared(context.Background(), plan, prepared, original), ErrScope) || reads != 0 || kernel.mutations != 0 {
+			t.Fatal("foreign original work scope admitted", field)
+		}
+	}
+}
+
+func TestRecoverPreparedFencesMixedForeignAndUnstableStateWithoutDeletion(t *testing.T) {
+	for _, field := range []string{"mixed", "route", "link", "unstable"} {
+		old, kernel := fakeExecutor()
+		plan := fixturePlan()
+		prepared, err := old.Prepare(context.Background(), plan)
+		if err != nil || old.ApplyPrepared(context.Background(), plan, prepared) != nil {
+			t.Fatal("initial apply", err)
+		}
+		switch field {
+		case "mixed":
+			kernel.state.Routes = kernel.state.Routes[:len(kernel.state.Routes)-1]
+		case "route":
+			kernel.state.Routes = append(kernel.state.Routes, route{Destination: "203.0.113.0/24", Device: "wan0", Protocol: "static"})
+		case "link":
+			kernel.state.Links[0].Index++
+		}
+		identity := recoveryIdentityFixture()
+		restarted := &Executor{lifetime: context.Background(), run: kernel.run, identity: &identity}
+		if field == "unstable" {
+			links := 0
+			restarted.run = func(ctx context.Context, op operation) ([]byte, error) {
+				if op.kind == "links" {
+					links++
+					if links == 3 {
+						kernel.state.Links[0].Index++
+					}
+				}
+				return kernel.run(ctx, op)
+			}
+		}
+		before := kernel.mutations
+		if !errors.Is(restarted.RecoverPrepared(context.Background(), plan, prepared, identity), ErrUncertain) || !restarted.fenced || kernel.mutations != before || restarted.RestorePrepared(context.Background(), prepared) == nil || kernel.mutations != before {
+			t.Fatal("unknown state adopted or blindly deleted", field)
+		}
+	}
+}
+
 func TestPreparedSnapshotRejectsForeignAndUnsupportedBaseline(t *testing.T) {
 	for _, mutate := range []func(*fakeKernel){
 		func(f *fakeKernel) {

@@ -38,6 +38,15 @@ o desconocido bloquea en vez de borrarse a ciegas. Se exigen escritores exclusiv
 no hay atomicidad frente a CAP_NET_ADMIN ajeno. Ediciones posteriores exigen el
 mismo plan de red.
 
+`RecoverPlan`, exclusivo del arranque confiable del helper, resuelve el Work
+original autenticado y llama RecoverPrepared con UID/GID/boot/run/namespace
+target/host exactos. Root verifica lineage/generation, Intent seleccionado,
+finality y lease/deadline originales antes de devolver artefactos. Sólo admite
+la misma encarnación retenida y baseline o target completo tras dos observaciones
+de red. Estado mixto/ajeno bloquea sin borrar. No arma otro timer ni decide
+revertir operaciones confirmadas. Reboot u otro namespace exige Boot controlado,
+sin reutilizar autoridad de ifindexes previos.
+
 No se habilita runtime ni se proporcionan pruebas de endpoints, recuperación
 durable o adopción del manager del host. El ensamblaje autentica metadata y FDs.
 Reiniciar el helper no reconstruye propiedad del ejecutor desde el snapshot.

@@ -38,7 +38,16 @@ ou desconhecido bloqueia em vez de exclusão cega. Escritores exclusivos são
 obrigatórios; não há atomicidade contra CAP_NET_ADMIN alheio. Edições posteriores
 exigem o mesmo plano de rede.
 
-Não há ativação runtime, provas de endpoints, recuperação durável ou adoção do
+`RecoverPlan`, exclusivo da inicialização confiável do helper, resolve o Work
+original autenticado e chama RecoverPrepared com UID/GID/boot/run/namespace
+target/host exatos. Root verifica lineage/generation, Intent selecionado, finality
+e lease/deadline originais antes de retornar artefatos. Aceita somente a mesma
+encarnação retida e baseline ou target completo após duas observações de rede.
+Estado misto/alheio bloqueia sem exclusão. Não arma outro timer nem decide
+reverter operações confirmadas. Reboot ou novo namespace exige Boot controlado,
+sem reutilizar autoridade de ifindexes anteriores.
+
+Não há ativação runtime, provas de endpoints, recuperação durável completa ou adoção do
 manager do host. A montagem autentica metadata e FDs. Reiniciar o helper não
 reconstrói propriedade do executor a partir do snapshot. Não há novo banco,
 workers ou processos: usa-se uma lease Group, até três estados por tabela e

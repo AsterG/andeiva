@@ -108,6 +108,14 @@ type networkFixture struct {
 	calls    int
 	before   func() error
 	cancel   context.CancelFunc
+	identity networkexecutor.OwnedNamespaceIdentity
+}
+
+func (n *networkFixture) RecoverPrepared(ctx context.Context, revision networkplan.Revision, snapshot networkexecutor.PreparedSnapshot, original networkexecutor.OwnedNamespaceIdentity) error {
+	if original != n.identity || ctx.Err() != nil || revision.Hash != n.snapshot.PlanHash || snapshot.Hash != n.snapshot.Hash {
+		return ErrState
+	}
+	return nil
 }
 
 func (n *networkFixture) Prepare(ctx context.Context, plan networkplan.Revision) (networkexecutor.PreparedSnapshot, error) {
@@ -407,5 +415,74 @@ func TestGroupEngineConfirmRecoverSerializePhysicalOutcome(t *testing.T) {
 	}
 	if _, _, err := f.group.SnapshotObserved(); err != nil {
 		t.Fatal("physical outcome not verified", err)
+	}
+}
+
+func TestEngineRecoverPlanBindsOriginalWorkWithoutTimerOrEffects(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		f := assembleFixture(t)
+		defer f.group.Close()
+		ctx := context.Background()
+		if configured {
+			if f.engine.ValidatePlan(ctx, f.plan, nil, f.target, f.started.Add(10*time.Second)) != nil || f.engine.Apply(ctx, f.target) != nil {
+				t.Fatal("establish target without a controller timer")
+			}
+		}
+		original := networkexecutor.OwnedNamespaceIdentity{UID: 1001, GID: 1002, Namespace: 200, Host: 100, BootID: "12345678-1234-1234-1234-123456789abc", RunID: strings.Repeat("a", 32)}
+		// Replacement process has fresh engine memory; kernel state and the
+		// manager-authenticated namespace incarnation survive unchanged.
+		network := &networkFixture{snapshot: f.network.snapshot, active: f.network.active, identity: original}
+		restarted, err := New(f.kernel, network, f.listeners, f.engine.options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := len(f.kernel.batches)
+		if err := restarted.RecoverPlan(ctx, f.plan, nil, f.target, f.started.Add(10*time.Second), original); err != nil || len(f.kernel.batches) != before || network.calls != 0 {
+			t.Fatal("recovery made effects or rejected exact state", configured, err)
+		}
+		want := ""
+		if configured {
+			want = f.target.Composite.Hash
+		}
+		if restarted.Current() != want {
+			t.Fatal("recovered current was not physically observed")
+		}
+		if restarted.RestoreOwned(ctx, f.plan.BeforeOwned) != nil || network.active || len(f.listeners.actual) != 0 || restarted.Current() != "" {
+			t.Fatal("recovered memento could not restore exact before")
+		}
+	}
+}
+
+func TestEngineRecoverPlanRejectsWrongDeadlineIdentityAndMixedState(t *testing.T) {
+	for _, fault := range []string{"deadline", "boot", "run", "namespace", "mixed"} {
+		f := assembleFixture(t)
+		defer f.group.Close()
+		ctx := context.Background()
+		if f.engine.ValidatePlan(ctx, f.plan, nil, f.target, f.started.Add(10*time.Second)) != nil || f.engine.Apply(ctx, f.target) != nil {
+			t.Fatal("establish target")
+		}
+		original := networkexecutor.OwnedNamespaceIdentity{UID: 1001, GID: 1002, Namespace: 200, Host: 100, BootID: "12345678-1234-1234-1234-123456789abc", RunID: strings.Repeat("a", 32)}
+		network := &networkFixture{snapshot: f.network.snapshot, active: true, identity: original}
+		deadline := f.started.Add(10 * time.Second)
+		switch fault {
+		case "deadline":
+			deadline = deadline.Add(time.Nanosecond)
+		case "boot":
+			original.BootID = "87654321-1234-1234-1234-123456789abc"
+		case "run":
+			original.RunID = strings.Repeat("b", 32)
+		case "namespace":
+			original.Namespace++
+		case "mixed":
+			delete(f.kernel.objects, LocalTable)
+		}
+		restarted, err := New(f.kernel, network, f.listeners, f.engine.options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := len(f.kernel.batches)
+		if restarted.RecoverPlan(ctx, f.plan, nil, f.target, deadline, original) == nil || len(f.kernel.batches) != before || network.calls != 0 || restarted.RestoreOwned(ctx, f.plan.BeforeOwned) == nil || len(f.kernel.batches) != before {
+			t.Fatal("untrusted recovery scope adopted or blindly restored", fault)
+		}
 	}
 }

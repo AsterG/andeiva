@@ -145,16 +145,6 @@ func validNamespaceBinding(target, host, self uint64) bool {
 	return target != 0 && host != 0 && self == host && target != host
 }
 
-// OwnedNamespaceIdentity is copied by trusted assembly from authenticated manager
-// metadata and identities. It is not a request DTO. Neither an inode nor RunID
-// proves manager provenance: assembly must authenticate the metadata and inherited
-// descriptors before calling NewInOwnedNamespace.
-type OwnedNamespaceIdentity struct {
-	UID, GID        uint32
-	Namespace, Host uint64
-	BootID, RunID   string
-}
-
 // NewInOwnedNamespace runs only inside the manager's retained non-host namespace.
 // It needs NET_ADMIN, never SYS_ADMIN or nsenter. NewWithHost remains the separate
 // host-supervisor constructor. Caller pins are duplicated and never passed to ip.
@@ -194,7 +184,8 @@ func NewInOwnedNamespace(lifetime context.Context, target, host *os.File, expect
 	}
 	owners.ids[id] = true
 	owners.Unlock()
-	e := &Executor{lifetime: lifetime}
+	identity := expected
+	e := &Executor{lifetime: lifetime, identity: &identity}
 	e.release = func() error {
 		err := errors.Join(pin.Close(), hostPin.Close())
 		owners.Lock()

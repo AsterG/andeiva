@@ -326,6 +326,85 @@ func (e *Engine) ValidatePlan(ctx context.Context, plan configpoc.RoutedTransiti
 	return nil
 }
 
+// RecoverPlan is trusted helper-startup recovery, not a public activation verb.
+// ResolvePlan MUST authenticate the original Work scope, selected intent,
+// lineage/generation, finality and original lease/deadline before returning.
+// This method reconstructs only exact physical before/target state and never
+// arms a fresh timer or decides to roll back an already confirmed operation.
+func (e *Engine) RecoverPlan(ctx context.Context, plan configpoc.RoutedTransitionV1, previous *configpoc.RoutedActivationBundleV1, target configpoc.RoutedActivationBundleV1, deadline time.Time, original networkexecutor.OwnedNamespaceIdentity) error {
+	if e == nil || ctx == nil {
+		return ErrState
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.fenced || e.selected || e.network == nil || e.kernel == nil || e.listeners == nil || e.options.ResolvePlan == nil || !plan.ValidShape() || deadline.IsZero() || deadline.Location() != time.UTC || ctx.Err() != nil {
+		return ErrState
+	}
+	resolved, err := e.options.ResolvePlan(ctx, plan, previous, target, deadline)
+	if err != nil {
+		return ErrState
+	}
+	before, err := CanonicalOwned(resolved.Before)
+	if err != nil {
+		return ErrState
+	}
+	after, err := CanonicalOwned(resolved.Target)
+	if err != nil {
+		return ErrState
+	}
+	deps, err := CanonicalDependencies(resolved.Dependencies)
+	if err != nil {
+		return ErrState
+	}
+	target, err = configpoc.CanonicalRoutedActivationBundleV1(target)
+	if err != nil || after.NetworkState != Configured || after.LegacyFirewall.Presence != Absent || after.RoutedFirewall.Revision == nil || after.LocalServices.Revision == nil || after.RoutedFirewall.Revision.Hash != target.Firewall.Hash || after.LocalServices.Revision.Hash != target.LocalServices.Hash {
+		return ErrState
+	}
+	want, err := networkexecutor.PreparedSnapshotBytes(deps.Prepared)
+	if err != nil {
+		return ErrState
+	}
+	for _, snapshot := range []networkexecutor.PreparedSnapshot{before.Network, after.Network} {
+		actual, err := networkexecutor.PreparedSnapshotBytes(snapshot)
+		if err != nil || !bytes.Equal(actual, want) {
+			return ErrState
+		}
+	}
+	if previous == nil {
+		if before.NetworkState != Baseline {
+			return ErrState
+		}
+		for table, state := range tables(before) {
+			if !bytes.Equal(tableBytes(state), tableBytes(e.initial[table])) {
+				return ErrState
+			}
+		}
+	} else {
+		detached, err := configpoc.CanonicalRoutedActivationBundleV1(*previous)
+		if err != nil || before.NetworkState != Configured || before.LegacyFirewall.Presence != Absent || before.RoutedFirewall.Revision == nil || before.LocalServices.Revision == nil || before.RoutedFirewall.Revision.Hash != detached.Firewall.Hash || before.LocalServices.Revision.Hash != detached.LocalServices.Hash {
+			return ErrState
+		}
+		previous = &detached
+	}
+	recovery, ok := e.network.(interface {
+		RecoverPrepared(context.Context, networkplan.Revision, networkexecutor.PreparedSnapshot, networkexecutor.OwnedNamespaceIdentity) error
+	})
+	if !ok || recovery.RecoverPrepared(ctx, deps.Network, deps.Prepared, original) != nil {
+		e.fenced = true
+		return ErrState
+	}
+	if !e.matches(ctx, before, deps) && !e.matches(ctx, after, deps) {
+		e.fenced = true
+		return ErrState
+	}
+	e.plan, e.prepared, e.previous, e.target, e.selected = plan, PreparationV1{before, after, deps}, previous, target, true
+	e.known = [3][]TableStateV1{}
+	for table, state := range tables(before) {
+		e.known[table] = append(e.known[table], state, tables(after)[table])
+	}
+	return nil
+}
+
 func (e *Engine) remember(table int, state TableStateV1) bool {
 	for _, known := range e.known[table] {
 		if bytes.Equal(tableBytes(known), tableBytes(state)) {
