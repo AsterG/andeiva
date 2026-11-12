@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
 
@@ -48,6 +49,10 @@ func TestReserveEnvelopeMaximumDescriptors(t *testing.T) {
 		state.ActiveReserves = append(state.ActiveReserves, v2ActiveReserve{Work: id, Bundle: bundle})
 	}
 	state.SystemBundle = &v2ActiveReserve{Work: id, Bundle: &v2ReserveBundle{Scope: scope, Claims: claims, Admission: admission, Plan: &plan, PlanScope: &scope, PlanIntent: &intent}}
+	state.RoutedBootBoundary = &v2RoutedBootBoundary{Source: hash, OldWork: hash, Origin: &v2ReserveWorkRef{ID: id, Object: hash}, OldBoot: &v2ReserveWorkRef{ID: id, Object: hash}, NewOperation: id, NewIdentity: networkexecutor.OwnedNamespaceIdentity{UID: ^uint32(0), GID: ^uint32(0), Namespace: high, Host: high, BootID: string(boot), RunID: strings.Repeat("f", 32)}, CompletedBoot: hash, Resolution: hash}
+	for _, feature := range []string{v2RoutedFeature, v2RoutedBootFeature, v2RoutedNoNetworkFeature, v2OwnedCandidateFeature, v2RoutedBootBoundaryFeature} {
+		addFeatureV2(&state, feature)
+	}
 	common := v2Namespace{ID: id, Subject: id, Domain: "local_services", AdmitUntil: stamp}
 	for range 8 {
 		common.Open = append(common.Open, id)
@@ -61,6 +66,7 @@ func TestReserveEnvelopeMaximumDescriptors(t *testing.T) {
 	bound := reserveMetadataCoreV2(state)
 	bound.ActiveReserves = state.ActiveReserves
 	bound.SystemBundle = state.SystemBundle
+	bound.RoutedBootBoundary = state.RoutedBootBoundary
 	bound.ClosingCredits = state.ClosingCredits
 	bound.Namespaces = state.Namespaces
 	bound.Configuration.Intent = state.Configuration.Intent

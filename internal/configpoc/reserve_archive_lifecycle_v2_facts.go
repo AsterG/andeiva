@@ -56,7 +56,9 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 			if err != nil || !hasFeatureV2(state, v2RoutedFeature) || plan.work.Kind == v2BootKind && !hasFeatureV2(state, v2RoutedBootFeature) || validateRoutedWorkIntentV2(&capsule.Intent, plan, load) != nil {
 				return errV2Unavailable
 			}
-			if routedWorkUsesNoNetworkV2(plan)&&!hasFeatureV2(state,v2RoutedNoNetworkFeature){return errV2Unavailable}
+			if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(state, v2RoutedNoNetworkFeature) {
+				return errV2Unavailable
+			}
 		}
 	}
 	if validateArchiveGuardDeadlinesV2(archive, state, load) != nil {
@@ -69,6 +71,9 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 	if facts.Kind == "system" {
 		var record v2RecoveryRecord
 		if facts.Child != nil || facts.Recovery != nil || facts.Resolution != "" || archive.Child != "" || load(facts.Origin.Object, &record) != nil || !validRecoveryRecordV2(record, state.Lineage) || record.ID != facts.Origin.ID || record.State != "final" || record.Pinned || record.Audit != archive.Audit {
+			return errV2Unavailable
+		}
+		if record.SupersededBy != "" && (!hasFeatureV2(state, v2RoutedBootBoundaryFeature) || validateRoutedBootSupersessionV2(record, state.Lineage, load) != nil) {
 			return errV2Unavailable
 		}
 		if !archiveMatchesBundleV2(archive, record.Reserve, false) || len(archive.UnusedEscrow) != 0 {
@@ -105,6 +110,9 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 			return errV2Unavailable
 		}
 		audit = recovery.Audit
+		if recovery.SupersededBy != "" && (!hasFeatureV2(state, v2RoutedBootBoundaryFeature) || validateRoutedBootSupersessionV2(recovery, state.Lineage, load) != nil) {
+			return errV2Unavailable
+		}
 	}
 	if audit != archive.Audit {
 		return errV2Unavailable

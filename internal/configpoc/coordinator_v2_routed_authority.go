@@ -68,20 +68,21 @@ func (p RoutedSelectedPlanV1) Valid() bool {
 }
 
 type v2RoutedWork struct {
-	Scope        RoutedWorkScopeV1  `json:"scope"`
-	Baseline     string             `json:"baseline,omitempty"`
-	Kind         string             `json:"kind,omitempty"`
-	BootRecord   string             `json:"boot_record,omitempty"`
-	BootBaseline *RoutedBaselineV1  `json:"boot_baseline,omitempty"`
-	Version      int                `json:"version"`
-	Lineage      string             `json:"lineage"`
-	Operation    string             `json:"operation_id"`
-	Subject      string             `json:"subject"`
-	Generation   uint64             `json:"generation,string"`
-	Lease        string             `json:"lease"`
-	Deadline     time.Time          `json:"deadline"`
-	Cold         bool               `json:"cold"`
-	Transition   RoutedTransitionV1 `json:"transition"`
+	Boundary     *v2RoutedBootBoundary `json:"boot_boundary,omitempty"`
+	Scope        RoutedWorkScopeV1     `json:"scope"`
+	Baseline     string                `json:"baseline,omitempty"`
+	Kind         string                `json:"kind,omitempty"`
+	BootRecord   string                `json:"boot_record,omitempty"`
+	BootBaseline *RoutedBaselineV1     `json:"boot_baseline,omitempty"`
+	Version      int                   `json:"version"`
+	Lineage      string                `json:"lineage"`
+	Operation    string                `json:"operation_id"`
+	Subject      string                `json:"subject"`
+	Generation   uint64                `json:"generation,string"`
+	Lease        string                `json:"lease"`
+	Deadline     time.Time             `json:"deadline"`
+	Cold         bool                  `json:"cold"`
+	Transition   RoutedTransitionV1    `json:"transition"`
 }
 
 type RoutedWorkScopeV1 struct {

@@ -26,6 +26,13 @@ func (m *v2ReserveManager) maintainWork(s *v2Store, preferred string) error {
 	}
 	for {
 		var work *v2ActiveReserve
+		if b := s.state.RoutedBootBoundary; b != nil && b.CompletedBoot != "" && b.Resolution != "" && b.OldBoot != nil {
+			record, err := (&v2Coordinator{store: s}).recoveryLookupLocked(b.OldBoot.ID)
+			if err != nil || record.SupersededBy != b.CompletedBoot {
+				return ErrRecovery
+			}
+			work = &v2ActiveReserve{Work: record.ID, Bundle: record.Reserve, CanonicalHeld: true}
+		}
 		for _, active := range s.state.ActiveReserves {
 			if active.Work == preferred && active.Bundle.Scope.Origin != "" {
 				preferred = active.Bundle.Scope.Origin
@@ -33,7 +40,7 @@ func (m *v2ReserveManager) maintainWork(s *v2Store, preferred string) error {
 			}
 		}
 		for _, active := range s.state.ActiveReserves {
-			if active.CanonicalHeld && active.Work == preferred {
+			if work == nil && active.CanonicalHeld && active.Work == preferred {
 				value := active
 				work = &value
 				break

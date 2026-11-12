@@ -113,7 +113,7 @@ func (c *v2Coordinator) pendingReferencesLocked(state *v2Configuration) error {
 					return ErrRecovery
 				}
 			case "final":
-				if !op.Pinned || state.Pending == nil || state.Pending.OriginCommit != op.ID || state.Pending.Owner != op.Subject {
+				if (!op.Pinned || state.Pending == nil || state.Pending.OriginCommit != op.ID || state.Pending.Owner != op.Subject) && !boundaryRetainsOriginV2(c.store.state, op) {
 					return ErrRecovery
 				}
 			default:

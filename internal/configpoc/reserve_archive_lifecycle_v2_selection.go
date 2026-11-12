@@ -100,6 +100,14 @@ func (s *v2Store) releaseArchivedReserveV2(archive v2ReserveArchive) error {
 		held++
 		st.SystemBundle = nil
 	}
+	if b := st.RoutedBootBoundary; b != nil && b.CompletedBoot != "" && b.Resolution != "" {
+		if b.OldBoot != nil && b.OldBoot.ID == archive.Origin {
+			held++
+			st.RoutedBootBoundary = nil
+		} else if b.Origin != nil && b.Origin.ID == archive.Origin {
+			st.RoutedBootBoundary = nil
+		}
+	}
 	if held == 0 || st.ReservedBytes < held*v2OperationReserveBytes || st.ReservedInodes < held*v2OperationReserveInodes {
 		return ErrRecovery
 	}
