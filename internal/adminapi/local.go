@@ -15,6 +15,8 @@ import (
 )
 
 type Capabilities struct {
+	NetworkInventoryV2           bool                    `json:"network_inventory_v2,omitempty"`
+	ConfigurationOperationsV2    bool                    `json:"configuration_operations_v2,omitempty"`
 	FirewallConfigSchemaVersions []int                   `json:"firewall_config_schema_versions"`
 	FirewallRuleEnabled          bool                    `json:"firewall_rule_enabled"`
 	Firewall                     bool                    `json:"firewall"`
