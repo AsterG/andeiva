@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/AsterG/andeiva/internal/jsoncheck"
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkinventory"
 	"github.com/AsterG/andeiva/internal/networkplan"
 	"github.com/AsterG/andeiva/internal/routedflow"
@@ -89,6 +90,68 @@ func (n *namespace) create(ctx context.Context) error {
 	}
 	n.identity = info
 	return n.verify()
+}
+
+// open pins only this runner's namespace, checking both the path and the opened
+// object. The executor additionally verifies nsfs/type and rejects host netns.
+func (n *namespace) open() (*os.File, error) {
+	if err := n.verify(); err != nil {
+		return nil, err
+	}
+	path := "/run/netns/" + n.name
+	before, err := os.Lstat(path)
+	if err != nil || !sameNamespacePin(n.identity, before) {
+		return nil, errLab
+	}
+	pin, err := os.Open(path) // #nosec G304 -- Internally generated namespace name, verified process-owned mount inode; opened inode is checked below.
+	if err != nil {
+		return nil, err
+	}
+	opened, err := pin.Stat()
+	if err != nil || !sameNamespacePin(before, opened) || n.verify() != nil {
+		return nil, errors.Join(errLab, pin.Close())
+	}
+	return pin, nil
+}
+
+func sameNamespacePin(expected, actual os.FileInfo) bool {
+	return expected != nil && actual != nil && actual.Mode()&os.ModeSymlink == 0 && os.SameFile(expected, actual)
+}
+
+type networkPlanExecutor interface {
+	Apply(context.Context, networkplan.Revision) error
+	Verify(context.Context) error
+	Restore() error
+	Close() error
+}
+
+func applyTypedNetworkPlan(ctx context.Context, executor networkPlanExecutor) error {
+	if err := executor.Apply(ctx, routednft.LabPolicy().Network); err != nil {
+		return fmt.Errorf("network plan apply: %w", err)
+	}
+	if err := executor.Verify(ctx); err != nil {
+		return fmt.Errorf("network plan verify: %w", err)
+	}
+	return nil
+}
+
+// The only override is an already-open FD 0 from the root-owned lab service
+// definition, never an arbitrary descriptor number or a path from a caller.
+func newLabNetworkExecutor(ctx context.Context, target *os.File, hostAnchorFD string) (*networkexecutor.Executor, error) {
+	switch hostAnchorFD {
+	case "":
+		return networkexecutor.New(ctx, target)
+	case "0":
+		return networkexecutor.NewWithHost(ctx, target, os.Stdin)
+	default:
+		return nil, networkexecutor.ErrScope
+	}
+}
+
+func closeTypedNetworkPlan(executor networkPlanExecutor) error {
+	// Close must run even when restoration is uncertain, and its error is retained.
+	restored := executor.Restore()
+	return errors.Join(restored, executor.Close())
 }
 func (n *namespace) ip(ctx context.Context, args ...string) error {
 	if e := n.verify(); e != nil {
@@ -428,10 +491,8 @@ func lab(ctx context.Context, withFlows bool) (result error) {
 		{wan, []string{"link", "add", "server0", "type", "veth", "peer", "name", "wan0", "netns", gw.name}},
 		{lan, []string{"addr", "add", "198.18.0.2/24", "dev", "client0"}}, {wan, []string{"addr", "add", "198.19.0.2/24", "dev", "server0"}},
 		{gw, []string{"link", "set", "lan0", "address", "02:00:00:00:01:01"}}, {gw, []string{"link", "set", "wan0", "address", "02:00:00:00:02:01"}},
-		{gw, []string{"addr", "add", "198.18.0.1/24", "dev", "lan0"}}, {gw, []string{"addr", "add", "198.19.0.1/24", "dev", "wan0"}},
 		{lan, []string{"link", "set", "client0", "up"}}, {wan, []string{"link", "set", "server0", "up"}}, {gw, []string{"link", "set", "lan0", "up"}}, {gw, []string{"link", "set", "wan0", "up"}},
 		{lan, []string{"route", "add", "default", "via", "198.18.0.1"}},
-		{gw, []string{"route", "add", "default", "via", "198.19.0.2", "metric", "10"}},
 		{wan, []string{"route", "add", "198.18.0.0/24", "via", "198.19.0.1"}},
 		{lan, []string{"-6", "addr", "add", "fd00:18::2/64", "dev", "client0", "nodad"}},
 		{wan, []string{"-6", "addr", "add", "fd00:19::2/64", "dev", "server0", "nodad"}},
@@ -445,6 +506,35 @@ func lab(ctx context.Context, withFlows bool) (result error) {
 			return e
 		}
 	}
+	pin, e := gw.open()
+	if e != nil {
+		return e
+	}
+	// This recovery lifetime is independent of lab request cancellation. Its defer
+	// runs after restoration, but before the earlier namespace cleanup defer.
+	supervisorCtx, stopSupervisor := context.WithCancel(context.Background())
+	defer stopSupervisor()
+	network, e := newLabNetworkExecutor(supervisorCtx, pin, os.Getenv("ANDEIVA_LAB_HOST_ANCHOR_FD"))
+	closeErr := pin.Close() // New owns a duplicated descriptor, not this caller pin.
+	if e != nil {
+		return fmt.Errorf("network executor constructor: %w", errors.Join(e, closeErr))
+	}
+	applied := false
+	defer func() {
+		cleanupErr := closeTypedNetworkPlan(network)
+		result = errors.Join(result, cleanupErr)
+		if applied && cleanupErr == nil {
+			fmt.Println("PASS typed network plan applied/readback/restored")
+		}
+	}()
+	if closeErr != nil {
+		return closeErr
+	}
+	if e = applyTypedNetworkPlan(ctx, network); e != nil {
+		return e
+	}
+	applied = true
+	fmt.Println("PASS typed network plan applied/readback")
 	if _, e := gw.exec(ctx, nil, "/usr/sbin/sysctl", "-q", "-w", "net.ipv4.ip_forward=1"); e != nil {
 		return e
 	}

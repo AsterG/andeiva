@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — isolated static IPv4 network executor
+
+- Apply and verify typed static IPv4 addresses and a default route only inside a trusted, descriptor-pinned disposable namespace with an initially empty IPv4 baseline.
+- Preserve host separation, stable link bindings, bounded fixed commands, exact compensation and uncertainty fences; keep recovery authority independent of request cancellation.
+- Qualify the existing three-namespace routing laboratory with real TCP/UDP SNAT, conntrack, deny/revocation and verified restoration. Existing management LAN migration, DHCP, durable crash recovery and appliance runtime integration remain unsupported.
+
 ## Unreleased — internal transaction recovery reserves
 
 - Bind preallocated admission, plan and emergency pools to the selected v2 transaction lifecycle; retain uncertain operations without publishing unverified Running state.
