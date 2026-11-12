@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — journal append publication safety
+
+- Publish authoritative journal records with atomic no-replace semantics and
+  verified directory descriptors; refuse unsupported operations without fallback.
+- Preserve competing destinations and reject changed staging identity before
+  publication. Cover publication races, process exits and v1 reopening.
+
 ## Unreleased — bounded client traffic observations
 
 - Add a development-only, unprivileged one-target client for TCP, UDP echo,
