@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — prepared configuration operations transport
+
+- Prepare strict HTTPS operation contracts and a bounded client with atomic global/domain observations.
+- Add explicit cold-migration inspection and fingerprint checks without changing legacy sources.
+- Qualify real-store transport tests with simulated engines; production routes and capabilities remain disabled.
+
 ## Unreleased — authenticated configuration v2 adapter
 
 - Bind configuration operations to verified sessions and canonical durable subject identities.

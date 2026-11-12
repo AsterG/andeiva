@@ -59,9 +59,10 @@ type Options struct {
 	LocalInventory      []localpolicy.Interface
 }
 type handler struct {
-	options Options
-	host    string
-	traffic *firewalltraffic.Sampler
+	options            Options
+	host               string
+	traffic            *firewalltraffic.Sampler
+	preparedOperations *configpoc.ServiceV2
 }
 
 func New(options Options) (http.Handler, error) {
@@ -126,7 +127,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if r.URL.Path != "/api/v1/firewall/history" && r.URL.Path != "/api/v1/firewall/traffic" && r.URL.Path != "/api/v1/local-services/history" && r.URL.Path != "/api/v1/effective-policies" && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
+	if !(h.preparedOperations != nil && r.URL.Path == "/api/v2/config/operations" && r.Method == http.MethodGet) && r.URL.Path != "/api/v1/firewall/history" && r.URL.Path != "/api/v1/firewall/traffic" && r.URL.Path != "/api/v1/local-services/history" && r.URL.Path != "/api/v1/effective-policies" && (r.URL.RawQuery != "" || r.URL.ForceQuery) {
 		h.fail(w, 400, "ANDEIVA_REQUEST_INVALID")
 		return
 	}
@@ -185,6 +186,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	if h.preparedOperations != nil && strings.HasPrefix(r.URL.Path, "/api/v2/config/") {
+		h.operationsV2(w, r, ctx, token)
+		return
+	}
 	if r.URL.Path == "/api/v1/capabilities" && r.Method == http.MethodGet {
 		versions := []int{}
 		if h.options.Backend != nil {
