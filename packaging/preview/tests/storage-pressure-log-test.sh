@@ -82,3 +82,33 @@ done
 parse_volume_arguments --authorized-debian-lab /trusted/test.test expected --isolated-storage-only
 [[ -z $task_volume_id && -z $task_inspector_input && -z $task_inspector_sha ]]
 printf 'ANDEIVA_STORAGE_ENVIRONMENT_MODE_GATE_RESULT=pass\n'
+
+# V2 is an explicit argv mode, never an inherited variable or legacy selection.
+export task_v2=1
+parse_volume_arguments --authorized-debian-lab /trusted/test.test expected --isolated-storage-only
+[[ $task_v2 = 0 ]]
+for task_volume_mode in --authorized-debian-v2-volumes --inside-v2-volumes; do
+ parse_volume_arguments "$task_volume_mode" /trusted/test.test expected namespace /trusted/inspector digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ [[ $task_v2 = 1 && $task_volume_id = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && ${#task_volume_arguments[@]} = 4 ]]
+done
+parse_volume_arguments --authorized-debian-v2-volumes /trusted/test.test expected namespace /trusted/inspector digest
+[[ $task_v2 = 0 && -z $task_volume_id && ${#task_volume_arguments[@]} = 6 ]]
+for task_case in bytes inodes open-deleted; do
+ printf '=== RUN   TestNativeV2VolumePressure\n--- PASS: TestNativeV2VolumePressure (1.01s)\nANDEIVA_NATIVE_V2_CASE_PASS=%s\n' "$task_case" > "$task_base/output.log"
+ verify_test_log "$task_base/output.log" TestNativeV2VolumePressure "$task_case"
+ if verify_test_log "$task_base/output.log" TestNativeV2VolumePressure readonly; then exit 1; fi
+ if verify_test_log "$task_base/output.log" TestNativeVolumePressure "$task_case"; then exit 1; fi
+done
+for task_result in 'testing: warning: no tests to run' '--- SKIP: TestNativeV2VolumePressure (0.00s)' '--- FAIL: TestNativeV2VolumePressure (0.00s)'; do
+ printf '%s\nPASS\nANDEIVA_NATIVE_V2_CASE_PASS=bytes\n' "$task_result" > "$task_base/output.log"
+ if verify_test_log "$task_base/output.log" TestNativeV2VolumePressure bytes; then exit 1; fi
+done
+source <(sed -n '/^verify_v2_sentinel_snapshot() {$/,/^}$/p' "$task_source")
+task_hash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+verify_v2_sentinel_snapshot "$task_hash" 1:2:3 0:0:700 0:0:600:1 "$task_hash" 1:2:3
+for task_invalid in 1 2 3 4 5 6; do
+ task_args=("$task_hash" 1:2:3 0:0:700 0:0:600:1 "$task_hash" 1:2:3)
+ task_args[task_invalid-1]=invalid
+ if verify_v2_sentinel_snapshot "${task_args[@]}"; then exit 1; fi
+done
+printf 'ANDEIVA_STORAGE_V2_MODE_LOG_SENTINEL_GATE_RESULT=pass\n'

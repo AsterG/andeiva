@@ -73,7 +73,8 @@ func (g *PreparedGuardedEngine) Arm(ctx context.Context, id string, previous, ta
 	_ = g.authority.Arm(ctx, id, previous, target, ttl)
 	state, err = g.authority.State(ctx)
 	current, currentErr := g.authority.Current(ctx)
-	if err != nil || currentErr != nil || state.Phase != "armed" || !exactGuardScope(state, id, previous, target) || !time.Now().Before(state.Deadline) || state.Deadline.After(time.Now().Add(ttl)) || current != previous.Hash || g.engine.Current() != previous.Hash {
+	observedAt := time.Now()
+	if err != nil || currentErr != nil || state.Phase != "armed" || !exactGuardScope(state, id, previous, target) || !observedAt.Before(state.Deadline) || state.Deadline.After(observedAt.Add(ttl)) || current != previous.Hash || g.engine.Current() != previous.Hash {
 		return configpoc.ErrRecovery
 	}
 	g.id, g.previous, g.target = id, previous, target
