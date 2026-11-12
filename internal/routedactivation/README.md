@@ -101,3 +101,18 @@ RecoverObserved; it never adopts an encountered namespace or starts a new timer.
 Tests use real compiler/readback, Group and durable coordinator/reserve code with
 simulated kernel/network I/O. This is not native Boot4 qualification, configured
 appliance interface management, DHCP or host takeover evidence.
+
+Schema4 restoration now projects only the legacy revision from the exact
+canonical target onto the original physical baseline. This preserves every
+network/Observed/dependency fact and requires the original local revision.
+`ProjectRoutedRestoreBaselineV1` is pure prospective data conversion, not proof
+that the target is selected, saved or effective. Physical preparation may describe
+such a target without effects. Validate/Recover still authenticate the exact
+selected Work target, original scope/deadline and complete TargetOwned; the core
+loader independently recomputes and compares that projection. Thus a schema4 edit
+saved before schema6 can be restored exactly, while an unsaved edit can still
+return to the older selected Startup4. The original Work.Baseline reference and
+network memento remain retained; no new database, DTO or IPC field is added.
+Changing local-service configuration or substituting a different physical memento
+remains rejected. These tests model kernel/network I/O and do not qualify native
+host configuration or DHCP.
