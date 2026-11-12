@@ -1,5 +1,15 @@
 # Static IPv4 namespace executor — NET-EXECUTOR-001
 
+`ObservedSnapshot` captures actual empty-IPv4 inventory without a desired plan or
+PlanHash. PrepareObserved accepts only supervisor-authenticated physical bindings;
+it performs no address/route writes and creates no transaction. VerifyObserved
+checks the actual baseline. RecoverObserved also requires the original immutable
+namespace identity retained only by NewInOwnedNamespace. It never grants L3
+ownership. ObservedMatchesPrepared compares every physical fact when a subsequent
+real desired plan is supplied; equality is not authorization. The initial profile
+is exactly two owned links plus optional loopback, with no IPv4 addresses/routes.
+Existing configured interfaces and DHCP leases remain outside this helper profile.
+
 Owner: network executor. Status: isolated qualification verified; PR/integration
 pending. The isolated routing laboratory consumes this package; appliance API, CLI,
 runtime and privileged helpers do not.
