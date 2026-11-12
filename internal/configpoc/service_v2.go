@@ -77,8 +77,10 @@ func (s *ServiceV2) Close() error {
 	s.closeMu.Lock()
 	defer s.closeMu.Unlock()
 	if !s.closed {
-		s.coordinator.close()
-		s.closeErr = s.coordinator.store.close()
+		if s.coordinator != nil && s.coordinator.store != nil {
+			s.coordinator.close()
+			s.closeErr = s.coordinator.store.close()
+		}
 		s.closed = true
 	}
 	return s.closeErr
