@@ -60,3 +60,5 @@ reales del kernel/listeners, reinicio del SO, cortes eléctricos ni paridad
 desplegada. Métricas Debian y activación quedan pendientes de cualificación.
 Antes de activar, revertir consiste en retirar código preparado sin consumidores;
 un cutover futuro no autoriza volver a escritores v1 con trabajo sin resolver.
+
+La cualificación Debian13 pasó codec/cliente, sesión y snapshot atómico con sockets Unix reales, UID1000, sin capacidades y red privada. CPU combinada0,057439s/pico cgroup9.887.744B; motores simulados. El fixture usa nombres temporales cortos para respetar el límite AF_UNIX. No acredita nftables real, listeners del appliance ni activación del runtime.

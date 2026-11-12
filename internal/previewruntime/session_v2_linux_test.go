@@ -200,11 +200,27 @@ func TestScopedIPCV2LocalDomainObservation(t *testing.T) {
 	}
 }
 
+func socketDirV2(t *testing.T) string {
+	t.Helper()
+	// Unix socket names include the complete parent path. Avoid adding the
+	// potentially long test/subtest name to an already qualified TMPDIR.
+	p, err := os.MkdirTemp("", "v2sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(p); err != nil {
+			t.Error(err)
+		}
+	})
+	return p
+}
+
 func TestScopedIPCV2PrivateUnixController(t *testing.T) {
 	for _, wrongPeer := range []bool{false, true} {
 		t.Run(map[bool]string{false: "authenticated", true: "wrong-peer"}[wrongPeer], func(t *testing.T) {
 			s, _, engine, a, _ := fixtureSessionV2(t)
-			path := filepath.Join(privateDir(t), "v2.sock")
+			path := filepath.Join(socketDirV2(t), "v2.sock")
 			uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
 			listener, e := listenPrivate(path, uid, gid)
 			if e != nil {
@@ -263,7 +279,7 @@ func TestScopedIPCV2PrivateUnixController(t *testing.T) {
 
 func TestScopedIPCV2BurstAndFatalListenerCleanup(t *testing.T) {
 	s, _, engine, a, _ := fixtureSessionV2(t)
-	path := filepath.Join(privateDir(t), "bounded.sock")
+	path := filepath.Join(socketDirV2(t), "bounded.sock")
 	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
 	l, e := listenPrivate(path, uid, gid)
 	if e != nil {

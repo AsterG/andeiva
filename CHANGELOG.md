@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — scoped helper transport v2
+
+- Add an explicitly versioned private protocol for atomic observed-state attachment and exact-lease recovery.
+- Keep legacy frames unchanged and reject mixed versions, stale scopes and unverified recovery receipts.
+- Bound controller admission, preserve uncertain-result fencing and document independent runtime activation requirements.
+
 ## Unreleased — isolated storage volume qualification
 
 - Inspect inactive volumes through read-only lock descriptors while retaining exclusive locking and identity checks.

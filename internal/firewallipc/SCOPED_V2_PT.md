@@ -60,3 +60,5 @@ efeitos reais do kernel/listeners, reinício do SO, falha elétrica ou paridade
 instalada. Métricas Debian e ativação aguardam qualificação. Antes da ativação,
 rollback remove código preparado sem consumidores; um futuro cutover não
 autoriza voltar a escritores v1 com trabalho protegido ainda não resolvido.
+
+A qualificação Debian13 passou codec/cliente, sessão e snapshot atômico com sockets Unix reais, UID1000, sem capacidades e rede privada. CPU combinada0,057439s/pico cgroup9.887.744B; motores simulados. O fixture usa nomes temporários curtos para respeitar o limite AF_UNIX. Não comprova nftables real, listeners do appliance nem ativação do runtime.

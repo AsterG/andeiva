@@ -80,3 +80,5 @@ pending qualification; no production sizing claim follows from these fixtures.
 
 Before activation, rollback is removal of unused prepared code. After a future
 v2 cutover, do not fall back to a live v1 writer while protected work is unresolved.
+
+Native Debian 13 qualification passed the codec/client, scoped session and atomic guardian snapshot suites over real private Unix sockets, as UID1000 with no capabilities and private networking. Combined CPU0.057439s/cgrouppeak9,887,744B; engines were simulated. The native fixture uses short private socket-directory names so a long TMPDIR does not exceed AF_UNIX path limits. This is not real nftables, listener-process or runtime-cutover acceptance.
