@@ -1,13 +1,10 @@
 # Changelog
 
-## Unreleased — prepared local-service transactions
+## Unreleased — scoped helper transport v2
 
-- Coordinate local-service candidates, validation, confirmed commits, Save and
-  rollback through the composite transaction engine and fresh scoped evidence.
-- Keep metadata operations free of component application, preserve domain
-  separation during recovery and reject incompatible readers before effects.
-- Require explicit trusted assembly; deployed service and listener configuration
-  remains unchanged.
+- Add an explicitly versioned private protocol for atomic observed-state attachment and exact-lease recovery.
+- Keep legacy frames unchanged and reject mixed versions, stale scopes and unverified recovery receipts.
+- Bound controller admission, preserve uncertain-result fencing and document independent runtime activation requirements.
 
 ## Unreleased — read-only configuration reference inspection
 
@@ -276,6 +273,15 @@
   before enabling the new rule-state contract in Web, CLI and API.
 - Record isolated Debian traffic and browser validation, resource observations
   and limits in [the validation report](frontend/docs/firewall-rule-validation.md).
+
+## Unreleased — prepared local-service transactions
+
+- Coordinate local-service candidates, validation, confirmed commits, Save and
+  rollback through the composite transaction engine and fresh scoped evidence.
+- Keep metadata operations free of component application, preserve domain
+  separation during recovery and reject incompatible readers before effects.
+- Require explicit trusted assembly; deployed service and listener configuration
+  remains unchanged.
 
 ## Unreleased — isolated local service administration
 
