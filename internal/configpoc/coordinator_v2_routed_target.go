@@ -82,6 +82,9 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 		if err != nil {
 			return target, false, err
 		}
+		if bundle.LocalServices.Hash != state.LocalServices.Running.Hash {
+			return target, false, ErrDenied
+		}
 		incFirewall = true
 		incLocal = state.LocalServices.Running.Hash != bundle.LocalServices.Hash
 		target.Firewall.Running, target.LocalServices.Running = bundle.Firewall, bundle.LocalServices

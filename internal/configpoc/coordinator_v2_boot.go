@@ -65,6 +65,16 @@ func addFeatureV2(state *v2State, feature string) {
 }
 
 func preservesFeaturesV2(previous, next v2State) bool {
+	if previous.Configuration != nil && next.Configuration != nil {
+		p, n := previous.Configuration.Intent, next.Configuration.Intent
+		if p != nil && n != nil && p.RoutedWork != "" {
+			_, left, e1 := v2Canonical(p)
+			_, right, e2 := v2Canonical(n)
+			if e1 != nil || e2 != nil || left != right {
+				return false
+			}
+		}
+	}
 	if !preservesGuardDeadlineV2(previous, next) {
 		return false
 	}

@@ -42,6 +42,9 @@ func reserveMetadataFutureFitsV2(state v2State, load func(string, any) error) er
 	}
 	projected := state
 	projected.Configuration = &confirmed
+	if pending.Domain == "routed" {
+		projected.RoutedActive = &v2RoutedActive{Work: pending.Target, Side: "target"}
+	}
 	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited
 	}
@@ -64,6 +67,9 @@ func reserveMetadataFutureFitsV2(state v2State, load func(string, any) error) er
 		return errV2Unavailable
 	}
 	projected.Configuration = &expired
+	if pending.Domain == "routed" {
+		projected.RoutedActive = &v2RoutedActive{Work: pending.Target, Side: "before"}
+	}
 	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited
 	}

@@ -78,6 +78,13 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 		v2Release(&st, op)
 	}
 	st.Configuration = &target
+	if op.Domain == "routed" && s.state.Configuration.Intent != nil && s.state.Configuration.Intent.RoutedWork != "" {
+		if op.Request.Kind == OpConfirm && code == "applied" {
+			st.RoutedActive = &v2RoutedActive{Work: s.state.Configuration.Intent.RoutedWork, Side: "target"}
+		} else if code == "failed_rolled_back" {
+			st.RoutedActive = &v2RoutedActive{Work: s.state.Configuration.Intent.RoutedWork, Side: "before"}
+		}
+	}
 	st.Generation = generation
 	st.Clock = completed
 	if err = s.putOperation(&st, op); err != nil {
@@ -252,6 +259,19 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 	domain.Running = prior.Running
 	domain.LastGood = prior.LastGood
 	domain.Candidate = nil
+	if pending.Domain == "routed" {
+		localChanged := target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash || target.LocalServices.LastGood.Hash != previous.LocalServices.LastGood.Hash || target.LocalServices.Candidate != nil
+		target.LocalServices.Running = previous.LocalServices.Running
+		target.LocalServices.LastGood = previous.LocalServices.LastGood
+		target.LocalServices.Candidate = nil
+		target.CandidateGroup = nil
+		if localChanged && target.LocalServices.Generation == ^uint64(0) {
+			return errV2Limited
+		}
+		if localChanged {
+			target.LocalServices.Generation++
+		}
+	}
 	if domain.Generation == ^uint64(0) || s.state.Generation == ^uint64(0) {
 		return errV2Limited
 	}
@@ -297,6 +317,12 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 		return err
 	}
 	st.Configuration.Intent = &v2CoordinatorIntent{Operation: id, Subject: origin.Subject, Domain: pending.Domain, Kind: kind, Previous: previousHash, Target: targetHash, TargetGeneration: st.Generation + 1, Recovery: true, OriginCommit: origin.ID, Lease: pending.Lease}
+	if pending.Domain == "routed" {
+		if origin.Reserve == nil || origin.Reserve.PlanIntent == nil || !validHash(origin.Reserve.PlanIntent.RoutedWork) {
+			return ErrRecovery
+		}
+		st.Configuration.Intent.RoutedWork = origin.Reserve.PlanIntent.RoutedWork
+	}
 	st.Clock = c.recoveryNow()
 	if err = s.publish(st); err != nil {
 		return err
@@ -330,6 +356,9 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 		return errV2Unavailable
 	}
 	for _, engine := range c.enginesV2(intent.Domain) {
+		if intent.Domain == "routed" {
+			break
+		}
 		if engine.Validate(domainSnapshotV2(&target, intent.Domain).Running.Config) != nil {
 			return c.fenceRecoveryLocked()
 		}
@@ -380,6 +409,9 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 	target.RecoveryRequired = false
 	st := clone(s.state)
 	st.Configuration = &target
+	if intent.Domain == "routed" {
+		st.RoutedActive = &v2RoutedActive{Work: intent.RoutedWork, Side: "before"}
+	}
 	st.Generation = intent.TargetGeneration
 	st.Clock = c.recoveryNow()
 	origin.Pinned = false

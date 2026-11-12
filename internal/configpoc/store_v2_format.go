@@ -95,6 +95,7 @@ type v2Operation struct {
 	Retired       bool             `json:"retired"`
 }
 type v2State struct {
+	RoutedActive           *v2RoutedActive   `json:"routed_active,omitempty"`
 	ActiveReserves         []v2ActiveReserve `json:"active_reserves,omitempty"`
 	SystemBundle           *v2ActiveReserve  `json:"system_bundle,omitempty"`
 	RecoveryReserveVersion uint8             `json:"recovery_reserve_version,omitempty"`

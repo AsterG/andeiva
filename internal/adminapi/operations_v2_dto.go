@@ -127,13 +127,14 @@ type DomainGenerationsV2 struct {
 }
 
 type RoutedCurrentV2 struct {
-	SchemaVersion  int                            `json:"schema_version"`
-	LocalServices  SnapshotV2                     `json:"local_services"`
-	Running        configpoc.CompositeRevisionV1  `json:"running"`
-	Startup        configpoc.CompositeRevisionV1  `json:"startup"`
-	LastGood       configpoc.CompositeRevisionV1  `json:"last_good"`
-	Candidate      *configpoc.CompositeRevisionV1 `json:"candidate,omitempty"`
-	CandidateGroup *configpoc.CandidateGroupV2    `json:"candidate_group,omitempty"`
+	Confirmation   *configpoc.RoutedConfirmationV2 `json:"confirmation,omitempty"`
+	SchemaVersion  int                             `json:"schema_version"`
+	LocalServices  SnapshotV2                      `json:"local_services"`
+	Running        configpoc.CompositeRevisionV1   `json:"running"`
+	Startup        configpoc.CompositeRevisionV1   `json:"startup"`
+	LastGood       configpoc.CompositeRevisionV1   `json:"last_good"`
+	Candidate      *configpoc.CompositeRevisionV1  `json:"candidate,omitempty"`
+	CandidateGroup *configpoc.CandidateGroupV2     `json:"candidate_group,omitempty"`
 }
 
 func currentDTOv2(current configpoc.CurrentV2) CurrentV2 {
@@ -142,7 +143,7 @@ func currentDTOv2(current configpoc.CurrentV2) CurrentV2 {
 		result.DomainGenerations = &DomainGenerationsV2{Firewall: DecimalV2(d.Firewall), LocalServices: DecimalV2(d.LocalServices), Network: DecimalV2(d.Network)}
 	}
 	if r := current.Routed; r != nil {
-		result.Routed = &RoutedCurrentV2{SchemaVersion: r.SchemaVersion, LocalServices: snapshotDTOv2(r.LocalServices), Running: r.Running, Startup: r.Startup, LastGood: r.LastGood, Candidate: r.Candidate, CandidateGroup: r.CandidateGroup}
+		result.Routed = &RoutedCurrentV2{SchemaVersion: r.SchemaVersion, LocalServices: snapshotDTOv2(r.LocalServices), Running: r.Running, Startup: r.Startup, LastGood: r.LastGood, Candidate: r.Candidate, CandidateGroup: r.CandidateGroup, Confirmation: r.Confirmation}
 	}
 	return result
 }

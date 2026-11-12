@@ -38,7 +38,11 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 	if err != nil {
 		return err
 	}
-	if 18+8+archive+2*initial+verified > v2OperationReserveInodes {
+	routedObjects := uint64(0)
+	if target.Running.Config.SchemaVersion == 7 && target.Firewall.Running.Config.SchemaVersion == 6 {
+		routedObjects = 4
+	}
+	if 18+8+archive+2*initial+verified+routedObjects > v2OperationReserveInodes {
 		return errV2Limited
 	}
 	return nil
@@ -229,6 +233,9 @@ func reserveProfileFutureFitsV2(s *v2Store, target v2Configuration) error {
 func reserveProjectedEnvelopeV2(st v2State, target v2Configuration, _ string) v2State {
 	projected := st
 	projected.Configuration = &target
+	if hasFeatureV2(st, v2RoutedFeature) && target.Firewall.Running.Config.SchemaVersion == 6 {
+		projected.RoutedActive = &v2RoutedActive{Work: strings.Repeat("f", 64), Side: "target"}
+	}
 	reserveNormalizeEnvelopeScalarsV2(&projected)
 	return projected
 }

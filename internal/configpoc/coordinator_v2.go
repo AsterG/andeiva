@@ -5,9 +5,13 @@ import (
 	"errors"
 	"os"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 )
 
 type v2CoordinatorOptions struct {
+	Routed         RoutedAuthorityV1
+	RoutedIdentity networkexecutor.OwnedNamespaceIdentity
 	GuardDeadlines bool
 	Reserves       *v2ReserveManager
 	LocalPolicy    LocalPolicyV2
@@ -253,6 +257,35 @@ func (c *v2Coordinator) persistRevisions(state v2Configuration) error {
 }
 
 func (c *v2Coordinator) readback(state v2Configuration) bool {
+	if state.Firewall.Running.Config.SchemaVersion == 6 || c.store.state.RoutedActive != nil || c.store.state.Configuration != nil && c.store.state.Configuration.Intent != nil && c.store.state.Configuration.Intent.RoutedWork != "" {
+		if c.options.Routed == nil {
+			return false
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_, hash, err := c.options.Routed.Observe(ctx)
+		if err != nil {
+			return false
+		}
+		if hash == state.Running.Hash {
+			return true
+		}
+		if hash != "" || state.Firewall.Running.Config.SchemaVersion != 4 {
+			return false
+		}
+		var plan RoutedSelectedPlanV1
+		if in := c.store.state.Configuration.Intent; in != nil && in.RoutedWork != "" {
+			plan, err = c.selectedRoutedPlanV2()
+		} else if active := c.store.state.RoutedActive; active != nil && active.Side == "before" {
+			plan, err = loadRoutedWorkV2(active.Work, c.store.state.Lineage, c.store.readObject)
+			if plan.Scope().Identity != c.options.RoutedIdentity {
+				return false
+			}
+		} else {
+			return false
+		}
+		return err == nil && plan.Cold() && plan.previous.Composite.Hash == state.Running.Hash && c.options.Routed.Match(ctx, plan, "before") == nil
+	}
 	for _, engine := range c.firewall {
 		if engine.Current() != state.Firewall.Running.Hash {
 			return false
@@ -430,6 +463,22 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	if err != nil {
 		return result(op), err
 	}
+	if op.Domain == "routed" && op.Request.Kind == OpValidate && c.options.Routed != nil {
+		candidate, e := NewRoutedActivationBundleV1(target.Firewall.Candidate.Revision, target.LocalServices.Candidate.Revision)
+		if e != nil {
+			return result(op), e
+		}
+		var baseline *RoutedBaselineV1
+		if c.store.state.RoutedActive != nil {
+			_, baseline, e = c.routedBaselineV2()
+			if e != nil {
+				return result(op), e
+			}
+		}
+		if _, e = c.options.Routed.Prepare(ctx, candidate, baseline); e != nil {
+			return result(op), e
+		}
+	}
 	if err = c.absoluteGuardPreflightV2(op, state, target); err != nil {
 		return result(op), err
 	}
@@ -462,6 +511,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	st.Clock = now
 	st.Configuration.Intent = &v2CoordinatorIntent{Operation: op.ID, Subject: op.Subject, Domain: op.Domain, Kind: op.Request.Kind, Previous: previousHash, Target: targetHash, TargetGeneration: generation}
+	if err = c.publishRoutedWorkV2(ctx, op, state, target, st.Configuration.Intent); err != nil {
+		return result(op), err
+	}
 	if c.options.GuardDeadlines && immediateGuardIntentV2(st.Configuration.Intent, state, target) {
 		deadline := c.now().Add(10 * time.Second).UTC()
 		st.Configuration.Intent.GuardDeadline = &deadline
@@ -550,10 +602,18 @@ func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now 
 	if op.Domain == "routed" {
 		// Joint effects require the separately assembled group authority. Never
 		// fall through to the independent legacy component guard loops.
-		if op.Request.Kind == OpCommit || op.Request.Kind == OpRollback || op.Request.Kind == OpConfirm {
+		if c.options.Routed == nil && (op.Request.Kind == OpCommit || op.Request.Kind == OpRollback || op.Request.Kind == OpConfirm) {
 			return state, false, ErrRecovery
 		}
-		return routedTargetV2(c.store, op, state, now, "")
+		lease := ""
+		if op.Request.Kind == OpCommit || op.Request.Kind == OpRollback {
+			var err error
+			lease, err = v2ID("lease", op.Sequence)
+			if err != nil {
+				return state, false, err
+			}
+		}
+		return routedTargetV2(c.store, op, state, now, lease)
 	}
 	if state.CandidateGroup != nil || state.Firewall.Running.Config.SchemaVersion == 6 {
 		return state, false, ErrConflict
@@ -743,6 +803,13 @@ func (c *v2Coordinator) applyGuardedLocked(ctx context.Context, previous, target
 	domain := effectDomainV2(previous, target)
 	if len(domains) == 1 {
 		domain = domains[0]
+	}
+	if domain == "routed" && (forceGuard || recoverDrift || previous.Running.Hash != target.Running.Hash) {
+		plan, err := c.selectedRoutedPlanV2()
+		if err != nil {
+			return err
+		}
+		return c.options.Routed.Apply(ctx, plan)
 	}
 	if target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash && target.Firewall.Running.Hash != previous.Firewall.Running.Hash {
 		return ErrDenied

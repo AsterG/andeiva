@@ -46,7 +46,7 @@ func artifactFixture(t testing.TB) (OwnedV1, DependenciesV1, configpoc.RoutedAct
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := OwnedV1{Version: 1, Network: snapshot, NetworkState: Baseline, LegacyFirewall: TableStateV1{Present, &legacy}, RoutedFirewall: TableStateV1{Presence: Absent}, LocalServices: TableStateV1{Presence: Absent}}
+	before := OwnedV1{Version: 1, Network: snapshot, NetworkState: Baseline, LegacyFirewall: TableStateV1{Presence: Present, Revision: &legacy}, RoutedFirewall: TableStateV1{Presence: Absent}, LocalServices: TableStateV1{Presence: Absent}}
 	deps := DependenciesV1{Version: 1, Network: policy.Network, Prepared: snapshot, LocalInterfaces: localConfig.Interfaces}
 	return before, deps, bundle
 }
