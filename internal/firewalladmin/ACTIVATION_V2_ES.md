@@ -8,8 +8,11 @@ producción, configuración de autenticación, mensajes IPC privilegiados ni el
 los Engine sin guard siguen representando únicamente simulaciones.
 
 `PreparedGuardedEngine` reutiliza Engine, ActivationGuard y State/Current/Arm/Confirm
-de LeaseAuthority. El callback de recuperación confiable utiliza la operación de
-recuperación existente del helper. No introduce ejecutables o rutas seleccionados
+de LeaseAuthority. El callback tipado compara ID, hashes anterior/destino y plazo
+original dentro del mismo bloqueo que ejecuta la recuperación. El IPC
+`Client.Recovered` tiene otra semántica de barrera de sesión y no es un binding
+compatible. Este callback aún no tiene binding IPC privilegiado.
+No introduce ejecutables o rutas seleccionados
 por el cliente, verbos privilegiados nuevos ni bypass administrativo.
 
 El coordinador persiste el intent exacto antes de armar el helper. Los cambios
@@ -23,7 +26,7 @@ Retomar una lease pendiente no la rearma ni extiende su plazo, incluso durante
 los últimos 500 ms. Las leases nuevas conservan un mínimo de 500 ms. El timeout
 del helper no depende del proceso API, de la sesión ni del sujeto.
 
-El rollback utiliza la recuperación existente del helper después de validar
+El rollback utiliza la recuperación acotada del guardian después de validar
 lease, revisiones y estado efectivo. Una confirmación fallida puede recuperarse
 cuando se comprueba la reversión del helper: se restaura el contenido anterior,
 avanzan los contadores de dominio/global, se conserva Startup y se seleccionan
@@ -51,7 +54,8 @@ coordinador v2 real, guardian restringido existente y **motores simulados**.
 Comprueban commits inmediatos/confirmados, confirmación tardía, respuestas perdidas,
 aplicación parcial, leases ajenas, timeout independiente, reaperturas repetidas y
 una colisión real de archivo temporal después de confirmar el helper. No requieren
-root, reglas reales ni conexión al appliance. La validación nativa Debian 13 ejecutó los 10 tests
+root, reglas reales ni conexión al appliance. Antes de la corrección CAS,
+la validación nativa Debian 13 ejecutó los 10 tests
 seleccionados sin omisiones, como UID 1000 y sin capabilities: tiempo 0,586653 s,
 CPU 0,273888 s y pico de memoria cgroup 12.656.640 B. Se utilizó guardian en el
 mismo proceso, motores simulados y journals temporales reales. Es consumo del
@@ -62,3 +66,5 @@ evidencias de Local Services, aplicación de Startup durante un arranque del SO,
 garantías físicas de almacenamiento o cortes de energía. Arranque del SO y reinicio
 del proceso siguen siendo casos distintos; la transición adicional no se implementa
 aquí. AND-01/02 y los gates de activación permanecen abiertos.
+
+La calificación CAS en Debian 13 pasó las 11 pruebas del adaptador como UID 1000 sin capacidades: 1,196797 s, CPU 0,301658 s y pico de memoria cgroup 10.342.400 B. Las tres pruebas CAS del guardian también pasaron: 0,075054 s, CPU 0,026181 s y pico 7.184.384 B. Se utilizaron guardian en proceso, motores simulados y journals temporales reales; no califica IPC privilegiado ni consumo de un servicio de producción.

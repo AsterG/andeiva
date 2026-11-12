@@ -14,16 +14,16 @@ type PreparedGuardedEngine struct {
 	mu               sync.Mutex
 	engine           configpoc.Engine
 	authority        LeaseAuthority
-	recovered        func(context.Context) error
+	recoverLease     func(context.Context, LeaseState) error
 	id               string
 	previous, target configpoc.Revision
 }
 
-func NewPreparedGuardedEngine(engine configpoc.Engine, authority LeaseAuthority, recovered func(context.Context) error) (*PreparedGuardedEngine, error) {
-	if engine == nil || authority == nil || recovered == nil {
+func NewPreparedGuardedEngine(engine configpoc.Engine, authority LeaseAuthority, recoverLease func(context.Context, LeaseState) error) (*PreparedGuardedEngine, error) {
+	if engine == nil || authority == nil || recoverLease == nil {
 		return nil, configpoc.ErrInvalid
 	}
-	return &PreparedGuardedEngine{engine: engine, authority: authority, recovered: recovered}, nil
+	return &PreparedGuardedEngine{engine: engine, authority: authority, recoverLease: recoverLease}, nil
 }
 func (g *PreparedGuardedEngine) Name() string { return g.engine.Name() }
 func (g *PreparedGuardedEngine) Validate(config configpoc.Config) error {
@@ -108,9 +108,9 @@ func (g *PreparedGuardedEngine) Confirm(ctx context.Context, id, hash string) er
 	return nil
 }
 
-// RecoverPrevious reuses the existing helper recovery verb. It cannot select an
-// arbitrary revision, clear an unrelated lease, or undo an already confirmed
-// remote target whose durable coordinator publication is uncertain.
+// RecoverPrevious requires an authority-scoped compare-and-recover operation.
+// The callback must compare ID, hashes and deadline atomically with recovery;
+// the existing unscoped IPC Recovered operation is not a compatible binding.
 func (g *PreparedGuardedEngine) RecoverPrevious(ctx context.Context, id string, previous, target configpoc.Revision) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -133,7 +133,10 @@ func (g *PreparedGuardedEngine) RecoverPrevious(ctx context.Context, id string, 
 	if !exactGuardScope(state, id, previous, target) || (state.Phase != "armed" && state.Phase != "pending" && state.Phase != "expired") || (current != previous.Hash && current != target.Hash) {
 		return configpoc.ErrRecovery
 	}
-	if err := g.recovered(ctx); err != nil {
+	if state.Deadline.IsZero() {
+		return configpoc.ErrRecovery
+	}
+	if err := g.recoverLease(ctx, state); err != nil {
 		return configpoc.ErrRecovery
 	}
 	state, err = g.authority.State(ctx)
