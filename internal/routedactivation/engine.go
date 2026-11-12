@@ -75,23 +75,30 @@ type Options struct {
 	Neighbors       []localnft.NeighborLink
 	ResolvePlan     ResolvePlan
 	ResolveBaseline func(context.Context, configpoc.RoutedActivationBundleV1) (BaselineV1, error)
+	// ResolveRecoveredIdle consumes an opaque token already validated under the
+	// coordinator lock. It must not reenter that lock/store, accept caller flags,
+	// or attest a pending target as confirmed.
+	ResolveRecoveredIdle func(context.Context, configpoc.RoutedTransitionV1, time.Time) (nftguardian.RecoveredIdleV1, error)
 }
 
 type Engine struct {
-	mu        sync.Mutex
-	kernel    Kernel
-	network   Network
-	listeners localengine.Listeners
-	options   Options
-	initial   [3]TableStateV1
-	selected  bool
-	fenced    bool
-	plan      configpoc.RoutedTransitionV1
-	prepared  PreparationV1
-	previous  *configpoc.RoutedActivationBundleV1
-	target    configpoc.RoutedActivationBundleV1
-	known     [3][]TableStateV1
-	preview   *PreparationV1
+	mu                sync.Mutex
+	kernel            Kernel
+	network           Network
+	listeners         localengine.Listeners
+	options           Options
+	initial           [3]TableStateV1
+	selected          bool
+	fenced            bool
+	plan              configpoc.RoutedTransitionV1
+	prepared          PreparationV1
+	previous          *configpoc.RoutedActivationBundleV1
+	target            configpoc.RoutedActivationBundleV1
+	known             [3][]TableStateV1
+	preview           *PreparationV1
+	recovered         bool
+	recoveredScope    networkexecutor.OwnedNamespaceIdentity
+	recoveredDeadline time.Time
 }
 
 var _ nftguardian.GroupEngine = (*Engine)(nil)
@@ -448,6 +455,7 @@ func (e *Engine) ValidatePlan(ctx context.Context, plan configpoc.RoutedTransiti
 		previous = &detached
 	}
 	e.plan, e.prepared, e.previous, e.target, e.selected = plan, canonical, previous, target, true
+	e.recovered = false
 	e.known = [3][]TableStateV1{}
 	for i, state := range tables(before) {
 		e.known[i] = append(e.known[i], state, tables(after)[i])
@@ -527,11 +535,63 @@ func (e *Engine) RecoverPlan(ctx context.Context, plan configpoc.RoutedTransitio
 		return ErrState
 	}
 	e.plan, e.prepared, e.previous, e.target, e.selected = plan, PreparationV1{before, after, deps}, previous, target, true
+	e.recovered, e.recoveredScope, e.recoveredDeadline = true, original, deadline
 	e.known = [3][]TableStateV1{}
 	for table, state := range tables(before) {
 		e.known[table] = append(e.known[table], state, tables(after)[table])
 	}
 	return nil
+}
+
+// RecoveredIdle attests only durable finalized-before or confirmed-target from
+// trusted selected Work. Complete physical readback and original scope/receipt
+// are required again; this never derives finality from the observed hash.
+func (e *Engine) RecoveredIdle(ctx context.Context, plan configpoc.RoutedTransitionV1) (nftguardian.RecoveredIdleV1, error) {
+	if e == nil || ctx == nil {
+		return nftguardian.RecoveredIdleV1{}, ErrState
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.fenced || !e.selected || !e.recovered || e.plan != plan || e.options.ResolveRecoveredIdle == nil || ctx.Err() != nil {
+		return nftguardian.RecoveredIdleV1{}, ErrState
+	}
+	witness, err := e.options.ResolveRecoveredIdle(ctx, plan, e.recoveredDeadline)
+	if err != nil || witness.Plan != plan || witness.Scope != e.recoveredScope || witness.Deadline.IsZero() || witness.Deadline.Location() != time.UTC || !witness.Deadline.Equal(e.recoveredDeadline) {
+		return nftguardian.RecoveredIdleV1{}, ErrState
+	}
+	var expected *configpoc.RoutedActivationBundleV1
+	var owned OwnedV1
+	switch witness.Finality {
+	case nftguardian.BeforeRestored:
+		if witness.OwnedRef != plan.BeforeOwned {
+			return nftguardian.RecoveredIdleV1{}, ErrState
+		}
+		expected, owned = e.previous, e.prepared.Before
+	case nftguardian.TargetConfirmed:
+		if witness.OwnedRef != plan.TargetOwned {
+			return nftguardian.RecoveredIdleV1{}, ErrState
+		}
+		expected, owned = &e.target, e.prepared.Target
+	default:
+		return nftguardian.RecoveredIdleV1{}, ErrState
+	}
+	if (witness.Bundle == nil) != (expected == nil) {
+		return nftguardian.RecoveredIdleV1{}, ErrState
+	}
+	if expected != nil {
+		canonical, err := configpoc.CanonicalRoutedActivationBundleV1(*witness.Bundle)
+		if err != nil || canonical.Composite.Hash != expected.Composite.Hash {
+			return nftguardian.RecoveredIdleV1{}, ErrState
+		}
+		witness.Bundle = &canonical
+	}
+	if !e.matches(ctx, owned, e.prepared.Dependencies) || ctx.Err() != nil {
+		if ctx.Err() == nil {
+			e.fenced = true
+		}
+		return nftguardian.RecoveredIdleV1{}, ErrState
+	}
+	return witness, nil
 }
 
 func (e *Engine) remember(table int, state TableStateV1) bool {
