@@ -28,7 +28,7 @@ intent and validate original deadline, contextual refs and reservations. Shape
 validation or an always-successful resolver is insufficient. `ObserveOwned` and
 `MatchOwned` return/verify only selected refs after physical semantic readback.
 
-Initial activation requires an actual known canonical schema-4 default-deny table, absent
+Legacy fixture activation requires an actual known canonical schema-4 default-deny table, absent
 routed table, empty IPv4 baseline and absent or known empty local table. One nft
 transaction establishes routed/local deny and retires legacy enforcement before
 route effects. Target rules replace deny only after network and owned listeners
@@ -78,3 +78,19 @@ endpoint continuity; those require their own owner-reviewed evidence.
 go test -race ./internal/networkexecutor ./internal/routedactivation -count=3
 go vet ./internal/networkexecutor ./internal/routedactivation
 ```
+
+No-network schema4 Boot uses `Options.ObservedBindings` from authenticated supervisor
+inventory and `PrepareColdBoot(target4, saved4)`. It captures `ObservedSnapshot`
+without a desired plan or plan hash, with actual absence of all three tables.
+The selected Boot/SystemBundle and original Started+10s deadline must exist before
+any apply. Schema4 apply/rollback writes only the legacy table; it performs no
+address/route, listener or forwarding changes. Expiry restores actual absence,
+not the prospective saved policy. Confirmed schema4 edits may differ from the
+original saved policy while preserving the exact observed baseline. First schema6
+activation compares that complete baseline with its real PreparedSnapshot;
+inverse schema6→4 still requires the original authenticated saved baseline.
+A fresh helper verifies the original scope and exact observed state through
+RecoverObserved; it never adopts an encountered namespace or starts a new timer.
+Tests use real compiler/readback, Group and durable coordinator/reserve code with
+simulated kernel/network I/O. This is not native Boot4 qualification, configured
+appliance interface management, DHCP or host takeover evidence.

@@ -18,6 +18,7 @@ import (
 	"github.com/AsterG/andeiva/internal/firewallnft"
 	"github.com/AsterG/andeiva/internal/localpolicy"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/networkplan"
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"github.com/AsterG/andeiva/internal/routedactivation"
 	"github.com/AsterG/andeiva/internal/routednft"
@@ -54,6 +55,14 @@ func (a *routedBootReplyLostFixture) Bootstrap(ctx context.Context, p configpoc.
 }
 
 func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
+	routedPhysicalCoordinatorLifecycle(t, false)
+}
+
+func TestRoutedPhysicalCoordinatorNoNetworkBootLifecycle(t *testing.T) {
+	routedPhysicalCoordinatorLifecycle(t, true)
+}
+
+func routedPhysicalCoordinatorLifecycle(t *testing.T, noNetworkBoot bool) {
 	ctx := context.Background()
 	policy := routednft.LabPolicy()
 	localConfig := localpolicy.Config{SchemaVersion: 1, Interfaces: []localpolicy.Interface{
@@ -149,7 +158,11 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	network := &routedTestNetwork{snapshot: snapshot, identity: identity}
-	authority, err := NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, identity)
+	engineOptions := routedactivation.Options{Legacy: legacy}
+	for _, link := range snapshot.Links {
+		engineOptions.ObservedBindings = append(engineOptions.ObservedBindings, networkplan.Binding{Name: link.Name, HardwareAddress: link.MAC})
+	}
+	authority, err := NewRoutedAuthority(kernel, network, &routedTestListeners{}, engineOptions, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,6 +175,54 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	t.Cleanup(func() { _ = service.Close() })
 	if err = service.PrepareRoutedCompositeV1(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if noNetworkBoot {
+		if err := service.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := authority.group.Close(); err != nil {
+			t.Fatal(err)
+		}
+		// Model a newly supervised namespace on the next boot. Its physical
+		// tables are actually absent; the imported schema4 is only a saved witness.
+		identity.BootID = "32345678-1234-1234-1234-123456789abc"
+		identity.RunID = "2123456789abcdef0123456789abcdef"
+		identity.Namespace++
+		kernel = &routedTestKernel{objects: map[routedactivation.Table][]map[string]any{}}
+		network = &routedTestNetwork{snapshot: snapshot, identity: identity}
+		authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, engineOptions, identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = authority.group.Close() })
+		options.Routed, options.RoutedIdentity, options.BootID = authority, identity, identity.BootID
+		service, err = configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, options)
+		if err != nil {
+			t.Fatal("physical Startup4 no-network Boot", err)
+		}
+		data, present, err := kernel.Observe(ctx, routedactivation.LegacyTable)
+		if err != nil || !present {
+			t.Fatal("Boot4 missing actual legacy table", err)
+		}
+		if _, err := firewallnft.VerifyObservation(data, legacy); err != nil || network.calls != 0 || network.active || len(kernel.objects) != 1 {
+			t.Fatal("Boot4 did not preserve both imported rules without L3", err)
+		}
+		if err := service.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := authority.group.Close(); err != nil {
+			t.Fatal(err)
+		}
+		authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, engineOptions, identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = authority.group.Close() })
+		options.Routed = authority
+		service, err = configpoc.OpenRuntimeServiceV2(ctx, areas[2], budget, auth, []configpoc.Engine{engines[0]}, []configpoc.Engine{engines[1]}, options)
+		if err != nil {
+			t.Fatal("confirmed Boot4 fresh helper", err)
+		}
 	}
 	_, token, err := auth.Login("operator", credential)
 	if err != nil {
@@ -200,6 +261,19 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 		}
 		return result
 	}
+	if noNetworkBoot {
+		edited := legacy.Config
+		edited.Rules = append([]configpoc.Rule(nil), legacy.Config.Rules...)
+		edited.Rules[0].Action = "deny"
+		run(configpoc.OperationRequestV2{Kind: configpoc.OpStage, Config: &edited})
+		run(configpoc.OperationRequestV2{Kind: configpoc.OpValidate})
+		seconds := uint64(30)
+		changed := run(configpoc.OperationRequestV2{Kind: configpoc.OpCommit, ConfirmSeconds: &seconds})
+		run(configpoc.OperationRequestV2{Kind: configpoc.OpConfirm, Origin: changed.Operation.ID, Target: changed.Current.RunningRevision})
+		if network.calls != 0 || network.active {
+			t.Fatal("ordinary schema4 edit configured L3")
+		}
+	}
 	target := configpoc.Config{SchemaVersion: 6, DefaultAction: "deny", Routed: &policy}
 	run(configpoc.OperationRequestV2{Kind: configpoc.OpStage, Config: &target})
 	run(configpoc.OperationRequestV2{Kind: configpoc.OpValidate})
@@ -234,7 +308,7 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	}
 	foreignIdentity := identity
 	foreignIdentity.RunID = "fedcba9876543210fedcba9876543210"
-	foreign, e := NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, foreignIdentity)
+	foreign, e := NewRoutedAuthority(kernel, network, &routedTestListeners{}, engineOptions, foreignIdentity)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -250,7 +324,7 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 		t.Fatal("foreign recovery changed physical state")
 	}
 	_ = foreign.group.Close()
-	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, identity)
+	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, engineOptions, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +348,7 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	identity.RunID = "1123456789abcdef0123456789abcdef"
 	kernel = &routedTestKernel{objects: map[routedactivation.Table][]map[string]any{}}
 	network = &routedTestNetwork{snapshot: snapshot, identity: identity}
-	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, identity)
+	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, engineOptions, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +401,7 @@ func TestRoutedPhysicalCoordinatorConfirmedLifecycle(t *testing.T) {
 	if err = authority.group.Close(); err != nil {
 		t.Fatal(err)
 	}
-	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, routedactivation.Options{Legacy: legacy}, identity)
+	authority, err = NewRoutedAuthority(kernel, network, &routedTestListeners{}, engineOptions, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
