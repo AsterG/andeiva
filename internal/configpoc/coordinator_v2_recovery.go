@@ -390,6 +390,9 @@ func (c *v2Coordinator) reconcileLocked(ctx context.Context, reason string) erro
 	if intent == nil {
 		return nil
 	}
+	if intent.Kind == v2BootKind {
+		return c.finishBootLocked(ctx)
+	}
 	s.allowance = v2Budget{Bytes: v2OperationReserveBytes, Inodes: v2OperationReserveInodes}
 	defer func() { s.allowance = v2Budget{} }()
 	if intent.Recovery {
