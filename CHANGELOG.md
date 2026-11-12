@@ -2,6 +2,8 @@
 
 ## Unreleased — isolated storage volume qualification
 
+- Select copied-volume qualification only through explicit arguments, clearing inherited mode variables before both launcher phases.
+
 - Accept anchored composite test durations and preserve failures during idempotent log-test cleanup.
 
 - Prepare inactive, preallocated filesystem images through a fixed descriptor-only

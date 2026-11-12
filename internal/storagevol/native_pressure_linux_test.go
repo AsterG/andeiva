@@ -149,7 +149,11 @@ func TestNativeVolumePressure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer file.Close()
+		defer func() {
+			if file != nil {
+				_ = file.Close()
+			}
+		}()
 		block := make([]byte, 1024*1024)
 		for i := 0; i < 8; i++ {
 			if _, err = file.Write(block); err != nil {
@@ -167,8 +171,10 @@ func TestNativeVolumePressure(t *testing.T) {
 		if held.Bfree >= initial.Bfree {
 			t.Fatal("open-deleted allocation was not retained")
 		}
-		if err = file.Close(); err != nil {
-			t.Fatal(err)
+		closeErr := file.Close()
+		file = nil
+		if closeErr != nil {
+			t.Fatal(closeErr)
 		}
 		_ = syncRoot(observations)
 		released := nativeStat(t, observations)

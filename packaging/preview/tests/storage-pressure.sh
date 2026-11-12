@@ -22,11 +22,25 @@ verify_test_log() {
     grep -Fqx -- "ANDEIVA_NATIVE_VOLUME_CASE_PASS=$task_case" "$task_log" || return 1
   fi
 }
-if [[ $EUID = 0 && $# = 7 && $1 = --authorized-debian-volumes ]]; then
-  export ANDEIVA_STORAGE_VOLUME_ID=$7
-  [[ $ANDEIVA_STORAGE_VOLUME_ID =~ ^[a-f0-9]{32}$ ]] || die 'invalid preparation ID'
-  export ANDEIVA_STORAGE_INSPECTOR=$5 ANDEIVA_STORAGE_INSPECTOR_SHA=$6
-  set -- --authorized-debian-lab "$2" "$3" "$4"
+# The copied-volume mode is carried by explicit arguments across unshare,
+# never by inherited environment variables.
+parse_volume_arguments() {
+  unset ANDEIVA_STORAGE_VOLUME_ID ANDEIVA_STORAGE_INSPECTOR ANDEIVA_STORAGE_INSPECTOR_SHA
+  task_volume_id= task_inspector_input= task_inspector_sha=
+  task_volume_arguments=("$@")
+  if [[ $# = 7 && ( $1 = --authorized-debian-volumes || $1 = --inside-volumes ) ]]; then
+    task_volume_id=$7 task_inspector_input=$5 task_inspector_sha=$6
+    if [[ $1 = --authorized-debian-volumes ]]; then
+      task_volume_arguments=(--authorized-debian-lab "$2" "$3" "$4")
+    else
+      task_volume_arguments=(--inside "$2" "$3" "$4")
+    fi
+  fi
+}
+parse_volume_arguments "$@"
+set -- "${task_volume_arguments[@]}"
+if [[ -n $task_volume_id ]]; then
+  [[ $task_volume_id =~ ^[a-f0-9]{32}$ && $task_inspector_sha =~ ^[a-f0-9]{64}$ ]] || die 'invalid volume arguments'
 fi
 [[ $EUID = 0 && $# = 4 ]] || die 'root and explicit laboratory authorization required'
 task_mode=$1
@@ -67,17 +81,16 @@ trusted_ancestors() {
 trusted_ancestors "$task_script"
 trusted_ancestors "$task_binary"
 
-task_volume_id=${ANDEIVA_STORAGE_VOLUME_ID:-}
 if [[ -n $task_volume_id ]]; then
-  [[ $task_volume_id =~ ^[a-f0-9]{32}$ && ${ANDEIVA_STORAGE_INSPECTOR_SHA:-} =~ ^[a-f0-9]{64}$ ]] || die 'invalid volume arguments'
-  [[ ${ANDEIVA_STORAGE_INSPECTOR:-} = /* && ! -L $ANDEIVA_STORAGE_INSPECTOR ]] || die 'invalid inspector'
-  task_inspector=$(realpath -e -- "$ANDEIVA_STORAGE_INSPECTOR")
+  [[ $task_volume_id =~ ^[a-f0-9]{32}$ && $task_inspector_sha =~ ^[a-f0-9]{64}$ ]] || die 'invalid volume arguments'
+  [[ $task_inspector_input = /* && ! -L $task_inspector_input ]] || die 'invalid inspector'
+  task_inspector=$(realpath -e -- "$task_inspector_input")
   [[ -f $task_inspector && $(stat -c '%u:%h' "$task_inspector") = 0:1 ]] || die 'invalid inspector ownership'
   (( $(stat -c '%s' "$task_inspector") > 0 && $(stat -c '%s' "$task_inspector") <= 32*1024*1024 )) || die 'inspector exceeds size limit'
   task_permissions=$(stat -c '%a' "$task_inspector")
   (( (8#$task_permissions & 022) == 0 )) || die 'inspector writable by others'
   trusted_ancestors "$task_inspector"
-  [[ $(sha256sum "$task_inspector" | cut -d ' ' -f1) = "$ANDEIVA_STORAGE_INSPECTOR_SHA" ]] || die 'inspector checksum mismatch'
+  [[ $(sha256sum "$task_inspector" | cut -d ' ' -f1) = "$task_inspector_sha" ]] || die 'inspector checksum mismatch'
 fi
 
 if [[ $task_mode = --authorized-debian-lab ]]; then
@@ -87,6 +100,9 @@ if [[ $task_mode = --authorized-debian-lab ]]; then
   exec 9</proc/self/ns/mnt
   exec 10</proc/self/ns/net
   export ANDEIVA_STORAGE_PARENT_NETWORK="$task_parent_network"
+  if [[ -n $task_volume_id ]]; then
+    exec unshare --mount --net --propagation private -- /bin/bash "$task_script" --inside-volumes "$task_binary" "$task_sha" "$task_parent_namespace" "$task_inspector" "$task_inspector_sha" "$task_volume_id"
+  fi
   exec unshare --mount --net --propagation private -- /bin/bash "$task_script" --inside "$task_binary" "$task_sha" "$task_parent_namespace"
 fi
 [[ $task_mode = --inside && $task_namespace =~ ^mnt:\[[0-9]+\]$ ]] || die 'invalid execution mode'

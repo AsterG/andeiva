@@ -59,3 +59,26 @@ for task_original_status in 0 7; do
  [[ $task_observed_status = "$task_original_status" && ! -e $task_cleanup_base ]]
 done
 printf 'ANDEIVA_STORAGE_CLEANUP_GATE_RESULT=pass\n'
+
+# Malicious inherited environment cannot select copied-volume mode in the old CLI.
+source <(sed -n '/^parse_volume_arguments() {$/,/^}$/p' "$task_source")
+export ANDEIVA_STORAGE_VOLUME_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export ANDEIVA_STORAGE_INSPECTOR=/untrusted/inspector
+export ANDEIVA_STORAGE_INSPECTOR_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+parse_volume_arguments --authorized-debian-lab /trusted/test.test expected --isolated-storage-only
+[[ -z $task_volume_id && -z $task_inspector_input && -z $task_inspector_sha ]]
+[[ ! -v ANDEIVA_STORAGE_VOLUME_ID && ! -v ANDEIVA_STORAGE_INSPECTOR && ! -v ANDEIVA_STORAGE_INSPECTOR_SHA ]]
+[[ ${#task_volume_arguments[@]} = 4 && ${task_volume_arguments[0]} = --authorized-debian-lab ]]
+for task_volume_mode in --authorized-debian-volumes --inside-volumes; do
+ parse_volume_arguments "$task_volume_mode" /trusted/test.test expected namespace /trusted/inspector digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ [[ $task_volume_id = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && $task_inspector_input = /trusted/inspector && $task_inspector_sha = digest ]]
+ [[ ${#task_volume_arguments[@]} = 4 ]]
+ if [[ $task_volume_mode = --inside-volumes ]]; then
+  [[ ${task_volume_arguments[0]} = --inside ]]
+ else
+  [[ ${task_volume_arguments[0]} = --authorized-debian-lab ]]
+ fi
+done
+parse_volume_arguments --authorized-debian-lab /trusted/test.test expected --isolated-storage-only
+[[ -z $task_volume_id && -z $task_inspector_input && -z $task_inspector_sha ]]
+printf 'ANDEIVA_STORAGE_ENVIRONMENT_MODE_GATE_RESULT=pass\n'
