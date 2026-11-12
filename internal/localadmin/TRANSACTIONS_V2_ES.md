@@ -77,7 +77,7 @@ resiliencia global. Antes de activar, revertir retira código preparado sin uso;
 un store seleccionado exige lectores compatibles, nunca escritores v1 en paralelo.
 
 La cualificación nativa en Debian 13 ejecutó los binarios exactos como UID 1000,
-con no-new-privileges y red aislada: tiempo combinado 3,561436 s, CPU 1,598901 s
-y pico de memoria cgroup de 21.815.296 bytes. Incluye journals y pruebas de
+con no-new-privileges y red aislada: tiempo combinado 3,916337 s, CPU 1,764321 s
+y pico de memoria cgroup de 23.621.632 bytes. Incluye journals y pruebas de
 autenticación/evidencia reales con motores simulados. No demuestra activación de
 helper/listeners reales, rendimiento de tráfico ni recursos de todo el appliance.

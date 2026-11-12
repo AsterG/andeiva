@@ -5,6 +5,7 @@ package configpoc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"reflect"
@@ -360,5 +361,122 @@ func TestCoordinatorLocalV2ExplicitFirewallRecoveryRepairsOnlyFirewall(t *testin
 	}
 	if engines[0].applies.Load() != 1 || engines[1].applies.Load() != 1 || engines[2].applies.Load() != 0 {
 		t.Fatal("explicit recovery did not stay in firewall domain")
+	}
+}
+
+func TestCoordinatorLocalV2ReachabilityWithBootFeature(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending-%t", pending), func(t *testing.T) {
+			c, area, engines, p := bootFixtureV2(t)
+			c.options.LocalPolicy = localFaultPolicyV2{}
+			config := localSample(t, 18443)
+			if _, _, err := localFaultRequestV2(t, c, p, v2Request{Kind: OpStage, Config: &config}); err != nil {
+				t.Fatal(err)
+			}
+			id := v2BootID("a1111111-2222-3333-4444-555555555555")
+			c.options.BootID = &id
+			if pending {
+				c.options.Hook = func(point string) error {
+					if point == "after_boot_intent" {
+						return ErrInterrupted
+					}
+					return nil
+				}
+			}
+			c.store.mu.Lock()
+			err := c.bootStartupLocked(context.Background(), id)
+			c.store.mu.Unlock()
+			if pending {
+				if !errors.Is(err, ErrInterrupted) {
+					t.Fatal(err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if !hasFeatureV2(c.store.state, v2BootFeature) || !hasFeatureV2(c.store.state, v2LocalFeature) {
+				t.Fatal("combined features missing")
+			}
+			c.close()
+			if err := c.store.close(); err != nil {
+				t.Fatal(err)
+			}
+			before := journalFiles(t, area.Name())
+			for _, engine := range engines {
+				engine.reset()
+			}
+			report, err := inspectReachabilityV2(context.Background(), area, reachabilityBudgetV2())
+			if err != nil || !report.Complete {
+				t.Fatal("combined feature closure rejected", report, err)
+			}
+			if !reflect.DeepEqual(before, journalFiles(t, area.Name())) {
+				t.Fatal("inspection mutated store")
+			}
+			for _, engine := range engines {
+				if engine.applies.Load() != 0 {
+					t.Fatal("inspection applied component")
+				}
+			}
+		})
+	}
+}
+
+func TestCoordinatorLocalV2BootMaterializesCandidateBeforeIntent(t *testing.T) {
+	c, area, engines, p := bootFixtureV2(t)
+	c.options.LocalPolicy = localFaultPolicyV2{}
+	config := localSample(t, 18443)
+	if _, _, err := localFaultRequestV2(t, c, p, v2Request{Kind: OpStage, Config: &config}); err != nil {
+		t.Fatal(err)
+	}
+	before := clone(c.store.state)
+	target, err := bootTargetV2(*before.Configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Candidate == nil || target.Candidate.Hash == before.Configuration.Candidate.Hash {
+		t.Fatal("fixture needs newly composed candidate")
+	}
+	c.options.BootID = ptrBootV2(testBootIDV2)
+	c.options.Hook = func(point string) error {
+		if point == "before_boot_intent" {
+			return ErrInterrupted
+		}
+		return nil
+	}
+	for _, engine := range engines {
+		engine.reset()
+	}
+	c.store.mu.Lock()
+	err = c.bootStartupLocked(context.Background(), testBootIDV2)
+	c.store.mu.Unlock()
+	if !errors.Is(err, ErrInterrupted) || !reflect.DeepEqual(before, c.store.state) {
+		t.Fatal("pre-intent interruption selected state", err)
+	}
+	var stored v2CompositeConfig
+	if err := c.store.readObject(target.Candidate.Hash, &stored); err != nil {
+		t.Fatal("candidate not materialized before intent", err)
+	}
+	canonical, err := CanonicalComposite(stored)
+	if err != nil || canonical.Hash != target.Candidate.Hash {
+		t.Fatal("materialized wrong candidate", err)
+	}
+	for _, engine := range engines {
+		if engine.applies.Load() != 0 {
+			t.Fatal("effect before durable intent")
+		}
+	}
+	booted, err := reopenBootV2(t, c, area, ptrBootV2(testBootIDV2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if booted.store.state.Configuration.Candidate == nil || booted.store.state.Configuration.Candidate.Hash != target.Candidate.Hash || booted.store.state.Configuration.LocalServices.Candidate.Revision.Hash != before.Configuration.LocalServices.Candidate.Revision.Hash {
+		t.Fatal("resume changed staged local candidate")
+	}
+	booted.close()
+	if err := booted.store.close(); err != nil {
+		t.Fatal(err)
+	}
+	report, err := inspectReachabilityV2(context.Background(), area, reachabilityBudgetV2())
+	if err != nil || !report.Complete {
+		t.Fatal("resumed boot closure incomplete", report, err)
 	}
 }

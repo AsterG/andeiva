@@ -111,6 +111,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 			return ErrEngine
 		}
 	}
+	if err := c.persistRevisions(target); err != nil {
+		return err
+	}
 	previousHash, err := s.object(current)
 	if err != nil {
 		return err

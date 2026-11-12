@@ -99,7 +99,7 @@ must retain compatible readers and protected history; never reactivate live v1
 writers or reuse proof tokens to work around a failed recovery.
 
 Native qualification on Debian 13 ran the exact test binaries as UID 1000 with
-no-new-privileges and isolated networking: combined process elapsed 3.561436 s,
-CPU 1.598901 s and cgroup memory peak 21,815,296 bytes. This includes real journals,
+no-new-privileges and isolated networking: combined process elapsed 3.916337 s,
+CPU 1.764321 s and cgroup memory peak 23,621,632 bytes. This includes real journals,
 authentication/proof-book paths and simulated engines; it is not a real helper or
 listener activation, throughput benchmark or appliance-wide resource guarantee.

@@ -75,7 +75,7 @@ da ativação, rollback remove código preparado sem uso; store selecionado exig
 leitores compatíveis, nunca escritores v1 em paralelo.
 
 A qualificação nativa no Debian 13 executou os binários exatos como UID 1000,
-com no-new-privileges e rede isolada: tempo combinado 3,561436 s, CPU 1,598901 s
-e pico de memória cgroup de 21.815.296 bytes. Inclui journals e provas de
+com no-new-privileges e rede isolada: tempo combinado 3,916337 s, CPU 1,764321 s
+e pico de memória cgroup de 23.621.632 bytes. Inclui journals e provas de
 autenticação/evidência reais com motores simulados. Não demonstra ativação de
 helper/listeners reais, desempenho de tráfego ou recursos de todo o appliance.
