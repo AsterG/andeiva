@@ -224,6 +224,17 @@ func (s *v2Store) reserveArchiveLookupV2(root string, expected v2ReserveArchiveE
 				return archive, true, nil
 			}
 		}
+		if kind == "claim" {
+			for _, claim := range archive.UnusedEscrow {
+				if claim != expected.Claim {
+					continue
+				}
+				actual, err := reserveIdentityKeyV2(v2ReserveArchiveEntry{Claim: claim}, "claim")
+				if err == nil && actual == key {
+					return archive, true, nil
+				}
+			}
+		}
 		return v2ReserveArchive{}, false, errV2Unavailable
 	}
 	return v2ReserveArchive{}, false, nil

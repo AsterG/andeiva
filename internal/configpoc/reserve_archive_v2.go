@@ -3,6 +3,7 @@ package configpoc
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
@@ -23,16 +24,17 @@ type v2ReserveArchiveEntry struct {
 }
 
 type v2ReserveArchive struct {
-	Format          string                  `json:"format"`
-	Version         uint8                   `json:"version"`
-	Lineage         string                  `json:"lineage"`
-	Origin          string                  `json:"origin"`
-	Child           string                  `json:"child,omitempty"`
-	Audit           string                  `json:"audit"`
-	FinalWork       string                  `json:"final_work"`
-	LeaseResolution string                  `json:"lease_resolution,omitempty"`
-	Dependencies    []string                `json:"dependencies"`
-	Entries         []v2ReserveArchiveEntry `json:"entries"`
+	Format          string                        `json:"format"`
+	Version         uint8                         `json:"version"`
+	Lineage         string                        `json:"lineage"`
+	Origin          string                        `json:"origin"`
+	Child           string                        `json:"child,omitempty"`
+	Audit           string                        `json:"audit"`
+	FinalWork       string                        `json:"final_work"`
+	LeaseResolution string                        `json:"lease_resolution,omitempty"`
+	Dependencies    []string                      `json:"dependencies"`
+	Entries         []v2ReserveArchiveEntry       `json:"entries"`
+	UnusedEscrow    []recoveryreserve.SlotClaimV2 `json:"unused_escrow,omitempty"`
 }
 
 func reserveClaimKeyV2(claim recoveryreserve.SlotClaimV2) (string, error) {
@@ -50,6 +52,9 @@ func validateReserveArchiveV2(archive v2ReserveArchive) error {
 	if (archive.Child != "") != (len(archive.Entries) == 6) || (archive.Child != "" && archive.LeaseResolution == "") {
 		return errV2Invalid
 	}
+	if (len(archive.UnusedEscrow) != 0 && len(archive.UnusedEscrow) != 3) || (len(archive.UnusedEscrow) != 0 && archive.Child != "") {
+		return errV2Invalid
+	}
 	previous := ""
 	for _, hash := range archive.Dependencies {
 		if !validHash(hash) || hash <= previous {
@@ -58,6 +63,7 @@ func validateReserveArchiveV2(archive v2ReserveArchive) error {
 		previous = hash
 	}
 	seen := map[string]bool{}
+	physical := map[string]bool{}
 	roles := map[string]map[recoveryreserve.RoleV2]bool{}
 	ownerWork := map[string]string{}
 	ownerScope := map[string]string{}
@@ -73,6 +79,11 @@ func validateReserveArchiveV2(archive v2ReserveArchive) error {
 		}
 		previous = key
 		seen[key] = true
+		slot := fmt.Sprintf("%s:%d", entry.Claim.Pool, entry.Claim.Slot)
+		if physical[slot] {
+			return errV2Invalid
+		}
+		physical[slot] = true
 		owner := entry.Claim.Owner
 		if roles[owner] == nil {
 			roles[owner] = map[recoveryreserve.RoleV2]bool{}
@@ -159,6 +170,18 @@ func validateReserveArchiveV2(archive v2ReserveArchive) error {
 	if archive.Child != "" && lease == "" {
 		return errV2Invalid
 	}
+	var escrowOwner string
+	escrowRoles := map[recoveryreserve.RoleV2]bool{}
+	previous = ""
+	for _, claim := range archive.UnusedEscrow {
+		key, err := reserveClaimKeyV2(claim)
+		slot := fmt.Sprintf("%s:%d", claim.Pool, claim.Slot)
+		if err != nil || key <= previous || seen[key] || physical[slot] || roles[claim.Owner] != nil || escrowRoles[claim.Role] || (escrowOwner != "" && escrowOwner != claim.Owner) {
+			return errV2Invalid
+		}
+		seen[key], physical[slot], escrowRoles[claim.Role] = true, true, true
+		escrowOwner, previous = claim.Owner, key
+	}
 	return nil
 }
 
@@ -198,6 +221,11 @@ func sortReserveArchiveV2(archive *v2ReserveArchive) {
 	sort.Slice(archive.Entries, func(i, j int) bool {
 		left, _ := reserveClaimKeyV2(archive.Entries[i].Claim)
 		right, _ := reserveClaimKeyV2(archive.Entries[j].Claim)
+		return left < right
+	})
+	sort.Slice(archive.UnusedEscrow, func(i, j int) bool {
+		left, _ := reserveClaimKeyV2(archive.UnusedEscrow[i])
+		right, _ := reserveClaimKeyV2(archive.UnusedEscrow[j])
 		return left < right
 	})
 }

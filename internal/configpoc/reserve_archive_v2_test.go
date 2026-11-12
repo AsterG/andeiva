@@ -160,6 +160,7 @@ func TestReserveArchiveV2CountsSerializedEnvelope(t *testing.T) {
 		scope.Operation = origin
 		if entry.Claim.Owner == strings.Repeat("b", 128) {
 			scope.Operation = child
+			entry.Claim.Slot = 8
 		}
 		scope.Origin, scope.Lease, scope.Deadline = origin, strings.Repeat("e", 64), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		capacity := map[recoveryreserve.RoleV2]int{recoveryreserve.AdmissionV2: 4096, recoveryreserve.PlanV2: 16384, recoveryreserve.EmergencyV2: 8192}[entry.Claim.Role]
@@ -252,5 +253,66 @@ func TestReserveArchiveV2SharedPrefixWriteBudget(t *testing.T) {
 		if delta := s.used.Inodes - before; delta > 128 {
 			t.Fatalf("archive insertion exceeded reserved node budget: %d", delta)
 		}
+	}
+}
+
+func TestReserveArchiveV2UntouchedClosingEscrow(t *testing.T) {
+	archive := reserveArchiveFixtureV2(t, "origin-bundle")
+	for _, entry := range archive.Entries {
+		claim := entry.Claim
+		claim.Owner = "unused-closing-escrow"
+		claim.Slot = 8
+		archive.UnusedEscrow = append(archive.UnusedEscrow, claim)
+	}
+	sortReserveArchiveV2(&archive)
+	data, _, err := encodeReserveArchiveV2(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeReserveArchiveV2(data); err != nil {
+		t.Fatal(err)
+	}
+	s, _, _, _ := v2Fixture(t, v2MaximumOperations)
+	defer s.close()
+	hash, err := s.object(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := ""
+	for _, claim := range archive.UnusedEscrow {
+		entry := v2ReserveArchiveEntry{Claim: claim}
+		key, err := reserveIdentityKeyV2(entry, "claim")
+		if err != nil {
+			t.Fatal(err)
+		}
+		root, err = s.reserveArchiveInsertV2(root, 0, "", v2ReserveArchiveRef{Key: key, Archive: hash, Owner: claim.Owner, Role: claim.Role, Kind: "claim"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, found, err := s.reserveArchiveLookupV2(root, entry, "claim"); err != nil || !found {
+			t.Fatalf("untouched escrow lookup: %t %v", found, err)
+		}
+	}
+	for _, name := range []string{"partial", "owner", "duplicate", "physical-alias", "child"} {
+		t.Run(name, func(t *testing.T) {
+			bad := clone(archive)
+			switch name {
+			case "partial":
+				bad.UnusedEscrow = bad.UnusedEscrow[:2]
+			case "owner":
+				bad.UnusedEscrow[0].Owner = "foreign"
+			case "duplicate":
+				bad.UnusedEscrow[0] = bad.UnusedEscrow[1]
+			case "physical-alias":
+				bad.UnusedEscrow[0].Slot = 0
+				bad.UnusedEscrow[0].Epoch++
+			case "child":
+				bad.Child = "invented-child"
+			}
+			sortReserveArchiveV2(&bad)
+			if _, _, err := encodeReserveArchiveV2(bad); err == nil {
+				t.Fatal("invalid unused escrow accepted")
+			}
+		})
 	}
 }
