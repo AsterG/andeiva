@@ -351,7 +351,10 @@ func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPr
 	if err = c.point("after_intent"); err != nil {
 		return result(op), err
 	}
-	if err = c.applyLocked(ctx, state, target); err != nil {
+	if err = c.prepareGuardsLocked(ctx, op, state, target); err != nil {
+		return c.compensateLocked(ctx, op, state, err)
+	}
+	if err = c.applyGuardedLocked(ctx, state, target, op.Request.Kind == OpCommit); err != nil {
 		if errors.Is(err, ErrInterrupted) {
 			return result(op), err
 		}
@@ -368,6 +371,12 @@ func (c *v2Coordinator) executeLocked(ctx context.Context, principal v2TrustedPr
 	}
 	if c.now().Before(s.state.Clock) {
 		return c.compensateLocked(ctx, op, state, ErrInterrupted)
+	}
+	if err = c.confirmGuardsLocked(ctx, op, state, target); err != nil {
+		if op.Request.Kind == OpConfirm {
+			return c.compensateLocked(ctx, op, state, err)
+		}
+		return c.uncertainLocked(op, ErrRecovery)
 	}
 	code := "applied"
 	pin := false
@@ -542,10 +551,22 @@ func (c *v2Coordinator) loadFirewallRevision(hash string) (Revision, error) {
 }
 
 func (c *v2Coordinator) applyLocked(ctx context.Context, previous, target v2Configuration) error {
+	return c.applyGuardedLocked(ctx, previous, target, false)
+}
+func (c *v2Coordinator) applyGuardedLocked(ctx context.Context, previous, target v2Configuration, forceGuard bool) error {
 	if target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash {
 		return ErrDenied
 	}
 	if target.Firewall.Running.Hash == previous.Firewall.Running.Hash && c.readback(target) {
+		if forceGuard {
+			for _, engine := range c.firewall {
+				if _, ok := engine.(ActivationGuard); ok {
+					if err := engine.Apply(ctx, target.Firewall.Running); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		return nil
 	}
 	for _, engine := range c.firewall {

@@ -178,6 +178,36 @@ func (g *Guardian) Confirm(id, hash string) error {
 func (g *Guardian) RecoverPrevious() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.recoverPreviousLocked()
+}
+
+// RecoverLease compares the observed lease and its original deadline while
+// holding the same lock that restores it. A stale observer cannot recover a
+// replacement lease, even when its ID and policy hashes were reused.
+func (g *Guardian) RecoverLease(id, previous, target string, deadline time.Time) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed || id == "" || len(id) > 64 || deadline.IsZero() {
+		return ErrLease
+	}
+	if g.state.ID != id || g.state.Previous != previous || g.state.Target != target {
+		return ErrLease
+	}
+	if !g.state.Deadline.Equal(deadline) || !g.deadline.Equal(deadline) {
+		return ErrLease
+	}
+	if g.previous.Hash != previous || g.target.Hash != target {
+		return ErrLease
+	}
+	switch g.state.Phase {
+	case "armed", "pending", "expired":
+		return g.recoverPreviousLocked()
+	default:
+		return ErrLease
+	}
+}
+
+func (g *Guardian) recoverPreviousLocked() error {
 	if g.closed {
 		return ErrLease
 	}

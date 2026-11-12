@@ -154,6 +154,12 @@
 - Add an opt-in graphical redraw compatibility mode, without forcing a display
   resolution or changing drivers; preserve the default and recovery configuration.
 
+## Unreleased — prepared transactional engine guards
+
+- Arm fixed engine leases after durable intent and verify exact receipts and effective state before confirmation.
+- Reconcile owned expired leases with verified compensation while retaining fences for ambiguous confirmed publication.
+- Qualify simulated-engine and in-process guardian recovery without enabling privileged runtime integration or OS-boot migration.
+
 ## Unreleased — inactive boot theme resources
 
 - Add GRUB and Plymouth theme resources with the original logo, English status
