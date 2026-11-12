@@ -238,7 +238,7 @@ func (r *v2ReachabilityReader) lookup(state v2State, subject, id string) (v2Oper
 }
 
 func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, state v2State, depth int, live bool) error {
-	if !validV2Configuration(&cfg) {
+	if !r.selectedConfigurationValidV2(&cfg) {
 		return errV2Unavailable
 	}
 	if live && validateCandidateGroupEvidenceV2(cfg, r.object) != nil {
@@ -461,6 +461,15 @@ func (r *v2ReachabilityReader) findWitness(hash, revision string) (v2VerifiedEnt
 }
 
 func (r *v2ReachabilityReader) snapshot(hash, key string, state v2State, depth int) error {
+	if r.cache != nil {
+		// The complete state, not a traversal-path label, is the validation context.
+		// Keep all fields in the digest so future state fields cannot be omitted.
+		_, contextHash, err := v2Canonical(state)
+		if err != nil {
+			return err
+		}
+		key = contextHash
+	}
 	return r.walk("snapshot:"+key+":"+hash, depth, func() error {
 		var cfg v2Configuration
 		release, err := r.load(hash, &cfg)
@@ -628,6 +637,16 @@ func (r *v2ReachabilityReader) recovery(hash, id, key string, state v2State, dep
 	return r.recoveryWithOrigin(hash, id, key, state, depth, nil)
 }
 func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2State, depth int, archived *v2Operation) error {
+	if r.cache != nil {
+		contextKey, err := selectedValidationKeyV2(struct {
+			State    v2State
+			Archived *v2Operation
+		}{state, archived})
+		if err != nil {
+			return err
+		}
+		key = contextKey
+	}
 	return r.walk("recovery:"+key+":"+id+":"+hash, depth, func() error {
 		var record v2RecoveryRecord
 		release, err := r.load(hash, &record)
@@ -670,7 +689,7 @@ func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2
 				if err := r.object(record.Target, &target); err != nil {
 					return err
 				}
-				if !validBootTargetV2(previous, target) || audit.Result != "verified" || audit.Subject != "system" || audit.OriginCommit != "" || audit.Lease != "" || state.Configuration == nil || audit.Sequence > state.Configuration.AuditSequence || !audit.At.Equal(*record.Completed) || audit.Running != target.Running.Hash || audit.Startup != target.Startup.Hash {
+				if !r.selectedPureV2("boot-target:"+record.Previous+":"+record.Target, func() bool { return validBootTargetV2(previous, target) }) || audit.Result != "verified" || audit.Subject != "system" || audit.OriginCommit != "" || audit.Lease != "" || state.Configuration == nil || audit.Sequence > state.Configuration.AuditSequence || !audit.At.Equal(*record.Completed) || audit.Running != target.Running.Hash || audit.Startup != target.Startup.Hash {
 					return errV2Unavailable
 				}
 			}

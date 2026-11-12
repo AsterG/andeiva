@@ -4,8 +4,16 @@ func (r *v2ReachabilityReader) routedWork(hash, key string, state v2State, depth
 	if !hasFeatureV2(state, v2RoutedFeature) {
 		return errV2Unavailable
 	}
-	return r.walk("routed-work:"+hash, depth, func() error {
-		plan, err := loadRoutedWorkV2(hash, state.Lineage, r.object)
+	memoKey := "routed-work:" + hash
+	if r.cache != nil {
+		contextKey, err := selectedValidationKeyV2(state)
+		if err != nil {
+			return err
+		}
+		memoKey += ":" + contextKey
+	}
+	return r.walk(memoKey, depth, func() error {
+		plan, err := r.selectedRoutedWorkV2(hash, state.Lineage)
 		if err != nil {
 			return err
 		}
@@ -106,7 +114,20 @@ func (r *v2ReachabilityReader) routedIntent(in *v2CoordinatorIntent, key string,
 	if in == nil || in.RoutedWork == "" {
 		return nil
 	}
-	plan, err := loadRoutedWorkV2(in.RoutedWork, state.Lineage, r.object)
+	if r.cache != nil {
+		contextKey, err := selectedValidationKeyV2(struct {
+			Intent *v2CoordinatorIntent
+			State  v2State
+		}{in, state})
+		if err != nil {
+			return err
+		}
+		return r.walk("selected-intent:"+contextKey, depth, func() error { return r.checkRoutedIntentV2(in, key, state, depth) })
+	}
+	return r.checkRoutedIntentV2(in, key, state, depth)
+}
+func (r *v2ReachabilityReader) checkRoutedIntentV2(in *v2CoordinatorIntent, key string, state v2State, depth int) error {
+	plan, err := r.selectedRoutedWorkV2(in.RoutedWork, state.Lineage)
 	if err != nil || validateRoutedWorkIntentV2(in, plan, r.object) != nil {
 		return errV2Unavailable
 	}

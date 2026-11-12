@@ -37,6 +37,11 @@ func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]b
 	if r.shared == nil || limit < 1 || limit > v2ObjectLimit || r.ctx.Err() != nil {
 		return nil, noop, errV2Unavailable
 	}
+	if r.cache != nil {
+		if data, found, err := r.cache.get(r, name, limit); found || err != nil {
+			return data, noop, err
+		}
+	}
 	if r.report.IOCalls > r.budget.IOCalls || r.budget.IOCalls-r.report.IOCalls < 64 {
 		return nil, noop, errV2InspectionBudget
 	}
@@ -65,6 +70,16 @@ func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]b
 	if err != nil || int64(len(data)) != size {
 		r.active -= n
 		return nil, noop, errV2Unavailable
+	}
+	if r.cache != nil {
+		kept, err := r.cache.keep(r, name, info, data)
+		if err != nil {
+			r.active -= n
+			return nil, noop, err
+		}
+		if kept {
+			return data, noop, nil
+		}
 	}
 	released := false
 	return data, func() {

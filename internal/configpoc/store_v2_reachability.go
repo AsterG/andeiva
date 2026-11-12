@@ -43,6 +43,7 @@ type v2ReachabilityReader struct {
 	edges   map[string]uint8
 	root    os.FileInfo
 	shared  *recoveryreserve.ReaderAccessV2
+	cache   *selectedReadCacheV2
 }
 
 func (r *v2ReachabilityReader) step() error {

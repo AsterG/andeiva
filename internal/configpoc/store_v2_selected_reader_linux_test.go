@@ -195,6 +195,11 @@ func TestSelectedReaderV2RevalidationRejectsPoolAndSelectionChange(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() {
+				if err := captured.graph.cache.close(captured.graph); err != nil {
+					t.Error(err)
+				}
+			})
 			if mode == "pool" {
 				if _, err = c.store.reserves.admission.ClaimClass("independent-claim", recoveryreserve.OrdinaryV2); err != nil {
 					t.Fatal(err)

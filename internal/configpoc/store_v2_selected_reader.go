@@ -71,7 +71,7 @@ func (r *RoutedSelectionReaderV2) pools() [3]*recoveryreserve.ReadOnlyPoolV2 {
 	return [3]*recoveryreserve.ReadOnlyPoolV2{r.options.Admission, r.options.Plan, r.options.Emergency}
 }
 
-func (r *RoutedSelectionReaderV2) read(ctx context.Context) (*selectedViewV2, error) {
+func (r *RoutedSelectionReaderV2) read(ctx context.Context) (result *selectedViewV2, resultErr error) {
 	if ctx == nil || ctx.Err() != nil || r.area == nil || r.options.Access.CheckDirectory(r.area) != nil {
 		return nil, ErrRecovery
 	}
@@ -79,6 +79,12 @@ func (r *RoutedSelectionReaderV2) read(ctx context.Context) (*selectedViewV2, er
 		return nil, ErrRecovery
 	}
 	graph := &v2ReachabilityReader{ctx: ctx, area: r.area, budget: r.options.Budget, objects: map[string]bool{}, edges: map[string]uint8{}, shared: &r.options.Access}
+	graph.cache = newSelectedReadCacheV2()
+	defer func() {
+		if result == nil {
+			_ = graph.cache.close(graph)
+		}
+	}()
 	s := &v2Store{root: r.area, access: &r.options.Access, readOnly: true, recordReader: graph.storeRecordV2, objectReader: graph.object}
 	view := &selectedViewV2{store: s, graph: graph}
 	manager := &v2ReserveManager{readers: map[recoveryreserve.RoleV2]reserveReadPoolV2{}}
@@ -139,6 +145,9 @@ func (r *RoutedSelectionReaderV2) revalidate(ctx context.Context, v *selectedVie
 	if ctx.Err() != nil || r.options.Access.CheckDirectory(r.area) != nil {
 		return ErrRecovery
 	}
+	if v.graph.cache.revalidate(v.graph) != nil {
+		return ErrRecovery
+	}
 	for i, pool := range r.pools() {
 		if pool.Revalidate(ctx, v.pools[i]) != nil {
 			return ErrRecovery
@@ -155,7 +164,7 @@ func (r *RoutedSelectionReaderV2) revalidate(ctx context.Context, v *selectedVie
 	return nil
 }
 
-func (r *RoutedSelectionReaderV2) Observe(ctx context.Context) (SelectionReferenceV2, error) {
+func (r *RoutedSelectionReaderV2) Observe(ctx context.Context) (out SelectionReferenceV2, resultErr error) {
 	if r == nil || ctx == nil {
 		return SelectionReferenceV2{}, ErrInvalid
 	}
@@ -165,10 +174,28 @@ func (r *RoutedSelectionReaderV2) Observe(ctx context.Context) (SelectionReferen
 	if err != nil {
 		return SelectionReferenceV2{}, err
 	}
+	defer func() {
+		if v.graph.cache.close(v.graph) != nil {
+			out = SelectionReferenceV2{}
+			resultErr = ErrRecovery
+		}
+	}()
 	return v.ref, nil
 }
 
 func (r *RoutedSelectionReaderV2) Resolve(ctx context.Context, reference SelectionReferenceV2, purpose RoutedSelectionPurposeV2) (RoutedSelectedPlanV1, error) {
+	return r.resolve(ctx, &reference, nil, purpose)
+}
+
+// ResolveCurrent derives the complete selected tuple under the reader lock.
+// The supplied work reference is only an expectation, never authority.
+func (r *RoutedSelectionReaderV2) ResolveCurrent(ctx context.Context, expected RoutedWorkReferenceV1, purpose RoutedSelectionPurposeV2) (RoutedSelectedPlanV1, error) {
+	if !validHash(expected.Work) || (expected.Lineage == "" || len(expected.Lineage) > 128) || expected.Generation == 0 {
+		return RoutedSelectedPlanV1{}, ErrInvalid
+	}
+	return r.resolve(ctx, nil, &expected, purpose)
+}
+func (r *RoutedSelectionReaderV2) resolve(ctx context.Context, expectedSelection *SelectionReferenceV2, expectedWork *RoutedWorkReferenceV1, purpose RoutedSelectionPurposeV2) (out RoutedSelectedPlanV1, resultErr error) {
 	if r == nil || ctx == nil {
 		return RoutedSelectedPlanV1{}, ErrInvalid
 	}
@@ -178,8 +205,18 @@ func (r *RoutedSelectionReaderV2) Resolve(ctx context.Context, reference Selecti
 	if err != nil {
 		return RoutedSelectedPlanV1{}, err
 	}
-	if v.ref != reference {
+	defer func() {
+		if v.graph.cache.close(v.graph) != nil {
+			out = RoutedSelectedPlanV1{}
+			resultErr = ErrRecovery
+		}
+	}()
+	if expectedSelection != nil && v.ref != *expectedSelection {
 		return RoutedSelectedPlanV1{}, ErrConflict
+	}
+	reference := v.ref
+	if expectedWork != nil && (reference.WorkHash != expectedWork.Work || reference.Lineage != expectedWork.Lineage) {
+		return out, ErrConflict
 	}
 	var plan RoutedSelectedPlanV1
 	s := v.store
@@ -207,6 +244,9 @@ func (r *RoutedSelectionReaderV2) Resolve(ctx context.Context, reference Selecti
 	}
 	if err != nil {
 		return RoutedSelectedPlanV1{}, err
+	}
+	if expectedWork != nil && plan.Reference() != *expectedWork {
+		return out, ErrConflict
 	}
 	if !selectedPurposeV2(s, plan, purpose) {
 		return RoutedSelectedPlanV1{}, ErrDenied
@@ -288,7 +328,15 @@ type RoutedPrepareViewV2 struct {
 }
 
 func (r *RoutedSelectionReaderV2) PrepareView(ctx context.Context, reference SelectionReferenceV2) (RoutedPrepareViewV2, error) {
-	var out RoutedPrepareViewV2
+	return r.prepareView(ctx, &reference)
+}
+
+// PrepareCurrentView reads and verifies the current preparation view once;
+// final selector, pool and object checks remain mandatory.
+func (r *RoutedSelectionReaderV2) PrepareCurrentView(ctx context.Context) (RoutedPrepareViewV2, error) {
+	return r.prepareView(ctx, nil)
+}
+func (r *RoutedSelectionReaderV2) prepareView(ctx context.Context, reference *SelectionReferenceV2) (out RoutedPrepareViewV2, resultErr error) {
 	if r == nil || ctx == nil {
 		return out, ErrInvalid
 	}
@@ -298,7 +346,13 @@ func (r *RoutedSelectionReaderV2) PrepareView(ctx context.Context, reference Sel
 	if err != nil {
 		return out, err
 	}
-	if reference != v.ref {
+	defer func() {
+		if v.graph.cache.close(v.graph) != nil {
+			out = RoutedPrepareViewV2{}
+			resultErr = ErrRecovery
+		}
+	}()
+	if reference != nil && *reference != v.ref {
 		return out, ErrConflict
 	}
 	cfg := v.store.state.Configuration

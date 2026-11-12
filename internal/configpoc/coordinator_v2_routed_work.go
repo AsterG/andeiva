@@ -196,10 +196,17 @@ func (c *v2Coordinator) publishRoutedObjectsV2(work v2RoutedWork, prepared Route
 // loadRoutedWorkV2 validates typed payloads without accessing engines or pools.
 // G1 uses its bounded reader; effects add selected-selector/reservation checks.
 func loadRoutedWorkV2(hash, lineage string, load func(string, any) error) (RoutedSelectedPlanV1, error) {
-	return loadRoutedWorkDepthV2(hash, lineage, load, false)
+	return loadRoutedWorkWithValidationV2(hash, lineage, load, validV2Configuration)
 }
 
-func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, original bool) (RoutedSelectedPlanV1, error) {
+func loadRoutedWorkWithValidationV2(hash, lineage string, load func(string, any) error, validConfiguration func(*v2Configuration) bool) (RoutedSelectedPlanV1, error) {
+	if validConfiguration == nil {
+		return RoutedSelectedPlanV1{}, errV2Unavailable
+	}
+	return loadRoutedWorkDepthV2(hash, lineage, load, false, validConfiguration)
+}
+
+func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, original bool, validConfiguration func(*v2Configuration) bool) (RoutedSelectedPlanV1, error) {
 	var plan RoutedSelectedPlanV1
 	if !validHash(hash) || load == nil || load(hash, &plan.work) != nil {
 		return plan, errV2Unavailable
@@ -219,7 +226,7 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	var before, target v2Configuration
-	if load(work.Transition.Previous, &before) != nil || load(work.Transition.Target, &target) != nil || !validV2Configuration(&before) || !validV2Configuration(&target) || before.Intent != nil || target.Intent != nil {
+	if load(work.Transition.Previous, &before) != nil || load(work.Transition.Target, &target) != nil || !validConfiguration(&before) || !validConfiguration(&target) || before.Intent != nil || target.Intent != nil {
 		return plan, errV2Unavailable
 	}
 	var err error
@@ -268,7 +275,7 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	if work.Baseline != "" {
-		baseline, err := loadRoutedWorkDepthV2(work.Baseline, lineage, load, true)
+		baseline, err := loadRoutedWorkDepthV2(work.Baseline, lineage, load, true, validConfiguration)
 		if err != nil || baseline.work.Scope.Identity != work.Scope.Identity || baseline.work.Generation >= work.Generation {
 			return plan, errV2Unavailable
 		}
