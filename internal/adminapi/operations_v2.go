@@ -29,8 +29,12 @@ func newPreparedOperationsHandler(options Options, service *configpoc.ServiceV2)
 	if err != nil {
 		return nil, err
 	}
-	h.(*handler).preparedOperations = service
-	return h, nil
+	prepared, ok := h.(*handler)
+	if !ok {
+		return nil, configpoc.ErrInvalid
+	}
+	prepared.preparedOperations = service
+	return prepared, nil
 }
 func wireIDv2(id string) bool {
 	if id == "" || len(id) > 128 {

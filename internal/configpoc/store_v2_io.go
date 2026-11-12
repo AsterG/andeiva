@@ -10,17 +10,19 @@ import (
 )
 
 type v2Store struct {
-	mu        sync.Mutex
-	root      *os.Root
-	lock      *os.File
-	state     v2State
-	selection v2Selection
-	selector  v2Selector
-	budget    v2Budget
-	used      v2Budget
-	blocked   bool
-	hook      func(string) error
-	allowance v2Budget
+	mu         sync.Mutex
+	root       *os.Root
+	lock       *os.File
+	state      v2State
+	selection  v2Selection
+	selector   v2Selector
+	budget     v2Budget
+	used       v2Budget
+	blocked    bool
+	hook       func(string) error
+	allowance  v2Budget
+	physical   v2PhysicalUsage
+	spaceProbe func(*os.File) (storageSpace, error)
 }
 
 // The caller owns the directory lifetime. No directory, legacy layout or engine
@@ -143,6 +145,17 @@ func (s *v2Store) scanV2Area() error {
 	}
 	s.used = v2Budget{}
 	s.blocked = false
+	initial, err := dir.Stat()
+	if err != nil {
+		_ = dir.Close()
+		return errV2Unavailable
+	}
+	s.physical = v2PhysicalUsage{inodes: 1, directoryInfo: initial}
+	s.physical.directory, err = v2Allocated(initial)
+	if err != nil {
+		_ = dir.Close()
+		return err
+	}
 	for {
 		entries, readErr := dir.ReadDir(128)
 		for _, entry := range entries {
@@ -156,10 +169,19 @@ func (s *v2Store) scanV2Area() error {
 				_ = dir.Close()
 				return errV2Unavailable
 			}
-			size := info.Size()
-			if size < 0 {
+			info, statErr = s.physicalRecord(name, info)
+			if statErr != nil {
 				_ = dir.Close()
 				return errV2Unavailable
+			}
+			size := info.Size()
+			if size < 0 || s.physicalAddFile(info) != nil {
+				_ = dir.Close()
+				return errV2Unavailable
+			}
+			if name == "selected.json" {
+				s.physical.selector, _ = v2Allocated(info)
+				s.physical.selectorSize = uint64(size)
 			}
 			s.used.Bytes += uint64(size)
 			s.used.Inodes++
@@ -179,7 +201,9 @@ func (s *v2Store) scanV2Area() error {
 			return errV2Unavailable
 		}
 	}
-	if dir.Close() != nil {
+	final, statErr := dir.Stat()
+	closeErr := dir.Close()
+	if statErr != nil || closeErr != nil || !os.SameFile(initial, final) || initial.Size() != final.Size() || !initial.ModTime().Equal(final.ModTime()) {
 		return errV2Unavailable
 	}
 	return nil
@@ -301,6 +325,9 @@ func (s *v2Store) object(value any) (string, error) {
 	if s.used.Bytes+reservedBytes+uint64(len(data)) > s.budget.Bytes || s.used.Inodes+reservedInodes+1 > s.budget.Inodes {
 		return "", errV2Limited
 	}
+	if err = s.physicalCapacity(uint64(len(data)), 1); err != nil {
+		return "", err
+	}
 	f, err := s.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return "", errV2Unavailable
@@ -323,11 +350,21 @@ func (s *v2Store) object(value any) (string, error) {
 	info, statErr := f.Stat()
 	closeErr := f.Close()
 	if writeErr != nil || statErr != nil || closeErr != nil {
+		s.blocked = true
 		return "", errV2Unavailable
+	}
+	if err = s.physicalAddFile(info); err != nil {
+		s.blocked = true
+		return "", err
 	}
 	verified, err := checkpointReadPinned(s.root, name, v2ObjectLimit, info)
 	if err != nil || !bytes.Equal(verified, data) {
+		s.blocked = true
 		return "", errV2Unavailable
+	}
+	if err = s.physicalRefreshDirectory(); err != nil {
+		s.blocked = true
+		return "", err
 	}
 	return hash, nil
 }
@@ -410,6 +447,12 @@ func (s *v2Store) publish(state v2State) (result error) {
 			s.blocked = true
 		}
 	}()
+	// Earlier lifecycle writes or engine effects may precede publication, so
+	// pressure here retains the original uncertainty fence. The old selector
+	// remains counted while two new objects and its replacement coexist.
+	if err := s.physicalCapacity(2*v2ObjectLimit+4096, 3); err != nil {
+		return err
+	}
 	stateHash, err := s.object(state)
 	if err != nil {
 		return err
@@ -435,6 +478,9 @@ func (s *v2Store) publish(state v2State) (result error) {
 	if err != nil {
 		return errV2Unavailable
 	}
+	if err = s.physicalPendingSelector(info); err != nil {
+		return err
+	}
 	if s.point("before_select") != nil {
 		return errV2Unavailable
 	}
@@ -446,6 +492,9 @@ func (s *v2Store) publish(state v2State) (result error) {
 		return errV2Unavailable
 	}
 	if s.point("after_select") != nil || checkpointSync(s.root, nil, "") != nil {
+		return errV2Uncertain
+	}
+	if err = s.physicalSelected(info); err != nil {
 		return errV2Uncertain
 	}
 	s.state = state
