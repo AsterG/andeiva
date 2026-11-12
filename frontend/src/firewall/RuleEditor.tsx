@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Button, Field, Notice, TextInput } from '../design-system/components.js';
 import { FloatingWindow } from '../design-system/FloatingWindow.js';
 import { floatingWindowMessages } from '../design-system/floatingWindowMessages.js';
@@ -9,7 +10,7 @@ import type { Rule, RuleDraft, RuleErrors } from './model.js';
 import type { RuleTableMessages } from './ruleTableMessages.js';
 import type { ConsoleMessages } from './consoleMessages.js';
 
-export function RuleEditor({ rules, index, copy, labels, consoleCopy, locale = 'en', visible = true, supportsEnabled, disabled, onSave, onCancel }: { rules: Rule[]; index: number | null; copy: FirewallMessages; labels: RuleTableMessages; consoleCopy?: ConsoleMessages; locale?: Locale; visible?: boolean; supportsEnabled: boolean; disabled: boolean; onSave: (rule: Rule) => void; onCancel: () => void }) {
+export function RuleEditor({ rules, index, copy, labels, consoleCopy, locale = 'en', visible = true, supportsEnabled, disabled, extraFields, onSave, onCancel }: { rules: Rule[]; index: number | null; copy: FirewallMessages; labels: RuleTableMessages; consoleCopy?: ConsoleMessages; locale?: Locale; visible?: boolean; supportsEnabled: boolean; disabled: boolean; extraFields?: ReactNode; onSave: (rule: Rule) => void; onCancel: () => void }) {
   const [draft, setDraft] = useState<RuleDraft>(() => index === null ? { ...emptyRule } : editRule(rules[index]!));
   const [errors, setErrors] = useState<RuleErrors>({});
   const form = useRef<HTMLFormElement>(null);
@@ -26,6 +27,7 @@ export function RuleEditor({ rules, index, copy, labels, consoleCopy, locale = '
     }}>
       {Object.keys(errors).length > 0 && <Notice title={copy.validationError} live>{copy.invalidError}</Notice>}
       <fieldset disabled={disabled} className="fw-fields">
+        {extraFields}
         {supportsEnabled && <div className="fw-enabled-field"><label><input type="checkbox" checked={draft.enabled ?? true} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /> {labels.enabled}</label><p className="ds-field-hint">{labels.toggleHint}</p></div>}
         {(['id', 'source', 'destination', 'source_ports', 'destination_ports'] as const).map((key) => {
           const error = errors[key];

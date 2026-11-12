@@ -11,6 +11,25 @@ export async function configurationRequest<T>(path: string, body?: unknown, csrf
   return requestAt<T>('/api/v2/', path, body, csrf, signal);
 }
 
+async function boundedJSON(response: Response): Promise<unknown> {
+  if (!response.body) return null;
+  const reader = response.body.getReader(), chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > 1024 * 1024) { await reader.cancel(); return null; }
+      chunks.push(next.value);
+    }
+  } finally { reader.releaseLock(); }
+  const data = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength; }
+  try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data)) as unknown; } catch { return null; }
+}
+
 async function requestAt<T>(prefix: '/api/v1/' | '/api/v2/', path: string, body?: unknown, csrf?: string, signal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -24,7 +43,7 @@ async function requestAt<T>(prefix: '/api/v1/' | '/api/v2/', path: string, body?
       headers: { Accept: 'application/json', 'X-ANDEIVA-Client': 'web', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    const data: unknown = await response.json().catch(() => null);
+    const data: unknown = await boundedJSON(response);
     if (!response.ok) {
       const code = data && typeof data === 'object' && 'code' in data && typeof data.code === 'string' ? data.code : 'ANDEIVA_REQUEST_FAILED';
       throw new ApiError(code, response.status);

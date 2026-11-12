@@ -7,6 +7,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/AsterG/andeiva/internal/adminapi"
+	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/localpolicy"
 )
 
 func TestCurrentAndInventoryV2UseVerifiedTransportWithoutDowngrade(t *testing.T) {
@@ -57,6 +61,53 @@ func TestCurrentAndInventoryV2UseVerifiedTransportWithoutDowngrade(t *testing.T)
 			}
 			if calls != 1 {
 				t.Fatal("unexpected retry or downgrade", calls)
+			}
+		})
+	}
+}
+
+func TestRoutedCurrentClientChecksComponentAndCompositeCorrelation(t *testing.T) {
+	base, _ := wireFixtureV2(t)
+	local, err := configpoc.Canonical(configpoc.Config{SchemaVersion: 3, DefaultAction: "deny", LocalServices: &localpolicy.Config{SchemaVersion: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := configpoc.NewRoutedActivationBundleV1(base.Current.Snapshot.Running, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := base.Current
+	current.Domain = "routed"
+	current.Global.Generation = adminapi.DecimalV2(^uint64(0))
+	current.Global.Running, current.Global.Startup = bundle.Composite.Hash, bundle.Composite.Hash
+	current.DomainGenerations = &adminapi.DomainGenerationsV2{Firewall: 17, Network: 17, LocalServices: 19}
+	current.Routed = &adminapi.RoutedCurrentV2{SchemaVersion: 7, LocalServices: adminapi.SnapshotV2{Generation: 19, Running: local, Startup: local, LastGood: local, Revoked: []string{}}, Running: bundle.Composite, Startup: bundle.Composite, LastGood: bundle.Composite}
+	if !validCurrentV2(current) {
+		t.Fatal("selected pre-routing components rejected")
+	}
+	for name, edit := range map[string]func(*adminapi.CurrentV2){
+		"global-component-confusion": func(c *adminapi.CurrentV2) { c.Global.Running = c.Snapshot.Running.Hash },
+		"foreign-component": func(c *adminapi.CurrentV2) {
+			c.Routed.Startup.Config.Domains.Firewall.Revision = strings.Repeat("0", 64)
+		},
+		"network-generation":   func(c *adminapi.CurrentV2) { c.DomainGenerations.Network++ },
+		"local-generation":     func(c *adminapi.CurrentV2) { c.DomainGenerations.LocalServices++ },
+		"missing-routed":       func(c *adminapi.CurrentV2) { c.Routed = nil },
+		"unexpected-downgrade": func(c *adminapi.CurrentV2) { c.Domain = "firewall" },
+		"unbound-candidate":    func(c *adminapi.CurrentV2) { c.Routed.Candidate = &bundle.Composite },
+	} {
+		t.Run(name, func(t *testing.T) {
+			data, err := json.Marshal(current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var invalid adminapi.CurrentV2
+			if json.Unmarshal(data, &invalid) != nil {
+				t.Fatal("fixture encoding")
+			}
+			edit(&invalid)
+			if validCurrentV2(invalid) {
+				t.Fatal("inconsistent selected view accepted")
 			}
 		})
 	}

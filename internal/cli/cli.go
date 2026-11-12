@@ -82,9 +82,13 @@ func RunInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] != "" && strings.HasPrefix("effective-policies", args[0]) {
 		return runLocalServices(append([]string{"effective"}, args[1:]...), locale, stdin, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] != "" && strings.HasPrefix("configuration", args[0]) {
+		return runConfigurationV2(args[1:], locale, stdin, stdout, stderr)
+	}
 	if len(args) == 0 || len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		fmt.Fprint(stdout, text.help)
 		fmt.Fprintln(stdout, "\nandeiva firewall help\nandeiva local-services help\nandeiva system help\nandeiva --version\nandeiva firewall completion")
+		fmt.Fprintln(stdout, "andeiva configuration help")
 		return 0
 	}
 	if len(args) == 1 && args[0] == "status" {
