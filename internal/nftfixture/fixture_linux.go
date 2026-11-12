@@ -170,18 +170,7 @@ func newFixture(ctx context.Context, self string, uid, gid uint32, globalReferen
 // CheckListeners verifies every positive control, including the always-denied
 // transit service, independently of the gateway policy.
 func (f *Fixture) CheckListeners(ctx context.Context) error {
-	for _, protocol := range []string{"tcp", "udp"} {
-		for port := 18080; port <= 18082; port++ {
-			ok, err := f.ProbeLocal(ctx, protocol, port)
-			if err != nil || !ok {
-				if err == nil {
-					err = errors.New("no echo response")
-				}
-				return fmt.Errorf("ANDEIVA_NFT_FIXTURE_LISTENER: %s/%d: %w", protocol, port, err)
-			}
-		}
-	}
-	return nil
+	return checkListenerControls(ctx, "ANDEIVA_NFT_FIXTURE_LISTENER", f.ProbeLocal)
 }
 
 func fixedEnvironment() []string {
@@ -517,14 +506,7 @@ func (f *Fixture) probeVerb(ctx context.Context, role, verb, protocol string, po
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err = cmd.Run()
-	if err == nil {
-		return true, nil
-	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 10 {
-		return false, nil
-	}
-	return false, fmt.Errorf("ANDEIVA_NFT_PROBE_FAILED: %w: %s", err, output.String())
+	return probeCommandResult(deadline, err, output.String())
 }
 func (f *Fixture) Probe(ctx context.Context, protocol string, port int) (bool, error) {
 	return f.probe(ctx, "source", protocol, port)
