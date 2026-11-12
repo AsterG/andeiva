@@ -59,7 +59,7 @@ func (s ScopeV2) Validate() error {
 			return ErrInvalid
 		}
 	}
-	if !digestV2(s.Fingerprint) || s.Global == 0 || s.Generation == 0 || (s.Domain != "firewall" && s.Domain != "local_services") {
+	if !digestV2(s.Fingerprint) || s.Global == 0 || s.Generation == 0 || (s.Domain != "firewall" && s.Domain != "local_services" && s.Domain != "routed") {
 		return ErrInvalid
 	}
 	switch s.Kind {

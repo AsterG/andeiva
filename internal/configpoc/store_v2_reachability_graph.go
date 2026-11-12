@@ -233,6 +233,9 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 	if !validV2Configuration(&cfg) {
 		return errV2Unavailable
 	}
+	if live && validateCandidateGroupEvidenceV2(cfg, r.object) != nil {
+		return errV2Unavailable
+	}
 	if live && cfg.AuditTip != "" {
 		var audit v2CoordinatorAudit
 		if err := r.object(cfg.AuditTip, &audit); err != nil {
@@ -459,7 +462,7 @@ func (r *v2ReachabilityReader) canonicalConfig(hash string, schema, depth int) e
 			return err
 		}
 		defer release()
-		canonical, err := Canonical(cfg)
+		canonical, err := canonicalDomainRevisionV2(cfg, schema == 6)
 		if err != nil || cfg.SchemaVersion != schema || canonical.Hash != hash {
 			return errV2Unavailable
 		}
@@ -475,11 +478,27 @@ func (r *v2ReachabilityReader) composite(hash string, depth int) error {
 			return err
 		}
 		defer release()
-		canonical, err := CanonicalComposite(cfg)
+		var canonical v2CompositeRevision
+		if cfg.SchemaVersion == 7 {
+			canonical, err = resolveRoutedCompositeV1(cfg, func(hash string, value any) error {
+				out, ok := value.(*Revision)
+				if !ok {
+					return errV2Unavailable
+				}
+				var config Config
+				if e := r.object(hash, &config); e != nil {
+					return e
+				}
+				*out = Revision{Hash: hash, Config: config}
+				return nil
+			})
+		} else {
+			canonical, err = CanonicalComposite(cfg)
+		}
 		if err != nil || canonical.Hash != hash {
 			return errV2Unavailable
 		}
-		if err := r.canonicalConfig(cfg.Domains.Firewall.Revision, 4, depth+1); err != nil {
+		if err := r.canonicalConfig(cfg.Domains.Firewall.Revision, cfg.Domains.Firewall.Schema, depth+1); err != nil {
 			return err
 		}
 		return r.canonicalConfig(cfg.Domains.LocalServices.Revision, 3, depth+1)

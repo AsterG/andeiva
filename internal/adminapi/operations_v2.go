@@ -152,7 +152,7 @@ func (h *handler) operationsV2(w http.ResponseWriter, r *http.Request, ctx conte
 			h.fail(w, 405, "ANDEIVA_METHOD_NOT_ALLOWED")
 			return
 		}
-		current, e := service.Current(binding, "firewall")
+		current, e := service.Current(binding, "")
 		if e != nil {
 			h.operationErrorV2(w, e)
 			return
@@ -169,7 +169,7 @@ func (h *handler) operationsV2(w http.ResponseWriter, r *http.Request, ctx conte
 		var body struct {
 			Domain string `json:"domain"`
 		}
-		if decodeV2(w, r, &body) != nil || body.Domain != "firewall" {
+		if decodeV2(w, r, &body) != nil || (body.Domain != "firewall" && body.Domain != "routed") {
 			h.fail(w, 400, "ANDEIVA_OPERATION_INVALID")
 			return
 		}

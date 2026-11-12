@@ -65,7 +65,13 @@ func (s *ServiceV2) Current(binding adminauth.SessionBinding, domain string) (Cu
 	if !c.store.principalV2Locked(p) || (p.Role != RoleAdmin && p.Role != RoleViewer) {
 		return CurrentV2{}, ErrDenied
 	}
-	if domain != "firewall" {
+	if domain == "" {
+		domain = "firewall"
+		if hasFeatureV2(c.store.state, v2RoutedFeature) {
+			domain = "routed"
+		}
+	}
+	if !c.store.observableDomainV2(domain) {
 		return CurrentV2{}, ErrDenied
 	}
 	return s.currentLocked(domain)

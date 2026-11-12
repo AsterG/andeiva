@@ -28,16 +28,17 @@ func (n *DecimalV2) UnmarshalJSON(data []byte) error {
 }
 
 type OperationRequestV2 struct {
-	Operation      string            `json:"operation"`
-	Config         *configpoc.Config `json:"config,omitempty"`
-	ConfirmSeconds *DecimalV2        `json:"confirm_seconds,omitempty"`
-	Target         string            `json:"target_revision,omitempty"`
-	Origin         string            `json:"origin_commit_operation_id,omitempty"`
-	Subject        string            `json:"target_subject_id,omitempty"`
+	LocalServicesConfig *configpoc.Config `json:"local_services_config,omitempty"`
+	Operation           string            `json:"operation"`
+	Config              *configpoc.Config `json:"config,omitempty"`
+	ConfirmSeconds      *DecimalV2        `json:"confirm_seconds,omitempty"`
+	Target              string            `json:"target_revision,omitempty"`
+	Origin              string            `json:"origin_commit_operation_id,omitempty"`
+	Subject             string            `json:"target_subject_id,omitempty"`
 }
 
 func (r OperationRequestV2) canonical() configpoc.OperationRequestV2 {
-	request := configpoc.OperationRequestV2{Kind: r.Operation, Config: r.Config, Target: r.Target, Origin: r.Origin, Subject: r.Subject}
+	request := configpoc.OperationRequestV2{Kind: r.Operation, Config: r.Config, Target: r.Target, Origin: r.Origin, Subject: r.Subject, LocalServicesConfig: r.LocalServicesConfig}
 	if r.ConfirmSeconds != nil {
 		seconds := uint64(*r.ConfirmSeconds)
 		request.ConfirmSeconds = &seconds
@@ -112,18 +113,46 @@ type SnapshotV2 struct {
 	Revoked []string `json:"revoked"`
 }
 type CurrentV2 struct {
-	Global   GlobalV2   `json:"global"`
-	Domain   string     `json:"domain"`
-	Snapshot SnapshotV2 `json:"snapshot"`
+	DomainGenerations *DomainGenerationsV2 `json:"domain_generations,omitempty"`
+	Routed            *RoutedCurrentV2     `json:"routed,omitempty"`
+	Global            GlobalV2             `json:"global"`
+	Domain            string               `json:"domain"`
+	Snapshot          SnapshotV2           `json:"snapshot"`
+}
+
+type DomainGenerationsV2 struct {
+	Firewall      DecimalV2 `json:"firewall"`
+	LocalServices DecimalV2 `json:"local_services"`
+	Network       DecimalV2 `json:"network"`
+}
+
+type RoutedCurrentV2 struct {
+	SchemaVersion  int                            `json:"schema_version"`
+	LocalServices  SnapshotV2                     `json:"local_services"`
+	Running        configpoc.CompositeRevisionV1  `json:"running"`
+	Startup        configpoc.CompositeRevisionV1  `json:"startup"`
+	LastGood       configpoc.CompositeRevisionV1  `json:"last_good"`
+	Candidate      *configpoc.CompositeRevisionV1 `json:"candidate,omitempty"`
+	CandidateGroup *configpoc.CandidateGroupV2    `json:"candidate_group,omitempty"`
 }
 
 func currentDTOv2(current configpoc.CurrentV2) CurrentV2 {
-	s := current.Snapshot
+	result := CurrentV2{Global: GlobalV2{Lineage: current.Global.Lineage, Generation: DecimalV2(current.Global.Generation), Running: current.Global.Running, Startup: current.Global.Startup}, Domain: current.Domain, Snapshot: snapshotDTOv2(current.Snapshot)}
+	if d := current.DomainGenerations; d != nil {
+		result.DomainGenerations = &DomainGenerationsV2{Firewall: DecimalV2(d.Firewall), LocalServices: DecimalV2(d.LocalServices), Network: DecimalV2(d.Network)}
+	}
+	if r := current.Routed; r != nil {
+		result.Routed = &RoutedCurrentV2{SchemaVersion: r.SchemaVersion, LocalServices: snapshotDTOv2(r.LocalServices), Running: r.Running, Startup: r.Startup, LastGood: r.LastGood, Candidate: r.Candidate, CandidateGroup: r.CandidateGroup}
+	}
+	return result
+}
+
+func snapshotDTOv2(s configpoc.Snapshot) SnapshotV2 {
 	revoked := s.Revoked
 	if revoked == nil {
 		revoked = []string{}
 	}
-	return CurrentV2{Global: GlobalV2{Lineage: current.Global.Lineage, Generation: DecimalV2(current.Global.Generation), Running: current.Global.Running, Startup: current.Global.Startup}, Domain: current.Domain, Snapshot: SnapshotV2{Generation: DecimalV2(s.Generation), Candidate: s.Candidate, Running: s.Running, Startup: s.Startup, LastGood: s.LastGood, Pending: s.Pending, RecoveryRequired: s.RecoveryRequired, Revoked: revoked}}
+	return SnapshotV2{Generation: DecimalV2(s.Generation), Candidate: s.Candidate, Running: s.Running, Startup: s.Startup, LastGood: s.LastGood, Pending: s.Pending, RecoveryRequired: s.RecoveryRequired, Revoked: revoked}
 }
 
 type NamespaceClosedV2 struct {

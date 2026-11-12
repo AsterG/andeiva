@@ -29,12 +29,12 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 func validFeaturesV2(state v2State) bool {
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature) || feature <= last {
+		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature) || feature <= last {
 			return false
 		}
 		last = feature
 	}
-	if !validGuardDeadlineFeatureV2(state) {
+	if !validGuardDeadlineFeatureV2(state) || !validRoutedFeatureV2(state) {
 		return false
 	}
 	if state.Configuration != nil && (state.Configuration.LastCompletedBoot != "" || (state.Configuration.Intent != nil && state.Configuration.Intent.Kind == v2BootKind)) {
