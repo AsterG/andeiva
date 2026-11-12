@@ -161,6 +161,9 @@ func (s *v2Store) admit(subject, namespace string, expected uint64, request v2Re
 	if len(ns.Open) >= v2MaximumOpen || s.state.HighWater == ^uint64(0) || s.used.Bytes+s.state.ReservedBytes+2*v2OperationReserveBytes > s.budget.Bytes || s.used.Inodes+s.state.ReservedInodes+2*v2OperationReserveInodes > s.budget.Inodes {
 		return v2Operation{}, errV2Limited
 	}
+	if err := s.physicalCapacity(2*v2OperationReserveBytes, 2*v2OperationReserveInodes); err != nil {
+		return v2Operation{}, err
+	}
 	if s.state.HighWater >= s.state.LiveSlots {
 		hash, e := s.indexGet(s.state.Index, s.state.HighWater+1-s.state.LiveSlots)
 		var old v2Operation

@@ -20,6 +20,44 @@ Orçamentos de bytes/inodes são contábeis, não quotas ou reservas físicas. A
 existe GC físico ou exportação/confirmação protegida. O histórico continua ocupando
 disco e pode impedir novas admissões. Não há garantia contra perda de energia.
 
+## Contabilidade física e margem de admissão
+
+No Linux, v2 mede blocos alocados a arquivos com `fstat` (`st_blocks` em unidades
+de 512 bytes), alocação do diretório e inodes, incluindo o diretório. Reconstrói os
+contadores ao abrir sob bloqueio e os atualiza incrementalmente; não percorre o
+catálogo a cada admissão. Conta ambos os seletores enquanto coexistem e não conta
+duas vezes um objeto idêntico já verificado. Os orçamentos configurados limitam
+tanto o uso lógico quanto a alocação física observada.
+
+Antes da admissão consulta bytes/inodes disponíveis com `fstatfs` no descritor
+validado do diretório. Preserva reservas alheias e acrescenta margem para
+arredondamento e crescimento do diretório. Falta conhecida retorna limited sem
+emitir operação, ocupar slot/reserva, publicar estado ou chamar motores. Somente
+leitura ou métricas inválidas retornam unavailable. Estado verificado, consultas
+retidas e repetições terminais continuam disponíveis; integridade ou publicação
+incerta mantêm o bloqueio. Consultar espaço com sucesso não remove esse bloqueio.
+
+É uma observação com margem estimada, **não uma reserva física**. Outros escritores,
+quotas, metadados ou erros posteriores podem impedir publicação e recuperação.
+A disponibilidade do filesystem ainda considera blocos de seletores removidos
+que permaneçam abertos. Não adiciona fallocate, quotas, GC, remoção de histórico
+protegido, mudanças de autenticação/auditoria ou ativação runtime. Continuidade com
+volume cheio, testes físicos e encerramento AND-01/02 continuam pendentes.
+
+Com dependências provisionadas previamente, sem rede:
+
+```sh
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -mod=readonly -buildvcs=false -race ./internal/configpoc -run '^TestV2Physical' -count=3
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -mod=readonly -buildvcs=false ./internal/configpoc -run '^$' -bench '^BenchmarkV2PhysicalPreflight$' -benchmem -count=3
+```
+
+Os testes cobrem alocação distinta do tamanho lógico, diretório, seletores
+temporários, arquivos parciais/sparse, overflow, pressão antes dos efeitos,
+reservas próprias, leituras verificadas e reabertura. Métricas injetadas não provam
+ENOSPC/EDQUOT/EROFS reais. O preflight mediu 4,925–4,930 microssegundos,
+812–828 bytes e 10 alocações por chamada em diretório temporário WSL Linux amd64;
+não é dimensionamento do appliance nem teste de perda de energia.
+
 Testes Linux com a versão Go indicada pelo repositório:
 
 ```sh

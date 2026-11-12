@@ -82,6 +82,49 @@ collection, export/acknowledgement or protected-history deletion. Disk use still
 grows until the configured accounting budget refuses new admissions. This
 preparation therefore does not close storage exhaustion/retention release gates.
 
+## Physical accounting and admission headroom
+
+The Linux v2 store also measures allocated file blocks (`fstat`, 512 bytes per
+`st_blocks` unit), directory allocation and owned inodes, including the directory.
+Open rebuilds those observations under the store lock; successful writes update
+them incrementally. Admission does not rescan the catalogue. The old selector and
+the temporary replacement both count until the replacement is durably selected.
+Existing identical objects are verified without charging them twice.
+
+The configured byte/inode budgets now constrain both logical usage and measured
+physical usage. Admission checks available filesystem bytes/inodes through
+`fstatfs` on the validated directory descriptor, retaining other operations'
+allowances and adding file-rounding/directory-growth headroom. A known shortage
+before admission returns limited without issuing an operation, consuming a slot
+or reservation, publishing state or calling an engine. Read-only filesystems and
+failed/invalid space observations return unavailable. Verified current state,
+retained lookup and terminal replay remain readable under pressure. Integrity or
+publication uncertainty remains fail-closed; a successful space probe cannot
+clear that fence.
+
+These checks are **observations and estimates, not physical reservations**.
+Another writer, quota, filesystem metadata overhead or later I/O failure can still
+prevent publication or recovery. Allocated blocks held by an open deleted selector
+remain reflected in filesystem availability, even after its name leaves owned
+accounting. No fallocate, quota configuration, collection, protected-history
+deletion, auth/audit change or runtime activation is added. Full-volume continuity,
+physical fault qualification and AND-01/persistent AND-02 closure remain pending.
+
+With the repository Go version and dependencies provisioned offline:
+
+```sh
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -mod=readonly -buildvcs=false -race ./internal/configpoc -run '^TestV2Physical' -count=3
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -mod=readonly -buildvcs=false ./internal/configpoc -run '^$' -bench '^BenchmarkV2PhysicalPreflight$' -benchmem -count=3
+```
+
+Coverage includes physical/logical differences, directory and temporary-selector
+allocation, retained partial objects, sparse files, overflow, pressure before
+engine effects, owned allowances, verified reads and reconstruction after reopen.
+Injected space observations do not establish real ENOSPC/EDQUOT/EROFS behavior.
+The descriptor preflight benchmark measured 4.925–4.930 microseconds, 812–828 bytes
+and 10 allocations per call on WSL Linux amd64; this is not appliance sizing or a
+power-loss qualification. The measurement uses a temporary local directory.
+
 ## Cold migration
 
 `prepareMigrationV2` locks firewall, local-services, then destination, in that

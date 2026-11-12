@@ -20,6 +20,44 @@ Los presupuestos de bytes/inodos son contables, no cuotas ni reservas físicas. 
 existe aún GC físico ni exportación/acuse protegido. El historial sigue ocupando
 disco y puede impedir nuevas admisiones. No se promete resistencia a cortes eléctricos.
 
+## Contabilidad física y margen de admisión
+
+En Linux, v2 mide bloques asignados a archivos mediante `fstat` (`st_blocks` en
+unidades de 512 bytes), asignación del directorio e inodos, incluido el directorio.
+Reconstruye los contadores al abrir bajo bloqueo y los actualiza incrementalmente;
+no recorre el catálogo por admisión. Cuenta ambos selectores mientras coexisten y
+no cobra dos veces un objeto idéntico ya verificado. Los presupuestos configurados
+limitan tanto uso lógico como asignación física observada.
+
+Antes de admitir consulta bytes/inodos disponibles con `fstatfs` sobre el descriptor
+validado del directorio. Conserva las reservas ajenas y agrega margen para redondeo
+y crecimiento del directorio. Una falta conocida devuelve limited sin emitir una
+operación, ocupar slot/reserva, publicar estado ni llamar al motor. Solo lectura o
+métricas inválidas devuelven unavailable. Estado verificado, consultas retenidas y
+reintentos terminales siguen disponibles; integridad o publicación incierta
+mantienen el bloqueo. Una consulta de espacio exitosa no elimina ese bloqueo.
+
+Es una observación con margen estimado, **no una reserva física**. Otros escritores,
+cuotas, metadatos o errores posteriores pueden impedir publicación y recuperación.
+La disponibilidad del filesystem sigue contando bloques de selectores eliminados
+que permanezcan abiertos. No agrega fallocate, cuotas, GC, borrado de historial
+protegido, cambios de autenticación/auditoría ni activación runtime. Continúan
+pendientes continuidad con volumen lleno, pruebas físicas y cierre AND-01/02.
+
+Con dependencias preaprovisionadas sin red:
+
+```sh
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -mod=readonly -buildvcs=false -race ./internal/configpoc -run '^TestV2Physical' -count=3
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -mod=readonly -buildvcs=false ./internal/configpoc -run '^$' -bench '^BenchmarkV2PhysicalPreflight$' -benchmem -count=3
+```
+
+Las pruebas cubren asignación distinta del tamaño lógico, directorio, selectores
+temporales, archivos parciales/sparse, overflow, presión antes de efectos,
+reservas propias, lecturas verificadas y reapertura. Métricas inyectadas no prueban
+ENOSPC/EDQUOT/EROFS reales. El preflight midió 4,925–4,930 microsegundos,
+812–828 bytes y 10 asignaciones por llamada en un directorio temporal WSL Linux
+amd64; no es dimensionamiento del appliance ni prueba de pérdida eléctrica.
+
 Pruebas Linux con la versión Go indicada por el repositorio:
 
 ```sh
