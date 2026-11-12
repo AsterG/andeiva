@@ -580,6 +580,9 @@ func (r *v2ReachabilityReader) witness(hash string, level int, prefix string, re
 }
 
 func (r *v2ReachabilityReader) recovery(hash, id, key string, state v2State, depth int) error {
+	return r.recoveryWithOrigin(hash, id, key, state, depth, nil)
+}
+func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2State, depth int, archived *v2Operation) error {
 	return r.walk("recovery:"+key+":"+id+":"+hash, depth, func() error {
 		var record v2RecoveryRecord
 		release, err := r.load(hash, &record)
@@ -620,9 +623,18 @@ func (r *v2ReachabilityReader) recovery(hash, id, key string, state v2State, dep
 			}
 		}
 		if record.Kind != v2BootKind {
-			op, err := r.lookup(state, record.Subject, record.Origin)
-			if err != nil {
-				return err
+			var op v2Operation
+			if archived != nil {
+				op = *archived
+				if op.Subject != record.Subject || op.ID != record.Origin || op.Lineage != state.Lineage {
+					return errV2Unavailable
+				}
+			} else {
+				var err error
+				op, err = r.lookup(state, record.Subject, record.Origin)
+				if err != nil {
+					return err
+				}
 			}
 			if op.Outcome == nil || op.Outcome.ConfirmationLease != record.Lease {
 				return errV2Unavailable

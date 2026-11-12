@@ -70,6 +70,9 @@ func (r *v2ReachabilityReader) reserveArchiveObject(ref v2ReserveArchiveRef, key
 			if err := validateArchiveFinalityV2(archive, state, r.object); err != nil {
 				return err
 			}
+			if err := r.reserveArchiveFinality(archive, key, state, depth+2); err != nil {
+				return err
+			}
 			for _, dependency := range archive.Dependencies {
 				if err := r.snapshot(dependency, key, state, depth+2); err != nil {
 					return err
