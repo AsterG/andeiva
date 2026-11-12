@@ -36,7 +36,10 @@ arbitrários, instalação, listeners ou workers permanentes. O modelo assume ro
 kernel e instalação confiáveis e propriedade exclusiva do namespace; outro processo
 root hostil não é coberto.
 
-Vincula observações confiáveis com `networkplan.Bind`, verifica identidade antes
+Vincula observações confiáveis com `networkplan.Bind`. Une endereços IPv4 a
+nome/índice/MAC de duas leituras iguais de
+`ip -j link show`. O seletor IPv4 omite MAC e enlaces sem IPv4; resposta vazia de
+endereços não significa inventário vazio de enlaces. Verifica identidade antes
 de cada alteração e confirma semanticamente endereços e todas as rotas, incluindo
 rotas conectadas/locais do kernel. Rejeita atributos desconhecidos de rotas e
 endereços. Não comprova conectividade nem ativa encaminhamento ou inspeção.

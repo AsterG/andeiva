@@ -69,32 +69,52 @@ func decode(data []byte, target any, strict bool) error {
 }
 func (e *Executor) observe(ctx context.Context) (observation, error) {
 	var o observation
+	links, err := e.readLinks(ctx)
+	if err != nil {
+		return o, err
+	}
+	o.Links = links
 	data, err := e.execute(ctx, operation{kind: "addresses"})
 	if err != nil {
 		return o, err
 	}
-	// Link records contain kernel/hardware-dependent read-only fields. Address
-	// records are separately decoded strictly, so dynamic/peer flags cannot hide.
+	// The IPv4 address selector omits link MACs and interfaces without IPv4.
+	// Identity therefore comes from separate stable L2 observations, never from
+	// caller data or assumptions about the shape of the IPv4 address response.
+	var addresses []link
 	var raw []struct {
 		Info []json.RawMessage `json:"addr_info"`
 	}
-	if decode(data, &o.Links, false) != nil || decode(data, &raw, false) != nil || len(o.Links) > networkinventory.MaxInterfaces {
+	if decode(data, &addresses, false) != nil || decode(data, &raw, false) != nil || len(addresses) > networkinventory.MaxInterfaces {
 		return o, ErrObservation
 	}
-	for i := range o.Links {
-		l := &o.Links[i]
-		if len(l.Addresses) > networkinventory.MaxAddresses || len(l.Name) > networkinventory.MaxNameBytes {
+	byName := make(map[string]int, len(links))
+	for i, l := range links {
+		byName[l.Name] = i
+	}
+	seen := make(map[int]bool, len(addresses))
+	for i := range addresses {
+		l := &addresses[i]
+		index, found := byName[l.Name]
+		if !found || seen[index] || l.Index != links[index].Index || l.MTU != links[index].MTU || (l.MAC != "" && l.MAC != links[index].MAC) {
+			return o, ErrObservation
+		}
+		seen[index] = true
+		slices.Sort(l.Flags)
+		if !slices.Equal(l.Flags, links[index].Flags) {
+			return o, ErrObservation
+		}
+		if len(l.Addresses) > networkinventory.MaxAddresses {
 			return o, ErrObservation
 		}
 		for j := range l.Addresses {
-			if decode(raw[i].Info[j], &l.Addresses[j], true) != nil {
+			if decode(raw[i].Info[j], &l.Addresses[j], true) != nil || l.Addresses[j].Family != "inet" {
 				return o, ErrObservation
 			}
 		}
-		slices.Sort(l.Flags)
 		slices.SortFunc(l.Addresses, func(a, b address) int { return strings.Compare(a.Local, b.Local) })
+		o.Links[index].Addresses = append([]address{}, l.Addresses...)
 	}
-	slices.SortFunc(o.Links, func(a, b link) int { return strings.Compare(a.Name, b.Name) })
 	data, err = e.execute(ctx, operation{kind: "routes"})
 	if err != nil {
 		return o, err
@@ -119,7 +139,37 @@ func (e *Executor) observe(ctx context.Context) (observation, error) {
 		r.Flags = nil
 	}
 	sortRoutes(o.Routes)
+	finalLinks, err := e.readLinks(ctx)
+	if err != nil {
+		return o, err
+	}
+	if !sameLinks(o, observation{Links: finalLinks}) {
+		return o, ErrObservation
+	}
 	return o, nil
+}
+
+func (e *Executor) readLinks(ctx context.Context) ([]link, error) {
+	data, err := e.execute(ctx, operation{kind: "links"})
+	if err != nil {
+		return nil, err
+	}
+	var links []link
+	if decode(data, &links, false) != nil || len(links) > networkinventory.MaxInterfaces {
+		return nil, ErrObservation
+	}
+	names, indexes := map[string]bool{}, map[int]bool{}
+	for i := range links {
+		l := &links[i]
+		if l.Name == "" || len(l.Name) > networkinventory.MaxNameBytes || l.Index <= 0 || names[l.Name] || indexes[l.Index] {
+			return nil, ErrObservation
+		}
+		names[l.Name], indexes[l.Index] = true, true
+		slices.Sort(l.Flags)
+		l.Addresses = []address{}
+	}
+	slices.SortFunc(links, func(a, b link) int { return strings.Compare(a.Name, b.Name) })
+	return links, nil
 }
 func sortRoutes(r []route) {
 	slices.SortFunc(r, func(a, b route) int { x, _ := json.Marshal(a); y, _ := json.Marshal(b); return bytes.Compare(x, y) })

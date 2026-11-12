@@ -36,8 +36,11 @@ arbitrarios, instalación, listeners o workers permanentes. Se presupone root,
 kernel e instalación confiables y propiedad exclusiva del namespace; otro proceso
 root hostil queda fuera del modelo de amenazas.
 
-Vincula observaciones confiables mediante `networkplan.Bind`, verifica identidad
-antes de cada cambio y comprueba semánticamente direcciones y todas las rutas,
+Vincula observaciones confiables mediante `networkplan.Bind`. Une direcciones
+IPv4 con nombre/índice/MAC de dos lecturas iguales de
+`ip -j link show`. El selector IPv4 omite MAC y enlaces sin IPv4; una respuesta
+vacía de direcciones no equivale a un inventario vacío de enlaces. Verifica la
+identidad antes de cada cambio y comprueba semánticamente direcciones y todas las rutas,
 incluidas las conectadas/locales del kernel. Rechaza atributos desconocidos en
 direcciones/rutas. No demuestra conectividad ni activa forwarding o inspección.
 Rechaza miembros JSON duplicados con semántica exacta de nombres JSON.

@@ -37,8 +37,11 @@ shell, arbitrary command/path input, installation, listener or permanent worker.
 The threat model assumes trusted root/kernel/executable installation and exclusive
 namespace ownership; it does not defend against another hostile root process.
 
-Before effects, trusted namespace observations are bound through `networkplan.Bind`;
-link identity is checked again before each mutation and during final semantic
+Before effects, trusted namespace observations are bound through `networkplan.Bind`.
+Each sample joins IPv4 address records to name/index/MAC identities from two
+matching `ip -j link show` observations. The IPv4 selector omits MACs and links
+without IPv4; an empty address response does not imply an empty link inventory.
+Link identity is checked again before each mutation and during final semantic
 readback. All controlled IPv4 addresses and all route tables must match the plan,
 including kernel-derived connected/local routes. Unknown route/address attributes
 are rejected. This neither proves reachability nor enables forwarding/inspection.

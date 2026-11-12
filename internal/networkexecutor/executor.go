@@ -243,7 +243,7 @@ func (e *Executor) Close() error {
 }
 
 func arguments(op operation) ([]string, error) {
-	if op.kind != "addresses" && op.kind != "routes" {
+	if op.kind != "links" && op.kind != "addresses" && op.kind != "routes" {
 		if !linkName.MatchString(op.name) || op.name == "lo" {
 			return nil, ErrScope
 		}
@@ -260,6 +260,8 @@ func arguments(op operation) ([]string, error) {
 		}
 	}
 	switch op.kind {
+	case "links":
+		return []string{"-j", "link", "show"}, nil
 	case "addresses":
 		return []string{"-4", "-j", "address", "show"}, nil
 	case "routes":

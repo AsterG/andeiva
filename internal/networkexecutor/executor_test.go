@@ -47,8 +47,19 @@ func (f *fakeKernel) run(ctx context.Context, op operation) ([]byte, error) {
 		return nil, err
 	}
 	switch op.kind {
+	case "links":
+		links := append([]link{}, f.state.Links...)
+		return marshalFixtureLinks(links, "addr_info")
 	case "addresses":
-		return json.Marshal(f.state.Links)
+		// ip -4 -j address show omits L2 MACs and links without IPv4.
+		links := []link{}
+		for _, l := range f.state.Links {
+			if len(l.Addresses) > 0 {
+				l.MAC = ""
+				links = append(links, l)
+			}
+		}
+		return marshalFixtureLinks(links, "address")
 	case "routes":
 		return json.Marshal(f.state.Routes)
 	}
@@ -105,6 +116,21 @@ func (f *fakeKernel) run(ctx context.Context, op operation) ([]byte, error) {
 		return nil, ErrCommand
 	}
 	return nil, nil
+}
+
+func marshalFixtureLinks(links []link, omit string) ([]byte, error) {
+	encoded, err := json.Marshal(links)
+	if err != nil {
+		return nil, err
+	}
+	var records []map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &records); err != nil {
+		return nil, err
+	}
+	for _, record := range records {
+		delete(record, omit)
+	}
+	return json.Marshal(records)
 }
 func TestApplyRestoreExact(t *testing.T) {
 	e, f := fakeExecutor()
@@ -358,15 +384,16 @@ func TestDuplicateObservationFieldsReject(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				if op.kind == "addresses" {
+				if op.kind == "links" {
 					switch field {
 					case "ifname":
 						data = []byte(strings.Replace(string(data), `"ifname":"lan0"`, `"ifname":"old0","ifname":"lan0"`, 1))
 					case "escaped-ifname":
 						data = []byte(strings.Replace(string(data), `"ifname":"lan0"`, `"\u0069fname":"old0","ifname":"lan0"`, 1))
-					case "addr_info":
-						data = []byte(strings.Replace(string(data), `"addr_info":[]`, `"addr_info":[],"addr_info":[]`, 1))
 					}
+				}
+				if op.kind == "addresses" && field == "addr_info" {
+					data = []byte(`[{"ifindex":1,"ifname":"lan0","mtu":1500,"flags":["UP"],"addr_info":[],"addr_info":[]}]`)
 				}
 				if op.kind == "routes" && field == "dst" {
 					data = []byte(`[{"dst":"default","dst":"203.0.113.0/24"}]`)
@@ -401,5 +428,97 @@ func TestRestoreChecksLinkBeforeEveryDeletion(t *testing.T) {
 	}
 	if f.mutations != before+1 || len(f.state.Links[1].Addresses) != 1 || !e.fenced {
 		t.Fatal("compensation touched a replaced link", f.mutations-before)
+	}
+}
+
+func TestActualIPv4JSONShapeBindsFromStableLinkSamples(t *testing.T) {
+	e, f := fakeExecutor()
+	calls := []string{}
+	e.run = func(ctx context.Context, op operation) ([]byte, error) {
+		calls = append(calls, op.kind)
+		return f.run(ctx, op)
+	}
+	o, err := e.observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, []string{"links", "addresses", "routes", "links"}) {
+		t.Fatal("missing stable L2 observations", calls)
+	}
+	// An empty IPv4 selector response contains neither links nor MACs. Bind must
+	// still resolve the real links using the independently observed L2 samples.
+	if !o.empty() || len(o.Links) != 2 {
+		t.Fatal("empty IPv4 baseline lost its links")
+	}
+	if _, err := networkplan.Bind(fixturePlan(), o.inventory()); err != nil {
+		t.Fatal("actual IPv4 JSON shape lost trusted identity", err)
+	}
+}
+
+func TestLinkAddressMergeRejectsForeignDuplicatesAndDrift(t *testing.T) {
+	for _, kind := range []string{"missing-link", "duplicate-link-name", "duplicate-link-index", "foreign-address-name", "foreign-address-index", "address-flags", "address-mac", "duplicate-address-link", "link-mac-drift", "link-index-drift", "link-disappears", "ipv6-in-ipv4"} {
+		t.Run(kind, func(t *testing.T) {
+			e, f := fakeExecutor()
+			samples := 0
+			e.run = func(ctx context.Context, op operation) ([]byte, error) {
+				data, err := f.run(ctx, op)
+				if err != nil {
+					return nil, err
+				}
+				if op.kind == "links" {
+					samples++
+					var links []link
+					if err := json.Unmarshal(data, &links); err != nil {
+						return nil, err
+					}
+					switch kind {
+					case "missing-link":
+						links = links[:1]
+					case "duplicate-link-name":
+						links[1].Name = links[0].Name
+					case "duplicate-link-index":
+						links[1].Index = links[0].Index
+					case "link-mac-drift":
+						if samples == 2 {
+							links[0].MAC = "02:00:00:00:ff:ff"
+						}
+					case "link-index-drift":
+						if samples == 2 {
+							links[0].Index = 99
+						}
+					case "link-disappears":
+						if samples == 2 {
+							links = links[:1]
+						}
+					}
+					return json.Marshal(links)
+				}
+				if op.kind == "addresses" {
+					l := f.state.Links[0]
+					l.MAC = ""
+					switch kind {
+					case "foreign-address-name":
+						l.Name = "foreign0"
+					case "foreign-address-index":
+						l.Index = 99
+					case "address-flags":
+						l.Flags = []string{"DOWN"}
+					case "address-mac":
+						l.MAC = "02:00:00:00:ff:ff"
+					case "duplicate-address-link":
+						return json.Marshal([]link{l, l})
+					case "ipv6-in-ipv4":
+						l.Addresses = []address{{Family: "inet6", Local: "fd00::1", Bits: 64}}
+					default:
+						return data, nil
+					}
+					return json.Marshal([]link{l})
+				}
+				return data, nil
+			}
+			if err := e.Apply(context.Background(), fixturePlan()); err == nil || f.mutations != 0 {
+				t.Fatal("untrusted merge admitted effects", err, f.mutations)
+			}
+		})
 	}
 }
