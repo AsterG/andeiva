@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — custom CA platform safety
+
+- Reject custom CA files before filesystem access on platforms without a qualified
+  nonblocking, no-follow opener. Keep verified system-trust HTTPS available.
+- Test Linux FIFO/symlink substitutions and non-Linux refusal.
+
 ## Unreleased — internal read-only network inventory
 
 - Observe real interfaces, IPv4/IPv6 addresses, masks and link flags through an

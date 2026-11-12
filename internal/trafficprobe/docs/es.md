@@ -62,3 +62,5 @@ Desde el repositorio: `go test -race ./internal/trafficprobe ./cmd/andeiva-traff
 y `go vet ./internal/trafficprobe ./cmd/andeiva-traffic-probe`. Estas pruebas usan
 únicamente listeners temporales loopback, DNS controlado y certificados de prueba;
 no acreditan tráfico Internet, NAT o routing real.
+
+Los archivos CA personalizados solo se admiten en Linux. Otros sistemas rechazan `--ca-file` antes de acceder al filesystem con `invalid_ca_file`; HTTPS con confianza del sistema conserva la verificación de certificados. Añadir otro sistema requiere un opener seguro y pruebas nativas.

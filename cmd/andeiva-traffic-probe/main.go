@@ -25,7 +25,7 @@ func run(ctx context.Context, args []string, output io.Writer) int {
 	timeout := flags.Duration("timeout", 3*time.Second, "Positive timeout, maximum 15s")
 	query := flags.String("dns-name", "", "DNS A query; explicit server is target-ipv4:port")
 	origin := flags.String("url", "", "HTTP(S) origin and path; no query, fragment or credentials")
-	ca := flags.String("ca-file", "", "Optional trusted absolute regular PEM CA file for HTTPS")
+	ca := flags.String("ca-file", "", "Optional trusted absolute regular PEM CA file for HTTPS (Linux only)")
 	language := flags.String("lang", "en", "en | es | pt")
 	invalid := trafficprobe.Result{SchemaVersion: 1, Outcome: "invalid_configuration", Transports: []trafficprobe.Transport{}}
 	write := func(result trafficprobe.Result) bool { return json.NewEncoder(output).Encode(result) == nil }
@@ -60,7 +60,7 @@ func run(ctx context.Context, args []string, output io.Writer) int {
 }
 
 var help = map[string]string{
-	"en": "One authorized laboratory target per invocation. Source IPv4 must be local. Timeout is not a firewall Deny verdict. HTTPS always verifies certificates; --ca-file requires an independently trusted CA file. --authorized-lab acknowledges scope and is not authentication.",
-	"es": "Un destino autorizado de laboratorio por ejecución. La IPv4 de origen debe ser local. Un timeout no demuestra Deny del firewall. HTTPS siempre verifica certificados; --ca-file exige una CA de origen confiable independiente. --authorized-lab declara alcance y no es autenticación.",
-	"pt": "Um destino autorizado de laboratório por execução. A IPv4 de origem deve ser local. Timeout não comprova Deny do firewall. HTTPS sempre verifica certificados; --ca-file exige uma CA de origem confiável independente. --authorized-lab declara o escopo e não é autenticação.",
+	"en": "One authorized laboratory target per invocation. Source IPv4 must be local. Timeout is not a firewall Deny verdict. HTTPS always verifies certificates; --ca-file requires an independently trusted CA file and is Linux-only. --authorized-lab acknowledges scope and is not authentication.",
+	"es": "Un destino autorizado de laboratorio por ejecución. La IPv4 de origen debe ser local. Un timeout no demuestra Deny del firewall. HTTPS siempre verifica certificados; --ca-file exige una CA de origen confiable independiente y solo se admite en Linux. --authorized-lab declara alcance y no es autenticación.",
+	"pt": "Um destino autorizado de laboratório por execução. A IPv4 de origem deve ser local. Timeout não comprova Deny do firewall. HTTPS sempre verifica certificados; --ca-file exige uma CA de origem confiável independente e só é aceito no Linux. --authorized-lab declara o escopo e não é autenticação.",
 }

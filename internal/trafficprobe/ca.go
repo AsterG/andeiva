@@ -12,7 +12,7 @@ import (
 const maxCABytes = 1024 * 1024
 
 func readCA(path string) (pool *x509.CertPool, result error) {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+	if !customCASupported || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return nil, errInvalid
 	}
 	for part := path; ; part = filepath.Dir(part) {
