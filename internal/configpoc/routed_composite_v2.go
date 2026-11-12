@@ -30,6 +30,9 @@ func resolveRoutedCompositeV1(config v2CompositeConfig, read func(string, any) e
 		if revision.Hash != reference.Revision || revision.Config.SchemaVersion != reference.Schema {
 			return v2CompositeRevision{}, ErrInvalid
 		}
+		if reference.Schema == 3 && len(revision.Config.Rules) != 0 {
+			return v2CompositeRevision{}, ErrInvalid
+		}
 		var canonical Revision
 		var err error
 		if reference.Schema == 6 {

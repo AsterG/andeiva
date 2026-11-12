@@ -154,3 +154,22 @@ func BenchmarkRoutedCompositeMemoryReader(b *testing.B) {
 		}
 	}
 }
+
+func TestRoutedCompositeLocalServicesRejectForwarding(t *testing.T) {
+	doc, objects := compositeRoutedFixture(t, true)
+	local := objects[doc.Domains.LocalServices.Revision].Config
+	local.Rules = []Rule{{ID: "forwarding-in-local", Action: "allow", Match: &Match{
+		Source: "192.0.2.0/24", Destination: "198.51.100.0/24", Protocol: "tcp",
+		SourcePorts: PortRange{From: 1, To: 65535}, DestinationPorts: PortRange{From: 443, To: 443},
+	}}}
+	revision, err := Canonical(local)
+	if err != nil {
+		t.Fatal("legacy component format unexpectedly changed", err)
+	}
+	objects[revision.Hash] = revision
+	doc.Domains.LocalServices.Revision = revision.Hash
+	count := 0
+	if _, err := resolveRoutedCompositeV1(doc, compositeRoutedReader(objects, &count)); !errors.Is(err, ErrInvalid) || count != 2 {
+		t.Fatal("local-services component accepted forwarding rules", err, count)
+	}
+}
