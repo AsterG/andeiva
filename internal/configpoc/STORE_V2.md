@@ -82,6 +82,49 @@ collection, export/acknowledgement or protected-history deletion. Disk use still
 grows until the configured accounting budget refuses new admissions. This
 preparation therefore does not close storage exhaustion/retention release gates.
 
+## Physical accounting and admission headroom
+
+The Linux v2 store also measures allocated file blocks (`fstat`, 512 bytes per
+`st_blocks` unit), directory allocation and owned inodes, including the directory.
+Open rebuilds those observations under the store lock; successful writes update
+them incrementally. Admission does not rescan the catalogue. The old selector and
+the temporary replacement both count until the replacement is durably selected.
+Existing identical objects are verified without charging them twice.
+
+The configured byte/inode budgets now constrain both logical usage and measured
+physical usage. Admission checks available filesystem bytes/inodes through
+`fstatfs` on the validated directory descriptor, retaining other operations'
+allowances and adding file-rounding/directory-growth headroom. A known shortage
+before admission returns limited without issuing an operation, consuming a slot
+or reservation, publishing state or calling an engine. Read-only filesystems and
+failed/invalid space observations return unavailable. Verified current state,
+retained lookup and terminal replay remain readable under pressure. Integrity or
+publication uncertainty remains fail-closed; a successful space probe cannot
+clear that fence.
+
+These checks are **observations and estimates, not physical reservations**.
+Another writer, quota, filesystem metadata overhead or later I/O failure can still
+prevent publication or recovery. Allocated blocks held by an open deleted selector
+remain reflected in filesystem availability, even after its name leaves owned
+accounting. No fallocate, quota configuration, collection, protected-history
+deletion, auth/audit change or runtime activation is added. Full-volume continuity,
+physical fault qualification and AND-01/persistent AND-02 closure remain pending.
+
+With the repository Go version and dependencies provisioned offline:
+
+```sh
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -mod=readonly -buildvcs=false -race ./internal/configpoc -run '^TestV2Physical' -count=3
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -mod=readonly -buildvcs=false ./internal/configpoc -run '^$' -bench '^BenchmarkV2PhysicalPreflight$' -benchmem -count=3
+```
+
+Coverage includes physical/logical differences, directory and temporary-selector
+allocation, retained partial objects, sparse files, overflow, pressure before
+engine effects, owned allowances, verified reads and reconstruction after reopen.
+Injected space observations do not establish real ENOSPC/EDQUOT/EROFS behavior.
+The descriptor preflight benchmark measured 4.925–4.930 microseconds, 812–828 bytes
+and 10 allocations per call on WSL Linux amd64; this is not appliance sizing or a
+power-loss qualification. The measurement uses a temporary local directory.
+
 ## Cold migration
 
 `prepareMigrationV2` locks firewall, local-services, then destination, in that
@@ -141,3 +184,40 @@ fault hooks qualify the tested filesystem protocol, not resistance to power loss
 Multiplatform compilation does not imply supported non-Linux durability/runtime.
 
 Localized guides: [Spanish](STORE_V2_ES.md), [Portuguese](STORE_V2_PT.md).
+
+
+### Copied-volume v2 pressure qualification
+
+Only in the authorized Debian 13 laboratory, build `go test -c ./internal/configpoc`
+and the `andeiva-storage-lab` inspector. Prepare the inactive fixed image profile
+using the storage laboratory guide. As root, with verified root-owned binaries:
+
+```sh
+bash packaging/preview/tests/storage-pressure.sh --authorized-debian-v2-volumes \
+  "$TEST_BINARY" "$TEST_SHA256" --isolated-storage-only \
+  "$INSPECTOR" "$INSPECTOR_SHA256" "$VOLUME_ID"
+```
+
+This mode admits bytes, inodes and open-deleted cases only. It copies and verifies
+original images, passes only the config-copy scope and pinned executable through
+inherited descriptors, then drops the worker to UID/GID 1000, no supplementary
+groups, no capabilities and no-new-privileges. Protected sibling domains remain
+root-only. Actual ENOSPC and held-unlinked allocation must reject admission without
+engine calls or selected-state changes; retained lookup/replay and later Save/cold
+reopen must pass. Engines in this fixture are simulated.
+
+Native qualification passed all three cases: bytes exhausted with availability
+zero, inode availability zero, and open-deleted blocks remained charged until
+close. Original image checks, other-domain sentinels and cleanup passed. Combined
+fixture elapsed 2.952 s / CPU 2.236 s / cgroup peak 553,398,272 bytes including
+cache. These observations do not prove v2 read-only recovery, quotas, physical
+reservations, protected-audit reclamation, real dataplane continuity or power-loss
+resistance. AND-01/02 remain open. The separate legacy volume fixture's read-only
+case must not be attributed to this v2 mode.
+
+The byte-pressure case observed zero available bytes, then 112,132,096 after
+releasing its filler. Inode pressure reached zero free inodes while 111,476,736
+bytes remained available. The open-deleted case retained zero available bytes
+until close, then reported 111,075,328. These are filesystem observations for this
+copied-volume run. The cgroup peak includes filesystem cache; it is not process
+RSS, application heap or a production memory-sizing result.

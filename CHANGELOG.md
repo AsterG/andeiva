@@ -42,6 +42,16 @@
   nonblocking, no-follow opener. Keep verified system-trust HTTPS available.
 - Test Linux FIFO/symlink substitutions and non-Linux refusal.
 
+## Unreleased — configuration v2 physical admission accounting
+
+- Measure allocated file/directory blocks and owned inodes through validated
+  descriptors; retain both selector allocations until durable replacement.
+- Check filesystem headroom before admission without consuming an operation slot
+  or another operation's allowance; preserve verified reads and uncertainty fences.
+- Add bounded fault/accounting tests and EN/ES/PT reproduction notes. Physical
+  reservations, collection, full-volume continuity and runtime activation remain
+  outside this change.
+
 ## Unreleased — inactive configuration storage v2 foundations
 
 
