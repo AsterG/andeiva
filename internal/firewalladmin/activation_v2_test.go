@@ -92,7 +92,9 @@ func preparedGuardFixture(t *testing.T) (*PreparedGuardedEngine, *preparedGuardA
 	}
 	t.Cleanup(func() { _ = g.Close() })
 	a := &preparedGuardAuthority{g: g, engine: engine}
-	guard, err := NewPreparedGuardedEngine(preparedGuardianEngine{engine, g}, a, func(context.Context) error { return g.RecoverPrevious() })
+	guard, err := NewPreparedGuardedEngine(preparedGuardianEngine{engine, g}, a, func(_ context.Context, scope LeaseState) error {
+		return g.RecoverLease(scope.ID, scope.Previous, scope.Target, scope.Deadline)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

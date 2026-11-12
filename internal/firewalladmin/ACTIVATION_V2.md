@@ -8,8 +8,12 @@ unchanged. Real runtime assembly must use the guarded wrapper; plain Engine
 fixtures continue to represent simulations only.
 
 `PreparedGuardedEngine` reuses Engine, ActivationGuard and the existing
-LeaseAuthority State/Current/Arm/Confirm contract. Its trusted recovery callback
-uses the existing helper recovery operation. No caller-selected executable,
+LeaseAuthority State/Current/Arm/Confirm contract. Its typed recovery callback
+requires an atomic comparison of the observed lease ID, previous/target hashes
+and original deadline inside the guardian lock before recovery. The existing
+unscoped IPC `Client.Recovered` has different session-barrier semantics and is
+not a compatible binding. No privileged IPC binding exists for this callback.
+No caller-selected executable,
 revision path, new privileged verb or administrative bypass is introduced.
 
 The coordinator persists its exact intent before arming the helper. Immediate
@@ -23,7 +27,7 @@ Rebinding an existing pending lease does not rearm or extend it, including durin
 the final 500 ms. Creating a new lease still requires at least 500 ms. Helper
 timeouts do not depend on a live API process, session or subject.
 
-Rollback uses the helper's existing recovery operation only after validating the
+Rollback uses the scoped guardian recovery operation only after validating the
 exact lease/previous/target and effective state. A failed confirmation can recover
 after a verified helper rollback: configuration content returns to the previous
 revision, domain/global counters advance, Startup remains unchanged, and the
@@ -51,7 +55,8 @@ real v2 coordinator with the existing restricted guardian and **simulated
 engines**. They test immediate/confirmed commits, late confirmation, lost replies,
 partial apply, foreign leases, independent timeout, repeated reopen and an actual
 staging-file collision after remote confirmation. They require no root, real
-firewall rules or appliance connection. Native Debian 13 qualification ran all 10 selected guard tests without skips as
+firewall rules or appliance connection. Before the scoped-CAS correction, native Debian 13 qualification ran 10 selected
+guard tests without skips as
 UID 1000 with no capabilities: elapsed 0.586653 s, CPU 0.273888 s and cgroup
 memory peak 12,656,640 B. The guardian ran in-process with simulated engines and
 real temporary journals. This is test-process consumption, not RSS or production
@@ -62,3 +67,5 @@ Local Services evidence mapping, true OS-boot Startup application, physical
 storage guarantees or power-loss resilience. OS boot must remain distinct from
 process restart; that additional transition is not implemented here. AND-01/02
 and runtime activation gates remain open.
+
+Native Debian 13 scoped-CAS qualification passed all 11 prepared-guard tests as UID 1000 without capabilities: elapsed 1.196797 s, CPU 0.301658 s, cgroup memory peak 10,342,400 B. The three guardian CAS tests also passed: elapsed 0.075054 s, CPU 0.026181 s, peak 7,184,384 B. These use in-process guardians, simulated engines and real temporary journals; they do not qualify privileged IPC or production daemon overhead.

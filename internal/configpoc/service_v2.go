@@ -87,7 +87,7 @@ func (s *ServiceV2) Close() error {
 }
 
 func (s *ServiceV2) principal(binding adminauth.SessionBinding) (v2TrustedPrincipal, error) {
-	if s == nil || s.auth == nil || s.coordinator == nil {
+	if s == nil || s.auth == nil || s.coordinator == nil || s.coordinator.store == nil {
 		return v2TrustedPrincipal{}, ErrDenied
 	}
 	verified, err := s.auth.VerifySession(binding)
