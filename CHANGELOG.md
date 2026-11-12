@@ -193,6 +193,11 @@
 - Share accessible, localized menus across administrative and sign-in views;
   support keyboard dismissal, focus return, zoom and small screens in both themes.
 
+## Unreleased — bounded configuration index reclamation
+
+- Reclaim only newly created, unreferenced catalogue index pages from the same opted-in writer handle after checking the complete selected reference closure. Preserve historical objects, protected audit and replay results.
+- Fence reclamation after unknown object producers or protected index promotion; retain exact file identity checks, reader compatibility and interruption recovery.
+- Include EN/ES/PT reproduction guides and negative tests for protected descendants, process exits, writer exclusion and previous-reader refusal. Runtime integration and finite-volume qualification remain separate gates.
 ## Unreleased — configuration storage admission
 
 - Check available filesystem bytes and inodes before ordinary configuration
