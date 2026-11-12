@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — routed administration workflows
+
+- Add authenticated Web and CLI consumers for grouped network, forwarding and source NAT configuration, with confirmed application, explicit persistence and durable operation lookup.
+- Preserve exact revision identities, block writes after uncertain execution and support explicit resumption of accepted requests without duplicate admission.
+- Expose bounded administrator-only v2 audit history and retain unbound reserve claims during reachability inspection without treating them as written plans.
+- Keep runtime migration, privileged helper activation and native appliance qualification independently gated.
+
 ## Unreleased — prepared routed composite references
 
 - Validate schema 7 references against canonical firewall and local-service payloads, deriving network identity from the routed firewall revision.
