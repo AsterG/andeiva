@@ -43,10 +43,9 @@ type activeProofV2 struct {
 	deadline                                                 time.Time
 }
 
-// PreparedProofBookV2 is deliberately not connected to ServiceV2 or a receiver.
-// It reuses v1 proof limits/profile helpers, not a second transaction coordinator.
-// F2 must revalidate scopes and reserve under the same coordinator lock. Auth
-// verification must finish BEFORE taking that lock; see Authenticate below.
+// PreparedProofBookV2 reuses bounded proof/profile helpers. The prepared policy
+// adapter binds it to the single v2 coordinator; no deployed receiver is enabled.
+// Authentication finishes before the coordinator lock; see Authenticate below.
 type PreparedProofBookV2 struct {
 	mu          sync.Mutex
 	auth        *adminauth.Manager
@@ -147,7 +146,8 @@ func sameProofBindingV2(a, b configpoc.LocalProofBindingV2) bool {
 
 // Publish accepts only a verified pending projection and its actual receiver
 // instances from the trusted caller. It does not itself prove kernel/listener
-// state. No production caller exists until F2 supplies that barrier under lock.
+// state. The prepared adapter supplies that barrier under the coordinator lock;
+// production listener assembly remains a separate qualification gate.
 func (b *PreparedProofBookV2) Publish(scope configpoc.LocalProofScopeV2, receivers []ProofReceiverV2) error {
 	if !b.ready() {
 		return configpoc.ErrRecovery
@@ -155,7 +155,11 @@ func (b *PreparedProofBookV2) Publish(scope configpoc.LocalProofScopeV2, receive
 	if !b.validate(scope) || scope.Binding().Purpose != "confirm" {
 		return configpoc.ErrInvalid
 	}
-	listeners := expectedListeners(scope.Target().Config)
+	return b.publishV2(scope.Binding(), scope.Target(), receivers)
+}
+
+func (b *PreparedProofBookV2) publishV2(binding configpoc.LocalProofBindingV2, target configpoc.Revision, receivers []ProofReceiverV2) error {
+	listeners := expectedListeners(target.Config)
 	if len(receivers) != len(listeners) || len(receivers) > 8 {
 		return configpoc.ErrInvalid
 	}
@@ -165,7 +169,7 @@ func (b *PreparedProofBookV2) Publish(scope configpoc.LocalProofScopeV2, receive
 	}
 	next := make(map[string]ProofReceiverV2, len(receivers))
 	for _, r := range receivers {
-		if !expected[r.Endpoint] || r.Run != b.run || !validHex(r.Instance, 16) || r.Namespace == 0 || r.ActivationHash != scope.Binding().LocalTarget || !proofSurfaceV2(r.Surface) {
+		if !expected[r.Endpoint] || r.Run != b.run || !validHex(r.Instance, 16) || r.Namespace == 0 || r.ActivationHash != binding.LocalTarget || !proofSurfaceV2(r.Surface) {
 			return configpoc.ErrInvalid
 		}
 		if _, duplicate := next[r.Endpoint]; duplicate {
@@ -178,10 +182,10 @@ func (b *PreparedProofBookV2) Publish(scope configpoc.LocalProofScopeV2, receive
 	if b.closed {
 		return configpoc.ErrRecovery
 	}
-	if !b.now().Before(scope.Binding().Deadline) {
+	if !b.now().Before(binding.Deadline) {
 		return configpoc.ErrExpired
 	}
-	active := activeScopeV2(scope.Binding())
+	active := activeScopeV2(binding)
 	for key, entry := range b.entries {
 		if !sameProofReceiverV2(entry.receiver, b.recovery) && (!sameActiveProofV2(b.active, active) || !sameProofReceiverV2(next[entry.receiver.Endpoint], entry.receiver)) {
 			delete(b.entries, key)
