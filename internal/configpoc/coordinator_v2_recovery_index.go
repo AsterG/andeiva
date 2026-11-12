@@ -3,7 +3,14 @@ package configpoc
 import "time"
 
 func validRecoveryRecordV2(record v2RecoveryRecord, lineage string) bool {
-	if record.Format != v2Format || record.ID == "" || len(record.ID) > 128 || record.Subject == "" || len(record.Subject) > 128 || record.Lineage != lineage || record.Origin == "" || record.Lease == "" || record.Started.IsZero() || !validHash(record.Previous) || !validHash(record.Target) || (record.Kind != "timeout" && record.Kind != "restart") {
+	if record.Format != v2Format || record.ID == "" || len(record.ID) > 128 || record.Lineage != lineage || record.Started.IsZero() || !validHash(record.Previous) || !validHash(record.Target) {
+		return false
+	}
+	if record.Kind == v2BootKind {
+		if record.BootID == nil || !validBootIDV2(*record.BootID) || record.Subject != "" || record.Origin != "" || record.Lease != "" {
+			return false
+		}
+	} else if record.BootID != nil || record.Subject == "" || len(record.Subject) > 128 || record.Origin == "" || record.Lease == "" || (record.Kind != "timeout" && record.Kind != "restart") {
 		return false
 	}
 	for _, character := range record.ID {

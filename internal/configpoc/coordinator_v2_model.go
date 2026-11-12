@@ -54,32 +54,34 @@ type v2Confirmation struct {
 	Deadline     time.Time `json:"deadline"`
 }
 type v2CoordinatorIntent struct {
-	Operation        string `json:"operation_id"`
-	Subject          string `json:"subject"`
-	Domain           string `json:"domain"`
-	Kind             string `json:"kind"`
-	Previous         string `json:"previous_snapshot"`
-	Target           string `json:"target_snapshot"`
-	TargetGeneration uint64 `json:"target_generation,string"`
-	Recovery         bool   `json:"recovery"`
-	OriginCommit     string `json:"origin_commit_operation_id,omitempty"`
-	Lease            string `json:"lease,omitempty"`
+	BootID           *v2BootID `json:"boot_id,omitempty"`
+	Operation        string    `json:"operation_id"`
+	Subject          string    `json:"subject"`
+	Domain           string    `json:"domain"`
+	Kind             string    `json:"kind"`
+	Previous         string    `json:"previous_snapshot"`
+	Target           string    `json:"target_snapshot"`
+	TargetGeneration uint64    `json:"target_generation,string"`
+	Recovery         bool      `json:"recovery"`
+	OriginCommit     string    `json:"origin_commit_operation_id,omitempty"`
+	Lease            string    `json:"lease,omitempty"`
 }
 type v2Configuration struct {
-	Firewall         v2DomainSnapshot     `json:"firewall"`
-	LocalServices    v2DomainSnapshot     `json:"local_services"`
-	Running          v2CompositeRevision  `json:"running"`
-	Startup          v2CompositeRevision  `json:"startup"`
-	LastGood         v2CompositeRevision  `json:"last_good"`
-	Candidate        *v2CompositeRevision `json:"candidate,omitempty"`
-	Pending          *v2Confirmation      `json:"pending,omitempty"`
-	Intent           *v2CoordinatorIntent `json:"intent,omitempty"`
-	RecoveryRequired bool                 `json:"recovery_required"`
-	AuditSequence    uint64               `json:"audit_sequence,string"`
-	AuditTip         string               `json:"audit_tip,omitempty"`
-	LastRecovery     string               `json:"last_recovery,omitempty"`
-	VerifiedIndex    string               `json:"verified_index,omitempty"`
-	RecoveryIndex    string               `json:"recovery_index,omitempty"`
+	LastCompletedBoot string               `json:"last_completed_boot,omitempty"`
+	Firewall          v2DomainSnapshot     `json:"firewall"`
+	LocalServices     v2DomainSnapshot     `json:"local_services"`
+	Running           v2CompositeRevision  `json:"running"`
+	Startup           v2CompositeRevision  `json:"startup"`
+	LastGood          v2CompositeRevision  `json:"last_good"`
+	Candidate         *v2CompositeRevision `json:"candidate,omitempty"`
+	Pending           *v2Confirmation      `json:"pending,omitempty"`
+	Intent            *v2CoordinatorIntent `json:"intent,omitempty"`
+	RecoveryRequired  bool                 `json:"recovery_required"`
+	AuditSequence     uint64               `json:"audit_sequence,string"`
+	AuditTip          string               `json:"audit_tip,omitempty"`
+	LastRecovery      string               `json:"last_recovery,omitempty"`
+	VerifiedIndex     string               `json:"verified_index,omitempty"`
+	RecoveryIndex     string               `json:"recovery_index,omitempty"`
 }
 type v2CoordinatorAudit struct {
 	Format       string    `json:"format"`
@@ -97,6 +99,7 @@ type v2CoordinatorAudit struct {
 	Startup      string    `json:"startup_revision"`
 }
 type v2RecoveryRecord struct {
+	BootID      *v2BootID  `json:"boot_id,omitempty"`
 	Format      string     `json:"format"`
 	ID          string     `json:"id"`
 	Origin      string     `json:"origin_commit_operation_id"`
@@ -218,6 +221,9 @@ func validV2Configuration(state *v2Configuration) bool {
 	if state.LastRecovery != "" && !validHash(state.LastRecovery) {
 		return false
 	}
+	if state.LastCompletedBoot != "" && !validHash(state.LastCompletedBoot) {
+		return false
+	}
 	if state.VerifiedIndex != "" && !validHash(state.VerifiedIndex) {
 		return false
 	}
@@ -230,7 +236,14 @@ func validV2Configuration(state *v2Configuration) bool {
 		}
 	}
 	if intent := state.Intent; intent != nil {
-		if intent.Operation == "" || intent.Subject == "" || intent.Domain != "firewall" || !validHash(intent.Previous) || !validHash(intent.Target) || intent.TargetGeneration == 0 {
+		if intent.Operation == "" || intent.Domain != "firewall" || !validHash(intent.Previous) || !validHash(intent.Target) || intent.TargetGeneration == 0 {
+			return false
+		}
+		if intent.Kind == v2BootKind {
+			if !validBootIntentV2(intent) {
+				return false
+			}
+		} else if intent.BootID != nil || intent.Subject == "" {
 			return false
 		}
 	}
