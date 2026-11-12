@@ -45,23 +45,13 @@ func (s *RoutedStoreSourceV3) Resolve(ctx context.Context, expected firewallipc.
 	default:
 		return configpoc.RoutedSelectedPlanV1{}, configpoc.ErrDenied
 	}
-	reference, e := s.reader.Observe(ctx)
+	generation, e := strconv.ParseUint(expected.Generation, 10, 64)
+	if e != nil {
+		return configpoc.RoutedSelectedPlanV1{}, configpoc.ErrInvalid
+	}
+	plan, e := s.reader.ResolveCurrent(ctx, configpoc.RoutedWorkReferenceV1{Work: expected.Work, Lineage: expected.Lineage, Generation: generation}, purpose)
 	if e != nil {
 		return configpoc.RoutedSelectedPlanV1{}, e
-	}
-	if reference.WorkHash != expected.Work || reference.Lineage != expected.Lineage {
-		return configpoc.RoutedSelectedPlanV1{}, configpoc.ErrConflict
-	}
-	// Resolve checks the full selected tuple, G1, both reserve banks and purpose.
-	// Work.Scope.Generation may predate the selected global generation (Confirm
-	// and metadata updates); those values must never be compared as equivalents.
-	plan, e := s.reader.Resolve(ctx, reference, purpose)
-	if e != nil {
-		return configpoc.RoutedSelectedPlanV1{}, e
-	}
-	work := plan.Reference()
-	if work.Work != expected.Work || work.Lineage != expected.Lineage || strconv.FormatUint(work.Generation, 10) != expected.Generation {
-		return configpoc.RoutedSelectedPlanV1{}, configpoc.ErrConflict
 	}
 	return plan, nil
 }
@@ -69,11 +59,7 @@ func (s *RoutedStoreSourceV3) PrepareView(ctx context.Context) (RoutedPreparatio
 	if s == nil || s.reader == nil {
 		return RoutedPreparationViewV3{}, configpoc.ErrRecovery
 	}
-	reference, e := s.reader.Observe(ctx)
-	if e != nil {
-		return RoutedPreparationViewV3{}, e
-	}
-	view, e := s.reader.PrepareView(ctx, reference)
+	view, e := s.reader.PrepareCurrentView(ctx)
 	if e != nil {
 		return RoutedPreparationViewV3{}, e
 	}

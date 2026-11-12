@@ -35,3 +35,27 @@ go build ./cmd/... ./internal/...
 Las pruebas usan registros temporales reales, conversión explícita de permisos del fixture e intents publicados por el coordinador; preparación/efectos son dobles de prueba. No acreditan integración del appliance con tres identidades, red host, IPC completo ni instalación resistente a cortes. La evidencia nativa y las medidas de recursos se publican por separado.
 
 Una muestra de diez iteraciones en WSL/Go 1.27.4 de `Observe` sobre un fixture temporal migrado midió 20,737 ms/op, 7.885.193 B/op y 62.973 asignaciones/op, incluido G1 y captura/revalidación de reservas. Son volumen de asignaciones y latencia del fixture, no heap retenido, RSS del appliance, capacidad ni objetivo de producción.
+
+## Reutilización de verificaciones dentro de una llamada
+
+`PrepareCurrentView` y `ResolveCurrent` obtienen una selección completa nueva bajo el mutex del lector. El segundo trata hash del trabajo, linaje y generación del **ámbito del trabajo** como expectativas; esa generación no es la generación global seleccionada. Los métodos existentes siguen exigiendo la referencia completa del llamante. No cambia el formato de transporte ni los plazos.
+
+Sólo una llamada puede reutilizar bytes verificados: hasta 256 descriptores retenidos de sólo lectura y la mitad del presupuesto existente de payload activo. Se mantienen la decodificación tipada y las comprobaciones contextuales de las referencias. Antes de devolver, se verifican otra vez propietario/modos/ACL, identidad y tiempos del inode retenido, bytes exactos, selector y ambos bancos de cada reserva. Reemplazo, unlink, cambios in-place y cancelación fallan de forma cerrada. La caché no sobrevive a la llamada.
+
+G1 sólo reutiliza la validación de un snapshot, intent o recuperación idénticos cuando su clave incluye el estado canónico completo y los demás argumentos de validación. Los predicados puros de configuración y destino de arranque conservan identidades exactas. Se reutilizan hasta ocho resultados inmutables de trabajo routed sólo si todos sus objetos fuente siguen retenidos; su payload representado se carga contra un cuarto del presupuesto existente de payload activo. El plan seleccionado final se reconstruye por separado, con comprobaciones actuales de propósito, identidad y reservas. Al alcanzar límites se usan lecturas acotadas normales, nunca autoridad parcial. Estas cotas limitan descriptores y payloads, no todo el heap Go ni el RSS del appliance.
+
+Pruebas negativas focales con Go 1.27.4:
+
+```sh
+GOPROXY=off GOSUMDB=off go test -race ./internal/configpoc -run 'TestSelectedCacheV2|TestSelectedReaderV2' -count=1 -timeout=4m -benchtime=3x
+```
+
+La optimización reduce verificaciones repetidas; no elimina historial retenido, aumenta presupuestos, amplía el plazo de tres segundos del helper ni acredita rendimiento del appliance.
+
+Una muestra compilada WSL/Go 1.27.4 completó el ciclo de almacenamiento compartido, incluidas transacciones schema-4/schema-6, reinicio del helper y rollback, con registros temporales, reservas e IPC Unix reales y motores físicos simulados. Con `RLIMIT_NOFILE=256`, la prueba completa tardó 22,96 s; la lectura de confirmación final tardó 1,7016 s. El lector anterior agotó Validate6 a los 3,0007 s. Las ejecuciones completan cantidades distintas de pasos y no comparan throughput.
+
+El proceso compilado exitoso consumió 22,95 s de CPU usuario, 5,02 s sistema y RSS máximo de 29.192 KiB. El fixture reúne los pools del escritor y del helper en un proceso, a diferencia del helper separado previsto. No mide el appliance Debian ni garantiza tiempos ante crecimiento del historial retenido. Las pruebas race validan comportamiento por separado de esta muestra temporal sin race.
+
+La cota efectiva de caché es `min(256, RLIMIT_NOFILE/2, FDs_libres_actuales-32)`. El censo Linux acotado es sólo una estimación de capacidad; si falla, deshabilita la caché de descriptores. Las lecturas generales pueden ocupar la mitad de esa cota y dejan espacio para dependencias de validación de trabajo routed. No aumentan el límite del proceso ni los presupuestos de recorrido. Agotar descriptores deniega autoridad; liberar descriptores ajenos permite una lectura nueva posterior. El wrapper original de carga y el validador de finalidad R2 conservan su comportamiento; sólo G1 proporciona predicados puros de configuración y cargas inmutables reutilizables, comprobando el estado completo de cada invocación y su finalidad.
+
+Tres ciclos completos posteriores pasaron con límites blando y duro fijados en 256 y observados independientemente mediante `/proc`. Entre 60 llamadas fuente, el máximo fue 1,8702 s. El tiempo total fue 76,5586 s, CPU usuario/sistema 85,2268/17,6873 s y RSS máximo 36.156 KiB. El muestreo de descriptores cada 10 ms observó un pico de 204; no demuestra el máximo instantáneo. Este fixture WSL repetido en un proceso sigue siendo distinto de la cualificación nativa con procesos separados.
