@@ -68,11 +68,18 @@ provided. Trusted assembly must authenticate manager metadata and retained
 descriptors. Helper restart cannot reconstruct executor ownership from the stored
 snapshot alone. The module adds no database, workers or processes; it uses the
 single Group lease, at most three known states per table and 512 KiB nft batches.
-Controlled unit tests exercise compilers and faults. Native three-namespace group
-traffic/Confirm/expiry/recovery passed specifically at source `3918ad8`: wall
-46.166222 s, CPU 13.259767 s, peak 31,281,152 bytes. That measurement does not qualify
-the later inverse/legacy-rule extension, native helper restart, crash recovery or
-endpoint continuity; those require their own owner-reviewed evidence.
+Controlled unit tests exercise compilers and faults. Native Debian 13 qualification
+at source `f6a474f` passed TCP/UDP SNAT, tuple-bound related ICMP, IPv6 and
+unsolicited-reverse denial, existing-flow revocation, no-NAT routing, and NAT
+without forwarding authorization. The same run restored two saved schema4 rules,
+reactivated schema6, reconciled a lost confirmation reply and reversed a confirmed
+schema4 transition on its original timeout. All three namespaces were cleaned;
+external addresses, routes, forwarding and nftables remained unchanged.
+The complete qualification took approximately 45 s, 12.890886 s CPU and a
+33,546,240-byte cgroup peak including child processes/cache. These are test costs,
+not service RSS or throughput. The selected-witness fixture does not qualify
+separate-process helper IPC, native Boot4, host interface takeover or Internet
+access. Earlier evidence at `3918ad8` remains historical, not later-feature proof.
 
 ```sh
 go test -race ./internal/networkexecutor ./internal/routedactivation -count=3

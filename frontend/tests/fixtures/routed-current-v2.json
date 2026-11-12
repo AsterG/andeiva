@@ -490,6 +490,211 @@
       }
     }
   },
+  "retained": {
+    "schema_version": 2,
+    "current": {
+      "domain_generations": {
+        "firewall": "2",
+        "local_services": "3",
+        "network": "2"
+      },
+      "routed": {
+        "schema_version": 7,
+        "local_services": {
+          "generation": "3",
+          "candidate": null,
+          "running": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "startup": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "last_good": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "pending": null,
+          "recovery_required": false,
+          "revoked": []
+        },
+        "running": {
+          "hash": "cbe6dcb111a8c6b6050c94c5fadb33526f91d876f833e97c69f78f8dc0c2d691",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 4,
+                "revision": "e67219c668114ae55ce6f088d1f95af545da7ab407abbb4542c6588fae3e4088"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": null
+            }
+          }
+        },
+        "startup": {
+          "hash": "cbe6dcb111a8c6b6050c94c5fadb33526f91d876f833e97c69f78f8dc0c2d691",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 4,
+                "revision": "e67219c668114ae55ce6f088d1f95af545da7ab407abbb4542c6588fae3e4088"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": null
+            }
+          }
+        },
+        "last_good": {
+          "hash": "cbe6dcb111a8c6b6050c94c5fadb33526f91d876f833e97c69f78f8dc0c2d691",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 4,
+                "revision": "e67219c668114ae55ce6f088d1f95af545da7ab407abbb4542c6588fae3e4088"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": null
+            }
+          }
+        }
+      },
+      "global": {
+        "lineage_id": "test-fixture-lineage",
+        "generation": "18446744073709551615",
+        "running_revision": "cbe6dcb111a8c6b6050c94c5fadb33526f91d876f833e97c69f78f8dc0c2d691",
+        "startup_revision": "cbe6dcb111a8c6b6050c94c5fadb33526f91d876f833e97c69f78f8dc0c2d691"
+      },
+      "domain": "routed",
+      "snapshot": {
+        "generation": "2",
+        "candidate": null,
+        "running": {
+          "hash": "e67219c668114ae55ce6f088d1f95af545da7ab407abbb4542c6588fae3e4088",
+          "config": {
+            "schema_version": 4,
+            "default_action": "deny",
+            "rules": [
+              {
+                "id": "retained-tcp",
+                "action": "allow",
+                "match": {
+                  "source": "198.18.0.2/32",
+                  "destination": "198.18.0.6/32",
+                  "protocol": "tcp",
+                  "source_ports": {
+                    "from": 1,
+                    "to": 65535
+                  },
+                  "destination_ports": {
+                    "from": 18080,
+                    "to": 18080
+                  }
+                },
+                "enabled": true
+              }
+            ]
+          }
+        },
+        "startup": {
+          "hash": "e67219c668114ae55ce6f088d1f95af545da7ab407abbb4542c6588fae3e4088",
+          "config": {
+            "schema_version": 4,
+            "default_action": "deny",
+            "rules": [
+              {
+                "id": "retained-tcp",
+                "action": "allow",
+                "match": {
+                  "source": "198.18.0.2/32",
+                  "destination": "198.18.0.6/32",
+                  "protocol": "tcp",
+                  "source_ports": {
+                    "from": 1,
+                    "to": 65535
+                  },
+                  "destination_ports": {
+                    "from": 18080,
+                    "to": 18080
+                  }
+                },
+                "enabled": true
+              }
+            ]
+          }
+        },
+        "last_good": {
+          "hash": "e67219c668114ae55ce6f088d1f95af545da7ab407abbb4542c6588fae3e4088",
+          "config": {
+            "schema_version": 4,
+            "default_action": "deny",
+            "rules": [
+              {
+                "id": "retained-tcp",
+                "action": "allow",
+                "match": {
+                  "source": "198.18.0.2/32",
+                  "destination": "198.18.0.6/32",
+                  "protocol": "tcp",
+                  "source_ports": {
+                    "from": 1,
+                    "to": 65535
+                  },
+                  "destination_ports": {
+                    "from": 18080,
+                    "to": 18080
+                  }
+                },
+                "enabled": true
+              }
+            ]
+          }
+        },
+        "pending": null,
+        "recovery_required": false,
+        "revoked": []
+      }
+    }
+  },
   "routed": {
     "schema_version": 2,
     "current": {

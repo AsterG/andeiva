@@ -30,3 +30,10 @@ página cargada. La consulta tiene límites de 1024 registros y 2 MiB e informa 
 queda incompleta. Los nombres proceden del registro actual; el ID del actor es
 duradero. No se inventa el origen Web/CLI/API de registros históricos sin esa
 procedencia, ni se presentan cambios de configuración como eventos de tráfico.
+
+Las reglas schema4 conservadas reutilizan la tabla y el editor, sin inventar un
+plan de red. Reemplazar o descartar una candidata exige revisión, ID de Stage
+anterior y generación exactos. Stage nunca reemplaza una candidata existente.
+El servidor verifica su propietario duradero. Estas operaciones no aplican cambios
+al tráfico. Las bases históricas siguen visibles; Validar y Commit permanecen
+bloqueados hasta un reemplazo explícito.

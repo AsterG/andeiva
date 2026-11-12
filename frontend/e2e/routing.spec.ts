@@ -182,3 +182,45 @@ for (const locale of ['en', 'es', 'pt'] as Locale[]) for (const theme of ['light
     await page.screenshot({ path: testInfo.outputPath(`rules-${locale}-${theme}.png`), fullPage: true });
   });
 }
+
+for (const theme of ['light', 'dark']) test(`owned Candidate replacement and discard require explicit review in ${theme}`, async ({ page }, testInfo) => {
+  const calls = await setup(page), value = structuredClone(fixtures.routed), c = value.current;
+  c.snapshot.candidate = { owner: 'subject', base: c.snapshot.running.hash, revision: structuredClone(c.snapshot.running) };
+  c.routed.local_services.candidate = { owner: 'subject', base: c.routed.local_services.running.hash, revision: structuredClone(c.routed.local_services.running) };
+  c.routed.candidate = structuredClone(c.routed.running);
+  c.routed.candidate_group = { stage_operation_id: 'original-stage', owner: 'subject', base: c.routed.running.hash, domains: ['firewall', 'local_services'] };
+  await page.route('**/api/v2/config/current', (route) => route.fulfill({ json: value }));
+  await page.goto('/firewall#rules'); await selectTheme(page, theme);
+  await expect(page.getByRole('button', { name: workspaceMessages.en.stage, exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: workspaceMessages.en.discard_candidate, exact: true }).click();
+  const review = page.getByRole('dialog', { name: workspaceMessages.en.review, exact: true });
+  await expect(review.getByText(workspaceMessages.en.ownedCandidateHint, { exact: true })).toBeVisible();
+  expect(calls.some(call => call.path.endsWith('/admit'))).toBe(false);
+  await review.getByRole('button', { name: workspaceMessages.en.cancel, exact: true }).click();
+  await page.getByRole('row').filter({ hasText: 'tcp-test' }).getByRole('checkbox').uncheck();
+  await page.getByRole('button', { name: workspaceMessages.en.replace_candidate, exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath(`replace-candidate-${theme}.png`), fullPage: true });
+  await review.getByRole('button', { name: workspaceMessages.en.proceed, exact: true }).click();
+  await expect(page.getByText(workspaceMessages.en.uncertain, { exact: true })).toBeVisible();
+  const admitted = calls.find(call => call.path.endsWith('/admit'))!.body as { request: { operation: string; expected_candidate_stage_operation_id: string; config: { routed: { rules: { enabled: boolean }[] } } } };
+  expect(admitted.request.operation).toBe('replace_candidate');
+  expect(admitted.request.expected_candidate_stage_operation_id).toBe('original-stage');
+  expect(admitted.request.config.routed.rules[0]!.enabled).toBe(false);
+  expect(calls.filter(call => call.path.endsWith('/execute'))).toHaveLength(1);
+});
+
+for (const theme of ['light', 'dark']) test(`retained rules remain editable without inventing a network in ${theme}`, async ({ page }, testInfo) => {
+  const calls = await setup(page);
+  await page.route('**/api/v2/config/current', (route) => route.fulfill({ json: fixtures.retained }));
+  await page.goto('/firewall#rules'); await selectTheme(page, theme);
+  const first = fixtures.retained.current.snapshot.running.config.rules[0];
+  await expect(page.getByRole('button', { name: `${firewallMessages.en.edit}: ${first.id}`, exact: true })).toBeVisible();
+  await page.getByRole('row').filter({ hasText: first.id }).getByRole('checkbox').setChecked(!first.enabled);
+  await page.screenshot({ path: testInfo.outputPath(`retained-rules-${theme}.png`), fullPage: true });
+  await page.getByRole('button', { name: workspaceMessages.en.stage, exact: true }).click();
+  await page.getByRole('dialog', { name: workspaceMessages.en.review, exact: true }).getByRole('button', { name: workspaceMessages.en.proceed, exact: true }).click();
+  await expect(page.getByText(workspaceMessages.en.uncertain, { exact: true })).toBeVisible();
+  const config = (calls.find(call => call.path.endsWith('/admit'))!.body as { request: { config: Record<string, unknown> } }).request.config;
+  expect(config.schema_version).toBe(4); expect(config).not.toHaveProperty('routed');
+  expect(config.rules).toHaveLength(fixtures.retained.current.snapshot.running.config.rules.length);
+});

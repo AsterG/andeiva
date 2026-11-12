@@ -96,3 +96,24 @@ test('verified no-effect finality remains consultable without accepting mismatch
     assert.throws(() => operationResponse(reply));
   }
 });
+
+test('retained schema4 Candidate has no invented network and rejects malformed rules', () => {
+  const value = structuredClone(fixtures.retained), c = value.current;
+  c.snapshot.candidate = { owner: 'subject', base: c.snapshot.running.hash, revision: structuredClone(c.snapshot.running) };
+  c.routed.local_services.candidate = { owner: 'subject', base: c.routed.local_services.running.hash, revision: structuredClone(c.routed.local_services.running) };
+  c.routed.candidate = structuredClone(c.routed.running);
+  c.routed.candidate_group = { stage_operation_id: 'stage-retained', owner: 'subject', base: c.routed.running.hash, domains: ['firewall', 'local_services'] };
+  const config = currentResponse(value).snapshot.candidate.revision.config;
+  assert.equal(config.schema_version, 4);
+  assert.equal('routed' in config, false);
+  for (const mutate of [r => { r.enabled = 'true'; }, r => { r.match.protocol = 'any'; }, r => { r.match.source_ports.to = 65536; }, r => { r.match.destination = 'not-an-ip'; }]) {
+    const invalid = structuredClone(value); mutate(invalid.current.snapshot.candidate.revision.config.rules[0]); assert.throws(() => currentResponse(invalid));
+  }
+});
+
+test('explicit owned Candidate operation outcomes remain queryable', () => {
+  for (const kind of ['replace_candidate', 'discard_candidate']) {
+    const value = { ...structuredClone(fixtures.routed), operation: { id: 'owned-op', namespace_id: 'owned-ns', domain: 'routed', kind, state: 'final', expected_generation: '18446744073709551615', outcome: { code: 'applied' } } };
+    assert.equal(operationResponse(value).operation.kind, kind);
+  }
+});

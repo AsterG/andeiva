@@ -44,3 +44,10 @@ npx playwright test routing.spec.ts --workers=1
 
 See [Spanish](docs/es.md), [Portuguese](docs/pt.md) and the
 [CLI contract](../../../internal/cli/CONFIGURATION_V2_EN.md).
+
+Retained schema4 rules use the existing rule table and editor without inventing
+a network plan. Grouped candidates can be explicitly replaced or discarded after
+review, with the exact prior stage ID and global generation. Stage never replaces
+an existing candidate. The server enforces durable ownership; controls do not
+grant permission. Neither operation applies traffic changes. Historical candidate
+bases remain visible; Validate and Commit stay blocked until explicitly replaced.
