@@ -56,7 +56,9 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 			if err != nil || !hasFeatureV2(state, v2RoutedFeature) || plan.work.Kind == v2BootKind && !hasFeatureV2(state, v2RoutedBootFeature) || validateRoutedWorkIntentV2(&capsule.Intent, plan, load) != nil {
 				return errV2Unavailable
 			}
-			if routedWorkUsesNoNetworkV2(plan)&&!hasFeatureV2(state,v2RoutedNoNetworkFeature){return errV2Unavailable}
+			if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(state, v2RoutedNoNetworkFeature) {
+				return errV2Unavailable
+			}
 		}
 	}
 	if validateArchiveGuardDeadlinesV2(archive, state, load) != nil {
