@@ -3,8 +3,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/AsterG/andeiva/internal/routednft"
 	"os"
+
+	"github.com/AsterG/andeiva/internal/routednft"
 )
 
 func main() {

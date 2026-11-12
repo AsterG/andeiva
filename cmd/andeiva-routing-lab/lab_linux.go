@@ -45,7 +45,7 @@ func command(ctx context.Context, input []byte, path string, args ...string) ([]
 	if e != nil {
 		return nil, e
 	}
-	if path != ipPath && path != nftPath && path != "/usr/sbin/sysctl" && path != self {
+	if !allowedExecutable(path, self) {
 		return nil, errLab
 	}
 	// #nosec G204 -- Fixed executable allowlist above; all arguments originate in this isolated runner, never an API or shell.
@@ -96,6 +96,10 @@ func (n *namespace) ip(ctx context.Context, args ...string) error {
 	return e
 }
 func (n *namespace) exec(ctx context.Context, input []byte, path string, args ...string) ([]byte, error) {
+	self, err := os.Executable()
+	if err != nil || !allowedExecutable(path, self) {
+		return nil, errLab
+	}
 	if e := n.verify(); e != nil {
 		return nil, e
 	}
@@ -596,4 +600,9 @@ func lab(ctx context.Context) (result error) {
 	}
 	fmt.Println(string(encoded))
 	return nil
+}
+
+// Both the namespace launcher and its inner executable use this fixed allowlist.
+func allowedExecutable(path, self string) bool {
+	return path == ipPath || path == nftPath || path == "/usr/sbin/sysctl" || (self != "" && path == self)
 }

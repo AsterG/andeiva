@@ -15,7 +15,7 @@ validada e hash, mas não gera regras ou contadores do kernel. IDs existentes de
 1–64 caracteres alfanuméricos/ponto/hífen/sublinhado, com início alfanumérico,
 são preservados sem renomear. Rotas IPv4 e IPv6 do host são comparadas na saída.
 
-A tabela exclusiva `inet andeiva_routed_alpha` preserva INPUT/OUTPUT. FORWARD usa
+A tabela exclusiva `inet andeiva_routed_alpha` não cria hooks INPUT ou OUTPUT e não altera políticas locais do host. FORWARD usa
 prioridade 0 e política drop, incluindo IPv6; NAT postrouting usa prioridade 100.
 Cada pacote verifica novamente a política atual e a tupla original do conntrack,
 mesmo após SNAT. Respostas exigem estado estabelecido e marca de admissão da regra
