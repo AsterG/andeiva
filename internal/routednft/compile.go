@@ -118,7 +118,7 @@ func policyObjects(r Revision) []object {
 			emit("unadmitted", counter(), object{"drop": nil})
 		}
 	}
-	add("forward", "default-deny", []object{counter(), {"drop": nil}})
+	add("forward", "default-deny", []object{counter(), object{"drop": nil}})
 	for _, n := range r.Policy.NAT {
 		add("postrouting", n.ID+":masquerade", []object{match(meta("nfproto"), "ipv4"), match(meta("iifname"), interfaces[n.Path.FromInterface]), match(meta("oifname"), interfaces[n.Path.ToInterface]), match(object{"payload": object{"protocol": "ip", "field": "saddr"}}, address(n.Source)), counter(), object{"masquerade": nil}})
 	}

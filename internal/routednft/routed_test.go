@@ -209,7 +209,12 @@ func TestSemanticReadback(t *testing.T) {
 func TestCompileIsolationAndState(t *testing.T) {
 	a, _ := Compile(LabPolicy())
 	s := string(a.Batch)
-	for _, bad := range []string{`"hook":"input"`, `"hook":"output"`, `"flush"`, `"key":"state"},"op":"in","right":["established","related"]`} {
+	for _, bad := range []string{
+		`"hook":"input"`,
+		`"hook":"output"`,
+		`"flush"`,
+		`"key":"state"},"op":"in","right":["established","related"]`,
+	} {
 		if strings.Contains(s, bad) {
 			t.Fatal(bad)
 		}
