@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — bounded conntrack laboratory observation
+
+- Observe current-namespace IPv4 TCP/UDP original, reply and translated tuples through bounded read-only netlink dumps.
+- Preserve unavailable counters and encode present 64-bit counters as exact decimal strings.
+- Qualify observed SNAT tuples with the isolated routing runner, without enabling an administrative endpoint or changing host policies.
+
 ## Unreleased — isolated stateful routing and SNAT
 
 - Compile typed ordered TCP/UDP forwarding and masquerade policies with strict effective-state readback.
