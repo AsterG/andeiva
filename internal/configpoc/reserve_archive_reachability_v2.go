@@ -76,7 +76,9 @@ func (r *v2ReachabilityReader) reserveArchiveObject(ref v2ReserveArchiveRef, key
 				return err
 			}
 			for _, entry := range archive.Entries {
-				if entry.Claim.Role == recoveryreserve.PlanV2 {
+				// A never-applied operation retains an unbound plan claim, not a
+				// serialized plan. Only bound capsules can own routed work edges.
+				if entry.Binding != nil && entry.Claim.Role == recoveryreserve.PlanV2 {
 					var plan v2ReservePlan
 					if checkpointDecode(entry.Raw, &plan) != nil {
 						return errV2Unavailable
