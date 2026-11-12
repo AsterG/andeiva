@@ -1,17 +1,5 @@
 # Changelog
 
-## Unreleased — prepared configuration operations transport
-
-- Prepare strict HTTPS operation contracts and a bounded client with atomic global/domain observations.
-- Add explicit cold-migration inspection and fingerprint checks without changing legacy sources.
-- Qualify real-store transport tests with simulated engines; production routes and capabilities remain disabled.
-
-## Unreleased — authenticated configuration v2 adapter
-
-- Bind configuration operations to verified sessions and canonical durable subject identities.
-- Revalidate session expiry/revocation and atomic registry ownership on every request; preserve legacy unbound authentication.
-- Expose the existing coordinator through bounded adapters without activating public transports or migration.
-
 ## Unreleased — internal composite transaction coordinator
 
 - Coordinate firewall changes against durable operations with atomic outcome/state/audit selection and verified component readback.
@@ -47,6 +35,12 @@
 - Finalize expired/closed operations and linked pins from their own released
   reservations, preserving other pending reservations through write failures.
 
+## Unreleased — authenticated configuration v2 adapter
+
+- Bind configuration operations to verified sessions and canonical durable subject identities.
+- Revalidate session expiry/revocation and atomic registry ownership on every request; preserve legacy unbound authentication.
+- Expose the existing coordinator through bounded adapters without activating public transports or migration.
+
 ## Unreleased — internal read-only network inventory
 
 - Observe real interfaces, IPv4/IPv6 addresses, masks and link flags through an
@@ -70,6 +64,12 @@
   redirects, bound output and distinguish timeouts from firewall verdicts.
 - Document un-attributed resolver results and loopback failure cases in EN/ES/PT.
   The tool does not configure networking or establish NAT or firewall enforcement.
+
+## Unreleased — prepared configuration operations transport
+
+- Prepare strict HTTPS operation contracts and a bounded client with atomic global/domain observations.
+- Add explicit cold-migration inspection and fingerprint checks without changing legacy sources.
+- Qualify real-store transport tests with simulated engines; production routes and capabilities remain disabled.
 
 ## Unreleased — checkpoint publication safety
 
