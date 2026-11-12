@@ -250,6 +250,9 @@ func v2ValidState(st v2State) bool {
 	if st.Configuration != nil && !validV2Configuration(st.Configuration) {
 		return false
 	}
+	if st.RoutedBootBoundary != nil && (st.RecoveryReserveVersion != 1 || !hasFeatureV2(st, v2RoutedBootBoundaryFeature) || !validRoutedBootBoundaryShapeV2(st.RoutedBootBoundary)) {
+		return false
+	}
 	ids, logins := map[string]bool{}, map[string]bool{}
 	for _, sub := range st.Subjects {
 		if sub.ID == "" || len(sub.ID) > 128 || sub.Login == "" || len(sub.Login) > 128 || !v2HashPattern.MatchString(sub.CredentialRevision) || ids[sub.ID] || (!sub.Retired && logins[sub.Login]) {
@@ -479,6 +482,9 @@ func (s *v2Store) readSelection() error {
 		}
 	}
 	reader := &v2Store{root: s.root, state: selectedState, access: s.access, readOnly: s.readOnly, recordReader: s.recordReader, objectReader: s.objectReader}
+	if validateRoutedBootBoundaryV2(selectedState, reader.readObject) != nil {
+		return errV2Unavailable
+	}
 	if selectedState.Migration != "" && reader.validateMigration() != nil {
 		return errV2Unavailable
 	}
@@ -502,7 +508,11 @@ func v2ValidSelection(selection v2Selection) bool {
 }
 
 func (s *v2Store) publish(state v2State) (result error) {
-	if s.readOnly || (!s.preparingShared && hasFeatureV2(state, v2SharedReaderFeature) != (s.access != nil)) || s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) {
+	if s.readOnly || (!s.preparingShared && hasFeatureV2(state, v2SharedReaderFeature) != (s.access != nil)) || s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) || !s.preservesRoutedBootBoundaryStateV2(state) {
+		return errV2Unavailable
+	}
+	if validateRoutedBootBoundaryV2(state, s.readObject) != nil {
+		s.blocked = true
 		return errV2Unavailable
 	}
 	// Registry growth must leave room for both outcomes of an outstanding

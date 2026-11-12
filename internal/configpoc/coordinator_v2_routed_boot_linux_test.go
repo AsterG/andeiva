@@ -39,7 +39,10 @@ func TestRoutedBootTargetPreservesStaleCandidateWithoutRebasing(t *testing.T) {
 	}
 	for _, kind := range []string{OpValidate, OpCommit} {
 		op.Request = v2Request{Kind: kind}
-		if kind == OpCommit { seconds := uint64(30); op.Request.ConfirmSeconds = &seconds }
+		if kind == OpCommit {
+			seconds := uint64(30)
+			op.Request.ConfirmSeconds = &seconds
+		}
 		if _, _, err = routedTargetV2(c.store, op, target, c.now(), "confirmed-lease"); !errors.Is(err, ErrConflict) {
 			t.Fatal("stale candidate accepted after Startup recovery", kind, err)
 		}

@@ -169,6 +169,9 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	boot := work.Kind == v2BootKind
+	if work.Boundary != nil && !boot {
+		return plan, errV2Unavailable
+	}
 	if work.Kind != "" && work.Kind != OpCommit && work.Kind != OpRollback && !boot || boot && (work.Subject != "" || !work.Cold || !validHash(work.BootRecord) || work.Lease != work.Operation || work.BootBaseline == nil) || !boot && (work.Subject == "" || work.BootRecord != "" || work.BootBaseline != nil) {
 		return plan, errV2Unavailable
 	}
@@ -189,6 +192,13 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	if boot {
+		if boundary := work.Boundary; boundary != nil {
+			source, _, e := routedBootBoundarySourceV2(*boundary, lineage, load)
+			_, expected, e1 := v2Canonical(routedBootBoundaryProjectionV2(source))
+			if e != nil || e1 != nil || expected != work.Transition.Previous || boundary.NewOperation != work.Operation || boundary.NewIdentity != work.Scope.Identity || boundary.CompletedBoot != "" || boundary.Resolution != "" {
+				return plan, errV2Unavailable
+			}
+		}
 		var record v2RecoveryRecord
 		if load(work.BootRecord, &record) != nil || !validRecoveryRecordV2(record, lineage) || record.Kind != v2BootKind || record.State != "pending" || record.Reserve != nil || record.ID != work.Operation || record.Previous != work.Transition.Previous || record.Target != work.Transition.Target || record.BootID == nil || string(*record.BootID) != work.Scope.Identity.BootID || !record.Started.Add(10*time.Second).Equal(work.Deadline) || !validBootTargetV2(before, target) {
 			return plan, errV2Unavailable

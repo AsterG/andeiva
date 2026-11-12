@@ -9,6 +9,13 @@ func reserveHeldReservationsV2(st v2State) (uint64, bool) {
 	}
 	seen := map[string]bool{}
 	var held uint64
+	if b := st.RoutedBootBoundary; b != nil && b.OldBoot != nil {
+		if !validRoutedBootBoundaryShapeV2(b) {
+			return 0, false
+		}
+		seen[b.OldBoot.ID] = true
+		held++
+	}
 	for _, active := range st.ActiveReserves {
 		if active.Work == "" || seen[active.Work] || !validReserveBundleV2(active.Bundle) || active.Bundle.Scope.Kind != "operation" || reserveWorkV2(active.Bundle) != active.Work {
 			return 0, false

@@ -29,7 +29,7 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 func validFeaturesV2(state v2State) bool {
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature) || feature <= last {
+		if (feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature) || feature <= last {
 			return false
 		}
 		last = feature
@@ -44,6 +44,9 @@ func validFeaturesV2(state v2State) bool {
 		return false
 	}
 	if hasFeatureV2(state, v2OwnedCandidateFeature) && !hasFeatureV2(state, v2RoutedFeature) {
+		return false
+	}
+	if hasFeatureV2(state, v2RoutedBootBoundaryFeature) && !hasFeatureV2(state, v2RoutedBootFeature) {
 		return false
 	}
 	if cfg := state.Configuration; cfg != nil && cfg.Intent != nil && cfg.Intent.Kind == v2BootKind && cfg.Intent.Domain == "routed" && !hasFeatureV2(state, v2RoutedBootFeature) {
@@ -82,7 +85,7 @@ func preservesFeaturesV2(previous, next v2State) bool {
 		if p != nil && n != nil && p.RoutedWork != "" {
 			_, left, e1 := v2Canonical(p)
 			_, right, e2 := v2Canonical(n)
-			if e1 != nil || e2 != nil || left != right {
+			if e1 != nil || e2 != nil || left != right && !preservesRoutedBootBoundaryV2(previous, next) {
 				return false
 			}
 		}
@@ -144,6 +147,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 			return nil
 		}
 	}
+	if c.bootBoundary != nil {
+		current = routedBootBoundaryProjectionV2(current)
+	}
 	if current.Intent != nil || current.Pending != nil || current.RecoveryRequired || !routed && (current.LocalServices.Running.Hash != current.LocalServices.Startup.Hash || !c.localReadback(current)) {
 		return ErrRecovery
 	}
@@ -181,6 +187,19 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	}
 	record := v2RecoveryRecord{Format: v2Format, ID: issued, BootID: &id, Kind: v2BootKind, State: "pending", Previous: previousHash, Target: targetHash, Lineage: s.state.Lineage, Started: c.recoveryNow(), Pinned: true}
 	st := clone(s.state)
+	if c.bootBoundary != nil {
+		c.bootBoundary.NewOperation = issued
+		st.RoutedBootBoundary = clone(c.bootBoundary)
+		st.Configuration = clone(&current)
+		if c.bootBoundary.Origin != nil {
+			st.Configuration.Pending = clone(s.state.Configuration.Pending)
+		}
+		st.RoutedActive = nil
+		if c.bootBoundary.OldBoot != nil {
+			st.SystemBundle = nil
+		}
+		addFeatureV2(&st, v2RoutedBootBoundaryFeature)
+	}
 	bootIntent := v2CoordinatorIntent{Operation: issued, Domain: "firewall", Kind: v2BootKind, Previous: previousHash, Target: targetHash, TargetGeneration: st.Generation + 1, Recovery: true, BootID: &id}
 	if routed {
 		bootIntent.Domain = "routed"

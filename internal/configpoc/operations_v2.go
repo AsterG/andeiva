@@ -171,7 +171,9 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 	if expected == 0 || !v2RequestValid(ns.Domain, request) {
 		return v2Operation{}, errV2Invalid
 	}
-	if ns.Domain=="routed"&&request.Config!=nil&&request.Config.SchemaVersion==4&&!hasFeatureV2(s.state,v2RoutedNoNetworkFeature){return v2Operation{},errV2Invalid}
+	if ns.Domain == "routed" && request.Config != nil && request.Config.SchemaVersion == 4 && !hasFeatureV2(s.state, v2RoutedNoNetworkFeature) {
+		return v2Operation{}, errV2Invalid
+	}
 	if request.Config != nil {
 		canonical, e := canonicalDomainRevisionV2(*request.Config, ns.Domain == "routed")
 		if e != nil {

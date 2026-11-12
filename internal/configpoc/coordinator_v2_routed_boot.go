@@ -190,6 +190,9 @@ func (c *v2Coordinator) publishRoutedBootWorkV2(ctx context.Context, record v2Re
 	}
 	work := v2RoutedWork{Version: 1, Kind: v2BootKind, BootRecord: original, BootBaseline: &baseline, Lineage: c.store.state.Lineage, Operation: record.ID, Generation: intent.TargetGeneration, Lease: record.ID, Deadline: record.Started.Add(10 * time.Second), Cold: true, Transition: RoutedTransitionV1{Version: 1, Operation: record.ID, Previous: intent.Previous, Target: intent.Target}}
 	work.Scope = RoutedWorkScopeV1{Version: 1, Identity: c.options.RoutedIdentity, Lineage: work.Lineage, Generation: work.Generation}
+	if c.bootBoundary != nil {
+		work.Boundary = clone(c.bootBoundary)
+	}
 	intent.RoutedWork, err = c.publishRoutedObjectsV2(work, prepared)
 	return err
 }
