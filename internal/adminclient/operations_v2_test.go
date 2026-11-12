@@ -49,6 +49,21 @@ func TestOperationsV2ClientRecognizesVerifiedNoEffectFinality(t *testing.T) {
 		})
 	}
 }
+
+func TestOperationsV2ClientRecognizesOnlyGroupedCandidateOperations(t *testing.T) {
+	response, _ := wireFixtureV2(t)
+	for _, kind := range []string{configpoc.OpReplaceCandidate, configpoc.OpDiscardCandidate} {
+		op := response.Operation
+		op.Kind, op.Domain = kind, "routed"
+		if !validOperationV2(op) {
+			t.Fatal("grouped operation rejected", kind)
+		}
+		op.Domain = "firewall"
+		if validOperationV2(op) {
+			t.Fatal("group operation accepted as legacy writer", kind)
+		}
+	}
+}
 func TestOperationsV2ClientWireLifecycle(t *testing.T) {
 	op, ns := wireFixtureV2(t)
 	calls := 0

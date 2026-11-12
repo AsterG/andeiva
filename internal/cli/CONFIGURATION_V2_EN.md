@@ -14,10 +14,27 @@ andeiva configuration commit --confirm-seconds 60 --url https://HOST:9443 --ca-f
 ```
 
 `stage.json` uses the typed `OperationRequestV2` contract: operation `stage` and
-the full schema 6 configuration. The CLI derives the nested network revision
-from its validated data. Admission uses the selected global generation as an
+the full schema 4 or 6 configuration, according to the runtime capability. Schema4
+is policy-only and never acquires an invented network plan. For schema6, the CLI
+derives the nested network revision from its validated data. Admission uses the selected global generation as an
 exact decimal string, preserving all uint64 digits. Stage and Validate do not
 activate forwarding. Commit is confirmed-only, with a 30–120 second deadline.
+
+Stage refuses an existing Candidate. To replace or discard your grouped Candidate,
+copy its exact `stage_operation_id` from status and choose an explicit operation:
+
+```sh
+cat replacement.json | andeiva configuration replace-candidate --expected-candidate-stage STAGE_OPERATION --request-file - --url https://HOST:9443 --ca-file ca.crt --credentials-file credentials.json
+andeiva configuration discard-candidate --expected-candidate-stage STAGE_OPERATION --url https://HOST:9443 --ca-file ca.crt --credentials-file credentials.json
+```
+
+`replacement.json` contains `operation: "replace_candidate"` and the complete
+`config`. The CLI passes `expected_candidate_stage_operation_id` unchanged, using
+the selected global generation for CAS. Replacement preserves the local Candidate;
+it cannot bypass its access-recovery proof. Neither operation changes Running,
+Startup or traffic. A stale Candidate remains readable; replacement never happens
+automatically. After replacement, validate before applying. Ambiguous abbreviated
+commands, including `r`, are rejected; `rep`, `rol` and `dis` are distinct prefixes.
 
 Before execution, stderr prints `ANDEIVA_OPERATION_ACCEPTED` and the durable ID.
 If execution is interrupted, query that ID rather than submit a replacement:

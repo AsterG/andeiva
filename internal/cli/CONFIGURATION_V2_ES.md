@@ -15,10 +15,27 @@ andeiva configuration commit --confirm-seconds 60 --url https://HOST:9443 --ca-f
 ```
 
 `stage.json` sigue el contrato tipado `OperationRequestV2`: operación `stage` y
-configuración completa de esquema 6. La CLI deriva la revisión de red de sus
-datos validados. La admisión conserva la generación global como cadena decimal
+configuración completa de esquema 4 o 6, según la capacidad del runtime. El esquema4
+contiene sólo políticas y no recibe un plan de red inventado. Para esquema6, la CLI
+deriva la revisión de red de sus datos validados. La admisión conserva la generación global como cadena decimal
 exacta. Stage y Validate no activan tráfico. Commit exige confirmación en 30–120
 segundos.
+
+Stage rechaza una Candidate existente. Para reemplazar o descartar su candidata
+agrupada, copie su `stage_operation_id` exacto desde status y elija explícitamente:
+
+```sh
+cat replacement.json | andeiva configuration replace-candidate --expected-candidate-stage OPERACION_STAGE --request-file - --url https://HOST:9443 --ca-file ca.crt --credentials-file credentials.json
+andeiva configuration discard-candidate --expected-candidate-stage OPERACION_STAGE --url https://HOST:9443 --ca-file ca.crt --credentials-file credentials.json
+```
+
+`replacement.json` contiene `operation: "replace_candidate"` y `config` completo.
+La CLI transmite `expected_candidate_stage_operation_id` sin alterarlo y usa la
+generación global seleccionada para CAS. Reemplazar conserva la Candidate local;
+no evita su prueba de recuperación de acceso. Ninguna operación cambia Running,
+Startup ni el tráfico. Una candidata obsoleta sigue siendo legible y nunca se
+reemplaza automáticamente. Valide después del reemplazo. Se rechazan abreviaturas
+ambiguas como `r`; `rep`, `rol` y `dis` son prefijos distintos.
 
 Antes de ejecutar, stderr muestra `ANDEIVA_OPERATION_ACCEPTED` y el ID durable.
 Ante una interrupción, consulte ese ID antes de enviar otra operación:
