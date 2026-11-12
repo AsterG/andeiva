@@ -29,7 +29,7 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 func validFeaturesV2(state v2State) bool {
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature) || feature <= last {
+		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature) || feature <= last {
 			return false
 		}
 		last = feature
@@ -41,6 +41,9 @@ func validFeaturesV2(state v2State) bool {
 		return false
 	}
 	if hasFeatureV2(state, v2RoutedNoNetworkFeature) && !hasFeatureV2(state, v2RoutedBootFeature) {
+		return false
+	}
+	if hasFeatureV2(state, v2OwnedCandidateFeature) && !hasFeatureV2(state, v2RoutedFeature) {
 		return false
 	}
 	if cfg := state.Configuration; cfg != nil && cfg.Intent != nil && cfg.Intent.Kind == v2BootKind && cfg.Intent.Domain == "routed" && !hasFeatureV2(state, v2RoutedBootFeature) {

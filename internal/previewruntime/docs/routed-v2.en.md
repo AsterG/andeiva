@@ -53,3 +53,12 @@ the group owner rejects independent firewall/local-service writes. Core boot
 validation requires the saved revision's protected witness, an exact observed
 baseline and a separately identified prospective legacy policy. These checks do
 not implement the physical no-network adapter or activate an installer option.
+
+Owned grouped candidates have explicit `replace_candidate` and
+`discard_candidate` operations. Both require the current global generation and
+`expected_candidate_stage_operation_id`. Replacement supplies a complete firewall
+configuration and preserves the selected local candidate; a local-access change
+without its existing proof is refused. Discard removes selected candidates only,
+retaining protected audit and historical outcomes. Stage still requires no
+candidate. These operations never apply network or firewall changes; their
+selected feature marker prevents older readers from silently interpreting them.

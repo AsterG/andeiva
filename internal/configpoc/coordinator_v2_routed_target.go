@@ -17,6 +17,30 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 		return group != nil && group.Owner == op.Subject && validCandidateGroupV2(&state, true) && group.Base == state.Running.Hash && state.Firewall.Candidate.Base == state.Firewall.Running.Hash && state.LocalServices.Candidate.Base == state.LocalServices.Running.Hash
 	}
 	switch op.Request.Kind {
+	case OpReplaceCandidate, OpDiscardCandidate:
+		if group == nil || group.Owner != op.Subject || group.Operation != op.Request.ExpectedCandidateStage || !validCandidateGroupV2(&state, true) || state.Pending != nil || state.Intent != nil || state.RecoveryRequired {
+			return target, false, ErrConflict
+		}
+		if op.Request.Kind == OpDiscardCandidate {
+			target.Firewall.Candidate, target.LocalServices.Candidate, target.CandidateGroup = nil, nil, nil
+		} else {
+			if state.LocalServices.Candidate.Revision.Hash != state.LocalServices.Running.Hash {
+				return target, false, ErrDenied
+			}
+			if op.Request.Config.SchemaVersion == 4 && (!hasFeatureV2(s.state, v2RoutedNoNetworkFeature) || state.Firewall.Running.Config.SchemaVersion != 4) {
+				return target, false, ErrDenied
+			}
+			firewall, err := canonicalDomainRevisionV2(*op.Request.Config, true)
+			if err != nil {
+				return target, false, err
+			}
+			target.Firewall.Candidate = &v2DomainCandidate{Owner: op.Subject, Base: state.Firewall.Running.Hash, Revision: firewall}
+			// Preserve the selected local candidate revision, never substitute the
+			// caller's local configuration or consume independent local work.
+			target.LocalServices.Candidate.Base = state.LocalServices.Running.Hash
+			target.CandidateGroup = &v2CandidateGroup{Operation: op.ID, Owner: op.Subject, Base: state.Running.Hash, Domains: []string{"firewall", "local_services"}}
+		}
+		incFirewall, incLocal = true, true
 	case OpStage:
 		if state.CandidateGroup != nil || state.Firewall.Candidate != nil || state.LocalServices.Candidate != nil || state.Pending != nil || state.Intent != nil || state.RecoveryRequired {
 			return target, false, ErrConflict

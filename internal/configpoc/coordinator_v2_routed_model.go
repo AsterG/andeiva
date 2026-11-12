@@ -2,6 +2,9 @@ package configpoc
 
 const v2RoutedFeature = "configuration.routed-composite.v1"
 const v2RoutedNoNetworkFeature = "configuration.routed-no-network.v1"
+const v2OwnedCandidateFeature = "configuration.owned-candidate.v1"
+const OpReplaceCandidate = "replace_candidate"
+const OpDiscardCandidate = "discard_candidate"
 
 type v2CandidateGroup struct {
 	Operation string   `json:"stage_operation_id"`
@@ -68,6 +71,22 @@ func validCandidateGroupV2(state *v2Configuration, routed bool) bool {
 }
 
 func routedRequestValidV2(r v2Request) bool {
+	if r.Kind == OpReplaceCandidate || r.Kind == OpDiscardCandidate {
+		if r.ExpectedCandidateStage == "" || len(r.ExpectedCandidateStage) > 128 || r.LocalServicesConfig != nil || r.ConfirmSeconds != nil || r.Target != "" || r.Origin != "" || r.Subject != "" {
+			return false
+		}
+		if r.Kind == OpDiscardCandidate {
+			return r.Config == nil
+		}
+		if r.Config == nil || (r.Config.SchemaVersion != 4 && r.Config.SchemaVersion != 6) {
+			return false
+		}
+		_, err := canonicalDomainRevisionV2(*r.Config, true)
+		return err == nil
+	}
+	if r.ExpectedCandidateStage != "" {
+		return false
+	}
 	if r.Kind == OpStage {
 		if r.Config == nil || (r.Config.SchemaVersion != 6 && r.Config.SchemaVersion != 4) || r.ConfirmSeconds != nil || r.Target != "" || r.Origin != "" || r.Subject != "" {
 			return false
@@ -156,7 +175,7 @@ func validateCandidateGroupEvidenceV2(state v2Configuration, load func(string, a
 			return errV2Unavailable
 		}
 		if audit.Operation == group.Operation {
-			if audit.Kind != OpStage || audit.Subject != group.Owner || audit.Result != "applied" || audit.Running != group.Base {
+			if (audit.Kind != OpStage && audit.Kind != OpReplaceCandidate) || audit.Subject != group.Owner || audit.Result != "applied" || audit.Running != group.Base {
 				return errV2Unavailable
 			}
 			return nil

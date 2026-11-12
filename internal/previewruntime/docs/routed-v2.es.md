@@ -50,3 +50,13 @@ y servicios locales. La validación del arranque exige el testigo protegido de l
 revisión guardada, una observación exacta y la política heredada prospectiva
 identificada por separado. No implementa el adaptador físico sin red ni activa
 una opción del instalador.
+
+Las candidatas agrupadas propias disponen de `replace_candidate` y
+`discard_candidate` explícitos. Ambos exigen la generación global actual y
+`expected_candidate_stage_operation_id`. El reemplazo recibe la configuración
+completa del firewall y conserva la candidata local seleccionada; rechaza cambiar
+el acceso local sin la prueba existente. Descartar sólo retira las candidatas
+seleccionadas y conserva la auditoría protegida y los resultados históricos.
+Stage sigue exigiendo ausencia de candidata. Estas operaciones no aplican cambios
+de red ni firewall; el marcador seleccionado impide interpretaciones silenciosas
+por lectores anteriores.

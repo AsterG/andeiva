@@ -18,7 +18,9 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 	projected := reserveProjectedEnvelopeV2(s.state, target, "firewall")
 	if target.Running.Config.SchemaVersion == 7 {
 		addFeatureV2(&projected, v2RoutedBootFeature)
-		if target.Firewall.Running.Config.SchemaVersion==4{addFeatureV2(&projected,v2RoutedNoNetworkFeature)}
+		if target.Firewall.Running.Config.SchemaVersion == 4 {
+			addFeatureV2(&projected, v2RoutedNoNetworkFeature)
+		}
 	}
 	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited
@@ -44,7 +46,7 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 		return err
 	}
 	routedObjects := uint64(0)
-	if target.Running.Config.SchemaVersion == 7 && target.Firewall.Running.Config.SchemaVersion == 6 {
+	if target.Running.Config.SchemaVersion == 7 {
 		routedObjects = 5
 	}
 	if 18+8+archive+2*initial+verified+routedObjects > v2OperationReserveInodes {
@@ -90,6 +92,9 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 		return errV2Limited
 	}
 	projected := reserveProjectedEnvelopeV2(s.state, target, op.Domain)
+	if op.Request.Kind == OpReplaceCandidate || op.Request.Kind == OpDiscardCandidate {
+		addFeatureV2(&projected, v2OwnedCandidateFeature)
+	}
 	reserveGuardFeatureBudgetV2(s, &projected)
 	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited
@@ -114,7 +119,7 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 		return err
 	}
 	base := uint64(30)
-	if op.Request.Kind == OpStage {
+	if op.Request.Kind == OpStage || op.Request.Kind == OpReplaceCandidate {
 		base = 32
 	}
 	if op.Request.Kind == OpRollback {

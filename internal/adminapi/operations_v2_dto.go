@@ -28,17 +28,18 @@ func (n *DecimalV2) UnmarshalJSON(data []byte) error {
 }
 
 type OperationRequestV2 struct {
-	LocalServicesConfig *configpoc.Config `json:"local_services_config,omitempty"`
-	Operation           string            `json:"operation"`
-	Config              *configpoc.Config `json:"config,omitempty"`
-	ConfirmSeconds      *DecimalV2        `json:"confirm_seconds,omitempty"`
-	Target              string            `json:"target_revision,omitempty"`
-	Origin              string            `json:"origin_commit_operation_id,omitempty"`
-	Subject             string            `json:"target_subject_id,omitempty"`
+	ExpectedCandidateStage string            `json:"expected_candidate_stage_operation_id,omitempty"`
+	LocalServicesConfig    *configpoc.Config `json:"local_services_config,omitempty"`
+	Operation              string            `json:"operation"`
+	Config                 *configpoc.Config `json:"config,omitempty"`
+	ConfirmSeconds         *DecimalV2        `json:"confirm_seconds,omitempty"`
+	Target                 string            `json:"target_revision,omitempty"`
+	Origin                 string            `json:"origin_commit_operation_id,omitempty"`
+	Subject                string            `json:"target_subject_id,omitempty"`
 }
 
 func (r OperationRequestV2) canonical() configpoc.OperationRequestV2 {
-	request := configpoc.OperationRequestV2{Kind: r.Operation, Config: r.Config, Target: r.Target, Origin: r.Origin, Subject: r.Subject, LocalServicesConfig: r.LocalServicesConfig}
+	request := configpoc.OperationRequestV2{Kind: r.Operation, Config: r.Config, Target: r.Target, Origin: r.Origin, Subject: r.Subject, LocalServicesConfig: r.LocalServicesConfig, ExpectedCandidateStage: r.ExpectedCandidateStage}
 	if r.ConfirmSeconds != nil {
 		seconds := uint64(*r.ConfirmSeconds)
 		request.ConfirmSeconds = &seconds
