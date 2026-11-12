@@ -71,6 +71,14 @@ func (s *v2Store) enableClosingCreditsLocked() error {
 	if s.state.RecoveryReserveVersion != 0 || s.used.Bytes > s.budget.Bytes || s.budget.Bytes-s.used.Bytes < v2ClosingReserveBytes+2*v2OperationReserveBytes || s.used.Inodes > s.budget.Inodes || s.budget.Inodes-s.used.Inodes < v2ClosingReserveInodes+2*v2OperationReserveInodes {
 		return errV2Limited
 	}
+	for _, ns := range s.state.Namespaces {
+		if len(namespaceOpenIDsV2(ns)) != 0 {
+			return errV2Uncertain
+		}
+	}
+	if c := s.state.Configuration; c != nil && (c.Pending != nil || c.Intent != nil || c.RecoveryRequired) {
+		return errV2Uncertain
+	}
 	st := clone(s.state)
 	err := s.visitOrdinaryIndexV2(st.Index, 2, 0, func(op v2Operation) error {
 		if !op.Retired {
