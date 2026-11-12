@@ -17,6 +17,7 @@ type RuntimePoolsV2 struct {
 	Emergency *recoveryreserve.PoolV2
 }
 type RuntimeOptionsV2 struct {
+	SharedReader   *recoveryreserve.ReaderAccessV2
 	Routed         RoutedAuthorityV1
 	RoutedIdentity networkexecutor.OwnedNamespaceIdentity
 	Pools          RuntimePoolsV2
@@ -38,7 +39,7 @@ func OpenRuntimeServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, a
 	if options.Routed != nil && (!validRoutedIdentityV1(options.RoutedIdentity) || options.Routed.Identity() != options.RoutedIdentity) {
 		return nil, ErrInvalid
 	}
-	trusted := v2CoordinatorOptions{Reserves: manager, GuardDeadlines: true, LocalPolicy: options.LocalPolicy, Routed: options.Routed, RoutedIdentity: options.RoutedIdentity}
+	trusted := v2CoordinatorOptions{SharedReader: options.SharedReader, Reserves: manager, GuardDeadlines: true, LocalPolicy: options.LocalPolicy, Routed: options.Routed, RoutedIdentity: options.RoutedIdentity}
 	if options.BootID != "" {
 		id := v2BootID(options.BootID)
 		if !validBootIDV2(id) {

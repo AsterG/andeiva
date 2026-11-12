@@ -21,10 +21,10 @@ func recoverReservePendingV2(s *v2Store, m *v2ReserveManager) (result error) {
 		return ErrRecovery
 	}
 	info, err := s.root.Lstat("selection.pending")
-	if err != nil || !regularOwned(info, 4096) {
+	if err != nil || !s.recordMetadataV2("selection.pending", info, 4096) {
 		return ErrRecovery
 	}
-	data, err := checkpointReadPinned(s.root, "selection.pending", 4096, info)
+	data, err := s.readPinnedRecordV2("selection.pending", 4096, info)
 	if err != nil {
 		return ErrRecovery
 	}
@@ -48,7 +48,7 @@ func recoverReservePendingV2(s *v2Store, m *v2ReserveManager) (result error) {
 	} else if selection.Segment != s.selection.Segment+1 {
 		return ErrRecovery
 	}
-	selectorBytes, err := checkpointRead(s.root, "selected.json", 4096)
+	selectorBytes, err := s.readRecordV2("selected.json", 4096)
 	var actual v2Selector
 	if err != nil || checkpointDecode(selectorBytes, &actual) != nil || actual != s.selector {
 		return ErrRecovery
@@ -70,7 +70,7 @@ func recoverReservePendingV2(s *v2Store, m *v2ReserveManager) (result error) {
 	if err = s.point("before_reserve_staging_quarantine"); err != nil {
 		return err
 	}
-	if _, err = checkpointReadPinned(s.root, "selection.pending", 4096, info); err != nil {
+	if _, err = s.readPinnedRecordV2("selection.pending", 4096, info); err != nil {
 		return ErrRecovery
 	}
 	fd := int(directory.Fd())
@@ -78,7 +78,7 @@ func recoverReservePendingV2(s *v2Store, m *v2ReserveManager) (result error) {
 	if err = unix.Renameat2(fd, "selection.pending", fd, name, unix.RENAME_NOREPLACE); err != nil {
 		return ErrRecovery
 	}
-	quarantined, err := checkpointReadPinned(s.root, name, 4096, info)
+	quarantined, err := s.readPinnedRecordV2(name, 4096, info)
 	if err != nil || !bytes.Equal(quarantined, data) {
 		// A same-UID writer violating the flock contract is outside cooperative
 		// serialization. Never remove/replace its bytes, including on mismatch.

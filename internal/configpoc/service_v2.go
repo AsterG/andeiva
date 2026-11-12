@@ -127,7 +127,13 @@ func openServiceCoordinatorV2(ctx context.Context, area *os.Root, budget BudgetV
 	if auth == nil {
 		return nil, ErrDenied
 	}
-	store, err := openV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes})
+	var store *v2Store
+	var err error
+	if options.SharedReader != nil {
+		store, err = openSharedStoreV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes}, *options.SharedReader)
+	} else {
+		store, err = openV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +223,9 @@ func (s *ServiceV2) catalogue(binding adminauth.SessionBinding, call func(*v2Sto
 func (s *ServiceV2) Namespace(binding adminauth.SessionBinding, domain string, lifetime time.Duration) (NamespaceV2, error) {
 	var result v2Namespace
 	err := s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
-		if s.coordinator.options.Routed!=nil&&hasFeatureV2(store.state,v2RoutedFeature)&&domain!="routed"{return ErrDenied}
+		if s.coordinator.options.Routed != nil && hasFeatureV2(store.state, v2RoutedFeature) && domain != "routed" {
+			return ErrDenied
+		}
 		result, err = store.namespaceLocked(p.Subject, domain, s.coordinator.now(), lifetime)
 		return err
 	})
@@ -226,7 +234,9 @@ func (s *ServiceV2) Namespace(binding adminauth.SessionBinding, domain string, l
 func (s *ServiceV2) Admit(binding adminauth.SessionBinding, namespace string, expected uint64, request OperationRequestV2) (OperationV2, error) {
 	var result v2Operation
 	err := s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
-		if i:=store.namespaceIndex(p.Subject,namespace);s.coordinator.options.Routed!=nil&&hasFeatureV2(store.state,v2RoutedFeature)&&i>=0&&store.state.Namespaces[i].Domain!="routed"{return ErrDenied}
+		if i := store.namespaceIndex(p.Subject, namespace); s.coordinator.options.Routed != nil && hasFeatureV2(store.state, v2RoutedFeature) && i >= 0 && store.state.Namespaces[i].Domain != "routed" {
+			return ErrDenied
+		}
 		result, err = store.admitLocked(p.Subject, namespace, expected, request, s.coordinator.now())
 		return err
 	})

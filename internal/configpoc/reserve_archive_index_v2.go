@@ -258,7 +258,7 @@ func (s *v2Store) readReserveArchiveV2(hash string) (v2ReserveArchive, error) {
 		s.blocked = true
 		return v2ReserveArchive{}, errV2Unavailable
 	}
-	data, err := checkpointRead(s.root, name, reserveArchiveLimitV2)
+	data, err := s.readRecordV2(name, reserveArchiveLimitV2)
 	if err != nil || checkpointDigest(data) != hash {
 		s.blocked = true
 		return v2ReserveArchive{}, errV2Unavailable
