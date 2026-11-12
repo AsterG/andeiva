@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — inactive routed network configuration model
+
+- Report a single stable field path for schema, collection and field-size validation errors.
+
+- Validate bounded WAN/LAN/management IPv4 configuration, interface bindings, zones,
+  default route and DNS before execution. Preserve host bits and deterministic
+  revisions; never infer DHCP leases from observed addresses.
+- Add strict JSON control-field validation and reuse exact JSON checks for nft
+  observations. No interface, route, DNS or forwarding changes are activated.
+
 ## Unreleased — custom CA platform safety
 
 - Reject custom CA files before filesystem access on platforms without a qualified
