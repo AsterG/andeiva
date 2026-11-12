@@ -56,11 +56,7 @@ type PreparationV1 struct {
 // BaselineV1 is resolved only from the original authenticated cold Work closure.
 // Saved is its saved configuration, distinct from the actually owned memento.
 // The resolver must bind lineage, manager incarnation and the one-hop Work ref.
-type BaselineV1 struct {
-	Saved        configpoc.RoutedActivationBundleV1 `json:"saved"`
-	Owned        OwnedV1                            `json:"owned"`
-	Dependencies DependenciesV1                     `json:"dependencies"`
-}
+type BaselineV1 = configpoc.RoutedBaselineV1
 
 // ResolvePlan must resolve these exact typed artifacts from selected durable
 // intent, preserving lineage, original deadline and owned reservations. It also
@@ -511,9 +507,15 @@ func (e *Engine) RecoverPlan(ctx context.Context, plan configpoc.RoutedTransitio
 		if before.NetworkState != Baseline {
 			return ErrState
 		}
-		for table, state := range tables(before) {
-			if !bytes.Equal(tableBytes(state), tableBytes(e.initial[table])) {
-				return ErrState
+		absent := before.LegacyFirewall.Presence == Absent && before.RoutedFirewall.Presence == Absent && before.LocalServices.Presence == Absent
+		// Only the authenticated original Work can attest a cold absent baseline
+		// captured by PrepareColdBoot. Encountering an empty namespace is not
+		// authority; ResolvePlan has already checked its original scope/context.
+		if !absent {
+			for table, state := range tables(before) {
+				if !bytes.Equal(tableBytes(state), tableBytes(e.initial[table])) {
+					return ErrState
+				}
 			}
 		}
 	} else {
