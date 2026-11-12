@@ -17,11 +17,12 @@ func TestReserveActivationRejectsOversizedCoreWithoutChangingLegacy(t *testing.T
 	}
 	before := clone(s.state)
 	selector := s.selector
+	used := s.used
 	files := journalFiles(t, area.Name())
 	s.mu.Lock()
 	err = s.enableClosingCreditsLocked()
 	s.mu.Unlock()
-	if !errors.Is(err, errV2Limited) || s.blocked || s.selector != selector || !reflect.DeepEqual(s.state, before) || !reflect.DeepEqual(files, journalFiles(t, area.Name())) {
+	if !errors.Is(err, errV2Limited) || s.blocked || s.selector != selector || s.used != used || !reflect.DeepEqual(s.state, before) || !reflect.DeepEqual(files, journalFiles(t, area.Name())) {
 		t.Fatal("incompatible opt-in fenced or mutated legacy state", err)
 	}
 }
