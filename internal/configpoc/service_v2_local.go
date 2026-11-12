@@ -21,7 +21,7 @@ func (s *ServiceV2) localAccessV2(binding adminauth.SessionBinding, receiver Loc
 }
 
 func (s *ServiceV2) AdmitLocalV2(binding adminauth.SessionBinding, namespace string, expected uint64, request OperationRequestV2) (OperationV2, error) {
-	var result OperationV2
+	var result v2Operation
 	err := s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
 		if s.coordinator.options.LocalPolicy == nil {
 			return ErrDenied
@@ -45,7 +45,7 @@ func (s *ServiceV2) AdmitLocalV2(binding adminauth.SessionBinding, namespace str
 		result, err = store.admitLocked(p.Subject, namespace, expected, request, s.coordinator.now())
 		return err
 	})
-	return clone(result), err
+	return operationDTOv2(result), err
 }
 
 // IssueLocalProofV2 accepts only an operation ID. Scope, subject incarnation,
@@ -109,5 +109,5 @@ func (s *ServiceV2) ExecuteLocalV2(ctx context.Context, binding adminauth.Sessio
 	if viewErr != nil {
 		return ObservationV2{}, viewErr
 	}
-	return ObservationV2{Operation: executed.Operation, Current: current}, err
+	return ObservationV2{Operation: operationDTOv2(executed.Operation), Current: current}, err
 }

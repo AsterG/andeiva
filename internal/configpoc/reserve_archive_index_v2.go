@@ -1,0 +1,206 @@
+package configpoc
+
+import (
+	"sort"
+	"strings"
+
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
+)
+
+type v2ReserveArchiveRef struct {
+	Key     string                 `json:"key"`
+	Archive string                 `json:"archive"`
+	Owner   string                 `json:"owner"`
+	Role    recoveryreserve.RoleV2 `json:"role"`
+	Kind    string                 `json:"kind"`
+}
+
+type v2ReserveArchiveNode struct {
+	Format   string                `json:"format"`
+	Depth    int                   `json:"depth"`
+	Kind     string                `json:"kind"`
+	Children [16]string            `json:"children"`
+	Entries  []v2ReserveArchiveRef `json:"entries"`
+}
+
+func reserveIdentityKeyV2(entry v2ReserveArchiveEntry, kind string) (string, error) {
+	if _, err := reserveClaimKeyV2(entry.Claim); err != nil {
+		return "", err
+	}
+	switch kind {
+	case "claim":
+		_, hash, err := v2Canonical(struct {
+			Kind  string                      `json:"kind"`
+			Claim recoveryreserve.SlotClaimV2 `json:"claim"`
+		}{kind, entry.Claim})
+		return hash, err
+	case "binding":
+		if entry.Binding == nil || entry.Binding.Validate() != nil {
+			return "", errV2Invalid
+		}
+		_, hash, err := v2Canonical(struct {
+			Kind    string                    `json:"kind"`
+			Binding recoveryreserve.BindingV2 `json:"binding"`
+		}{kind, *entry.Binding})
+		return hash, err
+	default:
+		return "", errV2Invalid
+	}
+}
+
+func validReserveArchiveNodeV2(node v2ReserveArchiveNode, depth int, prefix string) bool {
+	if node.Format != v2Format || node.Depth != depth || depth < 0 || depth > v2VerifiedDepthLimit || len(prefix) != depth {
+		return false
+	}
+	switch node.Kind {
+	case "leaf":
+		if len(node.Entries) == 0 || len(node.Entries) > v2VerifiedLeafLimit {
+			return false
+		}
+		for _, child := range node.Children {
+			if child != "" {
+				return false
+			}
+		}
+		previous := ""
+		for _, entry := range node.Entries {
+			if !validHash(entry.Key) || !strings.HasPrefix(entry.Key, prefix) || entry.Key <= previous || !validHash(entry.Archive) || entry.Owner == "" || len(entry.Owner) > 128 || (entry.Kind != "claim" && entry.Kind != "binding") {
+				return false
+			}
+			switch entry.Role {
+			case recoveryreserve.AdmissionV2, recoveryreserve.PlanV2, recoveryreserve.EmergencyV2:
+			default:
+				return false
+			}
+			previous = entry.Key
+		}
+	case "branch":
+		if depth >= v2VerifiedDepthLimit || len(node.Entries) != 0 {
+			return false
+		}
+		count := 0
+		for _, child := range node.Children {
+			if child != "" {
+				if !validHash(child) {
+					return false
+				}
+				count++
+			}
+		}
+		if count == 0 {
+			return false
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func (s *v2Store) reserveArchiveNodeV2(hash string, depth int, prefix string) (v2ReserveArchiveNode, error) {
+	var node v2ReserveArchiveNode
+	if s.readObject(hash, &node) != nil || !validReserveArchiveNodeV2(node, depth, prefix) {
+		s.blocked = true
+		return node, errV2Unavailable
+	}
+	return node, nil
+}
+
+func archiveDigitV2(key string, depth int) int {
+	value := key[depth]
+	if value <= '9' {
+		return int(value - '0')
+	}
+	return int(value - 'a' + 10)
+}
+
+func (s *v2Store) reserveArchiveInsertV2(root string, depth int, prefix string, entry v2ReserveArchiveRef) (string, error) {
+	probe := v2ReserveArchiveNode{Format: v2Format, Depth: depth, Kind: "leaf", Entries: []v2ReserveArchiveRef{entry}}
+	if !validReserveArchiveNodeV2(probe, depth, prefix) {
+		return "", errV2Invalid
+	}
+	node := v2ReserveArchiveNode{Format: v2Format, Depth: depth, Kind: "leaf"}
+	if root != "" {
+		var err error
+		node, err = s.reserveArchiveNodeV2(root, depth, prefix)
+		if err != nil {
+			return "", err
+		}
+	}
+	if node.Kind == "branch" {
+		digit := archiveDigitV2(entry.Key, depth)
+		next, err := s.reserveArchiveInsertV2(node.Children[digit], depth+1, entry.Key[:depth+1], entry)
+		if err != nil {
+			return "", err
+		}
+		node.Children[digit] = next
+		return s.object(node)
+	}
+	position := sort.Search(len(node.Entries), func(i int) bool { return node.Entries[i].Key >= entry.Key })
+	if position < len(node.Entries) && node.Entries[position].Key == entry.Key {
+		if node.Entries[position] != entry {
+			return "", errV2Unavailable
+		}
+		return root, nil
+	}
+	node.Entries = append(node.Entries, v2ReserveArchiveRef{})
+	copy(node.Entries[position+1:], node.Entries[position:])
+	node.Entries[position] = entry
+	if len(node.Entries) <= v2VerifiedLeafLimit {
+		return s.object(node)
+	}
+	if depth == v2VerifiedDepthLimit {
+		return "", errV2Limited
+	}
+	branch := v2ReserveArchiveNode{Format: v2Format, Depth: depth, Kind: "branch"}
+	for _, item := range node.Entries {
+		digit := archiveDigitV2(item.Key, depth)
+		child, err := s.reserveArchiveInsertV2(branch.Children[digit], depth+1, item.Key[:depth+1], item)
+		if err != nil {
+			return "", err
+		}
+		branch.Children[digit] = child
+	}
+	return s.object(branch)
+}
+
+// Every lookup validates its contextual identity against the archived bytes;
+// neither a semantic key nor a cached object hash establishes membership alone.
+func (s *v2Store) reserveArchiveLookupV2(root string, expected v2ReserveArchiveEntry, kind string) (v2ReserveArchive, bool, error) {
+	key, err := reserveIdentityKeyV2(expected, kind)
+	if err != nil {
+		return v2ReserveArchive{}, false, err
+	}
+	for depth := 0; root != "" && depth <= v2VerifiedDepthLimit; depth++ {
+		node, err := s.reserveArchiveNodeV2(root, depth, key[:depth])
+		if err != nil {
+			return v2ReserveArchive{}, false, err
+		}
+		if node.Kind == "branch" {
+			root = node.Children[archiveDigitV2(key, depth)]
+			continue
+		}
+		position := sort.Search(len(node.Entries), func(i int) bool { return node.Entries[i].Key >= key })
+		if position == len(node.Entries) || node.Entries[position].Key != key {
+			return v2ReserveArchive{}, false, nil
+		}
+		ref := node.Entries[position]
+		if ref.Owner != expected.Claim.Owner || ref.Role != expected.Claim.Role || ref.Kind != kind {
+			return v2ReserveArchive{}, false, errV2Unavailable
+		}
+		var archive v2ReserveArchive
+		if s.readObject(ref.Archive, &archive) != nil || validateReserveArchiveV2(archive) != nil {
+			return v2ReserveArchive{}, false, errV2Unavailable
+		}
+		for _, entry := range archive.Entries {
+			if entry.Claim != expected.Claim {
+				continue
+			}
+			actual, err := reserveIdentityKeyV2(entry, kind)
+			if err == nil && actual == key {
+				return archive, true, nil
+			}
+		}
+		return v2ReserveArchive{}, false, errV2Unavailable
+	}
+	return v2ReserveArchive{}, false, nil
+}

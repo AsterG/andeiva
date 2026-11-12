@@ -75,7 +75,7 @@ func ResolveLocalProofV2(in LocalProofInputV2, now time.Time) (LocalProofScopeV2
 	requestBytes, _, requestErr := v2Canonical(op.Request)
 	if op.State != "accepted" || op.Retired || op.Pinned || op.Completed != nil || op.Outcome != nil || op.RetainUntil != nil ||
 		op.ID == "" || len(op.ID) > 128 || op.Sequence == 0 || op.Namespace == "" || len(op.Namespace) > 128 ||
-		op.Domain != "local_services" || requestErr != nil || len(requestBytes) > 8192 || !v2RequestValid(op.Domain, op.Request) || !v2HashPattern.MatchString(op.Fingerprint) || op.Fingerprint != v2OperationFingerprint(op) ||
+		op.Domain != "local_services" || requestErr != nil || len(requestBytes) > 8192 || !v2RequestValid(op.Domain, op.Request) || !v2HashPattern.MatchString(op.Fingerprint) || op.Fingerprint != operationDTOFingerprintV2(op) ||
 		op.Lineage == "" || len(op.Lineage) > 128 || op.Lineage != in.Global.Lineage || op.Expected != in.Global.Generation ||
 		op.Accepted.IsZero() || now.Before(op.Accepted) || !now.Before(op.ExecuteBefore) || op.ExecuteBefore.After(op.Accepted.Add(15*time.Minute)) ||
 		ns.ID != op.Namespace || ns.Subject != op.Subject || ns.Domain != op.Domain || ns.Closed || !ns.AdmitUntil.After(op.Accepted) {
@@ -131,7 +131,7 @@ func ResolveLocalProofV2(in LocalProofInputV2, now time.Time) (LocalProofScopeV2
 			return LocalProofScopeV2{}, ErrConflict
 		}
 		o := in.Origin
-		if in.ConfirmationOwner != subject.ID || o == nil || o.ID != p.Origin || len(o.ID) > 128 || o.Subject != subject.ID || o.Lineage != op.Lineage || o.Domain != op.Domain || (o.Request.Kind != OpCommit && o.Request.Kind != OpRollback) || !v2RequestValid(o.Domain, o.Request) || !v2HashPattern.MatchString(o.Fingerprint) || o.Fingerprint != v2OperationFingerprint(*o) || o.State != "final" || !o.Pinned || o.Retired || o.Completed == nil || o.Outcome == nil || o.Outcome.Code != "applied_pending_confirmation" || o.Outcome.RunningRevision != p.Target || o.Outcome.ConfirmationLease != p.Lease || o.Outcome.ConfirmationDeadline == nil || !o.Outcome.ConfirmationDeadline.Equal(p.Deadline) {
+		if in.ConfirmationOwner != subject.ID || o == nil || o.ID != p.Origin || len(o.ID) > 128 || o.Subject != subject.ID || o.Lineage != op.Lineage || o.Domain != op.Domain || (o.Request.Kind != OpCommit && o.Request.Kind != OpRollback) || !v2RequestValid(o.Domain, o.Request) || !v2HashPattern.MatchString(o.Fingerprint) || o.Fingerprint != operationDTOFingerprintV2(*o) || o.State != "final" || !o.Pinned || o.Retired || o.Completed == nil || o.Outcome == nil || o.Outcome.Code != "applied_pending_confirmation" || o.Outcome.RunningRevision != p.Target || o.Outcome.ConfirmationLease != p.Lease || o.Outcome.ConfirmationDeadline == nil || !o.Outcome.ConfirmationDeadline.Equal(p.Deadline) {
 			return LocalProofScopeV2{}, ErrConflict
 		}
 		b.Purpose, b.Origin, b.Lease, b.Deadline = "confirm", p.Origin, p.Lease, p.Deadline.UTC()
