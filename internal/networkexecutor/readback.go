@@ -3,9 +3,12 @@ package networkexecutor
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net"
 	"net/netip"
 	"reflect"
 	"slices"
@@ -52,6 +55,187 @@ type route struct {
 type observation struct {
 	Links  []link
 	Routes []route
+}
+
+// These typed records contain only the IPv4/L2 facts actually observed by the
+// executor. IPv6 and administrative ownership are not asserted by this snapshot.
+type SnapshotAddress = address
+type SnapshotLink = link
+type SnapshotRoute = route
+
+const MaxPreparedSnapshot = 16 << 10
+
+// PreparedSnapshot is a node-local exact empty-IPv4 baseline. Its ifindexes are
+// witnesses for this retained namespace lifetime, never binding authority on boot.
+type PreparedSnapshot struct {
+	Version  int             `json:"version"`
+	PlanHash string          `json:"plan_hash"`
+	Links    []SnapshotLink  `json:"links"`
+	Routes   []SnapshotRoute `json:"routes"`
+	Hash     string          `json:"hash"`
+}
+
+func (s PreparedSnapshot) observation() observation {
+	return observation{Links: s.Links, Routes: s.Routes}
+}
+
+// CanonicalPreparedSnapshot validates, detaches and orders a bounded snapshot.
+// Only initially empty IPv4 state is supported; no foreign route is adopted.
+func CanonicalPreparedSnapshot(input PreparedSnapshot) (PreparedSnapshot, error) {
+	if len(input.Links) < 2 || len(input.Links) > 3 || len(input.Routes) != 0 || len(input.PlanHash) != 64 || len(input.Hash) != 64 {
+		return PreparedSnapshot{}, ErrScope
+	}
+	for _, l := range input.Links {
+		if len(l.Name) > 15 || len(l.MAC) != 17 || len(l.Flags) > 8 || len(l.Addresses) != 0 {
+			return PreparedSnapshot{}, ErrScope
+		}
+		for _, flag := range l.Flags {
+			if len(flag) > 16 {
+				return PreparedSnapshot{}, ErrScope
+			}
+		}
+	}
+	data, err := json.Marshal(input)
+	if err != nil || len(data) > MaxPreparedSnapshot {
+		return PreparedSnapshot{}, ErrScope
+	}
+	var s PreparedSnapshot
+	if json.Unmarshal(data, &s) != nil || s.Version != 1 || len(s.PlanHash) != 64 || s.PlanHash != strings.ToLower(s.PlanHash) || len(s.Links) < 2 || len(s.Links) > 3 || len(s.Routes) != 0 {
+		return PreparedSnapshot{}, ErrScope
+	}
+	if _, err := hex.DecodeString(s.PlanHash); err != nil {
+		return PreparedSnapshot{}, ErrScope
+	}
+	names, indexes := map[string]bool{}, map[int]bool{}
+	managed := 0
+	for i := range s.Links {
+		l := &s.Links[i]
+		mac, err := net.ParseMAC(l.MAC)
+		maxMTU := 65535
+		if l.Name == "lo" {
+			maxMTU = 65536
+		}
+		if !linkName.MatchString(l.Name) || l.Index <= 0 || l.MTU < 68 || l.MTU > maxMTU || names[l.Name] || indexes[l.Index] || err != nil || len(mac) != 6 || mac.String() != l.MAC || len(l.Addresses) != 0 || len(l.Flags) > 8 {
+			return PreparedSnapshot{}, ErrScope
+		}
+		names[l.Name], indexes[l.Index] = true, true
+		flags := map[string]bool{}
+		for _, flag := range l.Flags {
+			if flags[flag] || (flag != "UP" && flag != "LOWER_UP" && flag != "BROADCAST" && flag != "MULTICAST" && flag != "LOOPBACK") {
+				return PreparedSnapshot{}, ErrUnsupported
+			}
+			flags[flag] = true
+		}
+		if l.Name == "lo" {
+			if !flags["LOOPBACK"] || l.MAC != "00:00:00:00:00:00" {
+				return PreparedSnapshot{}, ErrScope
+			}
+		} else {
+			managed++
+			if flags["LOOPBACK"] || l.MAC == "00:00:00:00:00:00" || !flags["UP"] {
+				return PreparedSnapshot{}, ErrUnsupported
+			}
+		}
+		slices.Sort(l.Flags)
+		l.Flags = append([]string{}, l.Flags...)
+		l.Addresses = []address{}
+	}
+	if managed != 2 {
+		return PreparedSnapshot{}, ErrUnsupported
+	}
+	slices.SortFunc(s.Links, func(a, b link) int { return strings.Compare(a.Name, b.Name) })
+	s.Routes = []route{}
+	want := s.Hash
+	s.Hash = ""
+	data, err = json.Marshal(s)
+	if err != nil || len(data) > MaxPreparedSnapshot {
+		return PreparedSnapshot{}, ErrScope
+	}
+	digest := sha256.Sum256(data)
+	s.Hash = hex.EncodeToString(digest[:])
+	if want != s.Hash {
+		return PreparedSnapshot{}, ErrScope
+	}
+	return s, nil
+}
+
+// PreparedSnapshotBytes returns canonical detached bytes, including its verified
+// semantic hash. Root's object store applies its own contextual object envelope.
+func PreparedSnapshotBytes(s PreparedSnapshot) ([]byte, error) {
+	s, err := CanonicalPreparedSnapshot(s)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(s)
+}
+
+// Prepare reads twice without effects and binds only the two supported planned
+// links plus optional loopback. All other links, addresses and routes are refused.
+func (e *Executor) Prepare(ctx context.Context, revision networkplan.Revision) (PreparedSnapshot, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := e.ready(ctx); err != nil {
+		return PreparedSnapshot{}, err
+	}
+	if e.active != nil {
+		return PreparedSnapshot{}, ErrBusy
+	}
+	r, err := networkplan.Canonical(revision.Config)
+	if err != nil || r.Hash != revision.Hash || len(r.Config.Interfaces) != 2 || r.Config.DNS.Mode != "none" {
+		return PreparedSnapshot{}, ErrUnsupported
+	}
+	for _, i := range r.Config.Interfaces {
+		if i.IPv4.Mode != "static" || netip.MustParsePrefix(i.IPv4.Address).Bits() > 30 {
+			return PreparedSnapshot{}, ErrUnsupported
+		}
+	}
+	first, err := e.observe(ctx)
+	if err != nil {
+		return PreparedSnapshot{}, err
+	}
+	second, err := e.observe(ctx)
+	if err != nil || !reflect.DeepEqual(first, second) {
+		return PreparedSnapshot{}, ErrObservation
+	}
+	if !first.empty() {
+		return PreparedSnapshot{}, ErrUnsupported
+	}
+	if _, err := networkplan.Bind(r, first.inventory()); err != nil {
+		return PreparedSnapshot{}, ErrScope
+	}
+	names := map[string]bool{}
+	for _, i := range r.Config.Interfaces {
+		names[i.Binding.Name] = true
+	}
+	for _, l := range first.Links {
+		if l.Name != "lo" && !names[l.Name] {
+			return PreparedSnapshot{}, ErrScope
+		}
+	}
+	s := PreparedSnapshot{Version: 1, PlanHash: r.Hash, Links: first.Links, Routes: first.Routes}
+	data, _ := json.Marshal(s)
+	digest := sha256.Sum256(data)
+	s.Hash = hex.EncodeToString(digest[:])
+	return CanonicalPreparedSnapshot(s)
+}
+
+// VerifyPrepared independently checks the actual baseline; it neither applies nor
+// adopts resources. Active target state must be checked through Verify instead.
+func (e *Executor) VerifyPrepared(ctx context.Context, prepared PreparedSnapshot) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := e.ready(ctx); err != nil {
+		return err
+	}
+	s, err := CanonicalPreparedSnapshot(prepared)
+	if err != nil {
+		return err
+	}
+	actual, err := e.observe(ctx)
+	if err != nil || !reflect.DeepEqual(actual, s.observation()) {
+		return ErrObservation
+	}
+	return nil
 }
 
 func decode(data []byte, target any, strict bool) error {

@@ -15,21 +15,10 @@ func (g *Guardian) ArmUntil(id string, previous, target configpoc.Revision, dead
 	if g.closed || g.state.Phase != "idle" || len(id) < 1 || len(id) > 64 || !valid(previous) || !valid(target) || deadline.IsZero() || deadline.Location() != time.UTC || deadline.Sub(time.Now()) > g.maxTTL || g.engine.Current() != previous.Hash {
 		return ErrLease
 	}
-	now := time.Now()
-	remaining := deadline.Sub(now)
-	if remaining < 500*time.Millisecond || remaining > g.maxTTL {
-		return ErrLease
-	}
-	g.previous, _ = configpoc.Canonical(previous.Config)
-	g.target, _ = configpoc.Canonical(target.Config)
-	g.deadline = now.Add(remaining)
-	g.state = State{Phase: "armed", ID: id, Previous: previous.Hash, Target: target.Hash, Deadline: deadline}
-	g.timer = time.AfterFunc(time.Until(g.deadline), func() { g.mu.Lock(); defer g.mu.Unlock(); g.expire() })
-	return nil
-}
-
-func (g *Guardian) exactLeaseLocked(expected State) bool {
-	return !g.closed && expected.ID != "" && g.state.ID == expected.ID && g.state.Previous == expected.Previous && g.state.Target == expected.Target && !expected.Deadline.IsZero() && g.state.Deadline.Equal(expected.Deadline)
+	return g.armUntilLocked(id, previous.Hash, target.Hash, deadline, func() {
+		g.previous, _ = configpoc.Canonical(previous.Config)
+		g.target, _ = configpoc.Canonical(target.Config)
+	}, g.expire)
 }
 
 // ApplyLease and ConfirmLease compare scope and act under the same mutex.

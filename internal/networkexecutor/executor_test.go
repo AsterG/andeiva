@@ -25,6 +25,225 @@ func fixturePlan() networkplan.Revision {
 	return r
 }
 
+func TestPreparedSnapshotExactDetachedReadbackAndRestore(t *testing.T) {
+	e, f := fakeExecutor()
+	plan := fixturePlan()
+	s, err := e.Prepare(context.Background(), plan)
+	if err != nil || f.mutations != 0 || len(s.Links) != 2 || len(s.Routes) != 0 || s.Hash == "" {
+		t.Fatal("prepare", s, err)
+	}
+	bytes, err := PreparedSnapshotBytes(s)
+	if err != nil || len(bytes) > MaxPreparedSnapshot {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalPreparedSnapshot(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Links[0].Flags[0] = "foreign"
+	if canonical.Links[0].Flags[0] != "UP" {
+		t.Fatal("snapshot aliases caller")
+	}
+	if err := e.VerifyPrepared(context.Background(), canonical); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ApplyPrepared(context.Background(), plan, canonical); err != nil {
+		t.Fatal(err)
+	}
+	if e.VerifyPrepared(context.Background(), canonical) == nil || e.Verify(context.Background()) != nil {
+		t.Fatal("target confused with baseline")
+	}
+	if err := e.RestorePrepared(context.Background(), canonical); err != nil || e.VerifyPrepared(context.Background(), canonical) != nil {
+		t.Fatal("exact restore", err)
+	}
+	if f.mutations != 6 {
+		t.Fatal("unexpected operations", f.mutations)
+	}
+}
+
+func TestPreparedSnapshotRetainsNativeLoopbackMTUAndFlags(t *testing.T) {
+	e, f := fakeExecutor()
+	f.state.Links = append(f.state.Links, link{Index: 3, Name: "lo", MAC: "00:00:00:00:00:00", MTU: 65536, Flags: []string{"LOOPBACK", "UP", "LOWER_UP"}, Addresses: []address{}})
+	prepared, err := e.Prepare(context.Background(), fixturePlan())
+	if err != nil {
+		t.Fatal("native loopback rejected", err)
+	}
+	if len(prepared.Links) != 3 || prepared.Links[1].Name != "lo" || prepared.Links[1].MTU != 65536 || len(prepared.Links[1].Flags) != 3 {
+		t.Fatal("loopback facts discarded")
+	}
+	if e.ApplyPrepared(context.Background(), fixturePlan(), prepared) != nil || e.RestorePrepared(context.Background(), prepared) != nil || e.VerifyPrepared(context.Background(), prepared) != nil {
+		t.Fatal("loopback baseline was not preserved")
+	}
+}
+
+func recoveryIdentityFixture() OwnedNamespaceIdentity {
+	return OwnedNamespaceIdentity{UID: 1001, GID: 1002, Namespace: 200, Host: 100, BootID: "12345678-1234-1234-1234-123456789abc", RunID: strings.Repeat("a", 32)}
+}
+
+func TestRecoverPreparedReconstructsOnlySameOwnedBaselineOrFullTarget(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		old, kernel := fakeExecutor()
+		plan := fixturePlan()
+		prepared, err := old.Prepare(context.Background(), plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if configured && old.ApplyPrepared(context.Background(), plan, prepared) != nil {
+			t.Fatal("initial apply")
+		}
+		// A replacement process retains only authenticated manager scope and the
+		// same kernel namespace. It cannot reuse the old process's transaction.
+		identity := recoveryIdentityFixture()
+		restarted := &Executor{lifetime: context.Background(), run: kernel.run, identity: &identity}
+		before := kernel.mutations
+		if err := restarted.RecoverPrepared(context.Background(), plan, prepared, identity); err != nil || kernel.mutations != before || (restarted.active != nil) != configured {
+			t.Fatal("read-only reconstruction", configured, err)
+		}
+		if configured && restarted.Verify(context.Background()) != nil {
+			t.Fatal("reconstructed target failed independent readback")
+		}
+		if restarted.RestorePrepared(context.Background(), prepared) != nil || restarted.VerifyPrepared(context.Background(), prepared) != nil {
+			t.Fatal("reconstructed exact restore")
+		}
+	}
+}
+
+func TestRecoverPreparedRejectsForeignScopeWithoutObservingOrEffects(t *testing.T) {
+	for _, field := range []string{"uid", "gid", "boot", "run", "target", "host", "constructor"} {
+		e, kernel := fakeExecutor()
+		plan := fixturePlan()
+		prepared, err := e.Prepare(context.Background(), plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity := recoveryIdentityFixture()
+		e.identity = &identity
+		original := identity
+		switch field {
+		case "uid":
+			original.UID++
+		case "gid":
+			original.GID++
+		case "boot":
+			original.BootID = "87654321-1234-1234-1234-123456789abc"
+		case "run":
+			original.RunID = strings.Repeat("b", 32)
+		case "target":
+			original.Namespace++
+		case "host":
+			original.Host++
+		case "constructor":
+			e.identity = nil
+		}
+		reads := 0
+		e.run = func(ctx context.Context, op operation) ([]byte, error) { reads++; return kernel.run(ctx, op) }
+		if !errors.Is(e.RecoverPrepared(context.Background(), plan, prepared, original), ErrScope) || reads != 0 || kernel.mutations != 0 {
+			t.Fatal("foreign original work scope admitted", field)
+		}
+	}
+}
+
+func TestRecoverPreparedFencesMixedForeignAndUnstableStateWithoutDeletion(t *testing.T) {
+	for _, field := range []string{"mixed", "route", "link", "unstable"} {
+		old, kernel := fakeExecutor()
+		plan := fixturePlan()
+		prepared, err := old.Prepare(context.Background(), plan)
+		if err != nil || old.ApplyPrepared(context.Background(), plan, prepared) != nil {
+			t.Fatal("initial apply", err)
+		}
+		switch field {
+		case "mixed":
+			kernel.state.Routes = kernel.state.Routes[:len(kernel.state.Routes)-1]
+		case "route":
+			kernel.state.Routes = append(kernel.state.Routes, route{Destination: "203.0.113.0/24", Device: "wan0", Protocol: "static"})
+		case "link":
+			kernel.state.Links[0].Index++
+		}
+		identity := recoveryIdentityFixture()
+		restarted := &Executor{lifetime: context.Background(), run: kernel.run, identity: &identity}
+		if field == "unstable" {
+			links := 0
+			restarted.run = func(ctx context.Context, op operation) ([]byte, error) {
+				if op.kind == "links" {
+					links++
+					if links == 3 {
+						kernel.state.Links[0].Index++
+					}
+				}
+				return kernel.run(ctx, op)
+			}
+		}
+		before := kernel.mutations
+		if !errors.Is(restarted.RecoverPrepared(context.Background(), plan, prepared, identity), ErrUncertain) || !restarted.fenced || kernel.mutations != before || restarted.RestorePrepared(context.Background(), prepared) == nil || kernel.mutations != before {
+			t.Fatal("unknown state adopted or blindly deleted", field)
+		}
+	}
+}
+
+func TestPreparedSnapshotRejectsForeignAndUnsupportedBaseline(t *testing.T) {
+	for _, mutate := range []func(*fakeKernel){
+		func(f *fakeKernel) {
+			f.state.Links[0].Addresses = []address{{Family: "inet", Local: "198.18.0.1", Bits: 24}}
+		},
+		func(f *fakeKernel) {
+			f.state.Routes = []route{{Destination: "default", Device: "wan0", Gateway: "198.19.0.2"}}
+		},
+		func(f *fakeKernel) {
+			f.state.Links = append(f.state.Links, link{Index: 3, Name: "foreign0", MAC: "02:00:00:00:03:01", MTU: 1500, Flags: []string{"UP"}, Addresses: []address{}})
+		},
+		func(f *fakeKernel) { f.state.Links[0].MAC = "02:00:00:00:09:01" },
+		func(f *fakeKernel) { f.state.Links[0].Flags = []string{"UP", "PROMISC"} },
+	} {
+		e, f := fakeExecutor()
+		mutate(f)
+		if _, err := e.Prepare(context.Background(), fixturePlan()); err == nil || f.mutations != 0 {
+			t.Fatal("foreign baseline admitted", err, f.mutations)
+		}
+	}
+}
+
+func TestPreparedSnapshotRejectsTamperAndLinkReplacementBeforeEffects(t *testing.T) {
+	for _, mutate := range []func(*fakeKernel){
+		func(f *fakeKernel) { f.state.Links[0].Index = 99 },
+		func(f *fakeKernel) { f.state.Links[0].MTU = 1400 },
+		func(f *fakeKernel) { f.state.Links[0].Flags = []string{"UP", "LOWER_UP"} },
+	} {
+		e, f := fakeExecutor()
+		s, err := e.Prepare(context.Background(), fixturePlan())
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(f)
+		if e.VerifyPrepared(context.Background(), s) == nil || e.ApplyPrepared(context.Background(), fixturePlan(), s) == nil || f.mutations != 0 {
+			t.Fatal("changed physical snapshot admitted")
+		}
+	}
+	e, f := fakeExecutor()
+	s, err := e.Prepare(context.Background(), fixturePlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*PreparedSnapshot){
+		func(s *PreparedSnapshot) { s.Hash = strings.Repeat("0", 64) },
+		func(s *PreparedSnapshot) { s.PlanHash = strings.Repeat("f", 64) },
+		func(s *PreparedSnapshot) { s.Links[0].Index++ },
+		func(s *PreparedSnapshot) { s.Links[0].Flags = append(s.Links[0].Flags, "UP") },
+		func(s *PreparedSnapshot) { s.Routes = []route{{Destination: "default"}} },
+	} {
+		copy, err := CanonicalPreparedSnapshot(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(&copy)
+		if _, err := CanonicalPreparedSnapshot(copy); err == nil || e.ApplyPrepared(context.Background(), fixturePlan(), copy) == nil || f.mutations != 0 {
+			t.Fatal("tampered snapshot admitted")
+		}
+	}
+	if _, err := e.Prepare(nil, fixturePlan()); !errors.Is(err, ErrScope) || e.VerifyPrepared(nil, s) == nil {
+		t.Fatal("nil context admitted", err)
+	}
+}
+
 type fakeKernel struct {
 	state       observation
 	mutations   int

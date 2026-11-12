@@ -54,6 +54,7 @@ type v2Confirmation struct {
 	Deadline     time.Time `json:"deadline"`
 }
 type v2CoordinatorIntent struct {
+	RoutedWork       string     `json:"routed_work,omitempty"`
 	GuardDeadline    *time.Time `json:"guard_deadline,omitempty"`
 	BootID           *v2BootID  `json:"boot_id,omitempty"`
 	Operation        string     `json:"operation_id"`
@@ -250,6 +251,9 @@ func validV2Configuration(state *v2Configuration) bool {
 		}
 	}
 	if intent := state.Intent; intent != nil {
+		if intent.RoutedWork != "" && (!routed || intent.Domain != "routed" || !validHash(intent.RoutedWork)) {
+			return false
+		}
 		if !validGuardDeadlineShapeV2(intent) {
 			return false
 		}

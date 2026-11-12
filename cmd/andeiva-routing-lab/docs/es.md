@@ -1,5 +1,44 @@
 # Cualificación del plan de red tipado
 
+## Modo Group pendiente de cualificación nativa
+
+`--run-isolated-group-lab-with-flows` reutiliza estos tres namespaces y el ancla
+host revisada. Pasan las pruebas de fuente/unitarias; ejecutar Debian requiere
+revisión y autorización del propietario. Usa Engine/Group reales de
+routedactivation, snapshot exacto, transporte nft de tablas fijas y resolver de
+artefactos efímero explícitamente confiable. Es un registro de fixture, no un
+coordinador durable de producción.
+
+Comprueba TCP/UDP SNAT pendiente y recuperación fría exacta; después crea otra
+operación del fixture y confirma una lease distinta de treinta segundos. Todos
+los cambios posteriores pasan por Group y conservan las pruebas NAT/conntrack/
+deny/revocación. El último cambio vence en su deadline original de treinta
+segundos y debe restaurar la política previa real. Sólo una consulta completa
+exitosa demuestra ausencia de tabla.
+
+El perfil local no inicia procesos/listeners de servicios en gateway y comprueba
+sus tablas TCP/UDP reales. Nunca enumera ni detiene SSH/HTTPS del host. Un vecino
+IPv6 permanente en el peer LAN propio permite llegar al drop de forward sin
+agregar reglas allow. Forwarding se habilita después de instalar deny/target real.
+
+Marcadores adicionales, exclusivamente tras comprobaciones exitosas:
+
+```text
+PASS typed group TCP/UDP SNAT and exact cold recovery
+PASS typed group distinct confirmed lease and exact lost-confirm reconciliation
+PASS typed group original confirmed deadline expired and exact previous policy recovered
+```
+
+La ejecución conserva el límite de 55 segundos y limpieza independiente acotada.
+No cualifica reinicio del helper, migración LAN existente, continuidad de endpoints
+ni recuperación durable de producción. RecoverPrepared tiene pruebas unitarias
+separadas y exige WorkScope original autenticado y la misma encarnación retenida;
+NewWithHost no concede capacidad de reconstrucción.
+
+```sh
+go test -race ./cmd/andeiva-routing-lab ./internal/routedactivation ./internal/nftguardian ./internal/networkexecutor -count=3
+```
+
 El laboratorio Debian 13 existente de tres namespaces aplica las dos direcciones
 IPv4 estáticas y la ruta predeterminada del gateway mediante
 `internal/networkexecutor`. Verifica el namespace propio, abre y comprueba el

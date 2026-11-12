@@ -83,6 +83,11 @@ func (r *v2ReachabilityReader) reserveBundle(bundle *v2ReserveBundle, key string
 	}
 	return r.walk("reserve-bundle:"+key+":"+bundleHash, depth, func() error {
 		if plan := bundle.PlanIntent; plan != nil {
+			if plan.RoutedWork != "" {
+				if err := r.routedIntent(plan, key, state, depth+1); err != nil {
+					return err
+				}
+			}
 			if plan.GuardDeadline != nil {
 				var p, t v2Configuration
 				if r.object(plan.Previous, &p) != nil || r.object(plan.Target, &t) != nil || validateGuardDeadlineContextV2(plan, p, t, hasFeatureV2(state, v2GuardDeadlineFeature), false) != nil {

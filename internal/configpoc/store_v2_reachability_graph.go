@@ -236,6 +236,11 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 	if live && validateCandidateGroupEvidenceV2(cfg, r.object) != nil {
 		return errV2Unavailable
 	}
+	if live {
+		if err := r.routedActive(key, state, depth+1); err != nil {
+			return err
+		}
+	}
 	if live && cfg.AuditTip != "" {
 		var audit v2CoordinatorAudit
 		if err := r.object(cfg.AuditTip, &audit); err != nil {
@@ -299,6 +304,11 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 	}
 	if cfg.Intent != nil {
 		in := cfg.Intent
+		if in.RoutedWork != "" {
+			if err := r.routedIntent(in, key, state, depth+1); err != nil {
+				return err
+			}
+		}
 		if in.TargetGeneration < state.Generation || (in.TargetGeneration != state.Generation && (state.Generation == ^uint64(0) || in.TargetGeneration != state.Generation+1)) {
 			return errV2Unavailable
 		}

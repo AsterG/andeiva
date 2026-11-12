@@ -101,6 +101,12 @@ func routedRequestValidV2(r v2Request) bool {
 
 func validRoutedFeatureV2(state v2State) bool {
 	enabled := hasFeatureV2(state, v2RoutedFeature)
+	if active := state.RoutedActive; active != nil && (!enabled || !validHash(active.Work) || active.Side != "before" && active.Side != "target") {
+		return false
+	}
+	check := func(in *v2CoordinatorIntent) bool {
+		return in == nil || in.RoutedWork == "" || enabled && in.Domain == "routed" && validHash(in.RoutedWork)
+	}
 	if state.Configuration != nil {
 		if enabled != (state.Configuration.Running.Config.SchemaVersion == 7) {
 			return false
@@ -108,6 +114,17 @@ func validRoutedFeatureV2(state v2State) bool {
 		if !enabled && state.Configuration.CandidateGroup != nil {
 			return false
 		}
+		if !check(state.Configuration.Intent) {
+			return false
+		}
+	}
+	for _, active := range state.ActiveReserves {
+		if active.Bundle != nil && !check(active.Bundle.PlanIntent) {
+			return false
+		}
+	}
+	if state.SystemBundle != nil && state.SystemBundle.Bundle != nil && !check(state.SystemBundle.Bundle.PlanIntent) {
+		return false
 	}
 	for _, ns := range state.Namespaces {
 		if ns.Domain == "routed" && !enabled {

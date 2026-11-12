@@ -1,6 +1,7 @@
 package configpoc
 
 import (
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"reflect"
 	"time"
 )
@@ -42,6 +43,21 @@ func terminalReserveOperationV2(op v2Operation, state v2State) bool {
 // This proves immutable canonical facts only. The caller separately verifies
 // the live selected closure and the exact physical binding before retirement.
 func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load func(string, any) error) error {
+	for _, entry := range archive.Entries {
+		if entry.Binding == nil || entry.Claim.Role != recoveryreserve.PlanV2 {
+			continue
+		}
+		var capsule v2ReservePlan
+		if checkpointDecode(entry.Raw, &capsule) != nil {
+			return errV2Unavailable
+		}
+		if capsule.Intent.RoutedWork != "" {
+			plan, err := loadRoutedWorkV2(capsule.Intent.RoutedWork, state.Lineage, load)
+			if err != nil || !hasFeatureV2(state, v2RoutedFeature) || validateRoutedWorkIntentV2(&capsule.Intent, plan, load) != nil {
+				return errV2Unavailable
+			}
+		}
+	}
 	if validateArchiveGuardDeadlinesV2(archive, state, load) != nil {
 		return errV2Unavailable
 	}

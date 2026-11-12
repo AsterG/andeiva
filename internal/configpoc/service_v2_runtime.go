@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/AsterG/andeiva/internal/adminauth"
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
 
@@ -16,6 +17,8 @@ type RuntimePoolsV2 struct {
 	Emergency *recoveryreserve.PoolV2
 }
 type RuntimeOptionsV2 struct {
+	Routed         RoutedAuthorityV1
+	RoutedIdentity networkexecutor.OwnedNamespaceIdentity
 	Pools          RuntimePoolsV2
 	GuardDeadlines bool
 	BootID         string
@@ -32,7 +35,10 @@ func OpenRuntimeServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, a
 	if err != nil {
 		return nil, err
 	}
-	trusted := v2CoordinatorOptions{Reserves: manager, GuardDeadlines: true, LocalPolicy: options.LocalPolicy}
+	if options.Routed != nil && (!validRoutedIdentityV1(options.RoutedIdentity) || options.Routed.Identity() != options.RoutedIdentity) {
+		return nil, ErrInvalid
+	}
+	trusted := v2CoordinatorOptions{Reserves: manager, GuardDeadlines: true, LocalPolicy: options.LocalPolicy, Routed: options.Routed, RoutedIdentity: options.RoutedIdentity}
 	if options.BootID != "" {
 		id := v2BootID(options.BootID)
 		if !validBootIDV2(id) {
@@ -41,6 +47,53 @@ func OpenRuntimeServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, a
 		trusted.BootID = &id
 	}
 	return openServiceCoordinatorV2(ctx, area, budget, auth, firewall, local, trusted)
+}
+
+// PrepareRoutedCompositeV1 is a trusted cold cutover, never an HTTP operation.
+// Assembly must already supply the exclusive typed group authority and pools.
+func (s *ServiceV2) PrepareRoutedCompositeV1(ctx context.Context) error {
+	if s == nil || s.coordinator == nil || s.coordinator.options.Routed == nil {
+		return ErrDenied
+	}
+	c := s.coordinator
+	c.store.mu.Lock()
+	defer c.store.mu.Unlock()
+	return c.prepareRoutedCompositeLockedV2(ctx, v2ReachabilityBudget{Entries: 20000, Objects: 16000, Edges: 200000, IOCalls: 2000000, Bytes: 256 << 20, ActiveBytes: 16 << 20, Depth: 128})
+}
+
+// PrepareRuntimeReservesV2 is an explicit installer migration on this service's
+// sole writer. It allocates no pool and accepts no administrative request data.
+func (s *ServiceV2) PrepareRuntimeReservesV2(ctx context.Context, pools RuntimePoolsV2) error {
+	if s == nil || s.coordinator == nil || ctx == nil {
+		return ErrInvalid
+	}
+	manager, err := newReserveManagerV2(pools.Admission, pools.Plan, pools.Emergency)
+	if err != nil {
+		return err
+	}
+	c := s.coordinator
+	c.store.mu.Lock()
+	defer c.store.mu.Unlock()
+	if ctx.Err() != nil || c.closed || c.store.blocked || c.store.state.Configuration == nil {
+		return ErrRecovery
+	}
+	state := c.store.state.Configuration
+	if state.Intent != nil || state.Pending != nil || state.RecoveryRequired || state.Firewall.Candidate != nil || state.LocalServices.Candidate != nil || len(c.store.state.ActiveReserves) != 0 || c.store.state.SystemBundle != nil {
+		return ErrConflict
+	}
+	for _, namespace := range c.store.state.Namespaces {
+		if len(namespaceOpenIDsV2(namespace)) != 0 {
+			return ErrConflict
+		}
+	}
+	if !c.readback(*state) || manager.verifySelected(c.store) != nil {
+		return ErrRecovery
+	}
+	if err := c.store.enableClosingCreditsLocked(); err != nil {
+		return err
+	}
+	c.store.reserves, c.options.Reserves = manager, manager
+	return nil
 }
 
 // AuthenticatedBy prevents assembling a router and coordinator with unrelated

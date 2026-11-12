@@ -29,6 +29,19 @@ func (c *v2Coordinator) compensateConfirmationLocked(ctx context.Context, op v2O
 	domain.Running = prior.Running
 	domain.LastGood = prior.LastGood
 	domain.Candidate = nil
+	if op.Domain == "routed" {
+		localChanged := target.LocalServices.Running.Hash != original.LocalServices.Running.Hash || target.LocalServices.LastGood.Hash != original.LocalServices.LastGood.Hash || target.LocalServices.Candidate != nil
+		target.LocalServices.Running = original.LocalServices.Running
+		target.LocalServices.LastGood = original.LocalServices.LastGood
+		target.LocalServices.Candidate = nil
+		target.CandidateGroup = nil
+		if localChanged && target.LocalServices.Generation == ^uint64(0) {
+			return c.uncertainLocked(op, errV2Limited)
+		}
+		if localChanged {
+			target.LocalServices.Generation++
+		}
+	}
 	if domain.Generation == ^uint64(0) || s.state.Generation == ^uint64(0) {
 		return c.uncertainLocked(op, errV2Limited)
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewalladmin"
 	"github.com/AsterG/andeiva/internal/firewallipc"
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkinventory"
 )
 
@@ -53,6 +54,9 @@ func (r *OperationsRuntimeV2) Close() error {
 // Existing cold-boot reservation fences remain enforced by the coordinator.
 func OpenOperationsRuntimeV2(ctx context.Context, m Metadata, ids Identities, options OperationsRuntimeOptionsV2) (*OperationsRuntimeV2, error) {
 	if !bootPattern.MatchString(m.BootID) || options.Runtime.BootID != m.BootID {
+		return nil, ErrIdentity
+	}
+	if options.Runtime.Routed != nil && options.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}) {
 		return nil, ErrIdentity
 	}
 	client, err := connectHelperV2(ctx, m, ids)

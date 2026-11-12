@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/adminauth"
 )
@@ -29,13 +30,20 @@ type DomainGenerationsV2 struct {
 type CandidateGroupV2 = v2CandidateGroup
 
 type RoutedCurrentV2 struct {
-	SchemaVersion  int                  `json:"schema_version"`
-	LocalServices  Snapshot             `json:"local_services"`
-	Running        CompositeRevisionV1  `json:"running"`
-	Startup        CompositeRevisionV1  `json:"startup"`
-	LastGood       CompositeRevisionV1  `json:"last_good"`
-	Candidate      *CompositeRevisionV1 `json:"candidate,omitempty"`
-	CandidateGroup *CandidateGroupV2    `json:"candidate_group,omitempty"`
+	Confirmation   *RoutedConfirmationV2 `json:"confirmation,omitempty"`
+	SchemaVersion  int                   `json:"schema_version"`
+	LocalServices  Snapshot              `json:"local_services"`
+	Running        CompositeRevisionV1   `json:"running"`
+	Startup        CompositeRevisionV1   `json:"startup"`
+	LastGood       CompositeRevisionV1   `json:"last_good"`
+	Candidate      *CompositeRevisionV1  `json:"candidate,omitempty"`
+	CandidateGroup *CandidateGroupV2     `json:"candidate_group,omitempty"`
+}
+
+type RoutedConfirmationV2 struct {
+	Origin   string    `json:"origin_commit_operation_id"`
+	Target   string    `json:"target_revision"`
+	Deadline time.Time `json:"confirmation_deadline"`
 }
 type ObservationV2 struct {
 	Operation OperationV2
@@ -76,6 +84,9 @@ func (s *ServiceV2) currentLocked(domain string) (CurrentV2, error) {
 		}
 		current.DomainGenerations = &DomainGenerationsV2{Firewall: state.Firewall.Generation, LocalServices: state.LocalServices.Generation, Network: state.Firewall.Generation}
 		current.Routed = &RoutedCurrentV2{SchemaVersion: 7, LocalServices: local, Running: state.Running, Startup: state.Startup, LastGood: state.LastGood, Candidate: state.Candidate, CandidateGroup: state.CandidateGroup}
+		if pending := state.Pending; pending != nil && pending.Domain == "routed" {
+			current.Routed.Confirmation = &RoutedConfirmationV2{Origin: pending.OriginCommit, Target: pending.Target, Deadline: pending.Deadline}
+		}
 	}
 	return clone(current), nil
 }
