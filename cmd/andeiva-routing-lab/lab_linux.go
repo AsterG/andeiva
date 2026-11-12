@@ -286,9 +286,16 @@ func run(args []string) error {
 		}
 		signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		ctx, cancel := context.WithTimeout(signalCtx, 55*time.Second)
+		withGroup := strings.HasPrefix(args[0], "--run-isolated-group-")
+		limit := 55 * time.Second
+		if withGroup {
+			// The group scenario includes real saved4/forward6 handovers and one
+			// full thirty-second expiry. Product lease deadlines are unchanged.
+			limit = 80 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(signalCtx, limit)
 		defer cancel()
-		return labScenario(ctx, strings.HasSuffix(args[0], "-with-flows"), strings.HasPrefix(args[0], "--run-isolated-group-"))
+		return labScenario(ctx, strings.HasSuffix(args[0], "-with-flows"), withGroup)
 	default:
 		return errLab
 	}

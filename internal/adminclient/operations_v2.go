@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -80,38 +81,94 @@ func (c *Client) callV2(ctx context.Context, method, path string, body, out any,
 	}
 	return nil
 }
+func clientHashV2(value string) bool {
+	return len(value) == 64 && strings.Trim(value, "0123456789abcdef") == ""
+}
+
 func validCurrentV2(current adminapi.CurrentV2) bool {
-	if current.Domain != "firewall" || current.Global.Lineage == "" || len(current.Global.Lineage) > 128 || current.Global.Generation == 0 || current.Snapshot.Generation == 0 {
+	if !clientIDv2(current.Global.Lineage) || current.Global.Generation == 0 {
 		return false
 	}
 	for _, hash := range []string{current.Global.Running, current.Global.Startup} {
-		if len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" {
+		if !clientHashV2(hash) {
 			return false
 		}
 	}
-	for _, revision := range []configpoc.Revision{current.Snapshot.Running, current.Snapshot.Startup, current.Snapshot.LastGood} {
-		canonical, err := configpoc.Canonical(revision.Config)
-		if err != nil || canonical.Hash != revision.Hash || revision.Config.SchemaVersion != 4 {
+	if current.Domain == "firewall" {
+		return current.Routed == nil && current.DomainGenerations == nil && validSnapshotV2(current.Snapshot, false, false)
+	}
+	if current.Domain != "routed" || current.Routed == nil || current.DomainGenerations == nil || current.Routed.SchemaVersion != 7 || !validSnapshotV2(current.Snapshot, true, false) || !validSnapshotV2(current.Routed.LocalServices, false, true) {
+		return false
+	}
+	routed, generations := current.Routed, current.DomainGenerations
+	if generations.Firewall != current.Snapshot.Generation || generations.Network != generations.Firewall || generations.LocalServices != routed.LocalServices.Generation || current.Global.Running != routed.Running.Hash || current.Global.Startup != routed.Startup.Hash {
+		return false
+	}
+	for _, pair := range []struct {
+		firewall, local configpoc.Revision
+		composite       configpoc.CompositeRevisionV1
+	}{
+		{current.Snapshot.Running, routed.LocalServices.Running, routed.Running},
+		{current.Snapshot.Startup, routed.LocalServices.Startup, routed.Startup},
+		{current.Snapshot.LastGood, routed.LocalServices.LastGood, routed.LastGood},
+	} {
+		bundle, err := configpoc.NewRoutedActivationBundleV1(pair.firewall, pair.local)
+		if err != nil || !reflect.DeepEqual(bundle.Composite, pair.composite) {
 			return false
 		}
 	}
-	if candidate := current.Snapshot.Candidate; candidate != nil {
-		canonical, err := configpoc.Canonical(candidate.Revision.Config)
-		if err != nil || canonical.Hash != candidate.Revision.Hash || candidate.Revision.Config.SchemaVersion != 4 || candidate.Base != current.Snapshot.Running.Hash || !clientIDv2(candidate.Owner) {
+	if routed.Candidate == nil {
+		return routed.CandidateGroup == nil && current.Snapshot.Candidate == nil && routed.LocalServices.Candidate == nil
+	}
+	firewall, local, group := current.Snapshot.Candidate, routed.LocalServices.Candidate, routed.CandidateGroup
+	if firewall == nil || local == nil || group == nil || firewall.Revision.Config.SchemaVersion != 6 || !clientIDv2(group.Operation) || group.Owner != firewall.Owner || group.Owner != local.Owner || !clientHashV2(group.Base) || len(group.Domains) != 2 || group.Domains[0] != "firewall" || group.Domains[1] != "local_services" {
+		return false
+	}
+	bundle, err := configpoc.NewRoutedActivationBundleV1(firewall.Revision, local.Revision)
+	return err == nil && reflect.DeepEqual(bundle.Composite, *routed.Candidate)
+}
+
+func validSnapshotV2(snapshot adminapi.SnapshotV2, routed, local bool) bool {
+	if snapshot.Generation == 0 {
+		return false
+	}
+	validRevision := func(revision configpoc.Revision) bool {
+		if local {
+			if revision.Config.SchemaVersion != 3 || len(revision.Config.Rules) != 0 {
+				return false
+			}
+		} else if revision.Config.SchemaVersion != 4 && !(routed && revision.Config.SchemaVersion == 6) {
+			return false
+		}
+		var canonical configpoc.Revision
+		var err error
+		if revision.Config.SchemaVersion == 6 {
+			canonical, err = configpoc.CanonicalRouted(revision.Config)
+		} else {
+			canonical, err = configpoc.Canonical(revision.Config)
+		}
+		return err == nil && canonical.Hash == revision.Hash
+	}
+	for _, revision := range []configpoc.Revision{snapshot.Running, snapshot.Startup, snapshot.LastGood} {
+		if !validRevision(revision) {
 			return false
 		}
 	}
-	if pending := current.Snapshot.Pending; pending != nil {
-		canonical, err := configpoc.Canonical(pending.Previous.Config)
-		if err != nil || canonical.Hash != pending.Previous.Hash || pending.Previous.Config.SchemaVersion != 4 || !clientIDv2(pending.Owner) || !clientIDv2(pending.Lease) || pending.Deadline.IsZero() {
+	if candidate := snapshot.Candidate; candidate != nil {
+		if !validRevision(candidate.Revision) || !clientHashV2(candidate.Base) || !clientIDv2(candidate.Owner) {
 			return false
 		}
 	}
-	if len(current.Snapshot.Revoked) > 256 {
+	if pending := snapshot.Pending; pending != nil {
+		if !validRevision(pending.Previous) || !clientIDv2(pending.Owner) || !clientIDv2(pending.Lease) || pending.Deadline.IsZero() {
+			return false
+		}
+	}
+	if len(snapshot.Revoked) > 256 {
 		return false
 	}
 	seen := map[string]bool{}
-	for _, subject := range current.Snapshot.Revoked {
+	for _, subject := range snapshot.Revoked {
 		if !clientIDv2(subject) || seen[subject] {
 			return false
 		}
@@ -120,7 +177,7 @@ func validCurrentV2(current adminapi.CurrentV2) bool {
 	return true
 }
 func validOperationV2(op adminapi.OperationV2) bool {
-	if !clientIDv2(op.ID) || !clientIDv2(op.Namespace) || op.Domain != "firewall" || op.Expected == 0 || len(op.Fingerprint) != 64 || strings.Trim(op.Fingerprint, "0123456789abcdef") != "" || op.Accepted.IsZero() || !op.ExecuteBefore.After(op.Accepted) {
+	if !clientIDv2(op.ID) || !clientIDv2(op.Namespace) || (op.Domain != "firewall" && op.Domain != "routed") || op.Expected == 0 || len(op.Fingerprint) != 64 || strings.Trim(op.Fingerprint, "0123456789abcdef") != "" || op.Accepted.IsZero() || !op.ExecuteBefore.After(op.Accepted) {
 		return false
 	}
 	if op.State != "accepted" && op.State != "pending" && op.State != "final" && op.State != "uncertain" {
@@ -137,6 +194,14 @@ func validOperationV2(op adminapi.OperationV2) bool {
 	if op.Outcome != nil {
 		switch op.Outcome.Code {
 		case "applied", "applied_pending_confirmation", "rejected", "failed_rolled_back", "expired_without_effects":
+		case "profile_changed_without_effects":
+			if op.State != "final" || op.Outcome.ErrorCode != "ANDEIVA_RESERVE_PROFILE_CHANGED" {
+				return false
+			}
+		case "confirmation_resolved_without_effects":
+			if op.State != "final" || op.Outcome.ErrorCode != "ANDEIVA_CONFIRMATION_RESOLVED" {
+				return false
+			}
 		default:
 			return false
 		}
@@ -145,7 +210,7 @@ func validOperationV2(op adminapi.OperationV2) bool {
 }
 func (c *Client) NamespaceV2(ctx context.Context, domain string) (adminapi.NamespaceResponseV2, error) {
 	var result adminapi.NamespaceResponseV2
-	if domain != "firewall" {
+	if domain != "firewall" && domain != "routed" {
 		return result, ErrConfiguration
 	}
 	err := c.callV2(ctx, http.MethodPost, namespacesPathV2, struct {

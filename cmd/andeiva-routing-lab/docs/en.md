@@ -9,11 +9,15 @@ routedactivation Engine/Group, exact prepared snapshot, fixed-table nft transpor
 and an explicitly trusted ephemeral artifact resolver. The resolver is a fixture
 record, not a durable production coordinator.
 
-It proves pending TCP/UDP SNAT and exact cold recovery, then creates a new fixture
+It starts with an actually installed canonical schema-4 policy containing two
+saved rules. It proves pending TCP/UDP SNAT and exact cold recovery, then creates a new fixture
 operation and confirms a distinct thirty-second lease. Every later policy change
 uses Group; existing NAT/conntrack/deny/revocation checks remain. A final changed
-policy expires at its original thirty-second deadline and must restore the actual
-previous policy. Only a successful complete table query proves absence.
+policy restores the exact saved schema 4, confirms it and reactivates schema 6.
+The final inverse 6→4 expires at its original thirty-second deadline and must
+reapply the actual previous schema-6 network/rules. Only a successful complete
+table query proves absence. Fixture baseline provisioning does not qualify
+production Boot/SystemBundle publication; PrepareColdBoot is tested separately.
 
 The local profile starts no gateway service processes/listeners and checks actual
 isolated gateway TCP/UDP socket tables. Host SSH/HTTPS are never enumerated or
@@ -24,12 +28,19 @@ owned deny/target rules exist.
 Additional markers are emitted only after successful checks:
 
 ```text
+PASS typed group initial schema4 has exact two saved rules
 PASS typed group TCP/UDP SNAT and exact cold recovery
 PASS typed group distinct confirmed lease and exact lost-confirm reconciliation
-PASS typed group original confirmed deadline expired and exact previous policy recovered
+PASS typed group saved schema4 restores exact two-rule legacy and empty network
+PASS typed group confirmed schema4 reactivates owned schema6
+PASS typed group inverse saved schema4 deadline expired and exact schema6 recovered
 ```
 
-Execution remains bounded to 55 seconds plus independent bounded cleanup. This
+Group execution is bounded to 80 seconds plus independent bounded cleanup;
+the original non-group mode remains 55 seconds. Product lease deadlines do not
+change. Source `3918ad8` passed the earlier native group scenario in 46.166222 s
+(CPU 13.259767 s, peak 31,281,152 bytes); that evidence does not qualify this new
+inverse/two-rule runner. This
 mode does not qualify helper restart, existing management LAN migration, endpoint
 continuity or durable production recovery. RecoverPrepared has separate unit
 coverage and requires authenticated original WorkScope and the same retained

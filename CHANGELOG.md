@@ -1,15 +1,22 @@
 # Changelog
 
-## Unreleased — isolated static IPv4 network executor
+## Unreleased — routed administration workflows
 
-- Apply and verify typed static IPv4 addresses and a default route only inside a trusted, descriptor-pinned disposable namespace with an initially empty IPv4 baseline.
-- Preserve host separation, stable link bindings, bounded fixed commands, exact compensation and uncertainty fences; keep recovery authority independent of request cancellation.
-- Qualify the existing three-namespace routing laboratory with real TCP/UDP SNAT, conntrack, deny/revocation and verified restoration. Existing management LAN migration, DHCP, durable crash recovery and appliance runtime integration remain unsupported.
+- Add authenticated Web and CLI consumers for grouped network, forwarding and source NAT configuration, with confirmed application, explicit persistence and durable operation lookup.
+- Preserve exact revision identities, block writes after uncertain execution and support explicit resumption of accepted requests without duplicate admission.
+- Expose bounded administrator-only v2 audit history and retain unbound reserve claims during reachability inspection without treating them as written plans.
+- Keep runtime migration, privileged helper activation and native appliance qualification independently gated.
 
 ## Unreleased — prepared routed composite references
 
 - Validate schema 7 references against canonical firewall and local-service payloads, deriving network identity from the routed firewall revision.
 - Keep existing schema 5 behavior unchanged; runtime migration, administrative operations and grouped activation remain separately gated.
+
+## Unreleased — isolated static IPv4 network executor
+
+- Apply and verify typed static IPv4 addresses and a default route only inside a trusted, descriptor-pinned disposable namespace with an initially empty IPv4 baseline.
+- Preserve host separation, stable link bindings, bounded fixed commands, exact compensation and uncertainty fences; keep recovery authority independent of request cancellation.
+- Qualify the existing three-namespace routing laboratory with real TCP/UDP SNAT, conntrack, deny/revocation and verified restoration. Existing management LAN migration, DHCP, durable crash recovery and appliance runtime integration remain unsupported.
 
 ## Unreleased — internal transaction recovery reserves
 

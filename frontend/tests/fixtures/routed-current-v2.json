@@ -1,0 +1,1004 @@
+{
+  "empty": {
+    "schema_version": 2,
+    "current": {
+      "domain_generations": {
+        "firewall": "2",
+        "local_services": "3",
+        "network": "2"
+      },
+      "routed": {
+        "schema_version": 7,
+        "local_services": {
+          "generation": "3",
+          "candidate": null,
+          "running": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "startup": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "last_good": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "pending": null,
+          "recovery_required": false,
+          "revoked": []
+        },
+        "running": {
+          "hash": "01b78a76126cc83b0b68a453e64fc2d7a06074c91934e835b7387fb899071f0c",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 6,
+                "revision": "7d7434f957e753fb4f00f2dc045bf583cb9cb8bd9d7ed0ec71b2916e17c63c73"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": {
+                "config_schema": 1,
+                "revision": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125"
+              }
+            }
+          }
+        },
+        "startup": {
+          "hash": "01b78a76126cc83b0b68a453e64fc2d7a06074c91934e835b7387fb899071f0c",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 6,
+                "revision": "7d7434f957e753fb4f00f2dc045bf583cb9cb8bd9d7ed0ec71b2916e17c63c73"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": {
+                "config_schema": 1,
+                "revision": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125"
+              }
+            }
+          }
+        },
+        "last_good": {
+          "hash": "01b78a76126cc83b0b68a453e64fc2d7a06074c91934e835b7387fb899071f0c",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 6,
+                "revision": "7d7434f957e753fb4f00f2dc045bf583cb9cb8bd9d7ed0ec71b2916e17c63c73"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": {
+                "config_schema": 1,
+                "revision": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125"
+              }
+            }
+          }
+        }
+      },
+      "global": {
+        "lineage_id": "test-fixture-lineage",
+        "generation": "18446744073709551615",
+        "running_revision": "01b78a76126cc83b0b68a453e64fc2d7a06074c91934e835b7387fb899071f0c",
+        "startup_revision": "01b78a76126cc83b0b68a453e64fc2d7a06074c91934e835b7387fb899071f0c"
+      },
+      "domain": "routed",
+      "snapshot": {
+        "generation": "2",
+        "candidate": null,
+        "running": {
+          "hash": "7d7434f957e753fb4f00f2dc045bf583cb9cb8bd9d7ed0ec71b2916e17c63c73",
+          "config": {
+            "schema_version": 6,
+            "default_action": "deny",
+            "rules": [],
+            "routed": {
+              "schema_version": 1,
+              "lab_only": true,
+              "require_identification": false,
+              "require_inspection": false,
+              "network": {
+                "hash": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125",
+                "config": {
+                  "schema_version": 1,
+                  "interfaces": [
+                    {
+                      "id": "lan",
+                      "binding": {
+                        "name": "lan0",
+                        "hardware_address": "02:00:00:00:01:01"
+                      },
+                      "role": "lan",
+                      "zone": "inside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.18.0.1/24"
+                      }
+                    },
+                    {
+                      "id": "wan",
+                      "binding": {
+                        "name": "wan0",
+                        "hardware_address": "02:00:00:00:02:01"
+                      },
+                      "role": "wan",
+                      "zone": "outside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.19.0.1/24",
+                        "gateway": "198.19.0.2"
+                      }
+                    }
+                  ],
+                  "zones": [
+                    {
+                      "id": "inside",
+                      "kind": "lan"
+                    },
+                    {
+                      "id": "outside",
+                      "kind": "wan"
+                    }
+                  ],
+                  "default_route": {
+                    "interface_id": "wan",
+                    "metric": 10
+                  },
+                  "dns": {
+                    "mode": "none",
+                    "servers": []
+                  },
+                  "ipv6_forwarding": "deny"
+                }
+              },
+              "rules": null,
+              "nat": null
+            }
+          }
+        },
+        "startup": {
+          "hash": "7d7434f957e753fb4f00f2dc045bf583cb9cb8bd9d7ed0ec71b2916e17c63c73",
+          "config": {
+            "schema_version": 6,
+            "default_action": "deny",
+            "rules": [],
+            "routed": {
+              "schema_version": 1,
+              "lab_only": true,
+              "require_identification": false,
+              "require_inspection": false,
+              "network": {
+                "hash": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125",
+                "config": {
+                  "schema_version": 1,
+                  "interfaces": [
+                    {
+                      "id": "lan",
+                      "binding": {
+                        "name": "lan0",
+                        "hardware_address": "02:00:00:00:01:01"
+                      },
+                      "role": "lan",
+                      "zone": "inside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.18.0.1/24"
+                      }
+                    },
+                    {
+                      "id": "wan",
+                      "binding": {
+                        "name": "wan0",
+                        "hardware_address": "02:00:00:00:02:01"
+                      },
+                      "role": "wan",
+                      "zone": "outside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.19.0.1/24",
+                        "gateway": "198.19.0.2"
+                      }
+                    }
+                  ],
+                  "zones": [
+                    {
+                      "id": "inside",
+                      "kind": "lan"
+                    },
+                    {
+                      "id": "outside",
+                      "kind": "wan"
+                    }
+                  ],
+                  "default_route": {
+                    "interface_id": "wan",
+                    "metric": 10
+                  },
+                  "dns": {
+                    "mode": "none",
+                    "servers": []
+                  },
+                  "ipv6_forwarding": "deny"
+                }
+              },
+              "rules": null,
+              "nat": null
+            }
+          }
+        },
+        "last_good": {
+          "hash": "7d7434f957e753fb4f00f2dc045bf583cb9cb8bd9d7ed0ec71b2916e17c63c73",
+          "config": {
+            "schema_version": 6,
+            "default_action": "deny",
+            "rules": [],
+            "routed": {
+              "schema_version": 1,
+              "lab_only": true,
+              "require_identification": false,
+              "require_inspection": false,
+              "network": {
+                "hash": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125",
+                "config": {
+                  "schema_version": 1,
+                  "interfaces": [
+                    {
+                      "id": "lan",
+                      "binding": {
+                        "name": "lan0",
+                        "hardware_address": "02:00:00:00:01:01"
+                      },
+                      "role": "lan",
+                      "zone": "inside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.18.0.1/24"
+                      }
+                    },
+                    {
+                      "id": "wan",
+                      "binding": {
+                        "name": "wan0",
+                        "hardware_address": "02:00:00:00:02:01"
+                      },
+                      "role": "wan",
+                      "zone": "outside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.19.0.1/24",
+                        "gateway": "198.19.0.2"
+                      }
+                    }
+                  ],
+                  "zones": [
+                    {
+                      "id": "inside",
+                      "kind": "lan"
+                    },
+                    {
+                      "id": "outside",
+                      "kind": "wan"
+                    }
+                  ],
+                  "default_route": {
+                    "interface_id": "wan",
+                    "metric": 10
+                  },
+                  "dns": {
+                    "mode": "none",
+                    "servers": []
+                  },
+                  "ipv6_forwarding": "deny"
+                }
+              },
+              "rules": null,
+              "nat": null
+            }
+          }
+        },
+        "pending": null,
+        "recovery_required": false,
+        "revoked": []
+      }
+    }
+  },
+  "pre": {
+    "schema_version": 2,
+    "current": {
+      "domain_generations": {
+        "firewall": "2",
+        "local_services": "3",
+        "network": "2"
+      },
+      "routed": {
+        "schema_version": 7,
+        "local_services": {
+          "generation": "3",
+          "candidate": null,
+          "running": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "startup": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "last_good": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "pending": null,
+          "recovery_required": false,
+          "revoked": []
+        },
+        "running": {
+          "hash": "80d92b907c3b577cdaeb25dff24b0b9dc64005e8d8162ee4739532c2d43b113b",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 4,
+                "revision": "2918f3f865544487ca86aaeca877ddd9f3ea8ddf7aed6122d6bd1a471ae57f88"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": null
+            }
+          }
+        },
+        "startup": {
+          "hash": "80d92b907c3b577cdaeb25dff24b0b9dc64005e8d8162ee4739532c2d43b113b",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 4,
+                "revision": "2918f3f865544487ca86aaeca877ddd9f3ea8ddf7aed6122d6bd1a471ae57f88"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": null
+            }
+          }
+        },
+        "last_good": {
+          "hash": "80d92b907c3b577cdaeb25dff24b0b9dc64005e8d8162ee4739532c2d43b113b",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 4,
+                "revision": "2918f3f865544487ca86aaeca877ddd9f3ea8ddf7aed6122d6bd1a471ae57f88"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": null
+            }
+          }
+        }
+      },
+      "global": {
+        "lineage_id": "test-fixture-lineage",
+        "generation": "18446744073709551615",
+        "running_revision": "80d92b907c3b577cdaeb25dff24b0b9dc64005e8d8162ee4739532c2d43b113b",
+        "startup_revision": "80d92b907c3b577cdaeb25dff24b0b9dc64005e8d8162ee4739532c2d43b113b"
+      },
+      "domain": "routed",
+      "snapshot": {
+        "generation": "2",
+        "candidate": null,
+        "running": {
+          "hash": "2918f3f865544487ca86aaeca877ddd9f3ea8ddf7aed6122d6bd1a471ae57f88",
+          "config": {
+            "schema_version": 4,
+            "default_action": "deny",
+            "rules": []
+          }
+        },
+        "startup": {
+          "hash": "2918f3f865544487ca86aaeca877ddd9f3ea8ddf7aed6122d6bd1a471ae57f88",
+          "config": {
+            "schema_version": 4,
+            "default_action": "deny",
+            "rules": []
+          }
+        },
+        "last_good": {
+          "hash": "2918f3f865544487ca86aaeca877ddd9f3ea8ddf7aed6122d6bd1a471ae57f88",
+          "config": {
+            "schema_version": 4,
+            "default_action": "deny",
+            "rules": []
+          }
+        },
+        "pending": null,
+        "recovery_required": false,
+        "revoked": []
+      }
+    }
+  },
+  "routed": {
+    "schema_version": 2,
+    "current": {
+      "domain_generations": {
+        "firewall": "2",
+        "local_services": "3",
+        "network": "2"
+      },
+      "routed": {
+        "schema_version": 7,
+        "local_services": {
+          "generation": "3",
+          "candidate": null,
+          "running": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "startup": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "last_good": {
+            "hash": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111",
+            "config": {
+              "schema_version": 3,
+              "default_action": "deny",
+              "rules": [],
+              "local_services": {
+                "schema_version": 1,
+                "interfaces": [],
+                "services": []
+              }
+            }
+          },
+          "pending": null,
+          "recovery_required": false,
+          "revoked": []
+        },
+        "running": {
+          "hash": "b452740b6bf65cf9f34bcc6b613ef87a2c0acd99926c23e701e59a8501844239",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 6,
+                "revision": "6af429db75979cf9f220e776eec6066ec3575de6ad41831076cbae21199c9874"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": {
+                "config_schema": 1,
+                "revision": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125"
+              }
+            }
+          }
+        },
+        "startup": {
+          "hash": "b452740b6bf65cf9f34bcc6b613ef87a2c0acd99926c23e701e59a8501844239",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 6,
+                "revision": "6af429db75979cf9f220e776eec6066ec3575de6ad41831076cbae21199c9874"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": {
+                "config_schema": 1,
+                "revision": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125"
+              }
+            }
+          }
+        },
+        "last_good": {
+          "hash": "b452740b6bf65cf9f34bcc6b613ef87a2c0acd99926c23e701e59a8501844239",
+          "config": {
+            "schema_version": 7,
+            "domains": {
+              "firewall": {
+                "config_schema": 6,
+                "revision": "6af429db75979cf9f220e776eec6066ec3575de6ad41831076cbae21199c9874"
+              },
+              "local_services": {
+                "config_schema": 3,
+                "revision": "ed0341f8d41875ab0db6ff77c0523bfa86dde543881dfe261859a3828fda2111"
+              },
+              "network": {
+                "config_schema": 1,
+                "revision": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125"
+              }
+            }
+          }
+        }
+      },
+      "global": {
+        "lineage_id": "test-fixture-lineage",
+        "generation": "18446744073709551615",
+        "running_revision": "b452740b6bf65cf9f34bcc6b613ef87a2c0acd99926c23e701e59a8501844239",
+        "startup_revision": "b452740b6bf65cf9f34bcc6b613ef87a2c0acd99926c23e701e59a8501844239"
+      },
+      "domain": "routed",
+      "snapshot": {
+        "generation": "2",
+        "candidate": null,
+        "running": {
+          "hash": "6af429db75979cf9f220e776eec6066ec3575de6ad41831076cbae21199c9874",
+          "config": {
+            "schema_version": 6,
+            "default_action": "deny",
+            "rules": [],
+            "routed": {
+              "schema_version": 1,
+              "lab_only": true,
+              "require_identification": false,
+              "require_inspection": false,
+              "network": {
+                "hash": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125",
+                "config": {
+                  "schema_version": 1,
+                  "interfaces": [
+                    {
+                      "id": "lan",
+                      "binding": {
+                        "name": "lan0",
+                        "hardware_address": "02:00:00:00:01:01"
+                      },
+                      "role": "lan",
+                      "zone": "inside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.18.0.1/24"
+                      }
+                    },
+                    {
+                      "id": "wan",
+                      "binding": {
+                        "name": "wan0",
+                        "hardware_address": "02:00:00:00:02:01"
+                      },
+                      "role": "wan",
+                      "zone": "outside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.19.0.1/24",
+                        "gateway": "198.19.0.2"
+                      }
+                    }
+                  ],
+                  "zones": [
+                    {
+                      "id": "inside",
+                      "kind": "lan"
+                    },
+                    {
+                      "id": "outside",
+                      "kind": "wan"
+                    }
+                  ],
+                  "default_route": {
+                    "interface_id": "wan",
+                    "metric": 10
+                  },
+                  "dns": {
+                    "mode": "none",
+                    "servers": []
+                  },
+                  "ipv6_forwarding": "deny"
+                }
+              },
+              "rules": [
+                {
+                  "id": "tcp-test",
+                  "enabled": true,
+                  "path": {
+                    "from_zone": "inside",
+                    "to_zone": "outside",
+                    "from_interface": "lan",
+                    "to_interface": "wan"
+                  },
+                  "action": "allow",
+                  "source": "198.18.0.0/24",
+                  "destination": "198.19.0.2/32",
+                  "protocol": "tcp",
+                  "source_ports": {
+                    "from": 1024,
+                    "to": 65535
+                  },
+                  "destination_ports": {
+                    "from": 18080,
+                    "to": 18080
+                  }
+                },
+                {
+                  "id": "udp-test",
+                  "enabled": true,
+                  "path": {
+                    "from_zone": "inside",
+                    "to_zone": "outside",
+                    "from_interface": "lan",
+                    "to_interface": "wan"
+                  },
+                  "action": "allow",
+                  "source": "198.18.0.0/24",
+                  "destination": "198.19.0.2/32",
+                  "protocol": "udp",
+                  "source_ports": {
+                    "from": 1024,
+                    "to": 65535
+                  },
+                  "destination_ports": {
+                    "from": 18081,
+                    "to": 18082
+                  }
+                }
+              ],
+              "nat": [
+                {
+                  "id": "lan-wan",
+                  "path": {
+                    "from_zone": "inside",
+                    "to_zone": "outside",
+                    "from_interface": "lan",
+                    "to_interface": "wan"
+                  },
+                  "source": "198.18.0.0/24"
+                }
+              ]
+            }
+          }
+        },
+        "startup": {
+          "hash": "6af429db75979cf9f220e776eec6066ec3575de6ad41831076cbae21199c9874",
+          "config": {
+            "schema_version": 6,
+            "default_action": "deny",
+            "rules": [],
+            "routed": {
+              "schema_version": 1,
+              "lab_only": true,
+              "require_identification": false,
+              "require_inspection": false,
+              "network": {
+                "hash": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125",
+                "config": {
+                  "schema_version": 1,
+                  "interfaces": [
+                    {
+                      "id": "lan",
+                      "binding": {
+                        "name": "lan0",
+                        "hardware_address": "02:00:00:00:01:01"
+                      },
+                      "role": "lan",
+                      "zone": "inside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.18.0.1/24"
+                      }
+                    },
+                    {
+                      "id": "wan",
+                      "binding": {
+                        "name": "wan0",
+                        "hardware_address": "02:00:00:00:02:01"
+                      },
+                      "role": "wan",
+                      "zone": "outside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.19.0.1/24",
+                        "gateway": "198.19.0.2"
+                      }
+                    }
+                  ],
+                  "zones": [
+                    {
+                      "id": "inside",
+                      "kind": "lan"
+                    },
+                    {
+                      "id": "outside",
+                      "kind": "wan"
+                    }
+                  ],
+                  "default_route": {
+                    "interface_id": "wan",
+                    "metric": 10
+                  },
+                  "dns": {
+                    "mode": "none",
+                    "servers": []
+                  },
+                  "ipv6_forwarding": "deny"
+                }
+              },
+              "rules": [
+                {
+                  "id": "tcp-test",
+                  "enabled": true,
+                  "path": {
+                    "from_zone": "inside",
+                    "to_zone": "outside",
+                    "from_interface": "lan",
+                    "to_interface": "wan"
+                  },
+                  "action": "allow",
+                  "source": "198.18.0.0/24",
+                  "destination": "198.19.0.2/32",
+                  "protocol": "tcp",
+                  "source_ports": {
+                    "from": 1024,
+                    "to": 65535
+                  },
+                  "destination_ports": {
+                    "from": 18080,
+                    "to": 18080
+                  }
+                },
+                {
+                  "id": "udp-test",
+                  "enabled": true,
+                  "path": {
+                    "from_zone": "inside",
+                    "to_zone": "outside",
+                    "from_interface": "lan",
+                    "to_interface": "wan"
+                  },
+                  "action": "allow",
+                  "source": "198.18.0.0/24",
+                  "destination": "198.19.0.2/32",
+                  "protocol": "udp",
+                  "source_ports": {
+                    "from": 1024,
+                    "to": 65535
+                  },
+                  "destination_ports": {
+                    "from": 18081,
+                    "to": 18082
+                  }
+                }
+              ],
+              "nat": [
+                {
+                  "id": "lan-wan",
+                  "path": {
+                    "from_zone": "inside",
+                    "to_zone": "outside",
+                    "from_interface": "lan",
+                    "to_interface": "wan"
+                  },
+                  "source": "198.18.0.0/24"
+                }
+              ]
+            }
+          }
+        },
+        "last_good": {
+          "hash": "6af429db75979cf9f220e776eec6066ec3575de6ad41831076cbae21199c9874",
+          "config": {
+            "schema_version": 6,
+            "default_action": "deny",
+            "rules": [],
+            "routed": {
+              "schema_version": 1,
+              "lab_only": true,
+              "require_identification": false,
+              "require_inspection": false,
+              "network": {
+                "hash": "c10da50d92362bfb7052201e9786ccf7da12ade4aa3b6cccf3ee8465fc783125",
+                "config": {
+                  "schema_version": 1,
+                  "interfaces": [
+                    {
+                      "id": "lan",
+                      "binding": {
+                        "name": "lan0",
+                        "hardware_address": "02:00:00:00:01:01"
+                      },
+                      "role": "lan",
+                      "zone": "inside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.18.0.1/24"
+                      }
+                    },
+                    {
+                      "id": "wan",
+                      "binding": {
+                        "name": "wan0",
+                        "hardware_address": "02:00:00:00:02:01"
+                      },
+                      "role": "wan",
+                      "zone": "outside",
+                      "ipv4": {
+                        "mode": "static",
+                        "address": "198.19.0.1/24",
+                        "gateway": "198.19.0.2"
+                      }
+                    }
+                  ],
+                  "zones": [
+                    {
+                      "id": "inside",
+                      "kind": "lan"
+                    },
+                    {
+                      "id": "outside",
+                      "kind": "wan"
+                    }
+                  ],
+                  "default_route": {
+                    "interface_id": "wan",
+                    "metric": 10
+                  },
+                  "dns": {
+                    "mode": "none",
+                    "servers": []
+                  },
+                  "ipv6_forwarding": "deny"
+                }
+              },
+              "rules": [
+                {
+                  "id": "tcp-test",
+                  "enabled": true,
+                  "path": {
+                    "from_zone": "inside",
+                    "to_zone": "outside",
+                    "from_interface": "lan",
+                    "to_interface": "wan"
+                  },
+                  "action": "allow",
+                  "source": "198.18.0.0/24",
+                  "destination": "198.19.0.2/32",
+                  "protocol": "tcp",
+                  "source_ports": {
+                    "from": 1024,
+                    "to": 65535
+                  },
+                  "destination_ports": {
+                    "from": 18080,
+                    "to": 18080
+                  }
+                },
+                {
+                  "id": "udp-test",
+                  "enabled": true,
+                  "path": {
+                    "from_zone": "inside",
+                    "to_zone": "outside",
+                    "from_interface": "lan",
+                    "to_interface": "wan"
+                  },
+                  "action": "allow",
+                  "source": "198.18.0.0/24",
+                  "destination": "198.19.0.2/32",
+                  "protocol": "udp",
+                  "source_ports": {
+                    "from": 1024,
+                    "to": 65535
+                  },
+                  "destination_ports": {
+                    "from": 18081,
+                    "to": 18082
+                  }
+                }
+              ],
+              "nat": [
+                {
+                  "id": "lan-wan",
+                  "path": {
+                    "from_zone": "inside",
+                    "to_zone": "outside",
+                    "from_interface": "lan",
+                    "to_interface": "wan"
+                  },
+                  "source": "198.18.0.0/24"
+                }
+              ]
+            }
+          }
+        },
+        "pending": null,
+        "recovery_required": false,
+        "revoked": []
+      }
+    }
+  }
+}

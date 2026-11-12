@@ -196,6 +196,7 @@ type groupLab struct {
 	selection groupSelection
 	current   configpoc.RoutedActivationBundleV1
 	counter   int
+	baseline  *routedactivation.BaselineV1
 }
 
 func labReference(operation, role string, value []byte) string {
@@ -204,7 +205,15 @@ func labReference(operation, role string, value []byte) string {
 }
 
 func newGroupLab(ctx context.Context, network *networkexecutor.Executor, t transport) (*groupLab, error) {
-	legacy, err := configpoc.Canonical(configpoc.Config{SchemaVersion: 4, DefaultAction: "deny", Rules: []configpoc.Rule{}})
+	legacyConfig := configpoc.Config{SchemaVersion: 4, DefaultAction: "deny", Rules: []configpoc.Rule{}}
+	for _, rule := range routednft.LabPolicy().Rules {
+		enabled := rule.IsEnabled()
+		legacyConfig.Rules = append(legacyConfig.Rules, configpoc.Rule{ID: "saved-" + rule.ID, Enabled: &enabled, Action: rule.Action, Match: &configpoc.Match{
+			Source: rule.Source, Destination: rule.Destination, Protocol: rule.Protocol,
+			SourcePorts: configpoc.PortRange{From: rule.SourcePorts.From, To: rule.SourcePorts.To}, DestinationPorts: configpoc.PortRange{From: rule.DestinationPorts.From, To: rule.DestinationPorts.To},
+		}})
+	}
+	legacy, err := configpoc.Canonical(legacyConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -217,16 +226,34 @@ func newGroupLab(ctx context.Context, network *networkexecutor.Executor, t trans
 		return nil, err
 	}
 	b := &groupLab{kernel: groupKernel{t}, network: network, legacy: legacy, local: local}
-	// Establish the actual trusted supervisor deny baseline before forwarding.
+	// Fixture-only trusted supervisor provisioning establishes the actual known
+	// saved4 baseline. Production Boot preparation remains read-only until its
+	// SystemBundle/Intent is selected; this runner does not qualify that store.
 	artifact, err := firewallnft.Compile(legacy.Config)
 	if err != nil || t.Check(ctx, artifact.Create) != nil || t.Apply(ctx, artifact.Create) != nil {
 		return nil, errLab
 	}
+	data, present, err := b.kernel.Observe(ctx, routedactivation.LegacyTable)
+	if err != nil || !present {
+		return nil, errLab
+	}
+	observed, err := firewallnft.VerifyObservation(data, legacy)
+	if err != nil || len(observed.Revision.Config.Rules) != 2 {
+		return nil, errLab
+	}
+	fmt.Println("PASS typed group initial schema4 has exact two saved rules")
 	if err := b.cold(ctx); err != nil {
 		_ = b.Close()
 		return nil, err
 	}
 	return b, nil
+}
+
+func (b *groupLab) resolveBaseline(ctx context.Context, saved configpoc.RoutedActivationBundleV1) (routedactivation.BaselineV1, error) {
+	if ctx.Err() != nil || b.baseline == nil || b.baseline.Saved.Composite.Hash != saved.Composite.Hash {
+		return routedactivation.BaselineV1{}, errLab
+	}
+	return *b.baseline, nil
 }
 
 func (b *groupLab) resolve(ctx context.Context, plan configpoc.RoutedTransitionV1, previous *configpoc.RoutedActivationBundleV1, target configpoc.RoutedActivationBundleV1, deadline time.Time) (routedactivation.PreparationV1, error) {
@@ -243,6 +270,13 @@ func (b *groupLab) selectTarget(ctx context.Context, target configpoc.RoutedActi
 	prepared, err := b.engine.Prepare(ctx, target)
 	if err != nil {
 		return err
+	}
+	return b.selectPrepared(ctx, target, previous, prepared)
+}
+
+func (b *groupLab) selectPrepared(ctx context.Context, target configpoc.RoutedActivationBundleV1, previous *configpoc.RoutedActivationBundleV1, prepared routedactivation.PreparationV1) error {
+	if ctx == nil || ctx.Err() != nil {
+		return errLab
 	}
 	b.counter++
 	operation := fmt.Sprintf("group-lab-%d", b.counter)
@@ -267,7 +301,7 @@ func (b *groupLab) selectTarget(ctx context.Context, target configpoc.RoutedActi
 }
 
 func (b *groupLab) cold(ctx context.Context) error {
-	engine, err := routedactivation.New(b.kernel, b.network, groupEmptyListeners{b.kernel.transport}, routedactivation.Options{Legacy: b.legacy, ResolvePlan: b.resolve})
+	engine, err := routedactivation.New(b.kernel, b.network, groupEmptyListeners{b.kernel.transport}, routedactivation.Options{Legacy: b.legacy, ResolvePlan: b.resolve, ResolveBaseline: b.resolveBaseline})
 	if err != nil {
 		return err
 	}
@@ -282,9 +316,20 @@ func (b *groupLab) cold(ctx context.Context) error {
 		return err
 	}
 	target, err := configpoc.NewRoutedActivationBundleV1(firewall, b.local)
-	if err != nil || b.selectTarget(ctx, target, nil) != nil {
+	if err != nil {
 		return errLab
 	}
+	saved, err := configpoc.NewRoutedActivationBundleV1(b.legacy, b.local)
+	if err != nil {
+		return err
+	}
+	prepared, err := engine.Prepare(ctx, target)
+	if err != nil || b.selectPrepared(ctx, target, nil, prepared) != nil {
+		return errLab
+	}
+	// Preserve the actual captured saved4 baseline for explicit rollback; never
+	// synthesize a schema6 candidate to impersonate the desired schema4 target.
+	b.baseline = &routedactivation.BaselineV1{Saved: saved, Owned: prepared.Before, Dependencies: prepared.Dependencies}
 	s := b.selection
 	if err := group.ArmBootstrapUntilLease(ctx, s.plan, s.leaseID, target, s.deadline); err != nil {
 		return err
@@ -340,6 +385,10 @@ func (b *groupLab) armApply(ctx context.Context, revision routednft.Revision) er
 	if err != nil {
 		return err
 	}
+	return b.armBundle(ctx, target)
+}
+
+func (b *groupLab) armBundle(ctx context.Context, target configpoc.RoutedActivationBundleV1) error {
 	previous := b.current
 	if err := b.selectTarget(ctx, target, &previous); err != nil {
 		return err
@@ -382,22 +431,49 @@ func (b *groupLab) qualifyColdRecoveryAndConfirm(ctx context.Context, lan *names
 		return errLab
 	}
 	fmt.Println("PASS typed group distinct confirmed lease and exact lost-confirm reconciliation")
+	if err := b.qualifyInverseConfirm(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (b *groupLab) qualifyInverseConfirm(ctx context.Context) error {
+	if b.baseline == nil || b.armBundle(ctx, b.baseline.Saved) != nil {
+		return errLab
+	}
+	state, current, err := b.group.SnapshotObserved()
+	if err != nil || current != b.baseline.Saved.Composite.Hash || b.engine.MatchOwned(ctx, b.selection.plan.TargetOwned) != nil || b.network.VerifyPrepared(ctx, b.baseline.Dependencies.Prepared) != nil {
+		return errLab
+	}
+	data, present, err := b.kernel.Observe(ctx, routedactivation.LegacyTable)
+	if err != nil || !present {
+		return errLab
+	}
+	observed, err := firewallnft.VerifyObservation(data, b.legacy)
+	if err != nil || len(observed.Revision.Config.Rules) != 2 || b.group.ConfirmLease(ctx, b.selection.plan, state) != nil {
+		return errLab
+	}
+	fmt.Println("PASS typed group saved schema4 restores exact two-rule legacy and empty network")
+	revision, err := routednft.Canonical(routednft.LabPolicy())
+	if err != nil || b.Apply(ctx, revision) != nil {
+		return errLab
+	}
+	fmt.Println("PASS typed group confirmed schema4 reactivates owned schema6")
 	return nil
 }
 
 func (b *groupLab) qualifyExpiry(ctx context.Context, lan *namespace) error {
 	previous := b.current
-	revision, err := routednft.Canonical(routednft.LabPolicy())
-	if err != nil || b.armApply(ctx, revision) != nil {
+	if b.baseline == nil || b.armBundle(ctx, b.baseline.Saved) != nil {
 		return errLab
 	}
 	s := b.selection
 	state, _, err := b.group.SnapshotObserved()
-	if err != nil {
-		return err
+	if err != nil || b.engine.MatchOwned(ctx, s.plan.TargetOwned) != nil || b.network.VerifyPrepared(ctx, b.baseline.Dependencies.Prepared) != nil {
+		return errors.Join(errLab, err)
 	}
-	if _, err := lan.exec(ctx, nil, b.kernel.self, "--probe-tcp"); err != nil {
-		return err
+	if _, err := lan.exec(ctx, nil, b.kernel.self, "--probe-tcp"); err == nil {
+		return errors.New("saved schema4 unexpectedly retained routed IPv4")
 	}
 	timer := time.NewTimer(time.Until(s.deadline))
 	defer timer.Stop()
@@ -429,10 +505,13 @@ func (b *groupLab) qualifyExpiry(ctx context.Context, lan *namespace) error {
 		return errLab
 	}
 	b.current = previous
+	if b.network.Verify(ctx) != nil {
+		return errLab
+	}
 	if _, err := lan.exec(ctx, nil, b.kernel.self, "--probe-tcp"); err == nil {
 		return errors.New("expired group policy still authorized forwarding")
 	}
-	fmt.Println("PASS typed group original confirmed deadline expired and exact previous policy recovered")
+	fmt.Println("PASS typed group inverse saved schema4 deadline expired and exact schema6 recovered")
 	return nil
 }
 

@@ -39,10 +39,20 @@ func runSystem(args []string, locale string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] != "" && strings.HasPrefix("help", args[0])) {
 		fmt.Fprintln(stdout, text[0])
 		fmt.Fprintln(stdout, "andeiva [--lang en|es|pt] system info --url https://HOST:PORT --ca-file FILE --credentials-file FILE")
+		fmt.Fprintln(stdout, "andeiva [--lang en|es|pt] system network-interfaces --url https://HOST:PORT --ca-file FILE --credentials-file FILE")
 		fmt.Fprintln(stdout, text[2])
 		return 0
 	}
-	if args[0] == "" || !strings.HasPrefix("info", args[0]) {
+	operation := ""
+	for _, command := range []string{"info", "network-interfaces"} {
+		if args[0] != "" && strings.HasPrefix(command, args[0]) {
+			if operation != "" {
+				return fail(nil)
+			}
+			operation = command
+		}
+	}
+	if operation == "" {
 		return fail(nil)
 	}
 	options := map[string]string{}
@@ -80,7 +90,13 @@ func runSystem(args []string, locale string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	credentials = adminclient.Credentials{}
-	info, readErr := client.SystemInfo(ctx)
+	var info any
+	var readErr error
+	if operation == "network-interfaces" {
+		info, readErr = client.NetworkInterfacesV2(ctx)
+	} else {
+		info, readErr = client.SystemInfo(ctx)
+	}
 	// Logout has its own deadline even if the metadata request was cancelled.
 	logoutCtx, logoutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer logoutCancel()

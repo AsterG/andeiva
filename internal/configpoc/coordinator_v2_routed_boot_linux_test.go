@@ -37,9 +37,12 @@ func TestRoutedBootTargetPreservesStaleCandidateWithoutRebasing(t *testing.T) {
 	if target.CandidateGroup.Base == target.Running.Hash {
 		t.Fatal("fixture did not produce stale base")
 	}
-	op.Request = v2Request{Kind: OpValidate}
-	if _, _, err = routedTargetV2(c.store, op, target, c.now(), ""); !errors.Is(err, ErrConflict) {
-		t.Fatal("stale candidate accepted after Startup recovery", err)
+	for _, kind := range []string{OpValidate, OpCommit} {
+		op.Request = v2Request{Kind: kind}
+		if kind == OpCommit { seconds := uint64(30); op.Request.ConfirmSeconds = &seconds }
+		if _, _, err = routedTargetV2(c.store, op, target, c.now(), "confirmed-lease"); !errors.Is(err, ErrConflict) {
+			t.Fatal("stale candidate accepted after Startup recovery", kind, err)
+		}
 	}
 }
 

@@ -33,15 +33,7 @@ func (f *Fixture) CheckPreviewListeners(ctx context.Context) error {
 	if err := f.CheckListeners(ctx); err != nil {
 		return err
 	}
-	for _, protocol := range []string{"tcp", "udp"} {
-		for port := 18080; port <= 18082; port++ {
-			ok, err := f.ProbeReverseLocal(ctx, protocol, port)
-			if err != nil || !ok {
-				return errors.New("ANDEIVA_NFT_FIXTURE_REVERSE_LISTENER")
-			}
-		}
-	}
-	return nil
+	return checkListenerControls(ctx, "ANDEIVA_NFT_FIXTURE_REVERSE_LISTENER", f.ProbeReverseLocal)
 }
 
 // PinPreviewGateway retains only this fixture's gateway at the fixed systemd
