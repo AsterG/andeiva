@@ -20,6 +20,11 @@ type LocalProofInputV2 struct {
 	// Historical must already have a verified retained global witness. Its local
 	// component alone cannot establish historical provenance.
 	Historical *Revision
+	closing    *localClosingMembershipV2
+}
+
+type localClosingMembershipV2 struct {
+	operation, origin, credit, namespace, subject, domain string
 }
 
 // LocalProofBindingV2 contains no bearer material. Target is the composite hash;
@@ -89,6 +94,12 @@ func ResolveLocalProofV2(in LocalProofInputV2, now time.Time) (LocalProofScopeV2
 		if id == op.ID {
 			open++
 		}
+	}
+	if membership := in.closing; membership != nil {
+		if open != 0 || membership.credit == "" || op.Request.Kind != OpConfirm || membership.operation != op.ID || membership.origin != op.Request.Origin || membership.namespace != op.Namespace || membership.subject != op.Subject || membership.domain != op.Domain {
+			return LocalProofScopeV2{}, ErrInvalid
+		}
+		open++
 	}
 	if open != 1 || len(ns.Open) > v2MaximumOpen || !localProofSnapshot(in.Firewall, 4) || !localProofSnapshot(in.Local, 3) {
 		return LocalProofScopeV2{}, ErrInvalid

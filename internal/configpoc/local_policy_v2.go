@@ -91,6 +91,30 @@ func (c *v2Coordinator) localScopeLocked(op v2Operation, p v2TrustedPrincipal) (
 	// component snapshots intentionally contain no duplicate legacy Pending view.
 	fw.Pending, local.Pending = nil, nil
 	in := LocalProofInputV2{Operation: operationDTOv2(op), Namespace: namespaceDTOv2(s.state.Namespaces[i]), Subject: subject, Global: GlobalV2{Lineage: s.state.Lineage, Generation: s.state.Generation, Running: state.Running.Hash, Startup: state.Startup.Hash}, Firewall: fw, Local: local}
+	if op.ClosingCredit != "" {
+		if s.state.RecoveryReserveVersion != 1 || op.Request.Kind != OpConfirm {
+			return LocalProofScopeV2{}, errV2Unavailable
+		}
+		creditIndex := closingCreditIndexV2(&s.state, op.Request.Origin)
+		if creditIndex < 0 {
+			return LocalProofScopeV2{}, errV2Unavailable
+		}
+		credit := s.state.ClosingCredits[creditIndex]
+		if credit.ID != op.ClosingCredit || credit.Child != op.ID || credit.Subject != op.Subject || credit.Domain != op.Domain || credit.ChildNamespace != op.Namespace {
+			return LocalProofScopeV2{}, errV2Unavailable
+		}
+		for _, membership := range s.state.Namespaces[i].ClosingOpen {
+			if membership.Operation == op.ID && membership.Origin == credit.Origin && membership.Credit == credit.ID {
+				if in.closing != nil {
+					return LocalProofScopeV2{}, errV2Unavailable
+				}
+				in.closing = &localClosingMembershipV2{operation: op.ID, origin: credit.Origin, credit: credit.ID, namespace: op.Namespace, subject: op.Subject, domain: op.Domain}
+			}
+		}
+		if in.closing == nil {
+			return LocalProofScopeV2{}, errV2Unavailable
+		}
+	}
 	if pending := state.Pending; pending != nil {
 		in.Confirmation = &ConfirmationV2{Origin: pending.OriginCommit, Lease: pending.Lease, Domain: pending.Domain, Target: pending.Target, Deadline: pending.Deadline}
 		in.ConfirmationOwner = pending.Owner
