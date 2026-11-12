@@ -68,6 +68,8 @@ type PoolV2 struct {
 	slots           []slotV2
 	closed, blocked bool
 	hook            func(string) error
+	access          *ReaderAccessV2
+	readOnly        bool
 }
 
 func digestV2(value string) bool {
@@ -94,6 +96,10 @@ func bankSizeV2(capacity int) int64 { return int64(headerV2 + capacity) }
 // PrepareV2 only accepts an empty private directory. Failure preserves partial
 // preparation for inspection; it never removes or adopts another layout.
 func PrepareV2(area *os.Root, slots, capacity int, role RoleV2) (*PoolV2, error) {
+	return prepareV2(area, slots, capacity, role, nil)
+}
+
+func prepareV2(area *os.Root, slots, capacity int, role RoleV2, access *ReaderAccessV2) (*PoolV2, error) {
 	if area == nil || !validProfile(slots, capacity) || !validRoleV2(role) {
 		return nil, ErrInvalid
 	}
@@ -101,7 +107,7 @@ func PrepareV2(area *os.Root, slots, capacity int, role RoleV2) (*PoolV2, error)
 		return nil, ErrUnavailable
 	}
 	info, err := area.Stat(".")
-	if err != nil || !privateDirectory(info) {
+	if err != nil || !accessDirectoryV2(area, info, access) {
 		return nil, ErrUnavailable
 	}
 	dir, err := area.Open(".")
@@ -119,7 +125,7 @@ func PrepareV2(area *os.Root, slots, capacity int, role RoleV2) (*PoolV2, error)
 	}
 	m := manifestV2{formatV2, hex.EncodeToString(random[:]), slots, capacity, role, headerV2}
 	for index := 0; index < slots; index++ {
-		f, e := createFile(area, slotName(index))
+		f, e := createAccessFileV2(area, slotName(index), access)
 		if e != nil {
 			return nil, ErrUnavailable
 		}
@@ -142,7 +148,7 @@ func PrepareV2(area *os.Root, slots, capacity int, role RoleV2) (*PoolV2, error)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	f, err := createFile(area, "pool.json")
+	f, err := createAccessFileV2(area, "pool.json", access)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
@@ -158,10 +164,14 @@ func PrepareV2(area *os.Root, slots, capacity int, role RoleV2) (*PoolV2, error)
 	if err != nil || syncArea(area) != nil {
 		return nil, ErrUnavailable
 	}
-	return OpenV2(area)
+	return openAccessV2(area, access, false)
 }
 
 func OpenV2(area *os.Root) (pool *PoolV2, result error) {
+	return openAccessV2(area, nil, false)
+}
+
+func openAccessV2(area *os.Root, access *ReaderAccessV2, readOnly bool) (pool *PoolV2, result error) {
 	if area == nil {
 		return nil, ErrInvalid
 	}
@@ -169,21 +179,21 @@ func OpenV2(area *os.Root) (pool *PoolV2, result error) {
 		return nil, ErrUnavailable
 	}
 	info, err := area.Stat(".")
-	if err != nil || !privateDirectory(info) {
+	if err != nil || !accessDirectoryV2(area, info, access) {
 		return nil, ErrUnavailable
 	}
-	p := &PoolV2{root: area, rootInfo: info}
+	p := &PoolV2{root: area, rootInfo: info, access: access, readOnly: readOnly}
 	defer func() {
 		if result != nil {
 			_ = p.Close()
 		}
 	}()
-	p.lock, err = openFile(area, "pool.json")
+	p.lock, err = openAccessFileV2(area, "pool.json", readOnly)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
 	p.lockInfo, err = p.lock.Stat()
-	if err != nil || !privateFile(p.lockInfo, info) || p.lockInfo.Size() < 1 || p.lockInfo.Size() > 4096 || lock(p.lock) != nil {
+	if err != nil || !accessFileV2(p.lock, p.lockInfo, info, access) || p.lockInfo.Size() < 1 || p.lockInfo.Size() > 4096 || (!readOnly && lock(p.lock) != nil) {
 		return nil, ErrUnavailable
 	}
 	data, err := io.ReadAll(io.LimitReader(p.lock, 4097))
@@ -210,14 +220,14 @@ func OpenV2(area *os.Root) (pool *PoolV2, result error) {
 	}
 	owners := map[string]bool{}
 	for index := 0; index < p.manifest.Slots; index++ {
-		f, e := openFile(area, slotName(index))
+		f, e := openAccessFileV2(area, slotName(index), readOnly)
 		if e != nil {
 			return nil, ErrUnavailable
 		}
 		p.slots = append(p.slots, slotV2{file: f})
 		s := &p.slots[index]
 		s.info, e = f.Stat()
-		if e != nil || !privateFile(s.info, info) || s.info.Size() != 2*bankSizeV2(p.manifest.Capacity) || !fullyAllocated(s.info) {
+		if e != nil || !accessFileV2(f, s.info, info, access) || s.info.Size() != 2*bankSizeV2(p.manifest.Capacity) || !fullyAllocated(s.info) {
 			return nil, ErrUnavailable
 		}
 		observed, e := p.inspect(index)
@@ -379,8 +389,15 @@ func (p *PoolV2) follows(old, next recordV2) bool {
 func (p *PoolV2) inspect(index int) (inspectionV2, error) {
 	a, ad, ae := p.readBank(index, 0)
 	b, bd, be := p.readBank(index, 1)
-	// No recovery write or allocation is authorized by an unknown/torn bank.
 	if ae != nil || be != nil {
+		return inspectionV2{}, ErrUnavailable
+	}
+	return p.resolveBanksV2(a, ad, b, bd)
+}
+
+func (p *PoolV2) resolveBanksV2(a recordV2, ad []byte, b recordV2, bd []byte) (inspectionV2, error) {
+	// No recovery write or allocation is authorized by an unknown/torn bank.
+	if a.Slot != b.Slot {
 		return inspectionV2{}, ErrUnavailable
 	}
 	if a.Sequence == b.Sequence {
@@ -406,11 +423,11 @@ func (p *PoolV2) identity() error {
 		return ErrUnavailable
 	}
 	root, err := p.root.Stat(".")
-	if err != nil || !os.SameFile(root, p.rootInfo) || !privateDirectory(root) {
+	if err != nil || !os.SameFile(root, p.rootInfo) || !accessDirectoryV2(p.root, root, p.access) {
 		return ErrUnavailable
 	}
 	named, err := p.root.Lstat("pool.json")
-	if err != nil || !os.SameFile(named, p.lockInfo) || !privateFile(named, root) {
+	if err != nil || !os.SameFile(named, p.lockInfo) || !accessFileV2(p.lock, named, root, p.access) {
 		return ErrUnavailable
 	}
 	for i, s := range p.slots {
@@ -418,11 +435,11 @@ func (p *PoolV2) identity() error {
 			return ErrUnavailable
 		}
 		info, err := s.file.Stat()
-		if err != nil || !os.SameFile(info, s.info) || !privateFile(info, root) || info.Size() != 2*bankSizeV2(p.manifest.Capacity) || !fullyAllocated(info) {
+		if err != nil || !os.SameFile(info, s.info) || !accessFileV2(s.file, info, root, p.access) || info.Size() != 2*bankSizeV2(p.manifest.Capacity) || !fullyAllocated(info) {
 			return ErrUnavailable
 		}
 		named, err = p.root.Lstat(slotName(i))
-		if err != nil || !os.SameFile(named, info) || !privateFile(named, root) || named.Size() != info.Size() {
+		if err != nil || !os.SameFile(named, info) || !accessFileV2(s.file, named, root, p.access) || named.Size() != info.Size() {
 			return ErrUnavailable
 		}
 	}
@@ -430,7 +447,7 @@ func (p *PoolV2) identity() error {
 }
 
 func (p *PoolV2) ready() error {
-	if p.closed || p.blocked || p.identity() != nil {
+	if p.closed || p.blocked || p.readOnly || p.identity() != nil {
 		return ErrUnavailable
 	}
 	return nil
