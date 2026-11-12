@@ -8,6 +8,8 @@
 
 ## Unreleased — inactive configuration storage v2 foundations
 
+- Reject invalid checkpoint/segment boundaries and mismatched historical state lineages during reopen.
+
 - Prepare immutable selected storage, a bounded durable operation catalogue and
   cold schema 3/4 migration without activating engines or administrative endpoints.
 - Preserve legacy configuration and replay provenance; test interruptions, registry

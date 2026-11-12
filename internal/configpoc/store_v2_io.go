@@ -331,7 +331,7 @@ func (s *v2Store) readSelection() error {
 	if err = s.readObject(s.selector.Current, &s.selection); err != nil {
 		return err
 	}
-	if s.selection.Format != v2Format || s.selection.Sequence == 0 || s.selection.Segment == 0 || s.selection.Segment > 64 || s.selection.Previous != s.selector.Previous {
+	if !v2ValidSelection(s.selection) || s.selection.Previous != s.selector.Previous {
 		return errV2Unavailable
 	}
 	if err = s.readObject(s.selection.State, &s.state); err != nil || !v2ValidState(s.state) || s.state.Lineage != s.selection.Lineage {
@@ -341,14 +341,17 @@ func (s *v2Store) readSelection() error {
 	current := s.selection
 	for i := uint64(1); current.Previous != "" && i <= 64; i++ {
 		var prior v2Selection
-		if err = s.readObject(current.Previous, &prior); err != nil || prior.Format != v2Format || prior.Lineage != current.Lineage || prior.Sequence+1 != current.Sequence {
+		if err = s.readObject(current.Previous, &prior); err != nil || !v2ValidSelection(prior) || prior.Lineage != current.Lineage || prior.Sequence+1 != current.Sequence {
 			return errV2Unavailable
 		}
 		var state v2State
-		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) {
+		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage {
 			return errV2Unavailable
 		}
 		if current.Checkpoint {
+			if prior.Segment != 64 {
+				return errV2Unavailable
+			}
 			break
 		}
 		if prior.Segment+1 != current.Segment {
@@ -419,4 +422,15 @@ func (s *v2Store) publish(state v2State) (result error) {
 	s.selection = next
 	s.selector = selector
 	return nil
+}
+
+// Only a newly started segment may terminate bounded chain validation.
+func v2ValidSelection(selection v2Selection) bool {
+	if selection.Format != v2Format || selection.Sequence == 0 || selection.Segment == 0 || selection.Segment > 64 {
+		return false
+	}
+	if selection.Sequence == 1 {
+		return selection.Previous == "" && selection.Segment == 1 && !selection.Checkpoint
+	}
+	return selection.Previous != "" && selection.Checkpoint == (selection.Segment == 1)
 }
