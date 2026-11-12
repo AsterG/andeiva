@@ -264,9 +264,15 @@ func TestPreparedOperationsV2BoundariesRBACAndForeignIDs(t *testing.T) {
 		}
 	}
 	for _, query := range []string{"namespace_id=" + ns.Namespace + "&limit=0", "namespace_id=" + ns.Namespace + "&cursor=01", "namespace_id=" + ns.Namespace + "&state=other", "namespace_id=" + ns.Namespace + "&limit=1&limit=2", "namespace_id=" + ns.Namespace + "&subject=bob"} {
-		status, _, _ := f.api.request(t, "GET", operationsV2Path+"?"+query, "", f.headers)
+		status, body, _ := f.api.request(t, "GET", operationsV2Path+"?"+query, "", f.headers)
 		if status != 400 {
 			t.Fatal("invalid filters", status)
+		}
+		var failure struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(body), &failure) != nil || failure.Code != "ANDEIVA_OPERATION_INVALID" {
+			t.Fatal("inconsistent malformed query error", query, body)
 		}
 	}
 	cookieHeaders := map[string]string{"Cookie": cookieName + "=" + f.tokens["alice"], "Content-Type": "application/json", "Origin": f.api.server.URL}

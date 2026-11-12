@@ -104,6 +104,9 @@ func operationPageQueryV2(u *url.URL) (namespace, state string, cursor uint64, l
 	if !wireIDv2(namespace) {
 		return "", "", 0, 0, configpoc.ErrInvalid
 	}
+	if state != "" && state != "accepted" && state != "pending" && state != "final" && state != "uncertain" {
+		return "", "", 0, 0, configpoc.ErrInvalid
+	}
 	for _, key := range []string{"cursor", "limit"} {
 		if q.Has(key) {
 			n, e := strconv.ParseUint(q.Get(key), 10, 64)
@@ -172,7 +175,7 @@ func (h *handler) operationsV2(w http.ResponseWriter, r *http.Request, ctx conte
 		}
 		ns, state, cursor, limit, e := operationPageQueryV2(r.URL)
 		if e != nil {
-			h.operationErrorV2(w, e)
+			h.fail(w, 400, "ANDEIVA_OPERATION_INVALID")
 			return
 		}
 		page, e := service.ObserveList(binding, ns, state, cursor, limit)
