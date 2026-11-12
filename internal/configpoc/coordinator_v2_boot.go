@@ -10,6 +10,7 @@ import (
 
 const v2BootKind = "boot_startup"
 const v2BootFeature = "boot_startup.v1"
+const v2LocalFeature = "local_services_transactions.v1"
 
 // A boot identity comes from trusted assembly, never an operation request.
 type v2BootID string
@@ -25,17 +26,49 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 }
 
 func validFeaturesV2(state v2State) bool {
-	if len(state.RequiredFeatures) > 1 || (len(state.RequiredFeatures) == 1 && state.RequiredFeatures[0] != v2BootFeature) {
-		return false
+	last := ""
+	for _, feature := range state.RequiredFeatures {
+		if (feature != v2BootFeature && feature != v2LocalFeature) || feature <= last {
+			return false
+		}
+		last = feature
 	}
 	if state.Configuration != nil && (state.Configuration.LastCompletedBoot != "" || (state.Configuration.Intent != nil && state.Configuration.Intent.Kind == v2BootKind)) {
-		return len(state.RequiredFeatures) == 1
+		if !hasFeatureV2(state, v2BootFeature) {
+			return false
+		}
+	}
+	if cfg := state.Configuration; cfg != nil && (cfg.LocalServices.Candidate != nil || (cfg.Pending != nil && cfg.Pending.Domain == "local_services") || (cfg.Intent != nil && cfg.Intent.Domain == "local_services")) {
+		return hasFeatureV2(state, v2LocalFeature)
 	}
 	return true
 }
 
+func hasFeatureV2(state v2State, feature string) bool {
+	for _, f := range state.RequiredFeatures {
+		if f == feature {
+			return true
+		}
+	}
+	return false
+}
+func addFeatureV2(state *v2State, feature string) {
+	if hasFeatureV2(*state, feature) {
+		return
+	}
+	state.RequiredFeatures = append(state.RequiredFeatures, feature)
+	if len(state.RequiredFeatures) == 2 && state.RequiredFeatures[0] > state.RequiredFeatures[1] {
+		state.RequiredFeatures[0], state.RequiredFeatures[1] = state.RequiredFeatures[1], state.RequiredFeatures[0]
+	}
+}
+
 func preservesFeaturesV2(previous, next v2State) bool {
-	return len(previous.RequiredFeatures) == 0 || (len(next.RequiredFeatures) == 1 && next.RequiredFeatures[0] == v2BootFeature)
+	for _, feature := range previous.RequiredFeatures {
+		if !hasFeatureV2(next, feature) {
+			return false
+		}
+	}
+	return true
 }
 
 // This optional adapter is only assembled with the existing authenticated,
@@ -78,6 +111,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 			return ErrEngine
 		}
 	}
+	if err := c.persistRevisions(target); err != nil {
+		return err
+	}
 	previousHash, err := s.object(current)
 	if err != nil {
 		return err
@@ -96,7 +132,7 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 		return err
 	}
 	st := clone(s.state)
-	st.RequiredFeatures = []string{v2BootFeature}
+	addFeatureV2(&st, v2BootFeature)
 	st.Configuration.LastRecovery = hash
 	st.Configuration.RecoveryIndex, err = c.recoveryIndexPut(st.Configuration.RecoveryIndex, record, hash)
 	if err != nil {

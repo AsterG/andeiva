@@ -316,13 +316,13 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 			if entry.Operation != record.ID || entry.Audit != hash {
 				return errV2Unavailable
 			}
-			if hash == cfg.LastCompletedBoot && (record.Kind != v2BootKind || record.State != "final" || len(state.RequiredFeatures) != 1) {
+			if hash == cfg.LastCompletedBoot && (record.Kind != v2BootKind || record.State != "final" || !hasFeatureV2(state, v2BootFeature)) {
 				return errV2Unavailable
 			}
 			if record.State == "pending" && (cfg.Intent == nil || !cfg.Intent.Recovery || cfg.Intent.Operation != record.ID || cfg.Intent.Lease != record.Lease || cfg.Intent.OriginCommit != record.Origin) {
 				return errV2Unavailable
 			}
-			if record.Kind == v2BootKind && (len(state.RequiredFeatures) != 1 || (record.State == "pending" && (cfg.Intent.Kind != v2BootKind || cfg.Intent.BootID == nil || *cfg.Intent.BootID != *record.BootID))) {
+			if record.Kind == v2BootKind && (!hasFeatureV2(state, v2BootFeature) || (record.State == "pending" && (cfg.Intent.Kind != v2BootKind || cfg.Intent.BootID == nil || *cfg.Intent.BootID != *record.BootID))) {
 				return errV2Unavailable
 			}
 			if err := r.recovery(hash, "", key, view, depth+1); err != nil {

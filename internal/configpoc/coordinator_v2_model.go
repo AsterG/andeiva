@@ -150,8 +150,15 @@ func (state *v2Configuration) refresh() error {
 		return err
 	}
 	state.Candidate = nil
-	if state.Firewall.Candidate != nil {
-		revision, e := v2CompositeFromDomains(state.Firewall.Candidate.Revision, state.LocalServices.Running)
+	if state.Firewall.Candidate != nil || state.LocalServices.Candidate != nil {
+		firewall, local := state.Firewall.Running, state.LocalServices.Running
+		if state.Firewall.Candidate != nil {
+			firewall = state.Firewall.Candidate.Revision
+		}
+		if state.LocalServices.Candidate != nil {
+			local = state.LocalServices.Candidate.Revision
+		}
+		revision, e := v2CompositeFromDomains(firewall, local)
 		if e != nil {
 			return e
 		}
@@ -185,10 +192,6 @@ func validV2Configuration(state *v2Configuration) bool {
 				return false
 			}
 		}
-	}
-	// Local Services write/evidence mapping is intentionally unavailable in D.
-	if state.LocalServices.Candidate != nil {
-		return false
 	}
 	copy := clone(*state)
 	if copy.refresh() != nil {
@@ -231,12 +234,12 @@ func validV2Configuration(state *v2Configuration) bool {
 		return false
 	}
 	if pending := state.Pending; pending != nil {
-		if pending.Domain != "firewall" || pending.Owner == "" || pending.OriginCommit == "" || pending.Lease == "" || !validHash(pending.Previous) || pending.Target != state.Running.Hash || pending.Deadline.IsZero() {
+		if (pending.Domain != "firewall" && pending.Domain != "local_services") || pending.Owner == "" || pending.OriginCommit == "" || pending.Lease == "" || !validHash(pending.Previous) || pending.Target != state.Running.Hash || pending.Deadline.IsZero() {
 			return false
 		}
 	}
 	if intent := state.Intent; intent != nil {
-		if intent.Operation == "" || intent.Domain != "firewall" || !validHash(intent.Previous) || !validHash(intent.Target) || intent.TargetGeneration == 0 {
+		if intent.Operation == "" || (intent.Domain != "firewall" && intent.Domain != "local_services") || !validHash(intent.Previous) || !validHash(intent.Target) || intent.TargetGeneration == 0 {
 			return false
 		}
 		if intent.Kind == v2BootKind {

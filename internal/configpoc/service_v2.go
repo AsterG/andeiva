@@ -52,6 +52,9 @@ type ServiceV2 struct {
 // by the trusted installer. Opening may reconcile a durable interrupted intent
 // through those engines; it never promotes an unverified state to Running.
 func OpenServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *adminauth.Manager, firewall, local []Engine) (*ServiceV2, error) {
+	return openServiceV2(ctx, area, budget, auth, firewall, local, nil)
+}
+func openServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *adminauth.Manager, firewall, local []Engine, policy LocalPolicyV2) (*ServiceV2, error) {
 	if auth == nil {
 		return nil, ErrDenied
 	}
@@ -59,7 +62,7 @@ func OpenServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *ad
 	if err != nil {
 		return nil, err
 	}
-	c, err := openCoordinatorV2(ctx, store, firewall, local, v2CoordinatorOptions{})
+	c, err := openCoordinatorV2(ctx, store, firewall, local, v2CoordinatorOptions{LocalPolicy: policy})
 	if err != nil {
 		if c != nil {
 			c.close()
