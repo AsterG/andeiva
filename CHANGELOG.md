@@ -10,6 +10,7 @@
 - Label startup recovery audit events in English, Spanish and Portuguese, and keep long revision details within the responsive audit panel.
 - Keep runtime migration, privileged helper activation and native appliance qualification independently gated.
 - Restrict the grouped helper's legacy compatibility session to observation; policy changes remain subject to selected-state authorization.
+- Prepare a namespace-bound nft transport with fixed commands and shared strict table-presence decoding; native service activation remains gated.
 
 ## Unreleased — prepared routed composite references
 

@@ -28,3 +28,11 @@ qualificam nftables nativo, lançamento do supervisor, permissões entre três
 processos, transporte selecionado completo ou unidades implantadas.
 
 Linux: go test -race ./internal/previewruntime -run TestRoutedHelperV3 -count=1
+
+O transporte preparado `routedKernelV3` executa nft apenas com comandos e três
+nomes de tabela fixos no namespace verificado. Recebe lotes gerados pela entrada
+padrão. Limita entrada e cada saída a 512 KiB e cada processo a dois segundos
+dentro do prazo do chamador. Distingue ausência após consulta completa de falha;
+presença não comprova propriedade. Laboratório e helper compartilham o decoder
+puro. Rejeita execução no host e enums arbitrários. Não está conectado a uma
+unidade implantada; testes nativos de processos, tráfego e consumo estão pendentes.

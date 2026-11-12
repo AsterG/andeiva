@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,11 +13,9 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewallnft"
-	"github.com/AsterG/andeiva/internal/jsoncheck"
 	"github.com/AsterG/andeiva/internal/localnft"
 	"github.com/AsterG/andeiva/internal/localpolicy"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
-	"github.com/AsterG/andeiva/internal/nftengine"
 	"github.com/AsterG/andeiva/internal/nftguardian"
 	"github.com/AsterG/andeiva/internal/routedactivation"
 	"github.com/AsterG/andeiva/internal/routednft"
@@ -55,52 +51,18 @@ func groupTableName(table routedactivation.Table) (string, error) {
 }
 
 func tablePresent(data []byte, name string) (bool, error) {
-	if len(data) == 0 || len(data) > routednft.MaxObservation || !jsoncheck.UniqueFields(data) {
+	var table routedactivation.Table
+	switch name {
+	case firewallnft.TableName:
+		table = routedactivation.LegacyTable
+	case routednft.TableName:
+		table = routedactivation.RoutedTable
+	case localnft.TableName:
+		table = routedactivation.LocalTable
+	default:
 		return false, errLab
 	}
-	var envelope struct {
-		Objects []map[string]json.RawMessage `json:"nftables"`
-	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if d.Decode(&envelope) != nil || d.Decode(new(any)) != io.EOF || envelope.Objects == nil || len(envelope.Objects) > 16 {
-		return false, errLab
-	}
-	found := false
-	for i, object := range envelope.Objects {
-		if len(object) != 1 {
-			return false, errLab
-		}
-		if meta, ok := object["metainfo"]; ok && i == 0 {
-			var metadata map[string]any
-			decoder := json.NewDecoder(bytes.NewReader(meta))
-			decoder.UseNumber()
-			if decoder.Decode(&metadata) != nil || len(metadata) != 3 || metadata["version"] == nil || metadata["release_name"] == nil || metadata["json_schema_version"] == nil || !nftengine.ValidMetainfo(metadata) {
-				return false, errLab
-			}
-			continue
-		}
-		raw, ok := object["table"]
-		if !ok {
-			return false, errLab
-		}
-		var table struct {
-			Family string `json:"family"`
-			Name   string `json:"name"`
-		}
-		// Additional kernel table metadata does not establish authority. Complete
-		// rules are independently verified after this successful presence query.
-		if json.Unmarshal(raw, &table) != nil || table.Family == "" || table.Name == "" {
-			return false, errLab
-		}
-		if table.Family == "inet" && table.Name == name {
-			if found {
-				return false, errLab
-			}
-			found = true
-		}
-	}
-	return found, nil
+	return routedactivation.TablePresence(data, table)
 }
 
 func (k groupKernel) Observe(ctx context.Context, table routedactivation.Table) ([]byte, bool, error) {

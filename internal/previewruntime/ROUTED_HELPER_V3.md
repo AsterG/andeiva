@@ -34,3 +34,13 @@ Full supervisor launch, three-process permissions, complete selected-store
 transport and deployed units remain separate integration gates.
 
 Linux: go test -race ./internal/previewruntime -run TestRoutedHelperV3 -count=1
+
+The prepared `routedKernelV3` transport executes only the fixed nft executable
+inside the already verified gateway namespace. Commands and the three table
+names are fixed; generated batches arrive on standard input. Requests and both
+output streams are bounded to 512 KiB, subprocesses to two seconds within the
+caller deadline. Successful table-list absence is distinct from query failure;
+presence alone never establishes ownership. The laboratory and helper reuse
+the same pure presence decoder. Host execution and arbitrary enum dispatch are
+rejected. This transport is not wired to a deployed unit; native process,
+packet and resource qualification remain pending.
