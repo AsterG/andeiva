@@ -39,6 +39,7 @@ import (
 
 const nativeSeedRoleV3 = "--andeiva-native-seed-v3"
 const nativeReaderGIDV3 = 62004
+const nativeRetirementFileV3 = "fd-test-retirement-receipt"
 
 var nativeIdentitiesV3 = Identities{SchemaVersion: 1, APIUID: 62001, APIGID: 62001, HelperUID: 62002, IPCGID: 62003}
 
@@ -95,15 +96,16 @@ type nativeSeedResultV3 struct {
 	Profiles [3]recoveryreserve.ProfileV2
 }
 type nativeReportV3 struct {
-	Role                                   string `json:"role"`
-	PID, UID, GID, PeerPID                 int
-	Groups                                 []int
-	Caps                                   map[string]string
-	Namespace, Epoch, Generation           uint64
-	ReadOnlyDescriptors                    int
-	Running, Observed                      string
-	FactoryOpened                          bool
-	Integrity, PrivateRoot, IntegrityReady bool
+	Role                                           string `json:"role"`
+	PID, UID, GID, PeerPID                         int
+	Groups                                         []int
+	Caps                                           map[string]string
+	Namespace, Epoch, Generation                   uint64
+	ReadOnlyDescriptors                            int
+	Running, Observed                              string
+	FactoryOpened                                  bool
+	Integrity, PrivateRoot, IntegrityReady         bool
+	FreshScope, RetirementFD, RetirementPathDenied bool
 }
 type nativeCloseV3 func() error
 
@@ -111,6 +113,12 @@ func (f nativeCloseV3) Close() error { return f() }
 
 func nativeReportProcessV3(role string, c RoutedLaunchContextV3) (nativeReportV3, error) {
 	r := nativeReportV3{Integrity: c.Integrity, PrivateRoot: c.IntegrityRoot != nil, Role: role, PID: os.Getpid(), UID: os.Getuid(), GID: os.Getgid(), PeerPID: int(c.PeerPID), Epoch: c.Epoch, Caps: map[string]string{}}
+	r.FreshScope = c.FreshScopeEnabled
+	if err := nativeRetirementAccessV3(role, c); err != nil {
+		return r, err
+	}
+	r.RetirementFD = c.FreshScope != nil
+	r.RetirementPathDenied = c.FreshScopeEnabled
 	var err error
 	r.Groups, err = os.Getgroups()
 	if err != nil {
@@ -131,6 +139,68 @@ func nativeReportProcessV3(role string, c RoutedLaunchContextV3) (nativeReportV3
 		}
 	}
 	return r, nil
+}
+
+// This checks descriptor isolation only. The fixture receipt below does not
+// attest that any old process or namespace was actually retired.
+func nativeRetirementAccessV3(role string, c RoutedLaunchContextV3) error {
+	if !c.FreshScopeEnabled {
+		if c.FreshScope != nil {
+			return errors.New("receipt inherited without fresh-scope opt-in")
+		}
+		return nil
+	}
+	path := "/proc/self/fd/5/../" + nativeRetirementFileV3
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	file, openErr := os.Open(path)
+	if file != nil {
+		_ = file.Close()
+	}
+	if !errors.Is(openErr, os.ErrPermission) {
+		return errors.New("root receipt reopen was not denied")
+	}
+	if _, err := os.ReadFile(path); !errors.Is(err, os.ErrPermission) {
+		return errors.New("root receipt path read was not denied")
+	}
+	if role == "helper" {
+		if c.FreshScope == nil || c.FreshScope.Receipt == nil || c.FreshScope.Receipt.Fd() != 14 {
+			return errors.New("helper missing inherited receipt FD14")
+		}
+		pinned, err := c.FreshScope.Receipt.Stat()
+		if err != nil || !os.SameFile(info, pinned) {
+			return errors.New("helper receipt descriptor differs from root file")
+		}
+		if _, err := readRetirementFileV3(c.FreshScope.Receipt, c.FreshScope.Binding); err != nil {
+			return err
+		}
+		if _, err := c.FreshScope.Receipt.WriteAt([]byte{0}, 0); !errors.Is(err, unix.EBADF) {
+			return errors.New("helper receipt descriptor permitted a write")
+		}
+		return nil
+	}
+	if role != "api" || c.FreshScope != nil {
+		return errors.New("API received private receipt or binding")
+	}
+	files, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		pinned, err := os.Stat("/proc/self/fd/" + file.Name())
+		if errors.Is(err, os.ErrNotExist) { // ReadDir's closed descriptor can appear.
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if os.SameFile(info, pinned) {
+			return errors.New("API inherited root receipt descriptor")
+		}
+	}
+	return nil
 }
 func nativeEmitV3(r nativeReportV3) error {
 	data, err := json.Marshal(r)
@@ -252,6 +322,9 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 			return out, err
 		},
 		API: func(ctx context.Context, c RoutedLaunchContextV3) (out OperationsRuntimeOptionsV2, cleanup io.Closer, err error) {
+			if err := nativeRetirementAccessV3("api", c); err != nil {
+				return out, nil, err
+			}
 			step := "api-read-auth"
 			defer func() {
 				if err != nil {
@@ -328,7 +401,7 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 					return out, cleanup, err
 				}
 			}
-			out = OperationsRuntimeOptionsV2{Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
+			out = OperationsRuntimeOptionsV2{RoutedFreshScope: c.FreshScopeEnabled, Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
 			fmt.Fprintln(os.Stderr, "ANDEIVA_NATIVE_STEP api-options-prepared")
 			return out, cleanup, nil
 		},
@@ -485,9 +558,12 @@ func (b *nativeLogV3) Write(p []byte) (int, error) {
 }
 func (b *nativeLogV3) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.buffer.String() }
 
-func TestNativeRoutedLaunchV3(t *testing.T)          { testNativeRoutedLaunchV3(t, false) }
-func TestNativeRoutedIntegrityLaunchV3(t *testing.T) { testNativeRoutedLaunchV3(t, true) }
-func testNativeRoutedLaunchV3(t *testing.T, integrity bool) {
+func TestNativeRoutedLaunchV3(t *testing.T)          { testNativeRoutedLaunchV3(t, false, false) }
+func TestNativeRoutedIntegrityLaunchV3(t *testing.T) { testNativeRoutedLaunchV3(t, true, false) }
+func TestNativeRoutedIntegrityFreshScopeLaunchV3(t *testing.T) {
+	testNativeRoutedLaunchV3(t, true, true)
+}
+func testNativeRoutedLaunchV3(t *testing.T, integrity, freshScope bool) {
 	if os.Getenv("ANDEIVA_NATIVE_LAUNCH_V3") != "1" {
 		t.Skip("requires authorized isolated root laboratory harness")
 	}
@@ -662,7 +738,12 @@ func testNativeRoutedLaunchV3(t *testing.T, integrity bool) {
 			t.Fatal("failed preparation changed marker", e)
 		}
 	}
-	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
+	var retirement *RoutedFreshScopeOptionsV3
+	if freshScope {
+		retirement = nativeRetirementReceiptV3(t, base, metadata)
+		defer retirement.Receipt.Close()
+	}
+	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{FreshScope: retirement, Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
 	if e != nil {
 		t.Fatalf("native launch failed: %v\n%s", e, logs.String())
 	}
@@ -701,6 +782,9 @@ func testNativeRoutedLaunchV3(t *testing.T, integrity bool) {
 				t.Fatal("preparer identity/capless namespace mismatch", r)
 			}
 		} else if r.Role == "helper" {
+			if r.FreshScope != freshScope || r.RetirementFD != freshScope || r.RetirementPathDenied != freshScope {
+				t.Fatal("helper retirement descriptor/profile mismatch", r)
+			}
 			if r.Integrity != integrity || r.PrivateRoot != integrity {
 				t.Fatal("helper integrity profile mismatch", r)
 			}
@@ -713,6 +797,9 @@ func testNativeRoutedLaunchV3(t *testing.T, integrity bool) {
 				t.Fatal("helper groups differ", r.Groups)
 			}
 		} else if r.Role == "api" {
+			if r.FreshScope != freshScope || r.RetirementFD || r.RetirementPathDenied != freshScope {
+				t.Fatal("API received retirement authority or wrong capability", r)
+			}
 			if r.Integrity != integrity || r.PrivateRoot || (integrity && !r.IntegrityReady) {
 				t.Fatal("API integrity/root/readiness mismatch", r)
 			}
@@ -746,6 +833,60 @@ func testNativeRoutedLaunchV3(t *testing.T, integrity bool) {
 		t.Fatalf("incomplete native reports %d/%d: %s", helpers, apis, logs.String())
 	}
 	t.Log("real helper/API identities, native table absence, grouped boot/readback and retained-helper API restart passed; no traffic or descendant cleanup qualification")
+	if freshScope {
+		t.Log("root receipt FD14 readable only by helper; API receipt inheritance, reopening and reading denied before and after API restart; fictitious old identity, no retirement/recovery qualification")
+	}
+}
+
+func nativeRetirementReceiptV3(t *testing.T, base string, m Metadata) *RoutedFreshScopeOptionsV3 {
+	t.Helper()
+	identity := networkexecutor.OwnedNamespaceIdentity{UID: nativeIdentitiesV3.HelperUID, GID: nativeIdentitiesV3.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}
+	// Deliberately fictitious old scope: this test exercises FD ownership only.
+	old := identity
+	old.Namespace = 1
+	for old.Namespace == identity.Namespace || old.Namespace == identity.Host {
+		old.Namespace++
+	}
+	old.RunID = strings.Repeat("a", 32)
+	if old.RunID == identity.RunID {
+		old.RunID = strings.Repeat("b", 32)
+	}
+	var now unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_BOOTTIME, &now); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := EncodeRootRetirementReceiptV3(RootRetirementReceiptV3{Version: 3, Old: old, MetadataSHA256: strings.Repeat("a", 64), DrainedAtBootNS: now.Nano()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(base, nativeRetirementFileV3)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+	if err = file.Chown(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Chmod(0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = file.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err = errors.Join(file.Sync(), file.Close()); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := RoutedFreshScopeBindingV3{ReceiptSHA256: retirementDigestV3(raw), NewIdentity: identity}
+	if _, err = readRetirementFileV3(reader, binding); err != nil {
+		_ = reader.Close()
+		t.Fatal(err)
+	}
+	return &RoutedFreshScopeOptionsV3{Receipt: reader, Binding: binding}
 }
 
 // The trusted offline preparer is supplied by the configuration module; it
