@@ -34,6 +34,7 @@ RuntimeDirectoryPreserve=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateMounts=yes
 PrivateDevices=yes
 # /proc/sys/net must resolve in the executing namespace, never a bind-mounted
 # host net subtree. Every write uses the fixed namespace-bound executor.

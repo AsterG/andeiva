@@ -30,3 +30,5 @@ printf 'PASS: administration stop/failure does not propagate to helper or namesp
 printf 'PASS: grouped Root FD store is bounded and main-only; writes use exact preallocated slots\n'
 
 [[ $(value andeiva-preview-grouped.service Delegate) = no ]]
+
+[[ $(value andeiva-preview-grouped.service PrivateMounts) = yes ]]

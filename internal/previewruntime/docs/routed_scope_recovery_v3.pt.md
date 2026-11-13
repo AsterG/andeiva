@@ -30,15 +30,39 @@ retirada existente. Somente recibo concluído exato e armazenamento vazio permit
 limpar o manifest. Ausência de caminhos e fechamento de FD não equivalem à
 destruição RCU síncrona. Falha preserva evidência e impede recibo falso.
 
-**A recuperação após queda continua bloqueada.** Anchors herdados são validados,
-mas rejeitados antes de criar outro scope. `ENODEV`, caminho ausente, cgroup
-substituto ou manifest isolado não autorizam limpeza. A observação nativa do
-antigo `cgroup.events` ainda não é autoridade de retirada. Não há promessa de
-persistência dos FD após reboot do OS, suspensão ou perda de energia.
+O consumidor experimental do mesmo boot vincula anchors herdados ao trabalho
+CURRENT selecionado pelo leitor privado sem capacidades. Root mantém o
+`checkpoint.lock` existente durante todo o processo. G1/R2 completo seleciona
+DHCP, Boot, Pending ou Active; rejeita correspondências históricas, corrupção,
+intents comuns não suportados e scopes ainda não selecionados. Não fabrica um
+scope inicial antes de L2.
+
+O caminho de cgroup vivo exige invocação não delegada, sem filhos e zero membros
+no grupo antigo distinto, ou apenas Root se o mesmo grupo foi reutilizado.
+**O ramo de desativação `ENODEV` permanece bloqueado até revisão independente**,
+mesmo com observação nativa do FD antigo. Ausência de caminhos ou grupos
+substitutos não prova drenagem. Não acrescenta recuperação após reboot do OS,
+suspensão ou perda de energia.
+
+Após prova selecionada e drenagem, comandos fixos fecham forwarding IPv4/IPv6,
+verificam-no e removem apenas filhos MACVLAN privados reconhecidos do namespace
+retido distinto do host. Revalidam o seletor antes de detach e antes de liberar
+o armazenamento. Uma thread dedicada entra no mount namespace privado retido,
+confere pin gateway e underlay exatos, desmonta e remove o arquivo; seu contexto
+de filesystem não retorna ao pool do Go. A limpeza aceita apenas metadata exata,
+netns ancorado, api vazio e os dois sockets IPC tipados. Root usa CAP_CHOWN
+existente somente no diretório IPC comprovado após drenagem. Entradas desconhecidas
+ou alteradas bloqueiam; sem remoção recursiva ou capacidades adicionais. Drop
+verificado, fechamento de pins e conferência do lock precedem o recibo, que não
+afirma rollback de endereços nem renovação do lease.
+
+Detach/chown/unlink parcial pode exigir inspeção do operador; propriedade incerta
+ou ausência de anchors não é sucesso idempotente. A retirada após queda no mesmo
+boot ainda não tem qualificação nativa.
 
 Os testes focais usam doubles explícitos do manager e transferência Unix real
 para barriers. Não qualificam armazenamento systemd nativo nem teardown
-privilegiado. Qualificação nativa de armazenamento, parada, falhas parciais,
+privilegiado. Qualificação nativa de parada, falhas parciais,
 SIGKILL e recursos permanece pendente. Nenhum host ou appliance foi ativado.
 
 ```sh
@@ -53,7 +77,7 @@ bash packaging/preview/tests/api-lifetime-unit-graph.sh
 [notification barriers and FDPOLL](https://www.freedesktop.org/software/systemd/man/257/sd_notify.html),
 [manager readback](https://github.com/systemd/systemd/blob/v257/src/analyze/analyze-fdstore.c).
 
-## Qualificação nativa do armazenamento (opt-in, ainda não executada)
+## Qualificação nativa do armazenamento (opt-in)
 
 `TestRoutedScopeRecoveryV3NativeStore` deve executar diretamente como MainPID de
 `andeiva-preview-grouped.service` transitória em cliente Debian 13 isolado, onde
@@ -88,4 +112,8 @@ systemd-run --unit=andeiva-preview-grouped.service --wait --pipe \
   -test.run=^TestRoutedScopeRecoveryV3NativeStore$ -test.v -test.timeout=30s
 ```
 
-A captura inicial também verifica que o manager identifica este processo Root como MainPID, o cgroup fixo e Delegate=no. O manifest registra InvocationID; rejeita controles do cgroup delegados ou graváveis por grupo/outros. O parser do events antigo distingue estado populated vivo de ENODEV no FD original exato, mas nenhuma observação habilita teardown. A retirada após queda ainda exige leitor G1/R2 completo autenticado e o bloqueio de publicação existente; o manifest não fabrica prova do estado selecionado.
+A captura inicial também verifica que o manager identifica este processo Root como MainPID, o cgroup fixo e Delegate=no. O manifest registra InvocationID; rejeita controles do cgroup delegados ou graváveis por grupo/outros.
+
+A fixture anterior Store/Drop de sete anchors passou no Debian 13 em 0.11s, com
+invariantes externos do host inalterados. CPU/RAM não estavam disponíveis.
+Não qualifica o novo consumidor de retirada nem suas falhas parciais.
