@@ -287,13 +287,33 @@ type routedDHCPJobClientV4 struct {
 	failed   bool
 }
 
-func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work configpoc.RoutedWorkReferenceV1) (routedDHCPJobReplyV4, []*os.File, error) {
+func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work configpoc.RoutedWorkReferenceV1) (reply routedDHCPJobReplyV4, returned []*os.File, result error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out routedDHCPJobReplyV4
 	if c.failed || ctx == nil || ctx.Err() != nil || c.sequence == math.MaxUint64 {
 		return out, nil, ErrUnavailable
 	}
+	callbackDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(callbackDone)
+		_ = c.conn.Close()
+	})
+	defer func() {
+		if !stop() {
+			<-callbackDone
+		}
+		// Cancellation can race with a valid reply. Drain the close callback and
+		// discard every transferred capability before releasing client ownership.
+		if ctx.Err() != nil {
+			for _, file := range returned {
+				_ = file.Close()
+			}
+			c.failed = true
+			_ = c.conn.Close()
+			reply, returned, result = routedDHCPJobReplyV4{}, nil, ErrUnavailable
+		}
+	}()
 	c.sequence++
 	q := routedDHCPJobV4{4, c.metadata.RunID, c.metadata.GatewayNamespace, c.sequence, op, work}
 	deadline := time.Now().Add(configpoc.IntegrityInspectionDeadlineV1)
@@ -306,7 +326,7 @@ func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work config
 		}
 		c.failed = true
 		_ = c.conn.Close()
-		return out, nil, ErrUnavailable
+		return routedDHCPJobReplyV4{}, nil, ErrUnavailable
 	}
 	if !routedDHCPJobValidV4(q, c.metadata, c.sequence-1) || c.conn.SetDeadline(deadline) != nil || routedDHCPJobSendV4(c.conn, q, nil) != nil {
 		return fail(nil)
@@ -316,7 +336,7 @@ func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work config
 	if op == "prepare" {
 		want = 3
 	}
-	if err != nil || out.Job != q || out.Unavailable || len(files) != want || (out.Binding != nil) != (op == "prepare") {
+	if err != nil || ctx.Err() != nil || out.Job != q || out.Unavailable || len(files) != want || (out.Binding != nil) != (op == "prepare") {
 		return fail(files)
 	}
 	return out, files, nil

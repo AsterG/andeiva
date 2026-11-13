@@ -4,7 +4,9 @@ package previewruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -280,5 +282,318 @@ func TestRoutedDHCPJobsV4OnlyCompleteInspectionMayActivate(t *testing.T) {
 	result, err = s.dispatch(ctx, check)
 	if !errors.Is(err, ErrUnavailable) || result.(firewallipc.RoutedIntegrityResultV3).Result.State == configpoc.IntegrityCompleteV1 || result.(firewallipc.RoutedIntegrityResultV3).DHCPSelected {
 		t.Fatal("failed activation claimed readiness", err)
+	}
+}
+
+func jobDescriptorReferencesV4(t *testing.T, target string) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		value, err := os.Readlink("/proc/self/fd/" + entry.Name())
+		if err == nil && value == target {
+			count++
+		}
+	}
+	return count
+}
+
+func TestRoutedDHCPJobsV4TruncatedRightsCloseEveryInstalledDescriptor(t *testing.T) {
+	r, h, peer := jobChannelFixtureV4(t)
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	defer write.Close()
+	target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", write.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := jobDescriptorReferencesV4(t, target)
+	if baseline != 2 {
+		t.Fatalf("unexpected fresh pipe references: %d", baseline)
+	}
+	// Bypass the trusted send wrapper to emulate a malformed peer. Thirty-two
+	// rights exceed the receiver's four-FD ancillary allocation even without creds.
+	fds := make([]int, 32)
+	for i := range fds {
+		fds[i] = int(write.Fd())
+	}
+	data, err := json.Marshal(routedDHCPJobReplyV4{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = h.WriteMsgUnix(data, unix.UnixRights(fds...), nil); err != nil {
+		t.Fatal(err)
+	}
+	// Peek the same queued datagram with exactly the production ancillary size,
+	// proving MSG_CTRUNC rather than merely testing the ordinary >3-FD rejection.
+	raw, err := r.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oob := make([]byte, unix.CmsgSpace(4*4)+unix.CmsgSpace(unix.SizeofUcred))
+	var on, flags int
+	var peekErr error
+	if err = raw.Control(func(fd uintptr) {
+		_, on, flags, _, peekErr = unix.Recvmsg(int(fd), make([]byte, routedDHCPJobFrameV4+1), oob, unix.MSG_PEEK|unix.MSG_CMSG_CLOEXEC)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	controls, parseErr := unix.ParseSocketControlMessage(oob[:on])
+	installed := 0
+	for _, control := range controls {
+		if control.Header.Level == unix.SOL_SOCKET && control.Header.Type == unix.SCM_RIGHTS {
+			rights, err := unix.ParseUnixRights(&control)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, fd := range rights {
+				installed++
+				if err := unix.Close(fd); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	if peekErr != nil || parseErr != nil || flags&unix.MSG_CTRUNC == 0 || installed == 0 || installed >= len(fds) {
+		t.Fatalf("truncation not exercised: flags=%d installed=%d read=%v parse=%v", flags, installed, peekErr, parseErr)
+	}
+	if got := jobDescriptorReferencesV4(t, target); got != baseline {
+		t.Fatalf("peek leaked descriptors: got %d, want %d", got, baseline)
+	}
+	var reply routedDHCPJobReplyV4
+	files, err := routedDHCPJobReceiveV4(r, peer, &reply)
+	for _, file := range files {
+		_ = file.Close()
+	}
+	if err == nil || len(files) != 0 {
+		t.Fatal("truncated rights accepted", err, len(files))
+	}
+	if got := jobDescriptorReferencesV4(t, target); got != baseline {
+		t.Fatalf("rejected datagram leaked descriptors: got %d, want %d", got, baseline)
+	}
+}
+
+func TestRoutedDHCPJobsV4CancellationAfterSendRejectsLateReply(t *testing.T) {
+	o := newJobOwnerFixtureV4(t)
+	m, work, _ := jobSourceFixtureV4(t, o.binding)
+	r, h, peer := jobChannelFixtureV4(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := &routedDHCPJobClientV4{conn: h, metadata: m, peer: peer}
+	done := make(chan error, 1)
+	go func() {
+		reply, files, err := client.call(ctx, "prepare", work)
+		if reply != (routedDHCPJobReplyV4{}) || len(files) != 0 {
+			t.Error("cancelled call exposed response or descriptors")
+		}
+		for _, file := range files {
+			_ = file.Close()
+		}
+		done <- err
+	}()
+	var request routedDHCPJobV4
+	files, err := routedDHCPJobReceiveV4(r, peer, &request)
+	for _, file := range files {
+		_ = file.Close()
+	}
+	if err != nil || request.Operation != "prepare" {
+		t.Fatal("request was not sent", err)
+	}
+	// Reception proves cancellation occurs after send, before any response.
+	cancel()
+	f, binding, err := o.TakeReaderFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	baseline := map[string]int{}
+	for _, file := range []*os.File{f.Request, f.Reply, f.ProducerPIDFD} {
+		target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", file.Fd()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		baseline[target] = jobDescriptorReferencesV4(t, target)
+	}
+	// Cancellation may already have closed the peer; either outcome must reject
+	// the late response, never hand its capabilities to the caller.
+	_ = routedDHCPJobSendV4(r, routedDHCPJobReplyV4{Job: request, Binding: &binding}, []*os.File{f.Request, f.Reply, f.ProducerPIDFD})
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled call accepted a late valid reply and descriptors")
+		}
+	case <-time.After(time.Second):
+		_ = client.Close()
+		<-done
+		t.Fatal("cancellation did not interrupt the outstanding call")
+	}
+	for target, want := range baseline {
+		if got := jobDescriptorReferencesV4(t, target); got != want {
+			t.Fatalf("late reply leaked %s descriptors: got %d, want %d", target, got, want)
+		}
+	}
+	if !client.failed {
+		t.Fatal("cancelled channel remained reusable")
+	}
+	if reply, files, err := client.call(context.Background(), "prepare", work); err == nil || reply != (routedDHCPJobReplyV4{}) || len(files) != 0 {
+		t.Fatal("failed channel was reused")
+	}
+}
+
+func TestRoutedDHCPJobsV4CancelledBeforeCallSendsNothing(t *testing.T) {
+	binding, _ := routedDeferredFixtureV4(t)
+	m, work, _ := jobSourceFixtureV4(t, binding)
+	r, h, peer := jobChannelFixtureV4(t)
+	client := &routedDHCPJobClientV4{conn: h, metadata: m, peer: peer}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	reply, files, err := client.call(ctx, "prepare", work)
+	if err == nil || reply != (routedDHCPJobReplyV4{}) || len(files) != 0 || client.sequence != 0 {
+		t.Fatal("pre-cancelled call emitted a request or returned capabilities", err)
+	}
+	raw, err := r.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receiveErr error
+	if err = raw.Control(func(fd uintptr) {
+		_, _, _, _, receiveErr = unix.Recvmsg(int(fd), make([]byte, 1), nil, unix.MSG_DONTWAIT)
+	}); err != nil || !errors.Is(receiveErr, unix.EAGAIN) {
+		t.Fatalf("pre-cancelled call left channel activity: control=%v receive=%v", err, receiveErr)
+	}
+}
+
+func TestRoutedDHCPJobsV4CancellationWithoutReplyClosesChannel(t *testing.T) {
+	binding, _ := routedDeferredFixtureV4(t)
+	m, work, _ := jobSourceFixtureV4(t, binding)
+	r, h, peer := jobChannelFixtureV4(t)
+	client := &routedDHCPJobClientV4{conn: h, metadata: m, peer: peer}
+	ctx, cancel := context.WithCancel(context.Background()) // No deadline to wake ReadMsgUnix.
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		reply, files, err := client.call(ctx, "prepare", work)
+		if reply != (routedDHCPJobReplyV4{}) || len(files) != 0 {
+			t.Error("cancelled call returned capabilities")
+		}
+		for _, file := range files {
+			_ = file.Close()
+		}
+		done <- err
+	}()
+	var request routedDHCPJobV4
+	files, err := routedDHCPJobReceiveV4(r, peer, &request)
+	for _, file := range files {
+		_ = file.Close()
+	}
+	if err != nil || request.Operation != "prepare" {
+		t.Fatal("request was not sent", err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !client.failed {
+			t.Fatal("cancellation did not permanently close the channel", err)
+		}
+	case <-time.After(time.Second):
+		_ = client.Close()
+		<-done
+		t.Fatal("cancelled read remained blocked without a response")
+	}
+}
+
+type jobActivationFixtureV4 struct {
+	*jobOwnerFixtureV4
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (o *jobActivationFixtureV4) Activate(ctx context.Context) error {
+	o.active.Add(1)
+	close(o.entered)
+	select {
+	case <-o.done:
+		return ErrUnavailable
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-o.release:
+		return nil
+	}
+}
+
+func TestRoutedDHCPJobsV4DeathOrChannelLossDuringActivation(t *testing.T) {
+	for _, loseOwner := range []bool{true, false} {
+		name := "channel-loss"
+		if loseOwner {
+			name = "owner-death"
+		}
+		t.Run(name, func(t *testing.T) {
+			o := &jobActivationFixtureV4{jobOwnerFixtureV4: newJobOwnerFixtureV4(t), entered: make(chan struct{}), release: make(chan struct{})}
+			m, work, source := jobSourceFixtureV4(t, o.binding)
+			b := &routedDHCPJobBrokerV4{preflight: func(context.Context, configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error) {
+				return source, nil
+			}, prepare: func(context.Context, networkplan.Revision) (routedDHCPJobOwnerV4, error) { return o, nil }}
+			r, h, peer := jobChannelFixtureV4(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			serverDone := make(chan error, 1)
+			go func() { serverDone <- b.serve(ctx, r, m, peer) }()
+			client := &routedDHCPJobClientV4{conn: h, metadata: m, peer: peer}
+			_, files, err := client.call(ctx, "prepare", work)
+			for _, file := range files {
+				_ = file.Close()
+			}
+			if err != nil {
+				t.Fatal("prepare", err)
+			}
+			clientDone := make(chan error, 1)
+			go func() {
+				reply, files, err := client.call(ctx, "activate", work)
+				if reply != (routedDHCPJobReplyV4{}) || len(files) != 0 {
+					t.Error("failed activation exposed acknowledgement or descriptors")
+				}
+				for _, file := range files {
+					_ = file.Close()
+				}
+				clientDone <- err
+			}()
+			select {
+			case <-o.entered:
+			case <-ctx.Done():
+				t.Fatal("Activate did not enter")
+			}
+			if loseOwner {
+				// Simulated producer death while Activate is awaiting its private ACK.
+				_ = o.Close()
+			} else {
+				_ = client.Close()
+				close(o.release)
+			}
+			select {
+			case err := <-clientDone:
+				if err == nil {
+					t.Fatal("lost activation authority accepted")
+				}
+			case <-ctx.Done():
+				t.Fatal("client did not drain")
+			}
+			select {
+			case err := <-serverDone:
+				if err == nil {
+					t.Fatal("lost activation channel accepted")
+				}
+			case <-ctx.Done():
+				t.Fatal("broker did not drain")
+			}
+			if o.closed.Load() != 1 || !client.failed || loseOwner && b.active {
+				t.Fatal("owner retained or failed activation/channel reused")
+			}
+		})
 	}
 }
