@@ -90,7 +90,7 @@ fi
 [[ $(timeout 4s systemctl show -p MainPID --value "$unit") == 0 ]]
 [[ $(timeout 4s systemctl show -p NRestarts --value "$unit") == 1 ]]
 invocation=$(timeout 4s systemctl show -p InvocationID --value "$unit")
-[[ $invocation =~ ^[a-f0-9]{32}$ && $(cat "$root/fixture/recovery-attempt") == "$invocation" ]]
+[[ $invocation =~ ^[a-f0-9]{32}$ && $(cat "$root/fixture/recovery-attempt-$invocation") == "$invocation" ]]
 [[ $(timeout 4s systemctl show -p RootDirectory --value "$unit") == "$root" ]]
 [[ $(timeout 4s systemctl show -p Result --value "$unit") == success ]]
 [[ $(timeout 4s systemctl show -p ExecMainCode --value "$unit") == 1 ]]

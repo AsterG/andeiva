@@ -39,10 +39,13 @@ scope inicial antes de L2.
 
 O caminho de cgroup vivo exige invocação não delegada, sem filhos e zero membros
 no grupo antigo distinto, ou apenas Root se o mesmo grupo foi reutilizado.
-**O ramo de desativação `ENODEV` permanece bloqueado até revisão independente**,
-mesmo com observação nativa do FD antigo. Ausência de caminhos ou grupos
-substitutos não prova drenagem. Não acrescenta recuperação após reboot do OS,
-suspensão ou perda de energia.
+A nova rota exige ENODEV sem bytes no FD original autenticado, inodes antigo e
+atual distintos no mesmo dispositivo e invocações reais distintas. Revalida
+seleção exata sob o lock original, sete anchors, BootID/host atuais, unidade não
+delegada e drenagem com somente Root. ENOENT, leitura parcial, identidade alterada
+ou qualquer prova falha recusam. Revisão independente e qualificação nativa
+pendentes; a tentativa anterior parou na antiga recusa ENODEV mantendo sete FD.
+Não acrescenta recuperação após reboot do OS, suspensão ou perda de energia.
 
 Após prova selecionada e drenagem, comandos fixos fecham forwarding IPv4/IPv6,
 verificam-no e removem apenas filhos MACVLAN privados reconhecidos do namespace

@@ -38,10 +38,15 @@ Active work; historical matches, corruption, unsupported ordinary intents and
 missing selected scope are refused. No initial scope is fabricated before L2.
 
 The live-cgroup path requires a nondelegated invocation, no children and either
-zero members in a distinct old group or Root alone in a reused group. **The
-`ENODEV` deactivation branch remains blocked pending independent review**, even
-though native observation of that old events FD is available. Missing paths or
-replacement groups never establish drainage. No OS-reboot, suspend or power-loss
+zero members in a distinct old group or Root alone in a reused group. The new
+deactivation path requires ENODEV with zero bytes on the authenticated original
+events FD, distinct old/current cgroup inodes on the same device, and distinct
+actual invocations. Exact selected work under the original lock, all seven
+anchors, current BootID/host namespace, current nondelegated unit and Root-only
+drainage are revalidated before success. ENOENT, partial reads, changed identity
+or any failed proof still refuse. Independent review and native retirement
+qualification are pending; the prior native attempt stopped at the former
+ENODEV rejection with seven FDs retained. No OS-reboot, suspend or power-loss
 recovery is added here.
 
 After selected proof and drainage, fixed commands close IPv4/IPv6 forwarding,

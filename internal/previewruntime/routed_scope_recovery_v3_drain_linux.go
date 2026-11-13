@@ -79,55 +79,146 @@ func scopeRecoveryLiveCgroupV3(ctx context.Context, directory *os.File, allowSel
 	}
 	return ctx.Err()
 }
-func (r *RoutedScopeRecoveryV3) checkDrainedV3(ctx context.Context) error {
-	if r == nil || ctx == nil || ctx.Err() != nil {
+
+// These callbacks are assembled only from retained Root handles below. Keeping
+// the ordering separate permits failure tests without simulating a real cgroup.
+type scopeRecoveryDrainChecksV3 struct {
+	selected, anchors, currentLive, drained func() error
+	unit                                    func() (scopeRecoveryUnitV3, error)
+	current                                 func() (RoutedScopeRecoveryFileV3, error)
+	events                                  func() ([]byte, error)
+	oldLive                                 func(bool) error
+}
+
+func verifyScopeRecoveryDrainV3(ctx context.Context, old RoutedScopeRecoveryFileV3, invocation string, c scopeRecoveryDrainChecksV3) error {
+	if ctx == nil || ctx.Err() != nil || c.selected == nil || c.anchors == nil || c.unit == nil || c.current == nil || c.events == nil || c.oldLive == nil || c.currentLive == nil || c.drained == nil {
+		return ErrIdentity
+	}
+	if err := c.selected(); err != nil {
+		return err
+	}
+	if err := c.anchors(); err != nil {
+		return err
+	}
+	unit, err := c.unit()
+	if err != nil || unit.mainPID <= 1 {
+		return ErrIdentity
+	}
+	current, err := c.current()
+	if err != nil {
+		return err
+	}
+	raw, readErr := c.events()
+	deactivated, populated, err := scopeRecoveryOldEventsObservationV3(raw, readErr, old, current, invocation, unit.invocation)
+	if err != nil {
+		return err
+	}
+	if !deactivated {
+		same := current == old
+		if populated != same {
+			return ErrUnavailable
+		}
+		if err = c.oldLive(same); err != nil {
+			return err
+		}
+	}
+	// ENODEV on the original core events FD excludes live access to that removed
+	// cgroup; it says nothing about the replacement group's descendants. Both
+	// selected-state checks and current-group drainage remain mandatory.
+	if err = c.currentLive(); err != nil {
+		return err
+	}
+	if err = c.drained(); err != nil {
+		return err
+	}
+	if err = c.selected(); err != nil {
+		return err
+	}
+	if err = c.anchors(); err != nil {
+		return err
+	}
+	finalUnit, err := c.unit()
+	if err != nil || finalUnit != unit {
+		return ErrIdentity
+	}
+	finalGroup, err := c.current()
+	if err != nil || finalGroup != current {
+		return ErrIdentity
+	}
+	raw, readErr = c.events()
+	againDeactivated, againPopulated, err := scopeRecoveryOldEventsObservationV3(raw, readErr, old, current, invocation, unit.invocation)
+	if err != nil || againDeactivated != deactivated || againPopulated != populated {
+		return ErrIdentity
+	}
+	if !deactivated {
+		if err = c.oldLive(current == old); err != nil {
+			return err
+		}
+	}
+	if err = c.currentLive(); err != nil {
+		return err
+	}
+	if err = c.drained(); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+func scopeRecoveryRuntimeIdentityV3(m Metadata, boot []byte, process, thread uint64) error {
+	actual, err := canonicalBoot(boot)
+	if m.ValidateRouted() != nil || err != nil || actual != m.BootID || process != m.HostNamespace || thread != m.HostNamespace {
+		return ErrIdentity
+	}
+	return nil
+}
+
+func (r *RoutedScopeRecoveryV3) checkDrainedV3(ctx context.Context, checkSelected func() error) error {
+	if r == nil || ctx == nil || ctx.Err() != nil || checkSelected == nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return ErrIdentity
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.revalidateLocked(ctx) != nil {
-		return ErrIdentity
-	}
-	unit, err := readScopeRecoveryUnitV3(ctx)
-	if err != nil {
-		return err
-	}
 	group, err := os.Open("/sys/fs/cgroup" + routedSupervisorCgroupV3)
 	if err != nil {
 		return err
 	}
 	defer group.Close()
-	current, _, err := scopeRecoveryIdentityV3(group)
-	if err != nil {
-		return err
+	checks := scopeRecoveryDrainChecksV3{
+		selected: checkSelected,
+		anchors: func() error {
+			if err := r.revalidateLocked(ctx); err != nil {
+				return err
+			}
+			boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+			process, pe := namespaceID("/proc/self/ns/net")
+			thread, te := namespaceID("/proc/thread-self/ns/net")
+			if err != nil || pe != nil || te != nil {
+				return ErrIdentity
+			}
+			return scopeRecoveryRuntimeIdentityV3(r.record.Metadata, boot, process, thread)
+		},
+		unit: func() (scopeRecoveryUnitV3, error) { return readScopeRecoveryUnitV3(ctx) },
+		current: func() (RoutedScopeRecoveryFileV3, error) {
+			id, st, err := scopeRecoveryIdentityV3(group)
+			var fs unix.Statfs_t
+			if err != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR || st.Mode&0022 != 0 || st.Uid != 0 || st.Gid != 0 || unix.Fstatfs(int(group.Fd()), &fs) != nil || fs.Type != unix.CGROUP2_SUPER_MAGIC || scopeRecoveryCgroupControlsV3(group) != nil {
+				return RoutedScopeRecoveryFileV3{}, ErrIdentity
+			}
+			actual, err := group.Stat()
+			named, ne := os.Lstat("/sys/fs/cgroup" + routedSupervisorCgroupV3)
+			if err != nil || ne != nil || !os.SameFile(actual, named) {
+				return RoutedScopeRecoveryFileV3{}, ErrIdentity
+			}
+			return id, nil
+		},
+		events: func() ([]byte, error) {
+			raw := make([]byte, 129)
+			n, err := r.files[6].ReadAt(raw, 0)
+			return raw[:n], err
+		},
+		oldLive:     func(allowSelf bool) error { return scopeRecoveryLiveCgroupV3(ctx, r.files[5], allowSelf) },
+		currentLive: func() error { return scopeRecoveryLiveCgroupV3(ctx, group, true) },
+		drained:     waitRoutedCgroupDrainedV3,
 	}
-	raw := make([]byte, 129)
-	n, readErr := r.files[6].ReadAt(raw, 0)
-	deactivated, populated, err := scopeRecoveryOldEventsObservationV3(raw[:n], readErr, r.record.Cgroup, current, r.record.CgroupInvocation, unit.invocation)
-	if err != nil {
-		return err
-	}
-	if deactivated {
-		// Native ENODEV behavior is observed, but promotion to retirement authority
-		// remains blocked until the complete selected/anchor predicate is reviewed.
-		return ErrUnavailable
-	}
-	same := current == r.record.Cgroup
-	if populated != same {
-		return ErrUnavailable
-	}
-	if err = scopeRecoveryLiveCgroupV3(ctx, r.files[5], same); err != nil {
-		return err
-	}
-	// The current helper/reader has exited. Reject any unexpected descendant in
-	// Root's current cgroup too; it must not retain old namespace descriptors.
-	if err = waitRoutedCgroupDrainedV3(); err != nil {
-		return err
-	}
-	n, readErr = r.files[6].ReadAt(raw, 0)
-	deactivated, again, err := scopeRecoveryOldEventsObservationV3(raw[:n], readErr, r.record.Cgroup, current, r.record.CgroupInvocation, unit.invocation)
-	if err != nil || deactivated || again != populated || ctx.Err() != nil {
-		return ErrIdentity
-	}
-	return nil
+	return verifyScopeRecoveryDrainV3(ctx, r.record.Cgroup, r.record.CgroupInvocation, checks)
 }

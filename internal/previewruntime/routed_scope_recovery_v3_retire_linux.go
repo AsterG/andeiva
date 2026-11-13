@@ -77,7 +77,7 @@ func retireInheritedRoutedScopeResourcesV3(ctx context.Context, area *os.Root, s
 		}
 		return barrier.check(ctx)
 	}
-	if err = r.checkDrainedV3(ctx); err != nil {
+	if err = r.checkDrainedV3(ctx, checkSelected); err != nil {
 		return err
 	}
 	cleanup, err := prepareScopeRecoveryCleanupV3(area, r.record)
@@ -93,7 +93,7 @@ func retireInheritedRoutedScopeResourcesV3(ctx context.Context, area *os.Root, s
 	}); err != nil {
 		return err
 	}
-	if err = r.checkDrainedV3(ctx); err != nil {
+	if err = r.checkDrainedV3(ctx, checkSelected); err != nil {
 		return err
 	}
 	if err = checkSelected(); err != nil {

@@ -28,8 +28,14 @@ The second invocation accepts exactly seven named descriptors, rejects a held
 publication lock, and calls the production retirement core. It checks selected
 history through the real capless reader, current invocation/cgroup drainage,
 network closure, namespace teardown, FD-store removal and the exact receipt.
-ENODEV remains a rejected branch: observing it produces a failure with retained
-evidence, not PASS. Unknown state is never treated as a completed retirement.
+The third native attempt reached Store and real Boot, then stopped at the former
+ENODEV rejection; seven descriptors remain retained. The new core accepts that
+observation only with repeated selected-state, anchor, boot/namespace, exact
+current unit and drainage proof. Review and native verification remain pending.
+Unknown state is never treated as a completed retirement. Attempt markers now
+include the actual InvocationID and never overwrite previous failures. Root can
+retry the retained unit with a reviewed binary and a new real invocation; this
+does not qualify the fresh-unit driver's restart counter or management handoff.
 
 This is a **core component** test. It supplies actual reader roots directly and
 does not qualify the deployment loader, migration provenance, managed restart,

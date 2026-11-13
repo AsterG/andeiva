@@ -384,7 +384,14 @@ func nativeScopeRetireFirstV3(t *testing.T, ctx context.Context, area, operation
 
 func nativeScopeRetireSecondV3(t *testing.T, ctx context.Context, area, operational *os.Root, recovery *RoutedScopeRecoveryV3) {
 	t.Helper()
-	nativeScopeRetireWriteV3(t, "/fixture/recovery-attempt", []byte(os.Getenv("INVOCATION_ID")+"\n"), 0600, 0, 0)
+	// Preserve previous failed attempts. A Root-authorized retry must receive
+	// the actual retained seven FDs and a new real manager invocation; it cannot
+	// manufacture a replacement scope or reuse this invocation's attempt file.
+	invocation := os.Getenv("INVOCATION_ID")
+	if !validHex(invocation, 16) {
+		t.Fatal("invalid actual invocation")
+	}
+	nativeScopeRetireWriteV3(t, "/fixture/recovery-attempt-"+invocation, []byte(invocation+"\n"), 0600, 0, 0)
 	raw, err := readOwned(nativeScopeRetireCaptureV3, 0, 0, 0600, 16384)
 	var capture nativeScopeRetireCapture
 	if err != nil || firewallipc.Decode(raw, &capture) != nil || capture.Version != 1 || capture.Launch.Validate() != nil || capture.Operational.ValidateRouted() != nil || capture.Operational != recovery.record.Metadata || capture.Invocation != recovery.record.CgroupInvocation || capture.Invocation == os.Getenv("INVOCATION_ID") || nativeScopeRetireIdentityV3(capture.Launch) != nativeScopeRetireIdentityV3(capture.Operational) {
@@ -435,7 +442,8 @@ func nativeScopeRetireSecondV3(t *testing.T, ctx context.Context, area, operatio
 	}
 	assertPreserved()
 	// Capture both actual cgroup identities and the original events FD. An
-	// ENODEV observation is evidence of a blocked branch, never native PASS.
+	// The observation alone is not permission. Success below requires the core's
+	// complete selected-state/anchor/current-unit/drain predicate and teardown.
 	group, err := os.Open("/sys/fs/cgroup" + routedSupervisorCgroupV3)
 	if err != nil {
 		t.Fatal(err)
@@ -454,14 +462,7 @@ func nativeScopeRetireSecondV3(t *testing.T, ctx context.Context, area, operatio
 	fmt.Fprintf(os.Stdout, "ANDEIVA_SCOPE_RETIRE_CGROUP old=%d current=%d deactivated=%t populated=%t\n", recovery.record.Cgroup.Inode, current.Inode, deactivated, populated)
 	err = retireInheritedRoutedScopeResourcesV3(ctx, area, slot, record, recovery, nativeIdentitiesV3, resources)
 	if err != nil {
-		if deactivated {
-			assertPreserved()
-			t.Fatal("ENODEV branch remains blocked; no retirement qualified", err)
-		}
 		t.Fatal("real retained-scope retirement failed; evidence retained", err)
-	}
-	if deactivated {
-		t.Fatal("unreviewed ENODEV branch unexpectedly retired")
 	}
 	if !recovery.closed {
 		t.Fatal("local retained anchors remain open")

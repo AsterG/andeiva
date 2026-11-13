@@ -15,8 +15,13 @@ privilegiado ou appliance instalado. Duas invocações reais: a primeira persist
 sete anchors antes de L2/Boot, inicia API sem capacidades/helper com NET_ADMIN,
 verifica Boot/readback, espera os filhos e encerra a si mesma com SIGKILL.
 A segunda recebe sete FD, testa recusa com lock ocupado e executa o core real
-com leitor capless, G1/R2, drain, desmontagem, Drop e recibo. ENODEV preserva
-evidências e falha; não significa retirada concluída.
+com leitor capless, G1/R2, drain, desmontagem, Drop e recibo. A terceira tentativa
+chegou a Store/Boot real e parou na antiga recusa ENODEV, preservando sete FD.
+O core novo exige revalidação de seleção, anchors, boot/namespace, unidade atual
+e drenagem; revisão e teste nativo pendentes. Marcadores por InvocationID preservam
+falhas anteriores. Root pode tentar novamente a unidade retida com binário
+revisado e invocação nova real; isso não qualifica o contador do driver de unidade
+nova nem o handoff management.
 
 RootDirectory e passwd/group privados; pais veth e MACVLAN somente em namespaces
 isolados. O bind writable de `/run` vem somente da raiz temporária, nunca do

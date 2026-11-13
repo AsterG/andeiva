@@ -16,7 +16,12 @@ persiste siete anchors antes de L2/Boot, inicia API sin capacidades/helper con
 NET_ADMIN, verifica Boot y readback, espera los hijos y se mata con SIGKILL.
 La segunda recibe los siete FD, prueba rechazo por lock ocupado y ejecuta el
 core real de retirada con lector capless, G1/R2, drain, desmontaje, Drop y recibo.
-ENODEV conserva evidencia y falla; no significa retirada completada.
+El tercer intento alcanzó Store/Boot real y se bloqueó en el antiguo rechazo
+ENODEV, conservando siete FD. El core nuevo exige además revalidación de selección,
+anchors, boot/namespace, unidad actual y drenaje; revisión y prueba nativa
+pendientes. Los marcadores por InvocationID conservan fallos previos. Root puede
+reintentar la unidad retenida con binario revisado e invocación nueva real; no
+acredita el contador del driver de unidad nueva ni el handoff management.
 
 RootDirectory y passwd/group privados; padres veth y MACVLAN sólo en namespaces
 aislados. El bind writable de `/run` procede sólo de la raíz temporal, nunca del
