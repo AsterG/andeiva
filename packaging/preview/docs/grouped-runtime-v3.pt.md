@@ -41,3 +41,5 @@ Build reproduzível e validação estática do pacote não demonstram migração
 inicialização nativa nem tráfego de ponta a ponta.
 
 A inicialização e drenagem dos filhos têm um limite separado de 45 segundos para a inspeção completa de 30 segundos. Os RPC de efeitos mantêm três segundos; os prazos persistidos e Boot Started+10 segundos não mudam. A fábrica mantém a validação completa inicial e não deduz integridade de um socket aberto.
+
+A inicialização de API/helper/namespaces legados é recusada quando existe o marcador root grouped-cutover.json, mesmo ilegível, truncado ou como link pendente. O guard não interrompe um escritor em execução: a ativação deve pará-lo, recolher seus processos e manter seu bloqueio antes. Instalar o pacote não cria o marcador.

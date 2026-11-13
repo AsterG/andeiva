@@ -109,6 +109,9 @@ func run(args []string) error {
 		}
 		return e
 	case "namespaces":
+		if e = previewruntime.LegacyRuntimeAllowedV3(); e != nil {
+			return e
+		}
 		ids, e := previewruntime.LoadIdentities(c)
 		if e != nil {
 			return e

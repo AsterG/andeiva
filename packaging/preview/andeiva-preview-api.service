@@ -1,4 +1,5 @@
 [Unit]
+ConditionPathExists=!/var/lib/andeiva-preview/grouped-cutover.json
 Description=ANDEIVA preview administration
 PartOf=andeiva-preview.target
 Requires=andeiva-preview-helper.service andeiva-preview-api.socket

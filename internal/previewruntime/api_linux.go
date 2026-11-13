@@ -23,6 +23,9 @@ import (
 )
 
 func API(ctx context.Context, c Config) error {
+	if err := LegacyRuntimeAllowedV3(); err != nil {
+		return err
+	}
 	ids, e := LoadIdentities(c)
 	if e != nil {
 		return e

@@ -150,6 +150,9 @@ func Helper(ctx context.Context, c Config) error {
 func HelperV2(ctx context.Context, c Config) error { return helperProtocol(ctx, c, true) }
 
 func helperProtocol(ctx context.Context, c Config, v2 bool) error {
+	if err := LegacyRuntimeAllowedV3(); err != nil {
+		return err
+	}
 	ids, e := LoadIdentities(c)
 	if e != nil {
 		return e
