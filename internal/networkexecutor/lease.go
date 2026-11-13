@@ -337,6 +337,10 @@ func (l *LeaseExecutor) Refresh(ctx context.Context) (LeaseOutcome, error) {
 	if err = l.sameFact(ctx, f); err == nil {
 		err = l.observeExpected(ctx)
 	}
+	if err == nil {
+		// Readback spans several kernel queries; authority can change during it.
+		err = l.sameFact(ctx, f)
+	}
 	if err != nil {
 		return l.failedApply(err, hadWAN)
 	}

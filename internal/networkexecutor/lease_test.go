@@ -54,6 +54,56 @@ func leaseFixture(t *testing.T) (*LeaseExecutor, *fakeKernel, *LeaseFact, *int64
 	return l, k, fact, now
 }
 
+func TestLeaseExecutorRejectsAuthorityChangeDuringFinalReadback(t *testing.T) {
+	for _, hadWAN := range []bool{false, true} {
+		for _, change := range []string{"expired", "revoked", "new-sequence"} {
+			name := change
+			if hadWAN {
+				name += "-replacing-wan"
+			}
+			t.Run(name, func(t *testing.T) {
+				l, k, fact, now := leaseFixture(t)
+				mutationsAtReadback := 2
+				want := LeaseBaselineRestored
+				if hadWAN {
+					if out, err := l.Refresh(context.Background()); err != nil || out != LeaseApplied {
+						t.Fatal("initial lease", out, err)
+					}
+					fact.Sequence++
+					fact.Address = "198.19.0.3/24"
+					mutationsAtReadback = 6 // Withdraw the prior WAN, then apply the new tuple.
+					want = LeaseWANWithdrawn
+				}
+				run := l.base.run
+				fired := false
+				l.base.run = func(ctx context.Context, op operation) ([]byte, error) {
+					data, err := run(ctx, op)
+					if !fired && op.kind == "routes" && k.mutations == mutationsAtReadback {
+						fired = true
+						switch change {
+						case "expired":
+							*now = fact.DeadlineBootNS
+						case "revoked":
+							fact.Revoked = true
+						case "new-sequence":
+							fact.Sequence++
+						}
+					}
+					return data, err
+				}
+				out, err := l.Refresh(context.Background())
+				if !fired || err == nil || out != want {
+					t.Fatal("stale readback published as applied", fired, out, err)
+				}
+				observed, err := l.base.observe(context.Background())
+				if err != nil || !reflect.DeepEqual(observed, l.baseline) {
+					t.Fatal("stale WAN or previous tuple survived compensation", err)
+				}
+			})
+		}
+	}
+}
+
 func TestLeaseExecutorPreservesLANAndRestoresOnlyOwnWAN(t *testing.T) {
 	l, k, fact, _ := leaseFixture(t)
 	if l.desired.Config.Interfaces[1].IPv4.Mode != "dhcp" {
