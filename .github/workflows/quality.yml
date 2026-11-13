@@ -42,7 +42,7 @@ jobs:
 
   source:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,7 +57,9 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: frontend
       - run: bash scripts/check.sh
-      - run: go test -race ./cmd/... ./internal/...
+      # The complete package suite exceeds Go's default ten-minute aggregate
+      # budget. This does not alter RPC or persisted transaction deadlines.
+      - run: go test -race -timeout=20m ./cmd/... ./internal/...
       - name: DHCP laboratory guard without privileged network operations
         run: |
           bash -n scripts/dhcp-native-isolated.sh
