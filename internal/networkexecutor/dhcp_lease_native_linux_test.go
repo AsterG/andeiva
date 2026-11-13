@@ -580,7 +580,7 @@ func (b *dhcpLeaseBroker) current() (LeaseFact, error) {
 
 func nativeDHCPLeaseObserve(t *testing.T) observation {
 	t.Helper()
-	e := &Executor{run: func(ctx context.Context, op operation) ([]byte, error) {
+	e := &Executor{lifetime: context.Background(), run: func(ctx context.Context, op operation) ([]byte, error) {
 		// This supervisor observer has no mutation entry point.
 		if op.kind != "links" && op.kind != "addresses" && op.kind != "routes" {
 			return nil, ErrScope
