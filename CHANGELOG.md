@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — DHCPv4 server configuration contract
+
+- Add bounded validation for LAN scopes, address pools, exclusions, MAC reservations and gateway/DNS/NTP/lease options.
+- Document offline engine dependencies and service-activation gates; server execution and administrative integration remain unimplemented.
+
 ## Unreleased — routed administration workflows
 
 - Add authenticated Web and CLI consumers for grouped network, forwarding and source NAT configuration, with confirmed application, explicit persistence and durable operation lookup.
