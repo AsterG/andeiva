@@ -19,3 +19,18 @@ Exigir testes com/sem tag, race, vet e compilação antes do native executado po
 Diagnóstico de duração: os hooks de concessão aceitos incluem apenas o número validado `lease_seconds`; a expiração não inventa duração. T1/T2 não fazem parte do evento validado e não são inferidos. A trilha distingue erros de canal, espera inicial, conflito, armazenamento e capacidade; registra mudanças de classe dentro do mesmo limite de 24 registros. Os campos opcionais de época e trabalho são uma leitura posterior à chamada sem bloqueio, não uma prova da operação exata que falhou. Nenhum erro, opção, endereço ou nome sem filtragem é adicionado.
 
 Trilha por verbo: o artefato de diagnóstico mantém no máximo 63 registros fixos em memória por processo. As chamadas usam TryLock; perdas por contenção ou capacidade são declaradas em um resumo adicional. O registro não realiza I/O nem acrescenta workers, temporizadores ou RPC. Somente após o término do papel nativo fixo de API/helper, TestMain grava os registros em seu stderr privado, fora do mutex, com limite total de 64 registros/32 KiB. Uma falha anterior do papel é preservada se a gravação também falhar. São registradas apenas classes fixas de lado, verbo, erro e contexto, duração e BOOTTIME. A morte abrupta pode perder essa evidência em memória. A compilação de produção não cria o registrador nem lê relógios para essa função. A observação não altera o prazo RPC de três segundos nem valida um orçamento agregado de reconciliação.
+
+Os pontos de falha do helper compartilham registrador e capacidade, com lado
+`helper_stage` e código fixo. Distinguem estado/seleção de Open, proprietário,
+preparação/abertura do gate e forwarding; fechamento, seleção, recuperação,
+retirada de concessão e readback; e verificações internas de autoridade/política.
+Não mantêm hash de Work, endereço, caminho ou erro bruto. As condições preservam
+ordem, curto-circuito e número de chamadas. O build comum nem consulta o contexto
+por meio desses hooks de diagnóstico.
+
+A fixture também coleta linhas novas de esquema fixo após o Close existente.
+Não altera EOF de controle, drenagem ou limite original de parada de quatro
+segundos. Assim preserva saída do helper posterior ao primeiro relato de falha.
+A ausência anterior não prova encerramento forçado; morte abrupta ou log limitado
+cheio ainda podem perder evidência. Não se infere aquisição WAN bem-sucedida nem
+a causa de uma falha nativa.

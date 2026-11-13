@@ -19,3 +19,18 @@ Review and run both tagged/default unit tests, race, vet and compilation before 
 Duration diagnostic: accepted grant hooks include only the validated numeric `lease_seconds`; expiry hooks carry no invented duration. T1/T2 are not part of the validated event and are not inferred. The native wait trace distinguishes channel, initial waiting, conflict, storage and capacity errors, capturing a changed class within the unchanged 24-record cap. Optional controller epoch/work fields are a nonblocking post-call snapshot, not proof of the exact failing operation. No raw errors, options, addresses or hostnames are added.
 
 Per-verb trace: the diagnostic artifact retains at most 63 fixed records in memory per process. Calls use TryLock; contention/capacity drops are declared in one additional summary. No I/O, worker, timer or extra RPC occurs while recording. Only after the fixed native API/helper role returns does TestMain flush to its private stderr, outside the recorder lock, with a total limit of 64 records/32 KiB. Prior role failure is preserved if flushing also fails. Records contain only fixed side/verb/error/context classes, elapsed time and BOOTTIME. Abrupt process death may lose this in-memory evidence. The production build has no recorder or clock reads for this feature. This observation does not change the three-second RPC deadline or qualify an aggregate reconciliation budget.
+
+Helper failure sites use the same recorder and capacity, with side
+`helper_stage` and a fixed stage code. They distinguish Open state/selection,
+owner, gate staging/opening and forwarding; withdrawal closure, selection,
+recovery, lease removal and readback; and nested authority/policy verification.
+They retain no Work hash, address, path or raw error. Conditions keep their
+original order, short-circuit behavior and call counts. The default build does
+not even read the context through these diagnostic hooks.
+
+The native fixture also collects new fixed-schema trace lines after the existing
+supervisor Close returns. Its original control EOF, drain and four-second stop
+bound are unchanged. This preserves helper output emitted after the initial
+failure report. Missing earlier output alone does not prove a forced kill;
+abrupt termination or the existing bounded log filling can still lose evidence.
+No successful WAN acquisition or cause of a native failure is inferred here.

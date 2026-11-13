@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
 )
@@ -45,10 +46,16 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 	r.fenced = func() bool { integrity.mu.Lock(); defer integrity.mu.Unlock(); return integrity.blockedLocked() }
 	r.policy = func(call context.Context, p routedDHCPWorkV3) error {
 		if r.ready() != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("policy_ready", configpoc.ErrRecovery, call)
 			return configpoc.ErrRecovery
 		}
 		receipt, hash, e := authority.Observe(call)
-		if e != nil || !integrityPhysicalIdleV3(receipt, hash) || hash != p.Running() {
+		if e != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("policy_observe", e, call)
+			return configpoc.ErrRecovery
+		}
+		if !integrityPhysicalIdleV3(receipt, hash) || hash != p.Running() {
+			firewallipc.RecordRoutedDHCPFailureV1("policy_state", configpoc.ErrRecovery, call)
 			return configpoc.ErrRecovery
 		}
 		return nil

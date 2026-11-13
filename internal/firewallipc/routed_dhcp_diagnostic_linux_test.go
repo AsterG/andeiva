@@ -72,6 +72,32 @@ func TestRoutedDHCPDiagnosticTryLockAndEnums(t *testing.T) {
 	}
 }
 
+func TestRoutedDHCPDiagnosticFailureStagesShareBound(t *testing.T) {
+	d := &routedDHCPDiagnosticRecorderV1{}
+	d.failure("private-stage", ErrChannel, nil)
+	d.failure("open_state", nil, nil)
+	if d.count != 0 {
+		t.Fatal("unknown stage or successful check recorded")
+	}
+	d.mu.Lock()
+	d.failure("open_gate_stage", ErrChannel, nil)
+	d.mu.Unlock()
+	for i := 0; i < 40; i++ {
+		d.record("helper", "dhcp_open", time.Now(), ErrChannel, nil)
+		d.failure("authority_policy", errors.New("private path/hash/address"), context.DeadlineExceeded)
+	}
+	var out bytes.Buffer
+	if err := d.flush(&out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "\n") != 64 || out.Len() > 32<<10 || strings.Contains(out.String(), "private") || !strings.Contains(out.String(), `"dropped":18`) {
+		t.Fatal("stage recorder escaped shared capacity/redaction")
+	}
+	if !strings.Contains(out.String(), `"side":"helper_stage","stage":"authority_policy"`) {
+		t.Fatal("missing fixed failure stage")
+	}
+}
+
 type blockedDiagnosticWriterV1 struct{ entered, release chan struct{} }
 
 func (w blockedDiagnosticWriterV1) Write(p []byte) (int, error) {

@@ -19,3 +19,18 @@ Exigir unit tests con/sin tag, race, vet y compilación antes del native ejecuta
 Diagnóstico de duración: los hooks de concesión aceptados incluyen sólo el número validado `lease_seconds`; la expiración no inventa una duración. T1/T2 no pertenecen al evento validado y no se infieren. La traza distingue errores de canal, espera inicial, conflicto, almacenamiento y capacidad; registra los cambios de clase dentro del mismo límite de 24 registros. Los campos opcionales de época y trabajo son una lectura posterior a la llamada que no bloquea, no una prueba de la operación exacta que falló. No se añaden errores, opciones, direcciones ni nombres sin filtrar.
 
 Traza por verbo: el artefacto de diagnóstico conserva como máximo 63 registros fijos en memoria por proceso. Las llamadas usan TryLock; las pérdidas por contención o capacidad se declaran en un resumen adicional. El registro no realiza I/O ni añade workers, temporizadores o RPC. Sólo después de terminar el rol nativo fijo de API/helper, TestMain vuelca los registros a su stderr privado, fuera del mutex, con límite total de 64 registros/32 KiB. Un fallo previo del rol se conserva si el volcado también falla. Sólo se registran clases fijas de lado, verbo, error y contexto, duración y BOOTTIME. La muerte abrupta puede perder esta evidencia en memoria. La compilación de producción no crea el registrador ni lee relojes para esta función. La observación no cambia el plazo RPC de tres segundos ni valida un presupuesto agregado de reconciliación.
+
+Los puntos de fallo del helper comparten registrador y capacidad, con lado
+`helper_stage` y código fijo. Distinguen estado/selección de Open, propietario,
+preparación/apertura del gate y forwarding; cierre, selección, recuperación,
+retiro de concesión y readback; y verificaciones anidadas de autoridad/política.
+No conservan hash de Work, dirección, ruta ni error crudo. Las condiciones
+mantienen orden, cortocircuito y número de llamadas. El build normal ni siquiera
+consulta el contexto mediante estos hooks de diagnóstico.
+
+La fixture recoge también líneas nuevas de esquema fijo después del Close
+existente. No cambia EOF de control, drenaje ni cota original de parada de cuatro
+segundos. Así conserva salida del helper posterior al primer informe de fallo.
+La ausencia anterior no prueba una terminación forzada; una muerte abrupta o
+llenar el log acotado todavía puede perder evidencia. No se infiere adquisición
+WAN exitosa ni la causa de un fallo nativo.

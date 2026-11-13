@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/AsterG/andeiva/internal/firewallipc"
 )
 
 func TestNativeDHCPJobsCloseTraceV4AfterCloseOnly(t *testing.T) {
@@ -37,5 +39,21 @@ func TestNativeDHCPJobsCloseTraceV4BoundAndEmpty(t *testing.T) {
 	})
 	if err != nil || strings.Count(trace, "\n") != 64 || len(trace) > 32<<10 || !strings.Contains(trace, `"dropped":37`) {
 		t.Fatal("unbounded teardown trace")
+	}
+}
+
+func TestNativeDHCPJobsCloseTraceV4StageSchema(t *testing.T) {
+	var logs nativeLogV3
+	line := "ANDEIVA_NATIVE_DHCP_RPC {\"side\":\"helper_stage\",\"stage\":\"open_gate_stage\",\"error\":\"recovery\",\"context\":\"ok\"}\n"
+	trace, err := nativeDHCPJobsCloseTraceV4(&logs, func() error {
+		_, e := logs.Write([]byte(line + strings.ReplaceAll(line, "open_gate_stage", "private-stage")))
+		return e
+	})
+	want := ""
+	if firewallipc.KnownRoutedDHCPFailureStageV1("open_gate_stage") {
+		want = line
+	}
+	if err != nil || trace != want {
+		t.Fatal("stage schema was not fixed or default emitted diagnostics")
 	}
 }

@@ -98,10 +98,25 @@ func (a routedDHCPGateAuthorityV3) Current(ctx context.Context) (networkexecutor
 func (a routedDHCPGateAuthorityV3) Verify(ctx context.Context, g networkexecutor.LeaseGateGrant) error {
 	r := a.runtime
 	p, err := r.selected(ctx, g.WorkHash)
-	if err != nil || p.Phase() != "applied" || g.Fact != r.grant.Snapshot.Fact() || r.sameOwner(ctx, r.grant) != nil || r.lease.VerifySelectedStateV3(ctx, r.grant.Snapshot, networkexecutor.LeaseSelectedTargetV3) != nil || r.policy(ctx, p) != nil {
+	if err != nil || p.Phase() != "applied" || g.Fact != r.grant.Snapshot.Fact() {
+		firewallipc.RecordRoutedDHCPFailureV1("authority_selected", configpoc.ErrRecovery, ctx)
 		return configpoc.ErrRecovery
 	}
-	return r.sameOwner(ctx, r.grant)
+	if err := r.sameOwner(ctx, r.grant); err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("authority_owner", err, ctx)
+		return configpoc.ErrRecovery
+	}
+	if err := r.lease.VerifySelectedStateV3(ctx, r.grant.Snapshot, networkexecutor.LeaseSelectedTargetV3); err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("authority_lease", err, ctx)
+		return configpoc.ErrRecovery
+	}
+	if err := r.policy(ctx, p); err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("authority_policy", err, ctx)
+		return configpoc.ErrRecovery
+	}
+	err = r.sameOwner(ctx, r.grant)
+	firewallipc.RecordRoutedDHCPFailureV1("authority_owner_after", err, ctx)
+	return err
 }
 
 func (r *RoutedDHCPRuntimeV3) sameOwner(ctx context.Context, g configpoc.RoutedDHCPGrantV3) error {
@@ -128,6 +143,8 @@ func (r *RoutedDHCPRuntimeV3) closeUnder(ctx context.Context) error {
 	}
 	forwardErr := r.forward.Disable(ctx)
 	if gateErr != nil || forwardErr != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("close_gate", gateErr, ctx)
+		firewallipc.RecordRoutedDHCPFailureV1("close_forward", forwardErr, ctx)
 		r.failed = true
 		return errors.Join(configpoc.ErrRecovery, gateErr, forwardErr)
 	}
@@ -249,19 +266,28 @@ func (r *RoutedDHCPRuntimeV3) retire(ctx context.Context) error {
 
 func (r *RoutedDHCPRuntimeV3) open(ctx context.Context, work string) error {
 	if r.failed || r.ready() != nil || r.opened || r.work != work || r.gate == nil || r.lease == nil {
+		firewallipc.RecordRoutedDHCPFailureV1("open_state", configpoc.ErrRecovery, ctx)
 		return configpoc.ErrRecovery
 	}
 	p, err := r.selected(ctx, work)
-	if err != nil || p.Phase() != "applied" || p.Epoch() != r.grant.Epoch || !reflect.DeepEqual(p.Snapshot(), r.grant.Snapshot) || r.sameOwner(ctx, r.grant) != nil {
+	if err != nil || p.Phase() != "applied" || p.Epoch() != r.grant.Epoch || !reflect.DeepEqual(p.Snapshot(), r.grant.Snapshot) {
+		firewallipc.RecordRoutedDHCPFailureV1("open_selected", configpoc.ErrRecovery, ctx)
+		return configpoc.ErrRecovery
+	}
+	if err := r.sameOwner(ctx, r.grant); err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("open_owner", err, ctx)
 		return configpoc.ErrRecovery
 	}
 	if err := r.gate.Stage(ctx); err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("open_gate_stage", err, ctx)
 		return errors.Join(err, r.closeUnder(ctx))
 	}
 	if err := r.gate.Open(ctx); err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("open_gate_open", err, ctx)
 		return errors.Join(err, r.closeUnder(ctx))
 	}
 	if err := r.forward.Enable(ctx, r.gate.Verify); err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("open_forward", err, ctx)
 		return errors.Join(err, r.closeUnder(ctx))
 	}
 	r.opened = true
@@ -272,20 +298,24 @@ func (r *RoutedDHCPRuntimeV3) withdraw(ctx context.Context, work string) error {
 	// Retained gate closure precedes even a failed selected-store read. A fresh
 	// helper has no token authority and requires supervisor-contained forwarding.
 	if r.closeUnder(ctx) != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("withdraw_close", configpoc.ErrRecovery, ctx)
 		return configpoc.ErrRecovery
 	}
 	p, err := r.selected(ctx, work)
 	if err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("withdraw_selected", err, ctx)
 		return err
 	}
 	s := p.Snapshot()
 	if r.gate == nil {
 		g, e := r.buildGate(ctx, routedDHCPGateAuthorityV3{r})
 		if e != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("withdraw_build_gate", e, ctx)
 			return e
 		}
 		r.gate = g
 		if e = g.RecoverClosedSelectedV3(ctx, s); e != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("withdraw_recover_gate", e, ctx)
 			r.failed = true
 			return e
 		}
@@ -293,16 +323,19 @@ func (r *RoutedDHCPRuntimeV3) withdraw(ctx context.Context, work string) error {
 	if r.lease == nil {
 		l, e := r.recoverLease(ctx, s)
 		if e != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("withdraw_recover_lease", e, ctx)
 			return e
 		}
 		r.lease = l
 	}
 	r.grant, r.work = configpoc.RoutedDHCPGrantV3{Epoch: p.Epoch(), Snapshot: s}, work
 	if _, err = r.lease.WithdrawSelectedV3(ctx); err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("withdraw_lease", err, ctx)
 		r.failed = true
 		return err
 	}
 	if err = r.verifyClosed(ctx, s.Hash, networkexecutor.LeaseSelectedBaselineV3); err != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("withdraw_verify", err, ctx)
 		r.failed = true
 		return err
 	}

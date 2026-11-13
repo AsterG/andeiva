@@ -357,6 +357,7 @@ func nativeDHCPJobsCloseTraceV4(logs *nativeLogV3, closeRuntime func() error) (s
 	type record struct {
 		Side      string `json:"side,omitempty"`
 		Verb      string `json:"verb,omitempty"`
+		Stage     string `json:"stage,omitempty"`
 		BootNS    int64  `json:"boot_ns,omitempty"`
 		ElapsedMS int64  `json:"elapsed_ms,omitempty"`
 		Error     string `json:"error,omitempty"`
@@ -383,10 +384,16 @@ func nativeDHCPJobsCloseTraceV4(logs *nativeLogV3, closeRuntime func() error) (s
 			continue
 		}
 		if r.Truncated {
-			if r.Side != "" || r.Verb != "" || r.Error != "" || r.Context != "" || r.Dropped == 0 {
+			if r.Side != "" || r.Verb != "" || r.Stage != "" || r.Error != "" || r.Context != "" || r.Dropped == 0 {
 				continue
 			}
-		} else if (r.Side != "helper" && r.Side != "client") || !firewallipc.RoutedDHCPVerbV3(r.Verb) || !knownClass(r.Error) || !knownClass(r.Context) {
+		} else if !knownClass(r.Error) || !knownClass(r.Context) {
+			continue
+		} else if r.Side == "helper_stage" {
+			if r.Verb != "" || !firewallipc.KnownRoutedDHCPFailureStageV1(r.Stage) {
+				continue
+			}
+		} else if (r.Side != "helper" && r.Side != "client") || !firewallipc.RoutedDHCPVerbV3(r.Verb) || r.Stage != "" {
 			continue
 		}
 		if count == 63 {
