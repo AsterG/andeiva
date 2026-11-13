@@ -6,12 +6,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"os"
 	"os/exec"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 )
 
 // Unit-only verifier: filesystem, history and pools are real; kernel evidence
