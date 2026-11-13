@@ -171,3 +171,12 @@ Licensing evidence identifies MPL-2.0 plus additional notices in Debian's
 [copyright record](https://metadata.ftp-master.debian.org/changelogs/main/i/isc-kea/isc-kea_2.6.3-1%2Bdeb13u1_copyright).
 Full transitive license/source redistribution review and SBOM remain pending;
 upstream availability is not legal sign-off. No premium hooks are proposed.
+
+## Independent review gates
+
+- Exercise unmask, enable, package triggers, interrupted configuration and reboot against the persistent mask; assert no stock daemon starts.
+- Compare the host's loaded AppArmor policy before/after, including failure paths. A private mount namespace does not make AppArmor effects local.
+- Test a compromised worker attempting AF_PACKET capture/transmission outside its authorized link and DHCP traffic; require an enforced denial.
+- Map every shipped binary to its exact source archive, license and redistribution obligations. The main engine license does not cover all transitive artifacts.
+
+These are required future tests, not completed installation evidence.

@@ -152,3 +152,12 @@ Metadata WSL/contêiner não qualifica appliance runtime. Nenhuma mudança EKS/H
 O [copyright Debian](https://metadata.ftp-master.debian.org/changelogs/main/i/isc-kea/isc-kea_2.6.3-1%2Bdeb13u1_copyright)
 inclui MPL-2.0 e avisos adicionais. Revisão completa de licenças/fontes/SBOM
 pendente; disponibilidade upstream não é aprovação legal. Sem hooks premium.
+
+## Gates de revisão independente
+
+- Testar unmask, enable, triggers, configuração interrompida e reinício contra a máscara persistente; nenhum daemon stock deve iniciar.
+- Comparar políticas AppArmor carregadas no host antes/depois, inclusive falhas. Um namespace de montagem privado não torna seus efeitos locais.
+- Testar worker comprometido tentando captura/transmissão AF_PACKET fora do enlace e tráfego DHCP autorizados; exigir negação efetiva.
+- Vincular cada binário distribuído à fonte exata, licença e obrigações. A licença do motor não cobre todos os artefatos transitivos.
+
+São testes futuros obrigatórios, não evidência de instalação concluída.
