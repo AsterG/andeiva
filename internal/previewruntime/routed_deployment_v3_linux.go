@@ -151,10 +151,42 @@ func openRoutedDeploymentWithManagementV3(ctx context.Context, c Config, managem
 }
 
 func openRoutedDeploymentResourcesV3(ctx context.Context, c Config, management *os.File) (resources *routedDeploymentResourcesV3, result error) {
+	return openRoutedDeploymentModeV3(ctx, c, management, nil)
+}
+
+type routedRecoveryDeploymentIdentityV3 struct {
+	metadata   Metadata
+	identities Identities
+}
+
+// Only the root consumer of an authenticated retained manifest may supply m.
+// These handles convey no selected-policy or retirement authority. The capless
+// full-history reader must independently authenticate the current selection.
+func openRoutedRecoveryDeploymentV3(ctx context.Context, c Config, m Metadata, ids Identities) (*routedDeploymentResourcesV3, error) {
+	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || c.Validate() != nil || m.ValidateRouted() != nil || ids.Validate() != nil {
+		return nil, ErrIdentity
+	}
+	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return nil, ErrIdentity
+	}
+	actual, err := canonicalBoot(boot)
+	host, hostErr := namespaceID("/proc/self/ns/net")
+	if err != nil || hostErr != nil || actual != m.BootID || host != m.HostNamespace {
+		return nil, ErrIdentity
+	}
+	return openRoutedDeploymentModeV3(ctx, c, nil, &routedRecoveryDeploymentIdentityV3{m, ids})
+}
+
+func openRoutedDeploymentModeV3(ctx context.Context, c Config, management *os.File, recovery *routedRecoveryDeploymentIdentityV3) (resources *routedDeploymentResourcesV3, result error) {
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || c.Validate() != nil {
 		return nil, ErrIdentity
 	}
-	for _, path := range []string{routedDeploymentDataV3, routedDeploymentRunV3} {
+	paths := []string{routedDeploymentDataV3}
+	if recovery == nil {
+		paths = append(paths, routedDeploymentRunV3)
+	}
+	for _, path := range paths {
 		if ownedDirectory(path, 0, 0, 0755) != nil {
 			return nil, ErrIdentity
 		}
@@ -172,7 +204,10 @@ func openRoutedDeploymentResourcesV3(ctx context.Context, c Config, management *
 	if err != nil {
 		return nil, err
 	}
-	if ownedDirectory(routedDeploymentRunV3+"/api", ids.APIUID, ids.APIGID, 0700) != nil {
+	if recovery != nil && recovery.identities != ids {
+		return nil, ErrIdentity
+	}
+	if recovery == nil && ownedDirectory(routedDeploymentRunV3+"/api", ids.APIUID, ids.APIGID, 0700) != nil {
 		return nil, ErrIdentity
 	}
 	data, err := readOwned(routedDeploymentPathV3, 0, 0, 0600, 16384)
@@ -191,9 +226,14 @@ func openRoutedDeploymentResourcesV3(ctx context.Context, c Config, management *
 	if hex.EncodeToString(digest[:]) != record.AccountsSHA256 {
 		return nil, ErrIdentity
 	}
-	m, err := readRoutedMetadataV3()
-	if err != nil {
-		return nil, err
+	var m Metadata
+	if recovery != nil {
+		m = recovery.metadata
+	} else {
+		m, err = readRoutedMetadataV3()
+		if err != nil {
+			return nil, err
+		}
 	}
 	r := &routedDeploymentResourcesV3{}
 	defer func() {
@@ -202,31 +242,33 @@ func openRoutedDeploymentResourcesV3(ctx context.Context, c Config, management *
 		}
 	}()
 	r.launch = RoutedLaunchResourcesV3{LocalOrigin: cloneRoutedLocalOriginV3(record.LocalOrigin), Metadata: m, Identities: ids, Budget: record.ReadBudget.budget(), StoreBudget: configpoc.BudgetV2{Bytes: record.WriteBudget.Bytes, Inodes: record.WriteBudget.Inodes}}
-	retirement, err := openRoutedRetirementResourceV3(m, ids)
-	if err != nil {
-		return nil, err
-	}
-	if retirement != nil {
-		r.launch.FreshScope, r.launch.RebootScope = retirement.FreshScope, retirement.RebootScope
-		if retirement.FreshScope != nil {
-			r.files = append(r.files, retirement.FreshScope.Receipt)
+	if recovery == nil {
+		retirement, err := openRoutedRetirementResourceV3(m, ids)
+		if err != nil {
+			return nil, err
 		}
-		if retirement.RebootScope != nil {
-			r.files = append(r.files, retirement.RebootScope.Receipt)
+		if retirement != nil {
+			r.launch.FreshScope, r.launch.RebootScope = retirement.FreshScope, retirement.RebootScope
+			if retirement.FreshScope != nil {
+				r.files = append(r.files, retirement.FreshScope.Receipt)
+			}
+			if retirement.RebootScope != nil {
+				r.files = append(r.files, retirement.RebootScope.Receipt)
+			}
 		}
+		gateway, err := openRoutedNamespacePinV3(filepath.Join(routedDeploymentRunV3, "netns", "gateway"), m.GatewayNamespace)
+		if err != nil {
+			return nil, err
+		}
+		r.files = append(r.files, gateway)
+		r.launch.Gateway = gateway
+		host, err := openRoutedNamespacePinV3("/proc/self/ns/net", m.HostNamespace)
+		if err != nil {
+			return nil, err
+		}
+		r.files = append(r.files, host)
+		r.launch.Host = host
 	}
-	gateway, err := openRoutedNamespacePinV3(filepath.Join(routedDeploymentRunV3, "netns", "gateway"), m.GatewayNamespace)
-	if err != nil {
-		return nil, err
-	}
-	r.files = append(r.files, gateway)
-	r.launch.Gateway = gateway
-	host, err := openRoutedNamespacePinV3("/proc/self/ns/net", m.HostNamespace)
-	if err != nil {
-		return nil, err
-	}
-	r.files = append(r.files, host)
-	r.launch.Host = host
 	openRoot := func(path string) (*os.Root, error) {
 		if safeParents(path) != nil {
 			return nil, ErrStorage
@@ -274,6 +316,12 @@ func openRoutedDeploymentResourcesV3(ctx context.Context, c Config, management *
 		return value
 	}
 	r.launch.Store, r.launch.Admission, r.launch.Plan, r.launch.Emergency = resource(0), resource(1), resource(2), resource(3)
+	if recovery != nil {
+		if ctx.Err() != nil {
+			return nil, ErrUnavailable
+		}
+		return r, nil
+	}
 	r.launch.Directory, err = openRoot(filepath.Join(routedDeploymentRunV3, "ipc"))
 	if err != nil {
 		return nil, err
