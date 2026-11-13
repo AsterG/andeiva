@@ -587,6 +587,14 @@ func TestNativeRoutedIntegrityFreshScopeLaunchV3(t *testing.T) {
 	testNativeRoutedLaunchV3(t, true, true)
 }
 func testNativeRoutedLaunchV3(t *testing.T, integrity, freshScope bool) {
+	testNativeRoutedLaunchModeV3(t, integrity, freshScope, false)
+}
+
+func TestNativeRoutedSelectedPreflightV4(t *testing.T) {
+	testNativeRoutedLaunchModeV3(t, true, false, true)
+}
+
+func testNativeRoutedLaunchModeV3(t *testing.T, integrity, freshScope, selectedPreflight bool) {
 	if os.Getenv("ANDEIVA_NATIVE_LAUNCH_V3") != "1" {
 		t.Skip("requires authorized isolated root laboratory harness")
 	}
@@ -797,6 +805,36 @@ func testNativeRoutedLaunchV3(t *testing.T, integrity, freshScope bool) {
 	}
 	if e = supervisor.Close(); e != nil {
 		t.Fatal(e)
+	}
+	if selectedPreflight {
+		// The writer has exited. Hold its actual publication lock while the
+		// separate capless child authenticates current full-history selection.
+		lock, err := roots[0].OpenFile("checkpoint.lock", os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			t.Fatal("open existing publication barrier", err)
+		}
+		defer lock.Close()
+		before, err := roots[0].Lstat("checkpoint.lock")
+		info, statErr := lock.Stat()
+		if err != nil || statErr != nil || !os.SameFile(before, info) || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+			t.Fatal("publication barrier identity")
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st.Uid != nativeIdentitiesV3.APIUID || st.Nlink != 1 || unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB) != nil {
+			t.Fatal("publication barrier ownership or competing writer")
+		}
+		defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+		identity := networkexecutor.OwnedNamespaceIdentity{UID: nativeIdentitiesV3.HelperUID, GID: nativeIdentitiesV3.IPCGID, Namespace: metadata.GatewayNamespace, Host: metadata.HostNamespace, BootID: metadata.BootID, RunID: metadata.RunID}
+		options := RoutedSelectedPreflightOptionsV4{Metadata: metadata, Identities: nativeIdentitiesV3, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3(), Identity: identity, Purpose: RoutedPreflightRetirementV4}
+		observed, err := ReadRoutedSelectedPreflightV4(ctx, options)
+		if err != nil || observed.Identity != identity || observed.Reference.WorkHash == "" {
+			t.Fatal("native root-to-capless full selected preflight", err)
+		}
+		options.Identity.RunID = strings.Repeat("e", 32)
+		if _, err = ReadRoutedSelectedPreflightV4(ctx, options); err == nil {
+			t.Fatal("foreign old scope authorized")
+		}
+		t.Log("actual capless child authenticated current selection under the original publication lock; foreign scope refused; no retirement effects")
 	}
 	if strings.Contains(logs.String(), "native role failed:") {
 		t.Fatalf("child cleanup failed: %s", logs.String())
