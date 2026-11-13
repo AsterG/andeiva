@@ -40,6 +40,15 @@ type RoutedSessionV3 struct {
 	rebootScope routedRebootScopeProofV4
 	inventory   func(context.Context) (networkinventory.Snapshot, error)
 	dhcp        *RoutedDHCPRuntimeV3
+	dhcpJobs    routedDHCPJobsSessionV4
+}
+
+// This trusted hook runs under controller ownership after a completed full
+// inspection. No request supplies its implementation or an activation proof.
+type routedDHCPJobsSessionV4 interface {
+	Inspect(context.Context, configpoc.SelectionReferenceV2) (bool, error)
+	Dispatch(context.Context, firewallipc.RoutedCommandV3) (any, error)
+	Invalidate(context.Context) error
 }
 
 func NewRoutedSessionV3(authority configpoc.RoutedAuthorityV1, source RoutedSelectionSourceV3) (*RoutedSessionV3, error) {
@@ -123,7 +132,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		return ErrUnavailable
 	}
 	hello, e := firewallipc.DecodeRoutedHelloV3(data, false)
-	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
+	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil || s.dhcpJobs != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
 		return ErrIdentity
 	}
 	hello.Run = runtimeRun
@@ -185,6 +194,9 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 		return firewallipc.RoutedFreshScopeResultV3{Evidence: proof}, err
 	}
 	if firewallipc.RoutedDHCPVerbV3(c.Verb) {
+		if s.dhcpJobs != nil {
+			return s.dhcpJobs.Dispatch(ctx, c)
+		}
 		if s.dhcp == nil {
 			return nil, ErrIdentity
 		}
@@ -210,7 +222,17 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 		}
 		if c.Integrity.Mode == "check" {
 			result, err := s.integrity.inspect(ctx, c.Integrity.Selection, s.authority)
-			return firewallipc.RoutedIntegrityResultV3{Mode: "check", Result: result}, err
+			selected := false
+			if err == nil && result.State == configpoc.IntegrityCompleteV1 && s.dhcpJobs != nil {
+				selected, err = s.dhcpJobs.Inspect(ctx, result.Selection)
+				if err != nil {
+					result = integrityIncompleteV3(ctx, result.Selection, err)
+				}
+			}
+			if s.dhcpJobs != nil && (err != nil || result.State != configpoc.IntegrityCompleteV1) {
+				err = errors.Join(err, s.dhcpJobs.Invalidate(ctx))
+			}
+			return firewallipc.RoutedIntegrityResultV3{Mode: "check", Result: result, DHCPSelected: selected}, err
 		}
 		return nil, ErrIdentity
 	case "observe":

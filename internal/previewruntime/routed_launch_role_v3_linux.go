@@ -27,6 +27,8 @@ import (
 // their trusted deployment configuration, but cannot replace these descriptors,
 // invent a peer identity or open a configuration writer before the V3 factory.
 type RoutedLaunchContextV3 struct {
+	DHCPJobsEnabled            bool
+	dhcpJobs                   *routedDHCPJobClientV4 // Helper only; never inherited by API.
 	RebootScopeEnabled         bool
 	RebootScope                *RoutedRebootScopeOptionsV4 // Helper-only borrowed root descriptor.
 	FreshScopeEnabled          bool
@@ -47,6 +49,7 @@ type RoutedLaunchContextV3 struct {
 	PeerPID                    int32
 }
 type RoutedHelperComponentsV3 struct {
+	DHCPJobs         *routedDHCPJobAssemblyV4
 	NetworkInventory func(context.Context) (networkinventory.Snapshot, error)
 	Authority        configpoc.RoutedAuthorityV1
 	Compatibility    *SessionV2
@@ -62,6 +65,7 @@ type RoutedLaunchFactoriesV3 struct {
 }
 
 type routedLaunchFilesV3 struct {
+	jobs           *net.UnixConn
 	retirementFile *os.File
 	managementFile *os.File
 	integrityFile  *os.File
@@ -71,6 +75,9 @@ type routedLaunchFilesV3 struct {
 }
 
 func (f *routedLaunchFilesV3) close() {
+	if f.jobs != nil {
+		_ = f.jobs.Close()
+	}
 	if f.retirementFile != nil {
 		_ = f.retirementFile.Close()
 	}
@@ -189,6 +196,20 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 	}
 	if !validRoutedScopeBootstrapV4(b, role) {
 		return fail()
+	}
+	if b.DHCPJobs && !b.Integrity {
+		return fail()
+	}
+	if b.DHCPJobs && role == RoutedHelperRoleV3 {
+		file := os.NewFile(15, "routed-root-jobs")
+		var err error
+		f.jobs, err = routedDHCPJobSocketV4(file)
+		if file != nil {
+			_ = file.Close()
+		}
+		if err != nil {
+			return fail()
+		}
 	}
 	// Adopt optional descriptors before opening roots, which may reuse gaps.
 	if (b.FreshScope || b.RebootScope) && role == RoutedHelperRoleV3 {
@@ -317,6 +338,10 @@ func (f *routedLaunchFilesV3) context(b routedLaunchBootstrapV3) RoutedLaunchCon
 		value = *b.StoreBudget
 	}
 	out := RoutedLaunchContextV3{RebootScopeEnabled: b.RebootScope, FreshScopeEnabled: b.FreshScope, LocalOrigin: cloneRoutedLocalOriginV3(b.LocalOrigin), StoreBudget: value, Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Management: f.managementFile, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
+	out.DHCPJobsEnabled = b.DHCPJobs
+	if f.jobs != nil {
+		out.dhcpJobs = &routedDHCPJobClientV4{conn: f.jobs, metadata: b.Metadata, peer: routedDHCPJobPeerV4{pid: b.ParentPID, uid: 0, gid: 0}}
+	}
 	if f.retirementFile != nil && b.RebootScopeBinding != nil {
 		out.RebootScope = &RoutedRebootScopeOptionsV4{Receipt: f.retirementFile, Binding: *b.RebootScopeBinding}
 	}
@@ -361,7 +386,7 @@ func runRoutedAPILaunchV3(ctx context.Context, f *routedLaunchFilesV3, b routedL
 	if e != nil {
 		return e
 	}
-	if o.RoutedFreshScope != b.FreshScope || o.RoutedRebootScope != b.RebootScope || o.Store != f.roots[1] || o.Runtime.SharedReader == nil || *o.Runtime.SharedReader != b.Access[0] || o.Runtime.BootID != b.Metadata.BootID || !o.Runtime.GuardDeadlines {
+	if o.RoutedDHCP != b.DHCPJobs || o.RoutedFreshScope != b.FreshScope || o.RoutedRebootScope != b.RebootScope || o.Store != f.roots[1] || o.Runtime.SharedReader == nil || *o.Runtime.SharedReader != b.Access[0] || o.Runtime.BootID != b.Metadata.BootID || !o.Runtime.GuardDeadlines {
 		return ErrIdentity
 	}
 	routed, e := dialRoutedLaunchV3(ctx, f.roots[0], "routed.sock", b)
@@ -464,7 +489,11 @@ func runRoutedHelperLaunchV3(ctx context.Context, cancel context.CancelFunc, f *
 	if !ok || owner == nil || c.Compatibility.routedOwner != owner || c.Compatibility.routedReadback == nil {
 		return ErrIdentity
 	}
+	if (c.DHCPJobs != nil) != b.DHCPJobs {
+		return ErrIdentity
+	}
 	o := RoutedHelperOptionsV3{NetworkInventory: c.NetworkInventory, IntegrityRoot: f.integrityRoot, Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Authority: c.Authority}
+	o.DHCPJobs = c.DHCPJobs
 	if b.RebootScope {
 		o.RebootScope = &RoutedRebootScopeOptionsV4{Receipt: f.retirementFile, Binding: *b.RebootScopeBinding}
 	}

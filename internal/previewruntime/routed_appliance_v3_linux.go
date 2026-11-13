@@ -131,6 +131,7 @@ func NewRoutedApplianceFactoriesV3(c Config) (RoutedLaunchFactoriesV3, error) {
 				return out, cleanup, ErrStorage
 			}
 			out = OperationsRuntimeOptionsV2{RoutedRebootScope: launch.RebootScopeEnabled, RoutedFreshScope: launch.FreshScopeEnabled, RoutedInventory: true, Store: launch.Store, Budget: launch.StoreBudget, Auth: auth, Origin: c.Origin(), Static: routedApplianceStaticV3(assets.FS()), Local: []configpoc.Engine{routedApplianceLocalV3{}}, Runtime: configpoc.RuntimeOptionsV2{SharedReader: &launch.Access, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}, BootID: launch.Metadata.BootID, GuardDeadlines: true}}
+			out.RoutedDHCP = launch.DHCPJobsEnabled
 			return out, cleanup, nil
 		},
 		ServeAPI: func(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error) error {
@@ -216,7 +217,21 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 	if err != nil {
 		return out, err
 	}
-	network, err := networkexecutor.NewInOwnedNamespaceWithReader(ctx, c.Gateway, c.Host, identity, c.Access.ReaderGID)
+	bindings, err := routedApplianceBindingsV3()
+	if err != nil {
+		return out, err
+	}
+	var network routedNetworkDriverV4
+	var selector *routedNetworkSelectorV4
+	if c.DHCPJobsEnabled {
+		if c.dhcpJobs == nil {
+			return out, ErrIdentity
+		}
+		selector, err = newOwnedRoutedNetworkSelectorV4(ctx, c.Gateway, c.Host, identity, c.Access.ReaderGID, bindings)
+		network = selector
+	} else {
+		network, err = networkexecutor.NewInOwnedNamespaceWithReader(ctx, c.Gateway, c.Host, identity, c.Access.ReaderGID)
+	}
 	if err != nil {
 		return out, err
 	}
@@ -229,10 +244,6 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 	if err != nil {
 		return out, err
 	}
-	bindings, err := routedApplianceBindingsV3()
-	if err != nil {
-		return out, err
-	}
 	authority, err := NewRoutedAuthority(kernel, network, listeners, routedactivation.Options{Legacy: legacy.Firewall, Local: &legacy.LocalServices, ObservedBindings: bindings}, identity)
 	if err != nil {
 		return out, err
@@ -240,6 +251,9 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 	out.Cleanup = routedApplianceCloserV3(func() error { return errors.Join(authority.group.Close(), network.Close()) })
 	out.NetworkInventory = routedInventoryProviderV3(c.Metadata)
 	out.Authority = authority
+	if selector != nil {
+		out.DHCPJobs = &routedDHCPJobAssemblyV4{network: selector, listeners: listeners, target: c.Gateway, host: c.Host, client: c.dhcpJobs}
+	}
 	out.Compatibility, err = NewRoutedReadbackSessionV3(c.Metadata.RunID, c.Metadata.GatewayNamespace, authority)
 	if err != nil {
 		return out, err

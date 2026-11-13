@@ -32,7 +32,10 @@ type RoutedClientV3 struct {
 	rebootScope         bool
 	publicationAllowed  atomic.Bool
 	closingAllowed      atomic.Bool
+	dhcpSelected        atomic.Bool // Scheduling hint only, never an effect grant.
 }
+
+func (c *RoutedClientV3) DHCPSelectedV4() bool { return c != nil && c.dhcpSelected.Load() }
 
 func ConnectRoutedV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64) (*RoutedClientV3, error) {
 	return connectRoutedV3(parent, conn, runtimeRun, namespace, false)
@@ -107,6 +110,7 @@ func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser
 	}
 }
 func (c *RoutedClientV3) closeLocked() {
+	c.dhcpSelected.Store(false)
 	c.publicationAllowed.Store(false)
 	c.closingAllowed.Store(false)
 	c.dead = true
@@ -151,6 +155,7 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	}
 	if verb == "inspect" && command.Integrity.Mode == "check" {
 		c.publicationAllowed.Store(false)
+		c.dhcpSelected.Store(false)
 	}
 	c.sequence = request.Sequence
 	timeout := 3 * time.Second
@@ -188,6 +193,11 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 				return RoutedResultV3{}, ErrChannel
 			}
 			if verb == "inspect" && command.Integrity.Mode == "check" && out.result.Integrity.State == configpoc.IntegrityCompleteV1 && out.result.Integrity.Selection == command.Integrity.Selection {
+				if out.result.DHCPSelected && !c.dhcp {
+					c.closeLocked()
+					return RoutedResultV3{}, ErrChannel
+				}
+				c.dhcpSelected.Store(out.result.DHCPSelected)
 				c.publicationAllowed.Store(true)
 			}
 			if verb == "inspect" && out.result.Integrity.State == configpoc.IntegrityCompleteV1 && out.result.Integrity.Selection == command.Integrity.Selection {

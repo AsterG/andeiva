@@ -17,13 +17,16 @@ type routedIntegritySchedulerV3 struct {
 }
 
 func startRoutedIntegritySchedulerV3(service routedIntegrityScheduledServiceV3) *routedIntegritySchedulerV3 {
+	return startRoutedIntegrityCallbackV4(service, service.InspectRuntimeV1)
+}
+func startRoutedIntegrityCallbackV4(service routedIntegrityScheduledServiceV3, inspect func(context.Context) error) *routedIntegritySchedulerV3 {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &routedIntegritySchedulerV3{cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(s.done)
 		ticker := time.NewTicker(configpoc.IntegrityInspectionIntervalV1)
 		defer ticker.Stop()
-		runRoutedIntegritySchedulerV3(ctx, ticker.C, service.IntegrityPublicationsV1(), service.InspectRuntimeV1)
+		runRoutedIntegritySchedulerV3(ctx, ticker.C, service.IntegrityPublicationsV1(), inspect)
 	}()
 	return s
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewallipc"
@@ -37,11 +38,78 @@ func (r *routedDHCPRemoteV3) ReleaseWithdrawn(ctx context.Context) error {
 // serializes selected Prepare -> helper Apply -> selected Applied -> helper Open.
 // The selected work blocks conflicting configuration publication until Withdraw.
 type RoutedDHCPControllerV3 struct {
-	mu     sync.Mutex
-	remote *routedDHCPRemoteV3
-	writer *configpoc.RoutedDHCPSelectedStoreV3
-	work   string
-	grant  configpoc.RoutedDHCPGrantV3
+	mu             sync.Mutex
+	remote         *routedDHCPRemoteV3
+	writer         *configpoc.RoutedDHCPSelectedStoreV3
+	work           string
+	grant          configpoc.RoutedDHCPGrantV3
+	scheduleMu     sync.Mutex
+	scheduleCancel context.CancelFunc
+	scheduleDone   chan struct{}
+	scheduleClosed bool
+}
+
+// This loop exists only after an authenticated complete inspection reports a
+// selected DHCP plan. It reads fresh owner/selected facts on every iteration;
+// the hint itself cannot authorize Current, Apply or Open.
+func (c *RoutedDHCPControllerV3) scheduleV4(selected bool) {
+	c.scheduleMu.Lock()
+	defer c.scheduleMu.Unlock()
+	if c.scheduleClosed {
+		return
+	}
+	if !selected {
+		if c.scheduleCancel != nil {
+			c.scheduleCancel()
+			c.scheduleCancel = nil
+		}
+		return
+	}
+	if c.scheduleCancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	previous := c.scheduleDone
+	done := make(chan struct{})
+	c.scheduleCancel, c.scheduleDone = cancel, done
+	go func() {
+		defer close(done)
+		if previous != nil {
+			select {
+			case <-previous:
+			case <-ctx.Done():
+				return
+			}
+		}
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			call, stop := context.WithTimeout(ctx, 3*time.Second)
+			_ = c.Reconcile(call)
+			stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (c *RoutedDHCPControllerV3) closeSchedulerV4() {
+	c.scheduleMu.Lock()
+	c.scheduleClosed = true
+	if c.scheduleCancel != nil {
+		c.scheduleCancel()
+	}
+	done := c.scheduleDone
+	c.scheduleMu.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 func newRoutedDHCPControllerV3(service *configpoc.ServiceV2, client *firewallipc.RoutedClientV3, id networkexecutor.OwnedNamespaceIdentity) (*RoutedDHCPControllerV3, error) {
@@ -60,11 +128,14 @@ func newRoutedDHCPControllerV3(service *configpoc.ServiceV2, client *firewallipc
 // is verified without extending the original token. Renewal is serial and
 // interrupts WAN while the previous selected work is retired.
 func (c *RoutedDHCPControllerV3) Reconcile(ctx context.Context) error {
-	if c == nil || ctx == nil {
+	if c == nil || ctx == nil || ctx.Err() != nil {
 		return ErrIdentity
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if ctx.Err() != nil {
+		return ErrUnavailable
+	}
 	if c.work != "" {
 		got, err := c.remote.Current(ctx)
 		if err == nil && reflect.DeepEqual(got, c.grant) {

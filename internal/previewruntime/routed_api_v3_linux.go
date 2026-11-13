@@ -35,6 +35,9 @@ func (r *RoutedOperationsRuntimeV3) Close() error {
 	if r.integrityScheduler != nil {
 		r.integrityScheduler.Close()
 	}
+	if r.DHCP != nil {
+		r.DHCP.closeSchedulerV4()
+	}
 	var se, re, le error
 	if r.Service != nil {
 		se = r.Service.Close()
@@ -228,7 +231,20 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 		}
 	}
 	if client.IntegrityEnabled() {
-		result.integrityScheduler = startRoutedIntegritySchedulerV3(service)
+		if result.DHCP != nil {
+			result.DHCP.scheduleV4(client.DHCPSelectedV4())
+			result.integrityScheduler = startRoutedIntegrityCallbackV4(service, func(call context.Context) error {
+				// Same ordering as Reconcile: controller lock, then store barrier.
+				// Existing valid WAN remains installed during full inspection.
+				result.DHCP.mu.Lock()
+				defer result.DHCP.mu.Unlock()
+				err := service.InspectRuntimeV1(call)
+				result.DHCP.scheduleV4(err == nil && client.DHCPSelectedV4())
+				return err
+			})
+		} else {
+			result.integrityScheduler = startRoutedIntegritySchedulerV3(service)
+		}
 	}
 	return result, nil
 }
