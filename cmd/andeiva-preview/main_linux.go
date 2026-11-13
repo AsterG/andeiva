@@ -78,6 +78,12 @@ func run(args []string) error {
 			return e
 		}
 		return json.NewEncoder(os.Stdout).Encode(map[string]bool{"provisioned": true})
+	case "grouped-profile":
+		result, err := previewruntime.ConvertRoutedMigrationProfileV3(ctx, c)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	case "grouped-prepare":
 		result, err := previewruntime.PrepareRoutedMigrationV3(ctx, c)
 		if err != nil {
