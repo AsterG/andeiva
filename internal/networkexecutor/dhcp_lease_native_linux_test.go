@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/AsterG/andeiva/internal/dhcpclient"
 	"github.com/AsterG/andeiva/internal/jsoncheck"
@@ -47,6 +48,7 @@ type dhcpLeaseFrame struct {
 	Outcome   LeaseOutcome      `json:"outcome,omitempty"`
 	Mutations int               `json:"mutations,omitempty"`
 	Error     string            `json:"error,omitempty"`
+	Pdeath    int               `json:"pdeath,omitempty"`
 }
 
 type dhcpLeasePipe struct{ read, write *os.File }
@@ -166,6 +168,29 @@ func dhcpLeaseRootParent(pid int, start uint64) bool {
 	return root && err == nil && actual == start && pid == os.Getppid()
 }
 
+func dhcpLeaseParentDeathSignal() (int, error) {
+	var signal int32
+	_, _, errno := unix.Syscall6(unix.SYS_PRCTL, unix.PR_GET_PDEATHSIG, uintptr(unsafe.Pointer(&signal)), 0, 0, 0, 0) // #nosec G103 -- Kernel ABI writes one local int32; no external pointer or buffer.
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(signal), nil
+}
+
+func dhcpLeaseArmParentDeath(boot dhcpLeaseBoot) error {
+	if !dhcpLeaseRootParent(boot.Parent, boot.ParentStart) {
+		return ErrScope
+	}
+	if err := unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(unix.SIGKILL), 0, 0, 0); err != nil {
+		return err
+	}
+	signal, err := dhcpLeaseParentDeathSignal()
+	if err != nil || signal != int(unix.SIGKILL) || !dhcpLeaseRootParent(boot.Parent, boot.ParentStart) {
+		return ErrScope
+	}
+	return nil
+}
+
 // Child roles have no public listener. Their only commands arrive through the
 // supervisor-created, direction-checked anonymous pipes.
 func TestNativeDHCPLeaseRole(t *testing.T) {
@@ -173,7 +198,7 @@ func TestNativeDHCPLeaseRole(t *testing.T) {
 	if os.Getenv("ANDEIVA_DHCP_LEASE_NATIVE") != "1" || role == "" {
 		t.Skip("native role only")
 	}
-	if os.Getenv("CI") != "" || (role != "owner" && role != "helper") {
+	if os.Getenv("CI") != "" || (role != "owner" && role != "helper" && role != "broker") {
 		t.Fatal("role denied")
 	}
 	for fd := 3; fd <= 7; fd++ {
@@ -189,8 +214,18 @@ func TestNativeDHCPLeaseRole(t *testing.T) {
 	if err != nil || init.Kind != "init" || init.Boot == nil || init.Boot.PID != os.Getpid() || !dhcpLeaseRootParent(init.Boot.Parent, init.Boot.ParentStart) {
 		t.Fatal("bootstrap identity")
 	}
+	// setpriv clears the exec-time setting. Retain this thread after rearming.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := dhcpLeaseArmParentDeath(*init.Boot); err != nil {
+		t.Fatal("parent-death binding", err)
+	}
 	if role == "owner" {
 		runDHCPLeaseOwner(t, pipe)
+		return
+	}
+	if role == "broker" {
+		runDHCPLeaseRelay(t, pipe, *init.Boot)
 		return
 	}
 	runDHCPLeaseHelper(t, pipe, *init.Boot)
@@ -291,7 +326,11 @@ func runDHCPLeaseHelper(t *testing.T, pipe dhcpLeasePipe, boot dhcpLeaseBoot) {
 		}
 		return run(ctx, op)
 	}
-	if pipe.send(dhcpLeaseFrame{Kind: "helper_ready"}) != nil {
+	signal, err := dhcpLeaseParentDeathSignal()
+	if err != nil || signal != int(unix.SIGKILL) || !dhcpLeaseRootParent(boot.Parent, boot.ParentStart) {
+		t.Fatal("helper parent-death readiness")
+	}
+	if pipe.send(dhcpLeaseFrame{Kind: "helper_ready", Pdeath: signal}) != nil {
 		t.Fatal("helper ready channel")
 	}
 	for {
@@ -326,6 +365,68 @@ func runDHCPLeaseHelper(t *testing.T, pipe dhcpLeasePipe, boot dhcpLeaseBoot) {
 			if err != nil {
 				t.Fatal("close active helper")
 			}
+			return
+		}
+	}
+}
+
+// Killing this actual root parent must SIGKILL its post-setpriv helper; an EOF
+// exit from a child without parent-death binding cannot satisfy the native test.
+func runDHCPLeaseRelay(t *testing.T, pipe dhcpLeasePipe, boot dhcpLeaseBoot) {
+	if os.Getuid() != 0 || os.Geteuid() != 0 {
+		t.Fatal("broker identity")
+	}
+	host, target := os.NewFile(3, "host-network"), os.NewFile(4, "owned-network")
+	defer host.Close()
+	defer target.Close()
+	helper := startDHCPLeaseChild(t, "helper", host, target, nil)
+	boot.PID, boot.Parent = helper.cmd.Process.Pid, os.Getpid()
+	var err error
+	boot.ParentStart, err = dhcpLeaseProcessStart(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if helper.pipe.send(dhcpLeaseFrame{Kind: "init", Boot: &boot}) != nil {
+		t.Fatal("relay helper bootstrap")
+	}
+	ready, err := helper.pipe.receive()
+	if err != nil || ready.Kind != "helper_ready" || ready.Pdeath != int(unix.SIGKILL) {
+		t.Fatal("relay helper readiness", ready.Kind, err)
+	}
+	start, err := dhcpLeaseProcessStart(helper.cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pipe.send(dhcpLeaseFrame{Kind: "broker_ready", PID: helper.cmd.Process.Pid, Start: start, Pdeath: ready.Pdeath}) != nil {
+		t.Fatal("relay readiness")
+	}
+	current := func() (LeaseFact, error) {
+		if pipe.send(dhcpLeaseFrame{Kind: "current"}) != nil {
+			return LeaseFact{}, ErrLeaseUnavailable
+		}
+		m, err := pipe.receive()
+		if err != nil || m.Kind != "fact" || m.Error != "" || m.Fact == nil {
+			return LeaseFact{}, ErrLeaseUnavailable
+		}
+		return *m.Fact, nil
+	}
+	for {
+		m, err := pipe.receiveWithin(4 * time.Minute)
+		if err != nil {
+			t.Fatal("relay command", err)
+		}
+		if m.Kind != "refresh" && m.Kind != "verify" && m.Kind != "withdraw" && m.Kind != "close" {
+			t.Fatal("relay command denied")
+		}
+		out, err := helper.exchange(m.Kind, current)
+		if err != nil {
+			t.Fatal("relay helper channel", err)
+		}
+		if pipe.send(out) != nil {
+			t.Fatal("relay result")
+		}
+		if m.Kind == "close" {
+			helper.wait(t, false)
 			return
 		}
 	}
@@ -539,6 +640,52 @@ func nativeDHCPLeaseStopServer(t *testing.T, targetID, hostID uint64) {
 	if err := unix.PidfdSendSignal(fd, unix.SIGTERM, nil, 0); err != nil {
 		t.Fatal("stop isolated server", err)
 	}
+	if err := dhcpLeaseWaitPidfd(fd, 5*time.Second); err != nil {
+		t.Fatal("server death not observed", err)
+	}
+	t.Log("server death: pidfd readable")
+}
+
+func dhcpLeaseWaitPidfd(fd int, timeout time.Duration) error {
+	if fd < 0 || fd > 65535 || timeout <= 0 {
+		return ErrScope
+	}
+	until := time.Now().Add(timeout)
+	for time.Now().Before(until) {
+		fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+		_, err := unix.Poll(fds, 100)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if fds[0].Revents&unix.POLLIN != 0 {
+			return nil
+		}
+		if fds[0].Revents != 0 {
+			return ErrScope
+		}
+	}
+	return ErrLeaseUnavailable
+}
+
+// A late ACK can replace the grant after server termination was requested.
+// Expiry must be measured against the most recent valid fact, never the first.
+func dhcpLeaseCheckExpiry(previous, current LeaseFact, now int64) (LeaseFact, bool, error) {
+	if previous.Revoked || previous.Sequence == 0 || previous.DeadlineBootNS <= 0 || current.Owner != previous.Owner || current.DesiredHash != previous.DesiredHash || current.WAN != previous.WAN || current.Sequence < previous.Sequence || now <= 0 {
+		return previous, false, ErrScope
+	}
+	if current.Revoked {
+		if current.Sequence <= previous.Sequence || current.Address != "" || current.Gateway != "" || current.DeadlineBootNS != 0 || now < previous.DeadlineBootNS {
+			return previous, false, ErrScope
+		}
+		return previous, true, nil
+	}
+	if current.DeadlineBootNS <= 0 || current.Sequence == previous.Sequence && current != previous {
+		return previous, false, ErrScope
+	}
+	return current, false, nil
 }
 
 func TestNativeDHCPLeaseIntegration(t *testing.T) {
@@ -546,8 +693,14 @@ func TestNativeDHCPLeaseIntegration(t *testing.T) {
 		t.Skip("requires authorized native integration harness")
 	}
 	mode := os.Getenv("ANDEIVA_DHCP_LEASE_MODE")
-	if os.Getenv("CI") != "" || os.Getuid() != 0 || (mode != "lifecycle" && mode != "owner-death" && mode != "manager-death") {
+	if os.Getenv("CI") != "" || os.Getuid() != 0 || (mode != "lifecycle" && mode != "owner-death" && mode != "manager-death" && mode != "broker-death") {
 		t.Fatal("integration scope")
+	}
+	if mode == "broker-death" {
+		if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
+			t.Fatal("subreaper", err)
+		}
+		defer unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0)
 	}
 	for fd := 3; fd <= 5; fd++ {
 		unix.CloseOnExec(fd)
@@ -596,6 +749,8 @@ func TestNativeDHCPLeaseIntegration(t *testing.T) {
 		t.Log(stage + ": exact LAN/empty-WAN physical baseline")
 	}
 	var owner, helper *dhcpLeaseChild
+	var relayedHelperPID int
+	var relayedHelperStart uint64
 	var broker *dhcpLeaseBroker
 	var identity OwnedNamespaceIdentity
 	startOwner := func() {
@@ -628,7 +783,11 @@ func TestNativeDHCPLeaseIntegration(t *testing.T) {
 	}
 	startHelper := func(denied bool) {
 		t.Helper()
-		helper = startDHCPLeaseChild(t, "helper", host, target, nil)
+		role := "helper"
+		if mode == "broker-death" && !denied {
+			role = "broker"
+		}
+		helper = startDHCPLeaseChild(t, role, host, target, nil)
 		b := dhcpLeaseBoot{PID: helper.cmd.Process.Pid, Parent: os.Getpid(), ParentStart: parentStart, Identity: identity, Owner: broker.identity, Desired: desired}
 		if helper.pipe.send(dhcpLeaseFrame{Kind: "init", Boot: &b}) != nil {
 			t.Fatal("helper init")
@@ -646,7 +805,14 @@ func TestNativeDHCPLeaseIntegration(t *testing.T) {
 			helper.wait(t, false)
 			return
 		}
-		if m.Kind != "helper_ready" {
+		if role == "broker" {
+			if m.Kind != "broker_ready" || m.PID <= 1 || m.Start == 0 || m.Pdeath != int(unix.SIGKILL) {
+				t.Fatal("broker helper readiness", m.Kind, m.Error)
+			}
+			relayedHelperPID, relayedHelperStart = m.PID, m.Start
+			return
+		}
+		if m.Kind != "helper_ready" || m.Pdeath != int(unix.SIGKILL) {
 			t.Fatal("helper constructor", m.Kind, m.Error)
 		}
 	}
@@ -719,6 +885,50 @@ func TestNativeDHCPLeaseIntegration(t *testing.T) {
 	assertBaseline("constructor read-only")
 	awaitGrant(0, "")
 	initial := apply("BOUND")
+	if mode == "broker-death" {
+		applied := nativeDHCPLeaseObserve(t)
+		fd, err := unix.PidfdOpen(relayedHelperPID, 0)
+		if err != nil {
+			t.Fatal("helper pidfd", err)
+		}
+		defer unix.Close(fd)
+		start, err := dhcpLeaseProcessStart(relayedHelperPID)
+		if err != nil || start != relayedHelperStart {
+			t.Fatal("relayed helper start identity")
+		}
+		if fd > 65535 {
+			t.Fatal("helper pidfd outside bounded profile")
+		}
+		alive := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+		if n, err := unix.Poll(alive, 0); err != nil || n != 0 {
+			t.Fatal("helper was not alive before broker kill", err)
+		}
+		if err := helper.cmd.Process.Kill(); err != nil {
+			t.Fatal("kill broker", err)
+		}
+		helper.wait(t, true)
+		if err := dhcpLeaseWaitPidfd(fd, 5*time.Second); err != nil {
+			t.Fatal("helper survived broker death", err)
+		}
+		var status unix.WaitStatus
+		pid, err := unix.Wait4(relayedHelperPID, &status, unix.WNOHANG, nil)
+		if err != nil || pid != relayedHelperPID || !status.Signaled() || status.Signal() != unix.SIGKILL {
+			t.Fatal("broker death did not SIGKILL helper", pid, status, err)
+		}
+		if !reflect.DeepEqual(nativeDHCPLeaseObserve(t), applied) {
+			t.Fatal("broker death changed retained L3")
+		}
+		identity.RunID = nativeLeaseNonce(t)
+		broker.identity.RunID = identity.RunID
+		startHelper(true)
+		callOwner("close")
+		owner.wait(t, false)
+		if !reflect.DeepEqual(nativeDHCPLeaseObserve(t), applied) {
+			t.Fatal("broker-death teardown changed retained L3")
+		}
+		t.Log("broker death: helper SIGKILL verified by pidfd/Wait4, WAN retained, occupied-WAN reopening denied; no restoration claim")
+		return
+	}
 	if mode == "manager-death" {
 		applied := nativeDHCPLeaseObserve(t)
 		if err := helper.cmd.Process.Kill(); err != nil {
@@ -785,7 +995,7 @@ func TestNativeDHCPLeaseIntegration(t *testing.T) {
 	}
 	awaitGrant(0, "")
 	apply("fresh owner/helper restart")
-	deadline := broker.last.DeadlineBootNS
+	lastLive := broker.last
 	nativeDHCPLeaseStopServer(t, targetID, hostID)
 	until := time.Now().Add(130 * time.Second)
 	for {
@@ -793,7 +1003,12 @@ func TestNativeDHCPLeaseIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if f.Revoked {
+		var expired bool
+		lastLive, expired, err = dhcpLeaseCheckExpiry(lastLive, f, nativeLeaseNow(t))
+		if err != nil {
+			t.Fatal("authority unavailable before latest grant deadline; not expiry evidence", err)
+		}
+		if expired {
 			break
 		}
 		if time.Now().After(until) {
@@ -801,9 +1016,7 @@ func TestNativeDHCPLeaseIntegration(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if nativeLeaseNow(t) < deadline {
-		t.Fatal("authority disappeared before expected expiry; not expiry evidence")
-	}
+	t.Logf("expiry witnessed against latest valid sequence=%d deadline=%d", lastLive.Sequence, lastLive.DeadlineBootNS)
 	m := callHelper("refresh")
 	if m.Outcome != LeaseWANWithdrawn || m.Error != ErrLeaseUnavailable.Error() {
 		t.Fatal("expiry withdrawal", m)
@@ -849,6 +1062,48 @@ func TestDHCPLeasePrivateFramesBounded(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(decoded, m) {
 			t.Fatal("nested frame roundtrip", err)
 		}
+	}
+}
+
+func TestDHCPLeaseExpiryTracksLatestGrant(t *testing.T) {
+	a := LeaseFact{Sequence: 1, DeadlineBootNS: 100, Address: "198.19.0.10/24", Gateway: "198.19.0.2"}
+	b := a
+	b.Sequence = 2
+	b.DeadlineBootNS = 200
+	last, expired, err := dhcpLeaseCheckExpiry(a, b, 90)
+	if err != nil || expired || last != b {
+		t.Fatal("late grant not retained", last, expired, err)
+	}
+	unavailable := b
+	unavailable.Sequence = 3
+	unavailable.Revoked = true
+	unavailable.Address = ""
+	unavailable.Gateway = ""
+	unavailable.DeadlineBootNS = 0
+	if _, expired, err := dhcpLeaseCheckExpiry(last, unavailable, 150); err == nil || expired {
+		t.Fatal("unavailable between A and B deadlines credited as expiry")
+	}
+	if latest, expired, err := dhcpLeaseCheckExpiry(last, unavailable, 200); err != nil || !expired || latest != b {
+		t.Fatal("latest deadline expiry rejected", expired, err)
+	}
+	changed := b
+	changed.DeadlineBootNS++
+	if _, _, err := dhcpLeaseCheckExpiry(b, changed, 100); err == nil {
+		t.Fatal("same sequence changed deadline")
+	}
+}
+
+func TestDHCPLeaseParentDeathRejectsUnknownParent(t *testing.T) {
+	before, err := dhcpLeaseParentDeathSignal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dhcpLeaseArmParentDeath(dhcpLeaseBoot{Parent: 0, ParentStart: 1}); err == nil {
+		t.Fatal("unverified parent accepted")
+	}
+	after, err := dhcpLeaseParentDeathSignal()
+	if err != nil || after != before {
+		t.Fatal("rejected parent changed signal", after, err)
 	}
 }
 

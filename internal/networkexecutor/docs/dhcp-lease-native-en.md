@@ -25,6 +25,7 @@ directory, verify hashes and require root-owned single-link regular files, mode
 ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 ./dhcp-lease-native-isolated.sh lifecycle
 ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 ./dhcp-lease-native-isolated.sh owner-death
 ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 ./dhcp-lease-native-isolated.sh manager-death
+ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 ./dhcp-lease-native-isolated.sh broker-death
 ```
 
 Required unit limits: `KillMode=control-group`, `RuntimeMaxSec=360s`,
@@ -46,6 +47,11 @@ root parent PID/start time, child PID, namespace/boot/run identity and DHCP owne
 incarnation. These private bounded canonical frames are test assembly, not a
 public JSON input or runtime IPC contract.
 
+Because the UID transition clears the exec-time parent-death setting, each role
+rearms SIGKILL after authenticating its parent, reads PR_GET_PDEATHSIG, then
+rechecks the same parent PID/start and four root UIDs. The role retains that OS
+thread through its lifetime; readiness includes the verified setting.
+
 During each operation, `Current` queries the real owner through those pipes.
 The broker retains the client's exact conservative CLOCK_BOOTTIME deadline;
 reading never extends it. Grants use the actual client Epoch and event; sequence
@@ -66,6 +72,15 @@ the LAN must remain unchanged, the fresh helper must refuse occupied-WAN adoptio
 and WAN remains until namespace teardown. That outcome is **not restoration** or
 cross-process recovery. A durable authenticated selected-work envelope and an
 independent kernel expiry guard remain prerequisites for future forwarding.
+
+`broker-death` inserts a real root relay parent between supervisor and helper.
+After applying the real lease, only that broker is killed. A supervisor subreaper
+requires helper pidfd readability and a reaped SIGKILL status. Normal EOF exit
+cannot pass. Occupied-WAN reopening must still be rejected; no restoration is
+claimed. Server death also requires readable pidfd, not just successful signal
+delivery. Expiry tracks every subsequent valid grant, including a late ACK,
+and fails if authority disappears before the latest observed deadline. The A→B
+unit negative rejects unavailability between those two grant deadlines.
 
 Record each mode's executed PASS (no skipped role), hashes, cgroup CPU/peak memory,
 host dual-stack links/addresses/routes/rules/nftables/forwarding/mount invariants,

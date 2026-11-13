@@ -15,7 +15,7 @@ for artifact in "$0" ./dhcp-lease-native.test ./andeiva-dhcp-hook; do
   (( (8#$mode & 0022) == 0 ))
 done
 if [[ $# == 1 && $1 != isolated ]]; then
-  [[ $1 == lifecycle || $1 == owner-death || $1 == manager-death ]]
+  [[ $1 == lifecycle || $1 == owner-death || $1 == manager-death || $1 == broker-death ]]
   [[ -x ./dhcp-lease-native.test && -x ./andeiva-dhcp-hook && -x /usr/sbin/dhcpcd && -x /usr/bin/busybox && -x /usr/bin/setpriv ]]
   exec 3</proc/self/ns/net
   exec 4</proc/self/ns/mnt
@@ -24,7 +24,7 @@ if [[ $# == 1 && $1 != isolated ]]; then
 fi
 [[ $# == 2 && $1 == isolated ]]
 mode=$2
-[[ $mode == lifecycle || $mode == owner-death || $mode == manager-death ]]
+[[ $mode == lifecycle || $mode == owner-death || $mode == manager-death || $mode == broker-death ]]
 # Reject direct entry BEFORE mounting. Original /proc identifies the host PID1.
 for pair in '3 net' '4 mnt' '6 pid'; do
   read -r descriptor kind <<< "$pair"
@@ -128,7 +128,7 @@ unset ANDEIVA_DHCP_LEASE_ROLE
 /usr/sbin/nft -j list ruleset > /run/andeiva-dhcp-lease/firewall-after.json
 cmp /run/andeiva-dhcp-lease/lan-before.json /run/andeiva-dhcp-lease/lan-after.json
 cmp /run/andeiva-dhcp-lease/firewall-before.json /run/andeiva-dhcp-lease/firewall-after.json
-if [[ $mode != manager-death ]]; then
+if [[ $mode != manager-death && $mode != broker-death ]]; then
   cmp /run/andeiva-dhcp-lease/addresses-before.json /run/andeiva-dhcp-lease/addresses-after.json
   cmp /run/andeiva-dhcp-lease/routes-before.json /run/andeiva-dhcp-lease/routes-after.json
 fi

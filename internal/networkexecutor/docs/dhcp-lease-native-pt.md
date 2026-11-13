@@ -24,6 +24,7 @@ diretório, executar cada modo em uma unidade systemd separada:
 ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 ./dhcp-lease-native-isolated.sh lifecycle
 ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 ./dhcp-lease-native-isolated.sh owner-death
 ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 ./dhcp-lease-native-isolated.sh manager-death
+ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 ./dhcp-lease-native-isolated.sh broker-death
 ```
 
 Exige `KillMode=control-group`, `RuntimeMaxSec=360s`, `TimeoutStopSec=10s` e
@@ -41,6 +42,11 @@ extremos herdados exclusivos, direção validada e close-on-exec autenticam a
 composição. Bootstrap verifica PID/início do pai root, PID filho,
 namespace/boot/run e incarnation DHCP. Frames canônicos privados limitados não
 são entrada JSON pública nem contrato IPC produtivo.
+
+A mudança de UID limpa Pdeathsig anterior ao exec. Cada papel rearma SIGKILL
+após autenticar o pai, lê PR_GET_PDEATHSIG e verifica novamente PID/início e os
+quatro UID root do mesmo pai. Mantém essa thread durante sua vida e só anuncia
+readiness com o sinal verificado.
 
 `Current` consulta o proprietário real durante cada operação. Preserva o prazo
 CLOCK_BOOTTIME exato do cliente sem prolongá-lo ao ler. Grants usam Epoch/evento
@@ -60,6 +66,14 @@ WAN ativa, LAN intacta e reabertura rejeitada por WAN ocupada; WAN permanece at�
 destruir namespace. **Não é restauração nem recuperação entre processos**.
 Trabalho selecionado autenticado durável e guard de expiração independente no
 kernel continuam pendentes antes de permitir encaminhamento.
+
+`broker-death` adiciona um pai relay root real. Após aplicar o lease real, mata
+somente esse broker: o supervisor subreaper exige pidfd do helper legível e status
+SIGKILL ao recolhê-lo. Saída normal por EOF não serve como evidência. Reabrir WAN
+ocupada continua proibido; não afirma restauração. Morte do servidor também exige
+pidfd legível, não apenas envio do sinal. Expiração preserva cada grant válido
+posterior, inclusive ACK em trânsito; falha se perder autoridade antes do último
+prazo observado. A negativa A→B rejeita indisponibilidade entre ambos os prazos.
 
 Registrar PASS executado sem skips, hashes, CPU/memória do cgroup, invariantes
 host dual-stack/links/endereços/rotas/regras/nftables/encaminhamento/mounts e ausência
