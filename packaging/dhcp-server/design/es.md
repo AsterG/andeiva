@@ -162,3 +162,11 @@ pendiente; disponibilidad upstream no es aprobación legal. Sin hooks premium.
 - Vincular cada binario distribuido con su fuente exacta, licencia y obligaciones. La licencia del motor no cubre todos los artefactos transitivos.
 
 Son pruebas futuras obligatorias, no evidencia de instalación completada.
+### Todos los sockets declarados deben estar disponibles
+
+La evaluación aislada deberá configurar `service-sockets-require-all: true`.
+Ocupar un segundo listener LAN declarado antes del arranque y comprobar que el
+servidor rechaza la activación parcial, no deja un primer scope utilizable y
+notifica el fallo. Liberar el conflicto y verificar la recuperación explícita.
+Un proceso activo no demuestra que todas las interfaces declaradas estén servidas.
+Es un criterio de aceptación; ANDEIVA todavía no implementa este ajuste del motor.

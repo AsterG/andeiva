@@ -180,3 +180,11 @@ upstream availability is not legal sign-off. No premium hooks are proposed.
 - Map every shipped binary to its exact source archive, license and redistribution obligations. The main engine license does not cover all transitive artifacts.
 
 These are required future tests, not completed installation evidence.
+### All configured listener sockets must be available
+
+The isolated component evaluation must set `service-sockets-require-all: true`.
+Occupy a second declared LAN listener before startup and verify that the server
+refuses partial activation, exposes no usable first scope and reports the failure.
+Release the conflict and verify explicit recovery. A running process alone does
+not prove that every declared interface is served. This is an acceptance condition,
+not an implemented ANDEIVA engine setting.
