@@ -100,6 +100,19 @@ func TestRoutedGatewayLinksV3Native(t *testing.T) {
 	if err = l.parentsMatch(ctx); err != nil {
 		t.Fatal("parent changed", err)
 	}
+	if err = l.Enable(ctx); err != nil {
+		t.Fatal("enable owned children", err)
+	}
+	raised, err := l.observe(ctx, routedLinkOperationV3{kind: "gateway"})
+	if err != nil || len(raised) != 3 {
+		t.Fatal("raised readback", err)
+	}
+	for _, child := range l.created {
+		actual := ownedRoutedLinkV3(raised, child)
+		if actual == nil || !containsRoutedLinkFlagV3(actual.Flags, "UP") {
+			t.Fatal("created identity not up")
+		}
+	}
 	if err = l.Close(); err != nil {
 		t.Fatal("remove", err)
 	}
@@ -130,5 +143,38 @@ func TestRoutedGatewayLinksV3Native(t *testing.T) {
 			t.Fatal("cleanup retry", stage, err)
 		}
 	}
-	t.Log("real pinned namespaces: two private down children created/read back/removed; parents unchanged")
+	// Exercise the exact manager's retained resources without launching an API
+	// or programming L3. The fixture owns this disposable runtime directory.
+	folder, err := area.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = folder.Chmod(0755); err != nil {
+		t.Fatal(err)
+	}
+	defer folder.Close()
+	node := routedNodeLinksV3{Version: 1, Identity: linkIdentity,
+		LAN: routedNodeParentV3{bindings[0].Index, bindings[0].Name, bindings[0].MAC, bindings[0].MTU},
+		WAN: routedNodeParentV3{bindings[1].Index, bindings[1].Name, bindings[1].MAC, bindings[1].MTU}}
+	managed, err := prepareRoutedManagedNamespaceV3(ctx, area, node, nativeIdentitiesV3)
+	if err != nil {
+		t.Fatal("managed resources", err)
+	}
+	if managed.metadata.ValidateRouted() != nil || managed.metadata.SourceNamespace != 0 || managed.metadata.SinkNamespace != 0 {
+		t.Fatal("managed metadata scope")
+	}
+	if err = managed.Close(); err != nil {
+		t.Fatal("managed cleanup", err)
+	}
+	if err = managed.Close(); err != nil {
+		t.Fatal("managed cleanup idempotency", err)
+	}
+	remainingEntries, err := area.ReadFile("runtime.json")
+	if !os.IsNotExist(err) || len(remainingEntries) != 0 {
+		t.Fatal("managed metadata retained", err)
+	}
+	if err = folder.Chmod(0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("real pinned namespaces: two private children created down, raised, read back and removed; parents unchanged")
 }

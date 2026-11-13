@@ -84,6 +84,8 @@ func run(args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(result)
+	case "grouped-links":
+		return previewruntime.PrepareRoutedNodeLinksV3(ctx, c, os.Stdin)
 	case "grouped-inspect":
 		result, err := previewruntime.InspectRoutedMigrationV3(ctx, c)
 		if err != nil {
@@ -92,6 +94,8 @@ func run(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(result)
 	case "grouped-supervisor":
 		return previewruntime.RunRoutedSupervisorV3(ctx, c)
+	case "grouped-managed-supervisor":
+		return previewruntime.RunRoutedManagedSupervisorV3(ctx, c)
 	case "grouped-health":
 		result, err := previewruntime.GroupedHealthV3(ctx, c)
 		if encode := json.NewEncoder(os.Stdout).Encode(result); err == nil {

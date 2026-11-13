@@ -168,6 +168,8 @@ func (l *RoutedGatewayLinksV3) arguments(op routedLinkOperationV3) (string, []st
 		return "/usr/bin/ip", []string{"link", "add", "link", p.Name, "name", name, "address", l.macs[op.slot], "mtu", fmt.Sprint(p.MTU), "netns", "/proc/self/fd/3", "type", "macvlan", "mode", "private"}, nil
 	case "remove":
 		return "/usr/bin/nsenter", []string{"--net=/proc/self/fd/3", "--", "/usr/bin/ip", "link", "delete", "dev", name}, nil
+	case "enable":
+		return "/usr/bin/nsenter", []string{"--net=/proc/self/fd/3", "--", "/usr/bin/ip", "link", "set", "dev", name, "up"}, nil
 	default:
 		return "", nil, ErrConfiguration
 	}
@@ -251,6 +253,51 @@ func (l *RoutedGatewayLinksV3) Create(ctx context.Context) error {
 	if l.parentsMatch(ctx) != nil {
 		l.uncertain = true
 		return ErrIdentity
+	}
+	return nil
+}
+
+// Enable raises only the two identities created and retained by this instance.
+// The namespace manager must have disabled IPv6 and forwarding before Create.
+// No address, route, listener or packet policy is installed here.
+func (l *RoutedGatewayLinksV3) Enable(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if ctx == nil || ctx.Err() != nil || l.ctx.Err() != nil || l.closed || l.uncertain || l.created[0] == nil || l.created[1] == nil || l.parentsMatch(ctx) != nil {
+		return ErrIdentity
+	}
+	for i, owned := range l.created {
+		links, err := l.observe(ctx, routedLinkOperationV3{kind: "gateway"})
+		actual := ownedRoutedLinkV3(links, owned)
+		if err != nil || len(links) != 3 || actual == nil {
+			l.uncertain = true
+			return ErrIdentity
+		}
+		if !containsRoutedLinkFlagV3(actual.Flags, "UP") {
+			if _, err = l.run(ctx, routedLinkOperationV3{kind: "enable", slot: i}); err != nil {
+				l.uncertain = true
+				return ErrIdentity
+			}
+		}
+		after, err := l.observe(ctx, routedLinkOperationV3{kind: "gateway"})
+		actual = ownedRoutedLinkV3(after, owned)
+		if err != nil || len(after) != 3 || actual == nil || !containsRoutedLinkFlagV3(actual.Flags, "UP") || l.parentsMatch(ctx) != nil {
+			l.uncertain = true
+			return ErrIdentity
+		}
+	}
+	return nil
+}
+
+func ownedRoutedLinkV3(links []routedLinkObservationV3, owned *routedLinkObservationV3) *routedLinkObservationV3 {
+	if owned == nil {
+		return nil
+	}
+	for i := range links {
+		v := &links[i]
+		if v.Name == owned.Name && v.Index == owned.Index && v.MAC == owned.MAC && v.Parent == owned.Parent && v.MTU == owned.MTU && reflect.DeepEqual(v.Info, owned.Info) && v.Promiscuity == 0 {
+			return v
+		}
 	}
 	return nil
 }

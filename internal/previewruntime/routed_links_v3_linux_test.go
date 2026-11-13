@@ -52,6 +52,13 @@ func newRoutedLinksFixtureV3(t *testing.T) *routedLinksFixtureV3 {
 		case "remove":
 			f.links = slices.DeleteFunc(f.links, func(v routedLinkObservationV3) bool { return v.Name == routedLinkNameV3(op.slot) })
 			return nil, nil
+		case "enable":
+			for i := range f.links {
+				if f.links[i].Name == routedLinkNameV3(op.slot) {
+					f.links[i].Flags = []string{"UP"}
+				}
+			}
+			return nil, nil
 		default:
 			t.Fatal("unexpected operation", op)
 			return nil, ErrConfiguration
@@ -61,6 +68,62 @@ func newRoutedLinksFixtureV3(t *testing.T) *routedLinksFixtureV3 {
 		t.Fatal(err)
 	}
 	return f
+}
+
+func TestRoutedGatewayLinksV3EnableOnlyCreatedIdentities(t *testing.T) {
+	for _, mode := range []string{"valid", "replaced", "readback", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newRoutedLinksFixtureV3(t)
+			if err := f.l.Create(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			switch mode {
+			case "replaced":
+				f.links[1].Index++
+			case "readback":
+				f.intercept = func(op routedLinkOperationV3) error {
+					if op.kind == "enable" {
+						return errors.New("lost acknowledgement")
+					}
+					return nil
+				}
+			case "canceled":
+				cancel()
+			}
+			before := len(f.ops)
+			err := f.l.Enable(ctx)
+			if mode == "valid" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !containsRoutedLinkFlagV3(f.links[1].Flags, "UP") || !containsRoutedLinkFlagV3(f.links[2].Flags, "UP") {
+					t.Fatal("links not raised")
+				}
+				n := len(f.ops)
+				if err = f.l.Enable(ctx); err != nil {
+					t.Fatal(err)
+				}
+				for _, op := range f.ops[n:] {
+					if op.kind == "enable" {
+						t.Fatal("non-idempotent enable")
+					}
+				}
+			} else {
+				if err == nil {
+					t.Fatal("unverified enable accepted")
+				}
+				if mode == "replaced" || mode == "canceled" {
+					for _, op := range f.ops[before:] {
+						if op.kind == "enable" {
+							t.Fatal("enabled unproved identity")
+						}
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestRoutedGatewayLinksV3OwnedLifecycle(t *testing.T) {

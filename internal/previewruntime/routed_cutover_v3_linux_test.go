@@ -3,11 +3,34 @@
 package previewruntime
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestRoutedCutoverV3PinsOperationalManifests(t *testing.T) {
+	deployment, links := []byte("deployment\n"), []byte("node-links\n")
+	digest, linkDigest := sha256.Sum256(deployment), sha256.Sum256(links)
+	marker, _ := json.Marshal(routedCutoverRecordV3{1, hex.EncodeToString(digest[:]), hex.EncodeToString(linkDigest[:])})
+	if err := verifyRoutedCutoverV3(marker, deployment, links); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []struct{ marker, deployment, links []byte }{
+		{marker, []byte("other"), links}, {marker, deployment, []byte("other")},
+		{[]byte(`{"version":1}`), deployment, links}, {marker, nil, links},
+		{append(marker, []byte(" {}")...), deployment, links},
+		{[]byte(strings.Replace(string(marker), `"version":1`, `"version":1,"version":1`, 1)), deployment, links},
+	} {
+		if verifyRoutedCutoverV3(input.marker, input.deployment, input.links) == nil {
+			t.Fatal("unbound cutover accepted")
+		}
+	}
+}
 
 func TestRoutedCutoverV3NeverFallsBack(t *testing.T) {
 	for _, kind := range []string{"absent", "valid", "truncated", "directory", "dangling-link"} {
