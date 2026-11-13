@@ -1,0 +1,11 @@
+# Inspección de migración offline
+
+Con la API anterior y su socket detenidos, ejecutar `andeiva-preview grouped-inspect` como instalador root autorizado. Conservar vivos helper y gestor de namespaces. El comando no los detiene, no modifica cuentas ni prepara/activa otro firewall. Un lock ocupado rechaza la operación.
+
+Un worker fijo APIUID sin capacidades usa el validador original y mantiene el lock FW mientras root escribe `/etc/andeiva-preview/grouped-migration-plan.json` mediante O_EXCL y sincronización de archivo/directorio. El borrador privado liga el fingerprint exacto y digest de cuentas con nuevos IDs durables y revisiones de credenciales. Conserva identidades durables existentes. No contiene hashes de credenciales ni contraseñas. La salida sólo muestra hash del borrador, fingerprint e identificadores.
+
+La inspección no crea bindings históricos. Autorizar cada Source/Actor/ReceiptIndex hacia un subject concreto en la preparación posterior. Igualdad de nombre o credencial no autoriza. Reinspeccionar conserva IDs y rechaza borradores incoherentes; nunca reemplaza ni repara archivos existentes. Un borrador parcial se conserva para recuperación autorizada.
+
+El hijo sólo acepta pipes root heredados, FD de namespace fijado y petición del padre root. Rechaza descriptores adicionales inesperados; limita su propio proceso a 256 FDs. Root fija el hilo creador hasta la salida. Pruebas de privacidad, no reemplazo, FDs y argumentos; la ejecución real exige el fixture nativo explícito, no queda acreditada por unit tests.
+
+El instalador crea el nuevo dominio inactivo Local Services mediante `PrepareInactiveLocalSourceV3` sólo después de validar la ausencia real con una autoridad confiable, Apply y lecturas Current repetidas. Su directorio separado, vacío y propiedad de API recibe exactamente un registro initialize con la fecha real. Se conservan y rechazan dominios existentes o parciales; un error de lectura posterior conserva la evidencia y devuelve fallo. No crea listeners, reglas, identidades locales históricas ni autorización de activación. Los fixtures unitarios modelan el motor de ausencia y sólo prueban persistencia; el proxy privilegiado aporta la lectura desplegada.

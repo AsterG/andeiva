@@ -51,6 +51,8 @@ func TestMain(m *testing.M) {
 		switch os.Args[1] {
 		case RoutedHelperRoleV3, RoutedAPIRoleV3:
 			err = RunRoutedLaunchRoleV3(ctx, os.Args[1], nativeFactoriesV3())
+		case RoutedMigrationInspectRoleV3:
+			err = RunRoutedMigrationInspectRoleV3(ctx)
 		case RoutedMigrationSourceRoleV3:
 			err = RunRoutedMigrationSourceRoleV3(ctx)
 		case RoutedMigrationStateRoleV3:

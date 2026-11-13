@@ -25,6 +25,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var migrationInspectNativeV3 = flag.Bool("andeiva-native-migration-inspect-v3", false, "explicitly create a root-owned migration draft while the legacy API/socket are stopped")
 var migrationSourceNativeV3 = flag.Bool("andeiva-native-migration-source-v3", false, "explicitly qualify the retained deployed source without applying policy")
 
 const migrationSourceNativeInputV3 = RuntimeDir + "/migration-source-qualification.json"
@@ -224,4 +225,54 @@ func TestRoutedMigrationSourceNativeV3(t *testing.T) {
 		t.Fatal("source changed or lock cleanup failed", err)
 	}
 	t.Log("PASS: actual APIUID source lock, capless guardian probes, NET_ADMIN semantic inspection, empty IPv4/IPv6 INET listener profile and UID/FD denials; no migration, writes, traffic or new gateway qualification")
+}
+
+func TestRoutedMigrationInspectNativeV3(t *testing.T) {
+	if !*migrationInspectNativeV3 {
+		t.Skip("requires explicit draft creation, root supervisor and stopped legacy API/socket")
+	}
+	if os.Getuid() != 0 || os.Geteuid() != 0 {
+		t.Fatal("root required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	c, err := LoadConfig(ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := LoadIdentities(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := readOwned(DataDir+"/accounts.json", 0, ids.APIGID, 0440, 16384)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := InspectRoutedMigrationV3(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := InspectRoutedMigrationV3(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := json.Marshal(first)
+	b, _ := json.Marshal(second)
+	if string(a) != string(b) {
+		t.Fatal("reinspection rotated IDs or draft context")
+	}
+	actual, err := readOwned(DataDir+"/accounts.json", 0, ids.APIGID, 0440, 16384)
+	if err != nil || string(accounts) != string(actual) {
+		t.Fatal("inspection changed credentials/account source", err)
+	}
+	raw, err := readOwned(routedMigrationPlanPathV3, 0, 0, 0600, 65536)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var draft routedMigrationPlanV3
+	if firewallipc.Decode(raw, &draft) != nil || draft.State != "draft" || len(draft.Bindings) != 0 {
+		t.Fatal("inspection granted historical ownership")
+	}
+	t.Log(string(a))
+	t.Log("PASS: actual capless APIUID inspection with retained FW lock, root O_EXCL draft/repeat stability, no account/source mutation or ownership grants; draft retained for explicit authorization")
 }

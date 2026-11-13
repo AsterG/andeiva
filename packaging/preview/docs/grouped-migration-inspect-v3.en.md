@@ -1,0 +1,11 @@
+# Offline migration inspection
+
+With the legacy API and its socket stopped, run `andeiva-preview grouped-inspect` as the authorized root installer. Keep the old helper and namespace manager alive. The command does not stop them, change accounts or prepare/activate a new firewall. A busy source lock causes refusal.
+
+A fixed capability-free APIUID worker uses the original legacy validator and keeps its FW lock while the root parent writes `/etc/andeiva-preview/grouped-migration-plan.json` with O_EXCL, file and directory synchronization. Its root-only draft binds the exact source fingerprint and account-file digest to newly allocated durable subject IDs and credential revisions. Existing durable identities remain unchanged. It contains no credential hashes or passwords. Standard output contains only draft hash, source fingerprint and subject identifiers.
+
+Inspection never creates historical ownership bindings. Authorize each Source/Actor/ReceiptIndex to a specific subject explicitly in the next preparation step. Username or credential equality is not authorization. Reinspection preserves IDs and refuses stale/malformed drafts; it does not replace or repair an existing file. A partial draft is retained for authorized recovery.
+
+The child accepts only fixed inherited root pipes, the pinned source namespace FD and a root-parent request. Unexpected inherited descriptors are refused; its process-local descriptor limit is 256. The root parent holds the creating OS thread until the child exits. Tests verify draft privacy, no-replace behavior, descriptor rejection and argument validation. Real deployed inspection requires the explicit native fixture; unit tests do not prove appliance installation.
+
+The installer creates the new inactive Local Services domain with `PrepareInactiveLocalSourceV3` only after trusted actual absence validation, Apply and repeated Current readback. Its separate empty API-owned directory receives exactly one initialize record with the actual timestamp. Existing/partial domains are preserved and refused; a post-publication readback error retains evidence but returns failure. This does not create listeners, rules, historical local identities or permission to activate. Unit fixtures model the absence engine and prove persistence only; deployed readback is supplied by the privileged proxy.
