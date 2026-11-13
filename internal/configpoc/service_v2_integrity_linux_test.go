@@ -221,3 +221,38 @@ func TestRuntimeIntegrityV1AttachPrecedesCoordinatorEffects(t *testing.T) {
 		t.Fatal("constructor returned before qualification")
 	}
 }
+
+func TestRuntimeIntegrityV1PublicationWakeupCoalesces(t *testing.T) {
+	s, _, _, _ := serviceV2Fixture(t, "admin")
+	c := s.coordinator
+	c.options.Integrity = &testIntegrityV1{inspect: completeIntegrityV1}
+	c.integrity.kick = make(chan struct{}, 1)
+	c.store.afterPublication = c.integrityPublicationV1
+	if err := s.InspectRuntimeV1(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for i := uint64(0); i < IntegrityPublicationLimitV1+2; i++ {
+		c.store.mu.Lock()
+		err := c.store.publish(clone(c.store.state))
+		c.store.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i+1 < IntegrityPublicationLimitV1 && len(c.integrity.kick) != 0 {
+			t.Fatal("early publication event")
+		}
+	}
+	select {
+	case <-s.IntegrityPublicationsV1():
+	default:
+		t.Fatal("publication threshold did not wake inspection")
+	}
+	select {
+	case <-s.IntegrityPublicationsV1():
+		t.Fatal("unbounded duplicate wakeups")
+	default:
+	}
+	if err := s.InspectRuntimeV1(context.Background()); err != nil || !c.integrityAllowsV1(false) {
+		t.Fatal("wakeup inspection did not refresh", err)
+	}
+}

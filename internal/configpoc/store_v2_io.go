@@ -11,28 +11,29 @@ import (
 )
 
 type v2Store struct {
-	archiveObserver func(v2ReserveArchiveRef) error
-	access          *recoveryreserve.ReaderAccessV2
-	readOnly        bool
-	recordReader    func(string, int64) ([]byte, error)
-	objectReader    func(string, any) error
-	preparingShared bool
-	guardDeadlines  bool // Trusted opt-in assembly only; never persisted authority.
-	reserves        *v2ReserveManager
-	mu              sync.Mutex
-	root            *os.Root
-	lock            *os.File
-	state           v2State
-	selection       v2Selection
-	selector        v2Selector
-	budget          v2Budget
-	used            v2Budget
-	blocked         bool
-	hook            func(string) error
-	allowance       v2Budget
-	physical        v2PhysicalUsage
-	spaceProbe      func(*os.File) (storageSpace, error)
-	reclaim         *v2ReclaimSession
+	afterPublication func()
+	archiveObserver  func(v2ReserveArchiveRef) error
+	access           *recoveryreserve.ReaderAccessV2
+	readOnly         bool
+	recordReader     func(string, int64) ([]byte, error)
+	objectReader     func(string, any) error
+	preparingShared  bool
+	guardDeadlines   bool // Trusted opt-in assembly only; never persisted authority.
+	reserves         *v2ReserveManager
+	mu               sync.Mutex
+	root             *os.Root
+	lock             *os.File
+	state            v2State
+	selection        v2Selection
+	selector         v2Selector
+	budget           v2Budget
+	used             v2Budget
+	blocked          bool
+	hook             func(string) error
+	allowance        v2Budget
+	physical         v2PhysicalUsage
+	spaceProbe       func(*os.File) (storageSpace, error)
+	reclaim          *v2ReclaimSession
 }
 
 // The caller owns the directory lifetime. No directory, legacy layout or engine
@@ -586,5 +587,8 @@ func (s *v2Store) publish(state v2State) (result error) {
 	s.state = state
 	s.selection = next
 	s.selector = selector
+	if s.afterPublication != nil {
+		s.afterPublication()
+	}
 	return nil
 }

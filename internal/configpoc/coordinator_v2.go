@@ -63,6 +63,10 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	c := &v2Coordinator{store: store, firewall: append([]Engine{}, firewall...), local: append([]Engine{}, local...), options: options}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if options.Integrity != nil {
+		c.integrity.kick = make(chan struct{}, 1)
+		store.afterPublication = c.integrityPublicationV1
+	}
 	if hasFeatureV2(store.state, v2RoutedOfflineSeedFeature) && (options.Routed == nil || options.BootID == nil || options.Reserves == nil || !options.GuardDeadlines) {
 		return nil, ErrRecovery
 	}
@@ -156,6 +160,7 @@ func (c *v2Coordinator) close() {
 	c.store.mu.Lock()
 	defer c.store.mu.Unlock()
 	c.closed = true
+	c.store.afterPublication = nil
 	c.invalidateLocalLocked()
 	if c.timer != nil {
 		c.timer.Stop()

@@ -37,10 +37,31 @@ type IntegrityResultV1 struct {
 
 type runtimeIntegrityStateV1 struct {
 	inspecting atomic.Bool
+	kick       chan struct{}
 	ready      bool // All remaining fields are protected by store.mu.
 	fenced     bool
 	checked    time.Time
 	sequence   uint64
+}
+
+// IntegrityPublicationsV1 is an internal, coalesced scheduler wakeup. It carries
+// no data or authority and is never exposed by an administrative transport.
+func (s *ServiceV2) IntegrityPublicationsV1() <-chan struct{} {
+	if s == nil || s.coordinator == nil {
+		return nil
+	}
+	return s.coordinator.integrity.kick
+}
+
+func (c *v2Coordinator) integrityPublicationV1() {
+	i := &c.integrity
+	if !i.ready || i.fenced || i.kick == nil || c.integrityAllowsV1(false) {
+		return
+	}
+	select {
+	case i.kick <- struct{}{}:
+	default:
+	}
 }
 
 // InspectRuntimeV1 is called only by trusted runtime assembly. Holding the
