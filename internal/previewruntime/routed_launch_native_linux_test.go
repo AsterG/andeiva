@@ -618,6 +618,11 @@ func testNativeRoutedLaunchV3(t *testing.T, integrity, freshScope bool) {
 	if e = os.Mkdir(sockets, 0750); e != nil {
 		t.Fatal(e)
 	}
+	// The production manager applies the exact directory mode after creation;
+	// the fixture must also work under the service's restrictive UMask0077.
+	if e = os.Chmod(sockets, 0750); e != nil {
+		t.Fatal(e)
+	}
 	if e = os.Chown(sockets, int(nativeIdentitiesV3.HelperUID), int(nativeIdentitiesV3.IPCGID)); e != nil {
 		t.Fatal(e)
 	}
