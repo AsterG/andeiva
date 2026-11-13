@@ -3,8 +3,9 @@
 package main
 
 import (
-	"github.com/AsterG/andeiva/internal/dhcpclient"
 	"os"
+
+	"github.com/AsterG/andeiva/internal/dhcpclient"
 )
 
 func main() {
