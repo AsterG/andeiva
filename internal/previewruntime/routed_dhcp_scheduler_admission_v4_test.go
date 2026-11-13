@@ -18,16 +18,17 @@ import (
 // Real private protocol over net.Pipe with a simulated selected grant. This
 // checks admission/deadlines, not a native owner, kernel state or DHCP traffic.
 type dhcpSchedulerPeerV4 struct {
-	requests atomic.Int32
-	live     atomic.Bool
-	done     chan struct{}
+	requests         atomic.Int32
+	live             atomic.Bool
+	firstLiveSuccess chan struct{}
+	done             chan struct{}
 }
 
 func dhcpSchedulerFixtureV4(t *testing.T, currentDelay, liveDelay time.Duration) (*RoutedDHCPControllerV3, *dhcpSchedulerPeerV4) {
 	t.Helper()
 	snapshot := dhcpRuntimeSnapshotV3(t)
 	a, b := net.Pipe()
-	peer := &dhcpSchedulerPeerV4{done: make(chan struct{})}
+	peer := &dhcpSchedulerPeerV4{done: make(chan struct{}), firstLiveSuccess: make(chan struct{})}
 	go func() {
 		defer close(peer.done)
 		defer b.Close()
@@ -70,8 +71,8 @@ func dhcpSchedulerFixtureV4(t *testing.T, currentDelay, liveDelay time.Duration)
 			if json.NewEncoder(b).Encode(reply) != nil {
 				return
 			}
-			if q.Verb == "dhcp_live" {
-				peer.live.Store(true)
+			if q.Verb == "dhcp_live" && !peer.live.Swap(true) {
+				close(peer.firstLiveSuccess)
 			}
 		}
 	}()
@@ -102,9 +103,11 @@ func TestRoutedDHCPSchedulerV4SkipsBusyLaneBeforeDeadline(t *testing.T) {
 	if requestsWhileBusy != 0 {
 		t.Fatalf("busy controller sent %d requests", requestsWhileBusy)
 	}
-	// Include the next 500ms tick and the 2s Current reply.
-	time.Sleep(2600 * time.Millisecond)
-	if !peer.live.Load() {
+	// Wait for the actual reply, allowing scheduling jitter without changing
+	// the controller's three-second deadline.
+	select {
+	case <-peer.firstLiveSuccess:
+	case <-time.After(8 * time.Second):
 		t.Fatal("controller lock wait consumed the scheduler's RPC budget")
 	}
 }
