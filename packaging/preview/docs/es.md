@@ -97,8 +97,8 @@ Ambas opciones interrumpen la administración. Los informes privados de root que
 en `/var/tmp`; no prueban paridad transaccional ni deducen la política esperada
 de una sonda exitosa. Compruébalas por separado contra la revisión prevista.
 
-La recuperación automática de API conserva el plazo del helper. Una parada
-explícita del servicio puede propagarse al target. La caída del helper cierra todo el preview.
+La recuperación automática de API conserva el plazo del helper. Detener API/socket
+conserva el target, helper y namespaces. La caída del helper cierra todo el preview.
 Detenga el target, espere que API, socket, helper y namespaces estén inactivos y
 luego inícielo; no suponga que `restart target` es atómico. Un reinicio de servicio
 en el mismo boot restaura Running; reiniciar la VM selecciona Startup guardado.
@@ -157,3 +157,11 @@ andeiva system info --url https://DIRECCION_LAN:9443 --ca-file /trusted/ca.crt -
 del appliance conectado. La validación del paquete comprueba que esa identidad
 coincida con su versión Debian. Solo se devuelve identidad propia de ANDEIVA,
 sin versiones del sistema operativo, kernel ni motores.
+
+### Política conservada al detener la administración
+
+En Debian de laboratorio recuperable, ejecuta el arnés nativo del paquete con
+`--ack-isolated-debian13-vm --api-stop`. Detiene API y socket; comprueba procesos,
+metadatos y política efectiva del kernel sin cambios; compara seis pruebas reales
+TCP/UDP y reinicia la administración. Si falla una comprobación, intenta restaurar
+la administración. No valida la intención de la política, migración, reinicio ni routing.

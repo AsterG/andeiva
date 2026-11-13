@@ -61,6 +61,7 @@ fi
 if find "$stage/root" -perm /6000 -type f | read -r _; then echo ANDEIVA_PREVIEW_SETID_FILE >&2; exit 1; fi
 (cd "$stage/root" && md5sum -c "$stage/control/md5sums" >/dev/null)
 units="$stage/root/usr/lib/systemd/system"
+bash "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/api-lifetime-unit-graph.sh" "$units"
 # Grouped assembly is packaged but cannot enable itself or turn socket loss
 # into a stop of its guardian-owning supervisor.
 grep -q '^Wants=andeiva-preview-grouped.socket$' "$units/andeiva-preview-grouped.service"

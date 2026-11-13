@@ -98,8 +98,8 @@ Ambas interrompem a administração. Relatórios privados de root ficam em
 `/var/tmp`; não comprovam paridade transacional nem deduzem a política esperada
 de uma sonda bem-sucedida. Verifique separadamente contra a revisão pretendida.
 
-A recuperação automática da API preserva o prazo do helper. Uma parada explícita
-do serviço pode propagar-se ao target. A falha do helper encerra todo o
+A recuperação automática da API preserva o prazo do helper. Parar API/socket
+preserva target, helper e namespaces. A falha do helper encerra todo o
 preview. Pare o target, espere API, socket, helper e namespaces ficarem inativos
 e depois inicie; não presuma que `restart target` seja atômico. Reinício de serviço
 no mesmo boot restaura Running; reiniciar a VM seleciona Startup salvo. Journal
@@ -157,3 +157,11 @@ andeiva system info --url https://ENDERECO_LAN:9443 --ca-file /trusted/ca.crt --
 appliance conectado. A validação do pacote verifica se essa identidade coincide
 com sua versão Debian. Apenas a identidade do produto ANDEIVA é retornada, sem
 versões do sistema operacional, kernel ou motores.
+
+### Política preservada ao parar a administração
+
+No Debian de laboratório recuperável, execute o teste nativo do pacote com
+`--ack-isolated-debian13-vm --api-stop`. Para API e socket, verifica processos,
+metadados e política efetiva do kernel, compara seis testes reais TCP/UDP e
+reinicia a administração. Uma falha tenta restaurar a administração. Não valida
+a intenção da política, migração, reinicialização ou routing.

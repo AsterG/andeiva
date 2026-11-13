@@ -1,7 +1,9 @@
 [Unit]
 Description=ANDEIVA Firewall Alpha Preview
 ConditionPathExists=/var/lib/andeiva-preview/identities.json
-Requires=andeiva-preview-namespaces.service andeiva-preview-helper.service andeiva-preview-api.socket andeiva-preview-api.service
+Requires=andeiva-preview-namespaces.service andeiva-preview-helper.service
+# Administration failure must not tear down the independent data plane.
+Wants=andeiva-preview-api.socket andeiva-preview-api.service
 After=andeiva-preview-namespaces.service andeiva-preview-helper.service andeiva-preview-api.socket andeiva-preview-api.service
 
 [Install]

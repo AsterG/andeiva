@@ -13,6 +13,10 @@
 - Prepare a namespace-bound nft transport with fixed commands and shared strict table-presence decoding; native service activation remains gated.
 - Prepare separate grouped API/helper supervision and verified legacy-table readback without a second policy guardian; preserve counter discontinuities across attempted replacement and rollback.
 - Add optional quiescent integrity inspection under the configuration writer barrier, with exact selection correlation, bounded scheduler wakeups and reserved confirmation handling.
+## Unreleased — administrative service isolation
+
+- Retain the last applied isolated firewall policy when the administrative API and socket are stopped or fail.
+- Preserve coordinated shutdown when the target, helper or namespace supervisor stops; add explicit administration-stop recovery checks.
 
 ## Unreleased — prepared routed composite references
 
