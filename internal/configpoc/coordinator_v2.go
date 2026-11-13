@@ -3,11 +3,12 @@ package configpoc
 import (
 	"context"
 	"errors"
-	"github.com/AsterG/andeiva/internal/recoveryreserve"
+	"fmt"
 	"os"
 	"time"
 
 	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
 
 type v2CoordinatorOptions struct {
@@ -91,7 +92,7 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 		return nil, err
 	}
 	if err := c.validateReferencesLocked(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("selected references: %w", err)
 	}
 	if handled, err := c.openRoutedBootBoundaryV2(ctx); handled {
 		return c, err
@@ -118,7 +119,7 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	}
 	if options.BootID != nil {
 		if err := c.bootStartupLocked(ctx, *options.BootID); err != nil {
-			return c, err
+			return c, fmt.Errorf("startup reconciliation: %w", err)
 		}
 	}
 	if err := c.resumeRoutedLockedV2(ctx); err != nil {

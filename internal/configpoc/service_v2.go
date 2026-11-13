@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -135,7 +136,7 @@ func openServiceCoordinatorV2(ctx context.Context, area *os.Root, budget BudgetV
 		store, err = openV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes})
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("selected configuration open: %w", err)
 	}
 	c, err := openCoordinatorV2(ctx, store, firewall, local, options)
 	if err != nil {
@@ -143,7 +144,7 @@ func openServiceCoordinatorV2(ctx context.Context, area *os.Root, budget BudgetV
 			c.close()
 		}
 		_ = store.close()
-		return nil, err
+		return nil, fmt.Errorf("configuration coordinator open: %w", err)
 	}
 	return &ServiceV2{coordinator: c, auth: auth}, nil
 }
