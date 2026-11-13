@@ -72,6 +72,19 @@ func (s *ServiceV2) RuntimeIntegrityReadyV1() bool {
 	return !c.closed && !c.store.blocked && c.integrityAllowsV1(false)
 }
 
+// RuntimeReadbackReadyV1 binds a trusted physical observation to the selected
+// Running revision. It grants no administrative permission or effect authority.
+func (s *ServiceV2) RuntimeReadbackReadyV1(observed string) bool {
+	if s == nil || s.coordinator == nil || s.coordinator.store == nil || observed == "" {
+		return false
+	}
+	c := s.coordinator
+	c.store.mu.Lock()
+	defer c.store.mu.Unlock()
+	cfg := c.store.state.Configuration
+	return !c.closed && !c.store.blocked && cfg != nil && cfg.Intent == nil && cfg.Pending == nil && !cfg.RecoveryRequired && cfg.Running.Hash == observed && c.integrityAllowsV1(false)
+}
+
 // IntegrityPublicationsV1 is an internal, coalesced scheduler wakeup. It carries
 // no data or authority and is never exposed by an administrative transport.
 func (s *ServiceV2) IntegrityPublicationsV1() <-chan struct{} {

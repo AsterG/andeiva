@@ -40,6 +40,10 @@ func TestRuntimeIntegrityV1QualificationAndFreshness(t *testing.T) {
 	s, binding, _, _ := serviceV2Fixture(t, "admin")
 	c := s.coordinator
 	c.options.Integrity = &testIntegrityV1{inspect: completeIntegrityV1}
+	running := c.store.state.Configuration.Running.Hash
+	if s.RuntimeReadbackReadyV1(running) {
+		t.Fatal("cold physical readback reported ready before inspection")
+	}
 	if _, err := s.Namespace(binding, "firewall", time.Minute); !errors.Is(err, ErrRecovery) {
 		t.Fatal("cold writes enabled", err)
 	}
@@ -50,10 +54,16 @@ func TestRuntimeIntegrityV1QualificationAndFreshness(t *testing.T) {
 	if c.store.selector != before || !c.integrityAllowsV1(false) {
 		t.Fatal("inspection published or failed qualification")
 	}
+	if !s.RuntimeReadbackReadyV1(running) || s.RuntimeReadbackReadyV1("") || s.RuntimeReadbackReadyV1("different-revision") {
+		t.Fatal("readiness was not bound to the selected Running revision")
+	}
 	if _, err := s.Namespace(binding, "firewall", time.Minute); err != nil {
 		t.Fatal("qualified writes denied", err)
 	}
 	c.integrity.checked = c.now().Add(-IntegrityInspectionIntervalV1)
+	if s.RuntimeReadbackReadyV1(running) {
+		t.Fatal("expired inspection reported ready from an unchanged readback")
+	}
 	if _, err := s.Namespace(binding, "firewall", time.Minute); !errors.Is(err, ErrRecovery) {
 		t.Fatal("overdue writes enabled", err)
 	}
