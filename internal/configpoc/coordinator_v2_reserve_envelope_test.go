@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,32 @@ import (
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
+
+func TestReserveEnvelopePreservesRoutedAndCompensationFeatures(t *testing.T) {
+	state := v2State{}
+	for _, feature := range []string{v2SharedReaderFeature, v2RoutedFeature, v2GuardDeadlineFeature, v2RoutedBootFeature, v2RoutedBootBoundaryFeature, v2RoutedOfflineSeedFeature} {
+		addFeatureV2(&state, feature)
+	}
+	original := append([]string(nil), state.RequiredFeatures...)
+	forecast := reserveMetadataCoreV2(state)
+	for _, feature := range append(original, v2ReserveCompensationFeature) {
+		if !hasFeatureV2(forecast, feature) {
+			t.Fatalf("forecast omitted required feature %q", feature)
+		}
+	}
+	if !reflect.DeepEqual(state.RequiredFeatures, original) {
+		t.Fatal("forecast mutated selected features")
+	}
+	addFeatureV2(&state, v2ReserveCompensationFeature)
+	before, _, err := v2Canonical(forecast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _, err := v2Canonical(reserveMetadataCoreV2(state))
+	if err != nil || string(before) != string(after) {
+		t.Fatal("compensation feature was not reserved before publication", err)
+	}
+}
 
 // This deliberately overapproximates compatible optional fields. It proves
 // serialization bounds only, not a physical allocation or valid runtime state.

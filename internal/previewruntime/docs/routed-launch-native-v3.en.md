@@ -1,6 +1,6 @@
 # Native grouped launch fixture V3
 
-Status: integration blocked before API readiness. This fixture is not production deployment or traffic qualification.
+Status: native fixture qualified for the source revisions recorded below. This fixture is not production deployment or traffic qualification.
 
 `TestNativeRoutedLaunchV3` uses the production launcher and both V3 factories. A separate capless API-identity process prepares a fresh declared store and real reserve pools offline. It closes writers before converting the reader profile. The helper reads those profiles, constructs the physical kernel/network adapters, observes actual listener absence and requires all three managed tables to be absent before boot. No simulated engine provides readback. The otherwise mandatory local-engine slot rejects every action; its action-call count must stay zero.
 
@@ -34,3 +34,9 @@ The earlier failure exposed owner reads incorrectly requiring the helper group; 
 
 
 For the explicit integrity profile, use the same private mount namespace and owned cgroup with --isolated-integrity-lab TEST_BINARY. This selects TestNativeRoutedIntegrityLaunchV3, including the fixed capless preparation role and helper-only persistent directory. The legacy --isolated-lab selection is unchanged. This does not activate an installed service or prove routed client traffic.
+
+## Integrity-profile qualification
+
+The explicit integrity fixture passed on Debian 13 using source 7a1178b. It verified exclusive capless preparation, rejection of marker re-preparation, helper-only access to the private integrity descriptor, full inspection before configuration readiness, real kernel boot/readback, authenticated HTTPS and an API restart retaining the helper. The test took 1.60 s; its containing unit used 1.643747 s CPU and peaked at 38,432,768 bytes. These figures describe the complete test, not idle resource use. Host nftables, routes and forwarding were unchanged; namespace cleanup passed. The unit was stopped and its executable removed after checksum verification.
+
+Binary SHA-256: dac7b167639b78b54ebcf14bf3d1660ea7a8bf1477104f4ce6aca660958f9611. This result does not qualify DHCP, forwarded client traffic, process-death cleanup, host-interface adoption or power-loss recovery. Later source changes require their own qualification.

@@ -34,3 +34,9 @@ A falha anterior revelou que a leitura do proprietário exigia incorretamente o 
 
 
 Para o perfil explícito de integridade, use o mesmo namespace de montagem privado e cgroup próprio com --isolated-integrity-lab TEST_BINARY. Seleciona TestNativeRoutedIntegrityLaunchV3, incluindo o papel fixo de preparação sem capacidades e o diretório persistente exclusivo do helper. A seleção anterior --isolated-lab permanece inalterada. Não ativa um serviço instalado nem comprova tráfego roteado de clientes.
+
+## Validação do perfil de integridade
+
+O teste explícito passou no Debian 13 com a fonte 7a1178b. Verificou preparação exclusiva sem capacidades, rejeição de uma segunda preparação, descritor privado acessível apenas ao helper, inspeção completa antes de declarar a configuração pronta, inicialização e leitura real do kernel, HTTPS autenticado e reinício da API mantendo o helper. Durou 1,60 s; a unidade completa usou 1,643747 s de CPU e atingiu 38.432.768 bytes de memória. Não são medições em repouso. As regras, rotas e forwarding do host permaneceram iguais; a limpeza dos namespaces passou. A unidade foi parada e o executável removido após verificar o checksum.
+
+SHA-256 do binário: dac7b167639b78b54ebcf14bf3d1660ea7a8bf1477104f4ce6aca660958f9611. Não valida DHCP, tráfego encaminhado do cliente, limpeza após morte do processo, adoção de interfaces principais ou falta de energia. Alterações posteriores exigem validação própria.
