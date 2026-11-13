@@ -41,7 +41,7 @@ func reserveNormalizeEnvelopeScalarsV2(st *v2State) {
 	st.ReservedBytes, st.ReservedInodes, st.OccupiedOrdinary, st.OccupiedClosing = high, high, high, high
 	st.Clock = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	st.Index, st.ClosingIndexRoot, st.ReserveArchiveRoot, st.Migration = hash, hash, hash, hash
-	st.RequiredFeatures = []string{v2BootFeature, v2LocalFeature}
+	st.RequiredFeatures = []string{v2BootFeature, v2LocalFeature, v2ReserveCompensationFeature}
 	if st.Configuration != nil {
 		cfg := *st.Configuration
 		cfg.AuditSequence = high

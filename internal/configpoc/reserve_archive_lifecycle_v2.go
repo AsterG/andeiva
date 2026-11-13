@@ -110,6 +110,13 @@ func (m *v2ReserveManager) archiveTerminal(s *v2Store, active v2ActiveReserve) e
 		}
 		st := clone(s.state)
 		st.ReserveArchiveRoot = root
+		var facts v2ReserveFinality
+		if s.readObject(archive.FinalWork, &facts) != nil {
+			return ErrRecovery
+		}
+		if facts.Version == 2 {
+			addFeatureV2(&st, v2ReserveCompensationFeature)
+		}
 		if err = s.publish(st); err != nil {
 			return err
 		}
@@ -349,6 +356,17 @@ func (m *v2ReserveManager) buildTerminalArchive(s *v2Store, active v2ActiveReser
 				archive.UnusedEscrow = origin.Reserve.ClosingEscrow.all()
 			}
 		}
+		if origin.Outcome.ConfirmationLease == "" && origin.Reserve != nil && origin.Reserve.PlanScope != nil && origin.Reserve.PlanScope.Lease != "" {
+			resolution, e := reserveCompensationResolutionV2(origin)
+			if e != nil {
+				return archive, e
+			}
+			hash, e := s.object(resolution)
+			if e != nil {
+				return archive, e
+			}
+			facts.Version, facts.Resolution, archive.LeaseResolution = 2, hash, hash
+		}
 		if origin.Outcome.ConfirmationLease != "" {
 			resolution := v2ReserveLeaseResolution{Format: v2Format, Version: 1, Origin: origin.ID, Lease: origin.Outcome.ConfirmationLease, Deadline: *origin.Outcome.ConfirmationDeadline, Child: archive.Child}
 			if cfg := s.state.Configuration; cfg != nil && cfg.LastRecovery != "" {
@@ -404,7 +422,11 @@ func (m *v2ReserveManager) buildTerminalArchive(s *v2Store, active v2ActiveReser
 	if _, _, err := encodeReserveArchiveV2(archive); err != nil {
 		return archive, err
 	}
-	if validateArchiveFinalityV2(archive, s.state, s.readObject) != nil {
+	proofState := clone(s.state)
+	if facts.Version == 2 {
+		addFeatureV2(&proofState, v2ReserveCompensationFeature)
+	}
+	if validateArchiveFinalityV2(archive, proofState, s.readObject) != nil {
 		return archive, ErrRecovery
 	}
 	return archive, nil
