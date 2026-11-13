@@ -60,6 +60,10 @@ func openRoutedRetirementSlotV3(area *os.Root) (*routedRetirementSlot, error) {
 	file, err := area.OpenFile(routedRetirementSlotV3, flags|os.O_CREATE|os.O_EXCL, 0600)
 	created := err == nil
 	if errors.Is(err, os.ErrExist) {
+		entry, statErr := area.Lstat(routedRetirementSlotV3)
+		if statErr != nil || !entry.Mode().IsRegular() {
+			return nil, ErrIdentity
+		}
 		file, err = area.OpenFile(routedRetirementSlotV3, flags, 0)
 	}
 	if err != nil {
@@ -87,7 +91,8 @@ func openRoutedRetirementSlotV3(area *os.Root) (*routedRetirementSlot, error) {
 			return nil, err
 		}
 	}
-	if validateRoutedRetirementFileV3(file) != nil {
+	slot := &routedRetirementSlot{file: file, area: area}
+	if slot.sameFile() != nil {
 		return nil, ErrIdentity
 	}
 	raw := make([]byte, RootRetirementReceiptSizeV3)
@@ -100,7 +105,7 @@ func openRoutedRetirementSlotV3(area *os.Root) (*routedRetirementSlot, error) {
 		}
 	}
 	accepted = true
-	return &routedRetirementSlot{file: file, area: area}, nil
+	return slot, nil
 }
 
 func validateRoutedRetirementFileV3(file *os.File) error {

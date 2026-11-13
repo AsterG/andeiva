@@ -126,6 +126,33 @@ func TestRoutedGatewayLinksV3EnableOnlyCreatedIdentities(t *testing.T) {
 	}
 }
 
+func TestRoutedGatewayLinksV3ParentFilterReferenceRequiresOwnedUpChild(t *testing.T) {
+	for _, scenario := range []string{"owned-up", "owned-down", "replaced", "extra-reference", "preexisting"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newRoutedLinksFixtureV3(t)
+			if scenario != "preexisting" {
+				if err := f.l.Create(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				f.links[1].Flags = []string{"UP"}
+			}
+			f.parents[0].Promiscuity = 1
+			switch scenario {
+			case "owned-down":
+				f.links[1].Flags = nil
+			case "replaced":
+				f.links[1].Index++
+			case "extra-reference":
+				f.parents[0].Promiscuity = 2
+			}
+			err := f.l.parentsMatch(context.Background())
+			if (err == nil) != (scenario == "owned-up") {
+				t.Fatal("unexpected parent filter-reference acceptance", err)
+			}
+		})
+	}
+}
+
 func TestRoutedGatewayLinksV3OwnedLifecycle(t *testing.T) {
 	f := newRoutedLinksFixtureV3(t)
 	if err := f.l.Create(context.Background()); err != nil {

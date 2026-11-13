@@ -194,8 +194,19 @@ func (l *RoutedGatewayLinksV3) parentsMatch(ctx context.Context) error {
 			return ErrIdentity
 		}
 		a := links[0]
-		if a.Index != p.Index || a.Name != p.Name || a.MAC != p.MAC || a.MTU != p.MTU || a.Promiscuity != 0 || !containsRoutedLinkFlagV3(a.Flags, "UP") {
+		if a.Index != p.Index || a.Name != p.Name || a.MAC != p.MAC || a.MTU != p.MTU || !containsRoutedLinkFlagV3(a.Flags, "UP") {
 			return ErrIdentity
+		}
+		if a.Promiscuity != 0 {
+			// A parent without unicast filtering (including Linux dummy links)
+			// acquires one kernel promiscuity reference when its private MACVLAN
+			// child is raised. Accept that single reference only while the exact
+			// child created here is independently observed UP. Never set promisc.
+			children, e := l.observe(ctx, routedLinkOperationV3{kind: "gateway"})
+			child := ownedRoutedLinkV3(children, l.created[i])
+			if a.Promiscuity != 1 || e != nil || len(children) != 3 || child == nil || !containsRoutedLinkFlagV3(child.Flags, "UP") {
+				return ErrIdentity
+			}
 		}
 	}
 	return nil
