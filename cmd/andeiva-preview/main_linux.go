@@ -17,7 +17,7 @@ import (
 )
 
 func run(args []string) error {
-	if len(args) > 0 && (args[0] == previewruntime.RoutedDHCPOwnerRoleV3 || args[0] == previewruntime.RoutedDHCPDeferredOwnerRoleV4) {
+	if len(args) > 0 && (args[0] == previewruntime.RoutedDHCPOwnerRoleV3 || args[0] == previewruntime.RoutedDHCPDeferredOwnerRoleV4 || args[0] == previewruntime.RoutedSelectedPreflightRoleV4) {
 		if len(args) != 1 {
 			return previewruntime.ErrConfiguration
 		}
@@ -25,6 +25,9 @@ func run(args []string) error {
 		defer cancel()
 		if args[0] == previewruntime.RoutedDHCPOwnerRoleV3 {
 			return previewruntime.RunRoutedDHCPOwnerRoleV3(ctx)
+		}
+		if args[0] == previewruntime.RoutedSelectedPreflightRoleV4 {
+			return previewruntime.RunRoutedSelectedPreflightRoleV4(ctx)
 		}
 		return previewruntime.RunRoutedDHCPDeferredOwnerRoleV4(ctx)
 	}

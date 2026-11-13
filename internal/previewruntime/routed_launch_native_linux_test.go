@@ -50,6 +50,8 @@ func TestMain(m *testing.M) {
 		defer cancel()
 		var err error
 		switch os.Args[1] {
+		case RoutedSelectedPreflightRoleV4:
+			err = RunRoutedSelectedPreflightRoleV4(ctx)
 		case RoutedDHCPOwnerRoleV3:
 			err = RunRoutedDHCPOwnerRoleV3(ctx)
 		case RoutedDHCPDeferredOwnerRoleV4:
