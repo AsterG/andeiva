@@ -25,12 +25,15 @@ func run(args []string) error {
 		defer cancel()
 		return previewruntime.RunRoutedApplianceRoleV3(ctx, args[0])
 	}
-	if len(args) > 0 && (args[0] == previewruntime.RoutedMigrationInspectRoleV3 || args[0] == previewruntime.RoutedMigrationStateRoleV3 || args[0] == previewruntime.RoutedMigrationSourceRoleV3) {
+	if len(args) > 0 && (args[0] == previewruntime.RoutedMigrationPrepareRoleV3 || args[0] == previewruntime.RoutedMigrationInspectRoleV3 || args[0] == previewruntime.RoutedMigrationStateRoleV3 || args[0] == previewruntime.RoutedMigrationSourceRoleV3) {
 		if len(args) != 1 {
 			return previewruntime.ErrConfiguration
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer cancel()
+		if args[0] == previewruntime.RoutedMigrationPrepareRoleV3 {
+			return previewruntime.RunRoutedMigrationPrepareRoleV3(ctx)
+		}
 		if args[0] == previewruntime.RoutedMigrationInspectRoleV3 {
 			return previewruntime.RunRoutedMigrationInspectRoleV3(ctx)
 		}
@@ -75,6 +78,12 @@ func run(args []string) error {
 			return e
 		}
 		return json.NewEncoder(os.Stdout).Encode(map[string]bool{"provisioned": true})
+	case "grouped-prepare":
+		result, err := previewruntime.PrepareRoutedMigrationV3(ctx, c)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	case "grouped-inspect":
 		result, err := previewruntime.InspectRoutedMigrationV3(ctx, c)
 		if err != nil {

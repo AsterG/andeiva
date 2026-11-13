@@ -227,6 +227,39 @@ func TestRoutedMigrationSourceNativeV3(t *testing.T) {
 	t.Log("PASS: actual APIUID source lock, capless guardian probes, NET_ADMIN semantic inspection, empty IPv4/IPv6 INET listener profile and UID/FD denials; no migration, writes, traffic or new gateway qualification")
 }
 
+var migrationPrepareNativeV3 = flag.Bool("andeiva-native-migration-prepare-v3", false, "explicit root storage preparation with authorized cold source")
+
+func TestRoutedMigrationPrepareNativeV3(t *testing.T) {
+	if !*migrationPrepareNativeV3 {
+		t.Skip("requires root authorization, empty grouped roots and retained legacy helper with API/socket stopped")
+	}
+	if os.Getuid() != 0 || os.Geteuid() != 0 {
+		t.Fatal("root required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Second)
+	defer cancel()
+	c, err := LoadConfig(ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := InspectRoutedMigrationV3(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := PrepareRoutedMigrationV3(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validateMigrationPreparedV3(out, before.PlanSHA256) != nil {
+		t.Fatal("invalid private preparation")
+	}
+	after, err := InspectRoutedMigrationV3(ctx, c)
+	if err != nil || before.PlanSHA256 != after.PlanSHA256 || before.Firewall != after.Firewall {
+		t.Fatal("original source changed", err)
+	}
+	t.Log("PASS: actual APIUID storage migration, retained source locks, five privileged source readbacks and exact one-record local origin; old FW/accounts unchanged, no runtime activation/shared conversion/new gateway claim")
+}
+
 func TestRoutedMigrationInspectNativeV3(t *testing.T) {
 	if !*migrationInspectNativeV3 {
 		t.Skip("requires explicit draft creation, root supervisor and stopped legacy API/socket")

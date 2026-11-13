@@ -55,7 +55,7 @@ func TestCommandRoleSubprocess(t *testing.T) {
 }
 
 func TestMigrationRolesRejectAdministrativeArguments(t *testing.T) {
-	for _, role := range []string{previewruntime.RoutedMigrationSourceRoleV3, previewruntime.RoutedMigrationStateRoleV3, previewruntime.RoutedMigrationInspectRoleV3} {
+	for _, role := range []string{previewruntime.RoutedMigrationPrepareRoleV3, previewruntime.RoutedMigrationSourceRoleV3, previewruntime.RoutedMigrationStateRoleV3, previewruntime.RoutedMigrationInspectRoleV3} {
 		if err := run([]string{role, "--config", "/caller/path"}); !errors.Is(err, previewruntime.ErrConfiguration) {
 			t.Fatal("role did not reject arguments before config access", role, err)
 		}
