@@ -69,7 +69,7 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 		c.integrity.kick = make(chan struct{}, 1)
 		store.afterPublication = c.integrityPublicationV1
 	}
-	if hasFeatureV2(store.state, v2RoutedOfflineSeedFeature) && (options.Routed == nil || options.BootID == nil || options.Reserves == nil || !options.GuardDeadlines) {
+	if (hasFeatureV2(store.state, v2RoutedOfflineSeedFeature) || hasFeatureV2(store.state, v2RoutedOfflineMigrationFeature)) && (options.Routed == nil || options.BootID == nil || options.Reserves == nil || !options.GuardDeadlines) {
 		return nil, ErrRecovery
 	}
 	if store.blocked {
