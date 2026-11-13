@@ -300,7 +300,7 @@ func (h routedApplianceHealthV3) Observed(ctx context.Context, _ configpoc.Princ
 		return firewalladmin.Observation{}, err
 	}
 	receipt := value.Observed.Receipt
-	qualified := h.runtime.Service.RuntimeIntegrityReadyV1() && (receipt.Phase == "idle" || receipt.Phase == "bootstrap") && value.Observed.Revision != ""
+	qualified := h.runtime.Service.RuntimeReadbackReadyV1(value.Observed.Revision) && (receipt.Phase == "idle" || receipt.Phase == "bootstrap") && value.Observed.Revision != ""
 	return firewalladmin.Observation{Hash: value.Observed.Revision, Phase: receipt.Phase, RecoveryRequired: !qualified}, nil
 }
 
