@@ -3,6 +3,9 @@ package configpoc
 import "time"
 
 func validRecoveryRecordV2(record v2RecoveryRecord, lineage string) bool {
+	if r := record.ServiceRestart; r != nil && (record.Kind != v2BootKind || record.BootID == nil || !validHash(r.Source) || !ValidRoutedFreshScopeEvidenceV3(r.Scope) || string(*record.BootID) != r.Scope.New.BootID) {
+		return false
+	}
 	if record.Format != v2Format || record.ID == "" || len(record.ID) > 128 || record.Lineage != lineage || record.Started.IsZero() || !validHash(record.Previous) || !validHash(record.Target) {
 		return false
 	}

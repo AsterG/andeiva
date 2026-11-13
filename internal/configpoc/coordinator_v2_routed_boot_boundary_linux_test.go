@@ -42,6 +42,15 @@ func (a *boundaryAuthorityFixtureV2) Prepare(_ context.Context, target RoutedAct
 	return RoutedPreparationV1{Before: before, Target: after, Dependencies: DependenciesV1{Version: 1, Network: target.Firewall.Config.Routed.Network, Prepared: a.prepared, LocalInterfaces: target.LocalServices.Config.LocalServices.Interfaces}}, nil
 }
 func (a *boundaryAuthorityFixtureV2) PrepareBoot(_ context.Context, target, saved RoutedActivationBundleV1) (RoutedPreparationV1, error) {
+	if target.Firewall.Config.SchemaVersion == 6 {
+		p, err := a.Prepare(context.Background(), target, nil)
+		p.Before.LegacyFirewall = TableStateV1{Presence: Absent}
+		if _, e := networkexecutor.CanonicalLANBootstrapPlanV3(target.Firewall.Config.Routed.Network); e == nil {
+			p.Before.Version, p.Target.Version, p.Dependencies.Version = 3, 3, 3
+			p.Dependencies.NetworkMode = "dhcp-lan"
+		}
+		return p, err
+	}
 	observed := networkexecutor.ObservedSnapshot{Version: 1, Links: a.prepared.Links, Routes: a.prepared.Routes}
 	raw, _ := json.Marshal(observed)
 	observed.Hash = checkpointDigest(raw)

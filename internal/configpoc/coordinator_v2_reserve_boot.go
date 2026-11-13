@@ -11,7 +11,8 @@ func reserveRecoveryFingerprintV2(record v2RecoveryRecord) string {
 		ID, Origin, Lease, Kind, Previous, Target, Subject, Lineage string
 		Boot                                                        *v2BootID
 		Started                                                     time.Time
-	}{record.ID, record.Origin, record.Lease, record.Kind, record.Previous, record.Target, record.Subject, record.Lineage, record.BootID, record.Started.UTC()})
+		ServiceRestart                                              *v3RoutedServiceRestart `json:"service_restart,omitempty"`
+	}{record.ID, record.Origin, record.Lease, record.Kind, record.Previous, record.Target, record.Subject, record.Lineage, record.BootID, record.Started.UTC(), record.ServiceRestart})
 	return hash
 }
 

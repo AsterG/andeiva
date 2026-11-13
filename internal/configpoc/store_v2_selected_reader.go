@@ -343,6 +343,7 @@ func selectedPendingReadbackV2(s *v2Store) (RoutedSelectedPlanV1, string, error)
 type RoutedPrepareViewV2 struct {
 	Current, Startup, Saved RoutedActivationBundleV1
 	Baseline                *RoutedBaselineV1
+	ServiceRestart          *RoutedServiceRestartViewV3
 }
 
 func (r *RoutedSelectionReaderV2) PrepareView(ctx context.Context, reference SelectionReferenceV2) (RoutedPrepareViewV2, error) {
@@ -376,6 +377,9 @@ func (r *RoutedSelectionReaderV2) prepareView(ctx context.Context, reference *Se
 	out, err = routedPrepareViewFromStoreV2(v.store)
 	if err != nil {
 		return out, err
+	}
+	if err = addServiceRestartViewV3(v.store, r.options.Identity, &out); err != nil {
+		return RoutedPrepareViewV2{}, err
 	}
 	if err = r.revalidate(ctx, v); err != nil {
 		return RoutedPrepareViewV2{}, err

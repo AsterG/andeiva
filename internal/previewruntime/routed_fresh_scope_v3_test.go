@@ -18,7 +18,8 @@ func retirementReceiptFixtureV3() RootRetirementReceiptV3 {
 }
 
 type freshScopeChannelFixtureV3 struct {
-	proof configpoc.RoutedFreshScopeEvidenceV3
+	proof   configpoc.RoutedFreshScopeEvidenceV3
+	prepare func(context.Context, configpoc.RoutedActivationBundleV1, string) (configpoc.RoutedPreparationV1, error)
 }
 
 func (f *freshScopeChannelFixtureV3) ProveFreshScope(_ context.Context, work string) (configpoc.RoutedFreshScopeEvidenceV3, error) {
@@ -31,6 +32,12 @@ func (*freshScopeChannelFixtureV3) verifyPlan(context.Context, configpoc.RoutedS
 	return ErrIdentity
 }
 func (*freshScopeChannelFixtureV3) Close() error { return nil }
+func (f *freshScopeChannelFixtureV3) prepareSelected(ctx context.Context, target configpoc.RoutedActivationBundleV1, saved string) (configpoc.RoutedPreparationV1, error) {
+	if f.prepare != nil {
+		return f.prepare(ctx, target, saved)
+	}
+	return configpoc.RoutedPreparationV1{}, ErrIdentity
+}
 
 func TestRoutedFreshScopeV3PrivateChannelBindsReplyAndRejectsRequestProof(t *testing.T) {
 	// Transport double only: this does not qualify root receipt FDs or kernel.
@@ -39,7 +46,7 @@ func TestRoutedFreshScopeV3PrivateChannelBindsReplyAndRejectsRequestProof(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.integrity = &routedIntegrityGateV3{}
+	s.integrity = &routedIntegrityGateV3{fence: &integrityMarkerFixtureV3{}, anchor: integrityRefFixtureV3(), phase: routedIntegrityReconcilingV3}
 	s.inventory = func(context.Context) (networkinventory.Snapshot, error) {
 		return networkinventory.Snapshot{}, ErrIdentity
 	}
@@ -48,7 +55,7 @@ func TestRoutedFreshScopeV3PrivateChannelBindsReplyAndRejectsRequestProof(t *tes
 	old.Namespace++
 	old.RunID = strings.Repeat("b", 32)
 	proof := configpoc.RoutedFreshScopeEvidenceV3{Version: 3, Old: old, New: next, Work: strings.Repeat("c", 64), ReceiptSHA256: strings.Repeat("d", 64), MetadataSHA256: strings.Repeat("e", 64), DrainedAtBootNS: 10, ObservedAtBootNS: 20, Before: strings.Repeat("f", 64), Dependencies: strings.Repeat("a", 64)}
-	s.freshScope = &freshScopeChannelFixtureV3{proof}
+	s.freshScope = &freshScopeChannelFixtureV3{proof: proof}
 	a, b := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -69,6 +76,71 @@ func TestRoutedFreshScopeV3PrivateChannelBindsReplyAndRejectsRequestProof(t *tes
 	}
 	_ = c.Close()
 	<-done
+}
+
+func TestRoutedFreshScopeV3RoutesBootPreparationThroughSelectedScope(t *testing.T) {
+	authority := &routedTransportAuthorityV3{}
+	s, err := NewRoutedSessionV3(authority, routedTransportReaderV3{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.integrity = &routedIntegrityGateV3{fence: &integrityMarkerFixtureV3{}, anchor: integrityRefFixtureV3(), phase: routedIntegrityReconcilingV3}
+	var selected, startup configpoc.RoutedActivationBundleV1
+	selected.Composite.Hash, startup.Composite.Hash = strings.Repeat("a", 64), strings.Repeat("b", 64)
+	calls := 0
+	s.freshScope = &freshScopeChannelFixtureV3{prepare: func(_ context.Context, target configpoc.RoutedActivationBundleV1, saved string) (configpoc.RoutedPreparationV1, error) {
+		calls++
+		if target.Composite.Hash != selected.Composite.Hash || saved != selected.Composite.Hash {
+			return configpoc.RoutedPreparationV1{}, configpoc.ErrConflict
+		}
+		return configpoc.RoutedPreparationV1{}, nil
+	}}
+	for _, target := range []configpoc.RoutedActivationBundleV1{selected, startup} {
+		_, err = s.dispatch(context.Background(), firewallipc.RoutedCommandV3{Verb: "prepare_boot", Target: target, Baseline: selected.Composite.Hash})
+		if (err == nil) != (target.Composite.Hash == selected.Composite.Hash) {
+			t.Fatal("wrong restart preparation route", err)
+		}
+	}
+	if calls != 2 || authority.calls.Load() != 0 {
+		t.Fatal("preparation bypassed selected-scope authority")
+	}
+}
+
+func TestRoutedFreshScopeV3RejectsColdAndFencedPreparation(t *testing.T) {
+	for _, phase := range []routedIntegrityPhaseV3{routedIntegrityColdV3, routedIntegrityCheckingV3, routedIntegrityFencedV3, routedIntegrityReconcilingV3} {
+		s, err := NewRoutedSessionV3(&routedTransportAuthorityV3{}, routedTransportReaderV3{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		marker := &integrityMarkerFixtureV3{blocked: phase == routedIntegrityReconcilingV3}
+		s.integrity = &routedIntegrityGateV3{fence: marker, phase: phase}
+		if phase != routedIntegrityColdV3 {
+			s.integrity.anchor = integrityRefFixtureV3()
+		}
+		calls := 0
+		s.freshScope = &freshScopeChannelFixtureV3{prepare: func(context.Context, configpoc.RoutedActivationBundleV1, string) (configpoc.RoutedPreparationV1, error) {
+			calls++
+			return configpoc.RoutedPreparationV1{}, nil
+		}}
+		for _, verb := range []string{"fresh_scope", "prepare_boot"} {
+			if _, err = s.dispatch(context.Background(), firewallipc.RoutedCommandV3{Verb: verb}); err == nil {
+				t.Fatal("unattached/fenced scope accepted", phase, verb)
+			}
+		}
+		if calls != 0 {
+			t.Fatal("preparation before integrity permission")
+		}
+	}
+	s, _ := NewRoutedSessionV3(&routedTransportAuthorityV3{}, routedTransportReaderV3{})
+	marker := &integrityMarkerFixtureV3{}
+	s.integrity = &routedIntegrityGateV3{fence: marker, anchor: integrityRefFixtureV3(), phase: routedIntegrityReconcilingV3}
+	s.freshScope = &freshScopeChannelFixtureV3{prepare: func(context.Context, configpoc.RoutedActivationBundleV1, string) (configpoc.RoutedPreparationV1, error) {
+		_ = marker.MarkBlocked()
+		return configpoc.RoutedPreparationV1{}, nil
+	}}
+	if _, err := s.dispatch(context.Background(), firewallipc.RoutedCommandV3{Verb: "prepare_boot"}); err == nil {
+		t.Fatal("fence changed during preparation was accepted")
+	}
 }
 
 func TestRootRetirementReceiptV3FixedSizeAndIntegrity(t *testing.T) {

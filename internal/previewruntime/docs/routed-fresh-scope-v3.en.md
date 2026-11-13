@@ -19,13 +19,24 @@ reuses `PrepareBoot`/`Observe`, requires no tables at all (including lease gate)
 and observes closed IPv4/IPv6 forwarding. Root must delay DHCP motor sockets
 until LAN boot; the existing real empty-listener check is not bypassed.
 
+Helper assembly calls `PrepareServiceRestartViewV3` with the old identity from
+the verified receipt. Its selected Target/Saved metadata configures the existing
+engine; `Saved` must not be replaced by Startup. The private `prepare_boot` path
+rereads selected work and receipt and checks the requested target/baseline before
+readonly preparation. Metadata alone never authorizes an effect.
+
 The API negotiates `routed_fresh_scope.v3` with integrity and inventory; DHCP is
 independent. `fresh_scope` accepts only a selected work reference. There is no
 request-supplied receipt, identity, deadline or proof flag. The existing store
 records sticky `configuration.routed-fresh-scope.v3`. DHCP ends as `scope_retired`,
 not `withdrawn` or `restored`, retaining original work and grant deadline. Boot
-retains pending confirmation outcomes and deadlines and selects new Startup
-work before effects. Selected history and the helper's retained receipt must
+retains pending confirmation outcomes and deadlines. A service restart preserves
+selected Running, LastGood and Startup, even when Running differs from Startup.
+Pending commits roll back to their exact selected Previous; they are never
+implicitly confirmed. The typed restart record binds the original source and
+receipt; the helper derives the same target from its full selected read before
+effects. OS reboot still selects Startup and is not enabled by this same-Boot
+receipt profile. Selected history and the helper's retained receipt must
 agree; an IP match or old token is insufficient.
 
 Focused tests use real selected-store files/reserve pools and explicit physical

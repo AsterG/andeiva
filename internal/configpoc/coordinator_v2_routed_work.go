@@ -248,7 +248,7 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 			}
 		}
 		var record v2RecoveryRecord
-		if load(work.BootRecord, &record) != nil || !validRecoveryRecordV2(record, lineage) || record.Kind != v2BootKind || record.State != "pending" || record.Reserve != nil || record.ID != work.Operation || record.Previous != work.Transition.Previous || record.Target != work.Transition.Target || record.BootID == nil || string(*record.BootID) != work.Scope.Identity.BootID || !record.Started.Add(10*time.Second).Equal(work.Deadline) || !validBootTargetV2(before, target) {
+		if load(work.BootRecord, &record) != nil || !validRecoveryRecordV2(record, lineage) || record.Kind != v2BootKind || record.State != "pending" || record.Reserve != nil || record.ID != work.Operation || record.Previous != work.Transition.Previous || record.Target != work.Transition.Target || record.BootID == nil || string(*record.BootID) != work.Scope.Identity.BootID || !record.Started.Add(10*time.Second).Equal(work.Deadline) || !validRecoveryBootTargetV3(record, before, target, load) || !reflect.DeepEqual(work.FreshScope, serviceRestartScopeV3(record)) {
 			return plan, errV2Unavailable
 		}
 		plan.bootRecord = &record

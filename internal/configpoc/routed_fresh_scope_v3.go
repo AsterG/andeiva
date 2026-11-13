@@ -57,14 +57,18 @@ func (c *v2Coordinator) proveFreshScopeV3(ctx context.Context, old networkexecut
 // RoutedFreshScopeSourceV3 is issued only by a full selected reader. Its old
 // identity cannot be supplied by an API request or inferred from matching IPs.
 type RoutedFreshScopeSourceV3 struct {
-	identity networkexecutor.OwnedNamespaceIdentity
-	ref      SelectionReferenceV2
+	identity      networkexecutor.OwnedNamespaceIdentity
+	ref           SelectionReferenceV2
+	target, saved RoutedActivationBundleV1
 }
 
 func (s RoutedFreshScopeSourceV3) Identity() networkexecutor.OwnedNamespaceIdentity {
 	return s.identity
 }
 func (s RoutedFreshScopeSourceV3) Reference() SelectionReferenceV2 { return s.ref }
+func (s RoutedFreshScopeSourceV3) PreparationBundles() (RoutedActivationBundleV1, RoutedActivationBundleV1) {
+	return clone(s.target), clone(s.saved)
+}
 
 func (r *RoutedSelectionReaderV2) ResolveFreshScopeSourceV3(ctx context.Context, work string) (out RoutedFreshScopeSourceV3, result error) {
 	return r.ObserveFreshScopeV3(ctx, work, func(RoutedFreshScopeSourceV3, RoutedPrepareViewV2) error { return nil })
@@ -74,7 +78,7 @@ func (r *RoutedSelectionReaderV2) ResolveFreshScopeSourceV3(ctx context.Context,
 // kernel observation, then revalidates selector, objects and pool bindings. The
 // callback must not reenter this reader or apply effects. It is never wire data.
 func (r *RoutedSelectionReaderV2) ObserveFreshScopeV3(ctx context.Context, work string, observe func(RoutedFreshScopeSourceV3, RoutedPrepareViewV2) error) (out RoutedFreshScopeSourceV3, result error) {
-	if r == nil || !validHash(work) || observe == nil {
+	if r == nil || r.options.Policy != SelectionFullHistoryV2 || !validHash(work) || observe == nil {
 		return out, ErrRecovery
 	}
 	r.mu.Lock()
@@ -129,6 +133,10 @@ func (r *RoutedSelectionReaderV2) ObserveFreshScopeV3(ctx context.Context, work 
 	if err != nil {
 		return RoutedFreshScopeSourceV3{}, err
 	}
+	if addServiceRestartViewV3(s, r.options.Identity, &view) != nil || view.ServiceRestart == nil {
+		return RoutedFreshScopeSourceV3{}, ErrRecovery
+	}
+	out.target, out.saved = view.ServiceRestart.Target, view.ServiceRestart.Saved
 	if err = observe(out, view); err != nil {
 		return RoutedFreshScopeSourceV3{}, err
 	}

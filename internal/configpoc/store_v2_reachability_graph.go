@@ -685,6 +685,14 @@ func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2
 		if !validRecoveryRecordV2(record, state.Lineage) || (id != "" && record.ID != id) {
 			return errV2Unavailable
 		}
+		if record.ServiceRestart != nil {
+			if !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
+				return errV2Unavailable
+			}
+			if err := r.snapshot(record.ServiceRestart.Source, key, state, depth+1); err != nil {
+				return err
+			}
+		}
 		if record.SupersededBy != "" {
 			if !hasFeatureV2(state, v2RoutedBootBoundaryFeature) || validateRoutedBootSupersessionV2(record, state.Lineage, r.object) != nil {
 				return errV2Unavailable
@@ -717,7 +725,7 @@ func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2
 				if err := r.object(record.Target, &target); err != nil {
 					return err
 				}
-				if !r.selectedPureV2("boot-target:"+record.Previous+":"+record.Target, func() bool { return validBootTargetV2(previous, target) }) || audit.Result != "verified" || audit.Subject != "system" || audit.OriginCommit != "" || audit.Lease != "" || state.Configuration == nil || audit.Sequence > state.Configuration.AuditSequence || !audit.At.Equal(*record.Completed) || audit.Running != target.Running.Hash || audit.Startup != target.Startup.Hash {
+				if !r.selectedPureV2("boot-target:"+hash+":"+record.Previous+":"+record.Target, func() bool { return validRecoveryBootTargetV3(record, previous, target, r.object) }) || audit.Result != "verified" || audit.Subject != "system" || audit.OriginCommit != "" || audit.Lease != "" || state.Configuration == nil || audit.Sequence > state.Configuration.AuditSequence || !audit.At.Equal(*record.Completed) || audit.Running != target.Running.Hash || audit.Startup != target.Startup.Hash {
 					return errV2Unavailable
 				}
 			}

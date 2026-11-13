@@ -29,6 +29,7 @@ type routedFreshScopeV3 struct {
 	reader    *configpoc.RoutedSelectionReaderV2
 	authority configpoc.RoutedAuthorityV1
 	kernel    *routedKernelV3
+	work      string // Correlation only; every preparation independently rereads selected work.
 }
 
 func validateRetirementFileV3(file *os.File) error {
@@ -194,12 +195,13 @@ func (p *routedFreshScopeV3) ProveFreshScope(ctx context.Context, work string) (
 		return out, err
 	}
 	var prepared configpoc.RoutedPreparationV1
-	_, err = p.reader.ObserveFreshScopeV3(ctx, work, func(source configpoc.RoutedFreshScopeSourceV3, view configpoc.RoutedPrepareViewV2) error {
+	_, err = p.reader.ObserveFreshScopeV3(ctx, work, func(source configpoc.RoutedFreshScopeSourceV3, _ configpoc.RoutedPrepareViewV2) error {
 		if source.Identity() != receipt.Old {
 			return ErrIdentity
 		}
 		var e error
-		prepared, e = p.prepare(ctx, view.Startup, view.Saved)
+		target, saved := source.PreparationBundles()
+		prepared, e = p.prepare(ctx, target, saved)
 		return e
 	})
 	if err != nil {
@@ -218,7 +220,37 @@ func (p *routedFreshScopeV3) ProveFreshScope(ctx context.Context, work string) (
 	if !configpoc.ValidRoutedFreshScopeEvidenceV3(out) || ctx.Err() != nil {
 		return configpoc.RoutedFreshScopeEvidenceV3{}, ErrIdentity
 	}
+	p.work = work
 	return out, nil
+}
+
+func (p *routedFreshScopeV3) prepareSelected(ctx context.Context, target configpoc.RoutedActivationBundleV1, saved string) (configpoc.RoutedPreparationV1, error) {
+	var result configpoc.RoutedPreparationV1
+	if p == nil || ctx == nil {
+		return result, ErrIdentity
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	r, err := readRetirementFileV3(p.file, p.binding)
+	if err != nil || p.work == "" {
+		return result, ErrIdentity
+	}
+	_, err = p.reader.ObserveFreshScopeV3(ctx, p.work, func(source configpoc.RoutedFreshScopeSourceV3, _ configpoc.RoutedPrepareViewV2) error {
+		selected, baseline := source.PreparationBundles()
+		if source.Identity() != r.Old || selected.Composite.Hash != target.Composite.Hash || baseline.Composite.Hash != saved {
+			return configpoc.ErrConflict
+		}
+		var e error
+		result, e = p.prepare(ctx, selected, baseline)
+		return e
+	})
+	if err != nil {
+		return configpoc.RoutedPreparationV1{}, err
+	}
+	if _, err = readRetirementFileV3(p.file, p.binding); err != nil || ctx.Err() != nil {
+		return configpoc.RoutedPreparationV1{}, ErrIdentity
+	}
+	return result, nil
 }
 
 func (p *routedFreshScopeV3) verifyPlan(ctx context.Context, plan configpoc.RoutedSelectedPlanV1) error {

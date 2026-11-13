@@ -164,10 +164,13 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 
 func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedCommandV3) (any, error) {
 	if c.Verb == "fresh_scope" {
-		if s.freshScope == nil {
+		if s.freshScope == nil || !freshScopeAllowedV3(s.integrity) {
 			return nil, ErrIdentity
 		}
 		proof, err := s.freshScope.ProveFreshScope(ctx, c.FreshScope.Work)
+		if !freshScopeAllowedV3(s.integrity) {
+			return nil, configpoc.ErrRecovery
+		}
 		return firewallipc.RoutedFreshScopeResultV3{Evidence: proof}, err
 	}
 	if firewallipc.RoutedDHCPVerbV3(c.Verb) {
@@ -203,6 +206,16 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 		receipt, revision, e := s.authority.Observe(ctx)
 		return firewallipc.RoutedObservedV3{Receipt: firewallipc.RoutedReceiptV3{Phase: receipt.Phase, ID: receipt.ID, Previous: receipt.Previous, Target: receipt.Target, Deadline: receipt.Deadline}, Revision: revision}, e
 	case "prepare", "prepare_boot":
+		if c.Verb == "prepare_boot" && s.freshScope != nil {
+			if !freshScopeAllowedV3(s.integrity) {
+				return nil, configpoc.ErrRecovery
+			}
+			preparation, err := s.freshScope.prepareSelected(ctx, c.Target, c.Baseline)
+			if !freshScopeAllowedV3(s.integrity) {
+				return nil, configpoc.ErrRecovery
+			}
+			return firewallipc.RoutedPreparedV3{Preparation: preparation}, err
+		}
 		view, e := s.source.PrepareView(ctx)
 		if e != nil {
 			return nil, e

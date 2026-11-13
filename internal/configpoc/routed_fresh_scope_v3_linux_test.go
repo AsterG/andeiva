@@ -49,11 +49,23 @@ func freshScopeAuthorityFixtureV3(t *testing.T, c *v2Coordinator, old *boundaryA
 	t.Helper()
 	a := freshBoundaryAuthorityV2(old)
 	a.identity.BootID, a.identity.Host = old.identity.BootID, old.identity.Host
-	target, err := NewRoutedActivationBundleV1(c.store.state.Configuration.Firewall.Startup, c.store.state.Configuration.LocalServices.Startup)
+	targetState, err := serviceRestartTargetV3(*c.store.state.Configuration, c.store.readObject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := a.PrepareBoot(context.Background(), target, target)
+	target, err := bundleFromConfigurationV2(targetState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := target
+	if target.Firewall.Config.SchemaVersion != 4 {
+		plan, e := loadRoutedWorkV2(c.store.state.RoutedActive.Work, c.store.state.Lineage, c.store.readObject)
+		if e != nil {
+			t.Fatal(e)
+		}
+		saved = plan.Baseline().Saved
+	}
+	p, err := a.PrepareBoot(context.Background(), target, saved)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +177,10 @@ func TestRoutedFreshScopeV3RejectsMissingMismatchedOrOccupiedProofBeforeEffects(
 			if err := c.bootStartupLocked(context.Background(), boot); err != nil {
 				t.Fatal(err)
 			}
+			selectedBefore, err := c.store.readRecordV2("selected.json", 4096)
+			if err != nil {
+				t.Fatal(err)
+			}
 			fresh, proof := freshScopeAuthorityFixtureV3(t, c, old)
 			switch name {
 			case "missing":
@@ -183,6 +199,10 @@ func TestRoutedFreshScopeV3RejectsMissingMismatchedOrOccupiedProofBeforeEffects(
 			}
 			if fresh.bootstraps != 0 || fresh.applies != 0 || fresh.arms != 0 || fresh.recovers != 0 {
 				t.Fatal("effect before proof")
+			}
+			selectedAfter, err := c.store.readRecordV2("selected.json", 4096)
+			if err != nil || string(selectedBefore) != string(selectedAfter) {
+				t.Fatal("rejected scope changed selected metadata", err)
 			}
 		})
 	}
@@ -234,6 +254,10 @@ func TestRoutedFreshScopeV3PendingOriginRetainsOriginalConfirmation(t *testing.T
 		t.Fatal(err)
 	}
 	immutable := clone(result.Operation.Outcome)
+	var previous v2Configuration
+	if err = c.store.readObject(result.Current.Pending.Previous, &previous); err != nil {
+		t.Fatal(err)
+	}
 	fresh, proof := freshScopeAuthorityFixtureV3(t, c, old)
 	opened, err := reopenFreshScopeFixtureV3(t, c, fresh, proof)
 	if err != nil {
@@ -242,6 +266,9 @@ func TestRoutedFreshScopeV3PendingOriginRetainsOriginalConfirmation(t *testing.T
 	retained, err := opened.store.lookupRetained(principal.Subject, origin.ID)
 	if err != nil || retained.Pinned || !reflect.DeepEqual(retained.Outcome, immutable) || fresh.bootstraps != 1 || fresh.recovers != 0 {
 		t.Fatal("pending origin changed", err)
+	}
+	if opened.store.state.Configuration.Running.Hash != previous.Running.Hash || fresh.current != previous.Running.Hash {
+		t.Fatal("pending target was implicitly confirmed instead of rolled back")
 	}
 }
 
@@ -263,9 +290,34 @@ func TestRoutedFreshScopeV3ColdContinuationAfterDHCPRetirement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assembly, err := r.PrepareServiceRestartViewV3(ctx, old.identity)
+	if err != nil || assembly.Target.Composite.Hash != c.store.state.Configuration.Running.Hash || assembly.Work != c.store.state.RoutedActive.Work {
+		t.Fatal("selected assembly metadata", err)
+	}
+	wrongOld := old.identity
+	wrongOld.RunID = strings.Repeat("f", 32)
+	if _, err = r.PrepareServiceRestartViewV3(ctx, wrongOld); err == nil {
+		t.Fatal("wrong receipt old identity accepted for assembly")
+	}
+	actionOptions := options
+	actionOptions.Policy = SelectionActionAuthorityV2
+	action, err := NewRoutedSelectionReaderV2(oldReader.area, actionOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = action.PrepareServiceRestartViewV3(ctx, old.identity); err == nil {
+		t.Fatal("action-only reader issued service restart metadata")
+	}
+	if _, err = action.ResolveFreshScopeSourceV3(ctx, hash); err == nil {
+		t.Fatal("action-only reader issued retirement source")
+	}
 	observations := 0
-	if _, err = r.ObserveFreshScopeV3(ctx, hash, func(RoutedFreshScopeSourceV3, RoutedPrepareViewV2) error {
+	if _, err = r.ObserveFreshScopeV3(ctx, hash, func(source RoutedFreshScopeSourceV3, view RoutedPrepareViewV2) error {
 		observations++
+		target, _ := source.PreparationBundles()
+		if target.Composite.Hash != c.store.state.Configuration.Running.Hash || target.Composite.Hash == view.Startup.Composite.Hash {
+			t.Fatal("helper preparation used Startup instead of selected Running")
+		}
 		return c.store.publish(clone(c.store.state))
 	}); err == nil || observations != 1 {
 		t.Fatal("selector changed during readonly observation was accepted", err)

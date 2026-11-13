@@ -367,7 +367,7 @@ func validateRoutedBootSupersessionV2(record v2RecoveryRecord, lineage string, l
 		return ErrRecovery
 	}
 	var previous, target v2Configuration
-	if load(completed.Previous, &previous) != nil || load(completed.Target, &target) != nil || !validBootTargetV2(previous, target) {
+	if load(completed.Previous, &previous) != nil || load(completed.Target, &target) != nil || !validRecoveryBootTargetV3(completed, previous, target, load) {
 		return ErrRecovery
 	}
 	_, want, e1 := v2Canonical(routedBootBoundaryProjectionV2(source))

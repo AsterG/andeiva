@@ -20,13 +20,24 @@ de toda tabla (incluido gate de lease) y observa forwarding IPv4/IPv6 cerrado.
 Root debe retrasar los sockets del motor DHCP hasta boot LAN; no se omite la
 comprobación real de ausencia de listeners.
 
+El ensamblado llama `PrepareServiceRestartViewV3` con la identidad anterior del
+recibo verificado. Su metadata Target/Saved seleccionada configura el motor;
+no debe reemplazar Saved por Startup. `prepare_boot` privado vuelve a leer trabajo
+y recibo y compara objetivo/baseline antes de preparar en sólo lectura. La
+metadata sola nunca autoriza efectos.
+
 La API negocia `routed_fresh_scope.v3` junto a integridad e inventario; DHCP es
 independiente. `fresh_scope` sólo recibe referencia de trabajo seleccionado.
 No admite recibo, identidad, deadline ni bandera de prueba en peticiones. El
 mismo almacén registra `configuration.routed-fresh-scope.v3` persistente. DHCP
 termina como `scope_retired`, no `withdrawn` ni `restored`; conserva trabajo y
-deadline original. Boot conserva outcomes y deadlines de confirmación pendientes
-y selecciona Startup nuevo antes de efectos. Historia seleccionada y recibo
+deadline original. Conserva outcomes y deadlines de confirmación pendientes.
+Reiniciar el servicio conserva Running, LastGood y Startup seleccionados, aunque
+Running difiera de Startup. Un commit pendiente vuelve a su Previous exacto;
+nunca se confirma implícitamente. El registro tipado liga origen y recibo; el
+helper deriva el mismo objetivo de su lectura completa antes de efectos.
+Reiniciar el OS sigue seleccionando Startup y no queda habilitado por este
+perfil de igual BootID. Historia seleccionada y recibo
 retenido por helper deben coincidir; dirección IP o token previo no bastan.
 
 Las pruebas focales usan archivos/pools reales y dobles explícitos de autoridad

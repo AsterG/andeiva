@@ -182,6 +182,7 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 			return nil
 		}
 	}
+	restartSource := clone(current)
 	if c.bootBoundary != nil {
 		current = routedBootBoundaryProjectionV2(current)
 	}
@@ -195,6 +196,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 		return err
 	}
 	target, err := bootTargetV2(current)
+	if c.bootFreshScope != nil {
+		target, err = serviceRestartTargetV3(restartSource, s.readObject)
+	}
 	if err != nil {
 		return ErrInvalid
 	}
@@ -221,6 +225,13 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 		return err
 	}
 	record := v2RecoveryRecord{Format: v2Format, ID: issued, BootID: &id, Kind: v2BootKind, State: "pending", Previous: previousHash, Target: targetHash, Lineage: s.state.Lineage, Started: c.recoveryNow(), Pinned: true}
+	if c.bootFreshScope != nil {
+		source, e := s.object(restartSource)
+		if e != nil {
+			return e
+		}
+		record.ServiceRestart = &v3RoutedServiceRestart{Source: source, Scope: *clone(c.bootFreshScope)}
+	}
 	st := clone(s.state)
 	if c.bootFreshScope != nil {
 		addFeatureV2(&st, v3RoutedFreshScopeFeature)
@@ -305,7 +316,7 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	defer func() { s.allowance = v2Budget{} }()
 	var previous, target v2Configuration
 	var record v2RecoveryRecord
-	if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validBootTargetV2(previous, target) || s.readObject(s.state.Configuration.LastRecovery, &record) != nil || !validRecoveryRecordV2(record, s.state.Lineage) || record.ID != intent.Operation || record.Kind != v2BootKind || record.State != "pending" || *record.BootID != *intent.BootID || record.Previous != intent.Previous || record.Target != intent.Target || intent.TargetGeneration != s.state.Generation+1 {
+	if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || s.readObject(s.state.Configuration.LastRecovery, &record) != nil || !validRecoveryRecordV2(record, s.state.Lineage) || !validRecoveryBootTargetV3(record, previous, target, s.readObject) || record.ID != intent.Operation || record.Kind != v2BootKind || record.State != "pending" || *record.BootID != *intent.BootID || record.Previous != intent.Previous || record.Target != intent.Target || intent.TargetGeneration != s.state.Generation+1 {
 		return ErrRecovery
 	}
 	if s.reserves != nil && s.reserves.verifyBundle(s, record.Reserve) != nil {

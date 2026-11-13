@@ -16,8 +16,18 @@ const RootRetirementReceiptSizeV3 = 4096
 
 type routedFreshScopeProofV3 interface {
 	configpoc.RoutedFreshScopeAuthorityV3
+	prepareSelected(context.Context, configpoc.RoutedActivationBundleV1, string) (configpoc.RoutedPreparationV1, error)
 	verifyPlan(context.Context, configpoc.RoutedSelectedPlanV1) error
 	Close() error
+}
+
+func freshScopeAllowedV3(g *routedIntegrityGateV3) bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.fence != nil && !g.blockedLocked() && g.anchor != (configpoc.SelectionReferenceV2{}) && (g.phase == routedIntegrityReconcilingV3 || g.phase == routedIntegrityReadyV3)
 }
 
 // RootRetirementReceiptV3 is an operational supervisor receipt, never a
