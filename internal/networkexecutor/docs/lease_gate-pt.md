@@ -89,3 +89,38 @@ DHCP real, trabalho durável selecionado ou recuperação produtiva. O namespace
 isolado limpa a WAN retida. Exige jq além das dependências do harness. Executar
 `ANDEIVA_LEASE_LAB_AUTHORIZED=1 ./lease-native-isolated.sh gate` apenas em grupo
 systemd root limitado do laboratório autorizado, com PASS literal e nenhum SKIP.
+
+## Qualificação de tráfego real preparada
+
+O novo modo `gate-traffic` está preparado, ainda sem qualificação nativa.
+Compilar sem privilégios com
+`go test -c -o lease-native.test ./internal/networkexecutor` e verificar
+`bash -n scripts/lease-native-isolated.sh`. Somente no diretório/cgroup do
+laboratório Debian autorizado, executar
+`ANDEIVA_LEASE_LAB_AUTHORIZED=1 ./lease-native-isolated.sh gate-traffic`.
+Manter KillMode=control-group, LimitNOFILE=256 e limite externo de 45 segundos.
+O modo adiciona timeout de 43 segundos e dois segundos para término forçado.
+
+Cria três namespaces isolados, ligados somente por veth: gateway, LAN e WAN.
+O helper NET_ADMIN existente instala L3 WAN, abre um gate breve e termina.
+Somente após readback de política/gate o supervisor ativa encaminhamento IPv4
+nesse namespace; IPv6 continua em zero. A cadeia posterior de qualificação mantém
+aceitação established/related e aceita LAN→WAN apenas TCP18080/UDP18081 exatos.
+Input/output permanecem DROP.
+
+Servidor/cliente Go usam UID/GID62007, cinco conjuntos de capacidades vazios,
+no_new_privs, pins host/gateway somente leitura e endereços benchmark fixos.
+Trocam nonces novos de 32 bytes. O cliente conserva a mesma conexão TCP e socket
+UDP. Root publica fase atômica, root e somente leitura, apenas após observar
+live vazio com enabled presente. Depois, TCP estabelecido, UDP e TCP novo devem
+terminar por timeout. EOF, reset, eco diferente ou servidor morto não comprovam
+corte. Ambos os processos devem encerrar com PASS explícito.
+
+O harness verifica estrutura do gate e política intactas (exceto contadores),
+uso da aceitação established, estado de endereços LAN e IPv6 fechado. Desativa
+encaminhamento IPv4 antes de limpar, termina/recolhe seus filhos; o namespace PID
+limita a limpeza em falhas. O supervisor externo deve verificar invariantes
+dual-stack/mount do host, limpeza do cgroup e CPU/memória pico. O novo modo não
+tem PASS nativo ou medições comprovadas. Não prova autenticidade DHCP, trabalho
+durável, recuperação, suspensão, instante exato do corte ou pacotes já enfileirados.
+Não ativa interfaces host, topologia MACVLAN ou encaminhamento produtivo.

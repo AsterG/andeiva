@@ -90,3 +90,38 @@ El namespace aislado limpia la WAN retenida. Exige jq además de las dependencia
 del arnés. Ejecutar `ANDEIVA_LEASE_LAB_AUTHORIZED=1 ./lease-native-isolated.sh gate`
 sólo en un grupo systemd root limitado del laboratorio autorizado, con PASS
 literal y ningún SKIP.
+
+## Calificación de tráfico real preparada
+
+El modo nuevo `gate-traffic` está preparado, sin calificación nativa todavía.
+Compilar sin privilegios con
+`go test -c -o lease-native.test ./internal/networkexecutor` y comprobar
+`bash -n scripts/lease-native-isolated.sh`. Sólo dentro del directorio/cgroup del
+laboratorio Debian autorizado, ejecutar
+`ANDEIVA_LEASE_LAB_AUTHORIZED=1 ./lease-native-isolated.sh gate-traffic`.
+Conservar KillMode=control-group, LimitNOFILE=256 y límite externo de 45 segundos.
+El modo agrega timeout de 43 segundos y dos segundos para terminación forzada.
+
+Crea tres namespaces aislados, unidos sólo por veth: gateway, LAN y WAN. El helper
+NET_ADMIN existente instala L3 WAN, abre un gate breve y termina. Sólo después
+del readback de política/gate se activa forwarding IPv4 en ese namespace;
+forwarding IPv6 sigue en cero. La cadena de calificación posterior conserva
+aceptación established/related y acepta LAN→WAN sólo TCP18080/UDP18081 exactos.
+Input/output siguen DROP.
+
+Servidor/cliente Go usan UID/GID62007, cinco conjuntos de capacidades vacíos,
+no_new_privs, pins host/gateway de sólo lectura y direcciones benchmark fijas.
+Intercambian nonces nuevos de 32 bytes. El cliente conserva una misma conexión
+TCP y socket UDP. Root publica una fase atómica, root y sólo lectura, únicamente
+tras observar vacío el conjunto live y enabled aún presente. Después deben vencer
+por timeout TCP establecido, UDP y TCP nuevo. EOF, reset, eco distinto o servidor
+muerto no acreditan corte. Ambos procesos deben terminar con PASS explícito.
+
+El arnés verifica estructura del gate y política intactas (salvo contadores), uso
+de la aceptación established, estado de direcciones LAN e IPv6 cerrado. Desactiva
+forwarding IPv4 antes de limpiar, termina y recoge sus hijos; el namespace PID
+limita la limpieza ante fallos. El supervisor externo debe comprobar invariantes
+dual-stack/mount del host, limpieza del cgroup y CPU/memoria pico. Este modo nuevo
+no tiene PASS nativo ni mediciones acreditadas. No prueba autenticidad DHCP,
+trabajo durable, recuperación, suspensión, instante exacto de corte ni paquetes
+ya encolados. No activa interfaces host, topología MACVLAN ni forwarding productivo.

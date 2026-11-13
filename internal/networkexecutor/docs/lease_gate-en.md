@@ -94,3 +94,38 @@ work or production recovery. The isolated namespace owns cleanup of retained
 WAN state. Requires jq in addition to the executor harness dependencies. Run
 `ANDEIVA_LEASE_LAB_AUTHORIZED=1 ./lease-native-isolated.sh gate` only in the
 bounded authorized root laboratory cgroup, and require literal PASS/no SKIP.
+
+## Prepared real-traffic qualification
+
+The new `gate-traffic` mode is prepared, not yet qualified natively. Build without
+privileges with `go test -c -o lease-native.test ./internal/networkexecutor` and
+check `bash -n scripts/lease-native-isolated.sh`. In the authorized Debian lab
+directory/cgroup only, run
+`ANDEIVA_LEASE_LAB_AUTHORIZED=1 ./lease-native-isolated.sh gate-traffic`.
+Retain KillMode=control-group, LimitNOFILE=256 and an external 45-second deadline.
+The mode also applies a 43-second timeout with a two-second kill bound.
+
+It creates three isolated network namespaces connected only by veth: gateway,
+LAN peer and WAN peer. The existing NET_ADMIN helper realizes WAN L3 and opens a
+short-lived gate, then exits. Only after policy/gate readback does the namespace
+supervisor set IPv4 forwarding to one. IPv6 forwarding remains zero. A separate
+qualification chain keeps established/related acceptance and exact LAN-to-WAN
+TCP18080/UDP18081 accepts behind the gate; input/output remain DROP.
+
+Go server/client roles use UID/GID62007, five empty capability sets, no_new_privs,
+read-only host/gateway pins and fixed benchmark addresses. They exchange fresh
+32-byte nonces. The client retains the same TCP connection and UDP socket across
+expiry. Root publishes an atomic, root-owned read-only phase only after observing
+the live kernel set empty while enabled remains. Established TCP, UDP and a new
+TCP connection must then time out; EOF, reset, mismatched echo or a dead server
+cannot count as successful cutoff. Both role processes must explicitly PASS.
+
+The harness checks unchanged gate structure, qualification policy (except
+counters), an exercised established accept, LAN address state and IPv6 closure.
+It disables IPv4 forwarding before cleanup and kills/reaps retained child
+processes; PID-namespace teardown bounds failure cleanup. The outer supervisor
+must still prove host dual-stack/mount invariants and cgroup cleanup and record
+CPU/peak memory. No native PASS or resource result is claimed for this new mode.
+This fixture does not qualify DHCP authenticity, selected durable work, restart
+recovery, suspend safety, exact cutoff time or packets already queued before
+expiry. No host links, MACVLAN topology or production forwarding are activated.
