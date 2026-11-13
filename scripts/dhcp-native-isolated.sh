@@ -10,14 +10,16 @@ if [[ $# == 0 ]]; then
   # Descriptor provenance is established before either namespace is created.
   exec 3</proc/self/ns/net
   exec 4</proc/self/ns/mnt
-  exec /usr/bin/unshare --mount --net -- /bin/bash "$0" isolated
+  exec 5</proc/self/ns/pid
+  exec /usr/bin/unshare --mount --net --pid --fork -- /bin/bash "$0" isolated
 fi
 [[ $# == 1 && $1 == isolated ]]
 # Reject direct entry before any mount operation. The retained descriptors must
 # identify this laboratory host, while both current namespaces must be private.
 [[ $(readlink /proc/self/fd/3) =~ ^net:\[[0-9]+\]$ ]]
 [[ $(readlink /proc/self/fd/4) =~ ^mnt:\[[0-9]+\]$ ]]
-for pair in '3 net' '4 mnt'; do
+[[ $(readlink /proc/self/fd/5) =~ ^pid:\[[0-9]+\]$ ]]
+for pair in '3 net' '4 mnt' '5 pid'; do
   read -r descriptor kind <<< "$pair"
   original=$(stat -Lc '%d:%i' "/proc/self/fd/$descriptor")
   current=$(stat -Lc '%d:%i' "/proc/self/ns/$kind")
@@ -26,6 +28,9 @@ for pair in '3 net' '4 mnt'; do
   [[ $current == "$(stat -Lc '%d:%i' "/proc/thread-self/ns/$kind")" ]]
 done
 /usr/bin/mount --make-rprivate /
+# PID isolation prevents a recycled server PID from addressing a host process.
+# Mount proc only after checking the retained host namespace references above.
+/usr/bin/mount -t proc -o nosuid,nodev,noexec proc /proc
 # All engine state paths are replaced only in this private mount namespace.
 /usr/bin/mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
 /usr/bin/mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /var/lib
