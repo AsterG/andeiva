@@ -121,7 +121,18 @@ El arnés verifica estructura del gate y política intactas (salvo contadores), 
 de la aceptación established, estado de direcciones LAN e IPv6 cerrado. Desactiva
 forwarding IPv4 antes de limpiar, termina y recoge sus hijos; el namespace PID
 limita la limpieza ante fallos. El supervisor externo debe comprobar invariantes
-dual-stack/mount del host, limpieza del cgroup y CPU/memoria pico. Este modo nuevo
-no tiene PASS nativo ni mediciones acreditadas. No prueba autenticidad DHCP,
+dual-stack/mount del host, limpieza del cgroup y CPU/memoria pico. La observación nativa siguiente califica únicamente este modo aislado. No prueba autenticidad DHCP,
 trabajo durable, recuperación, suspensión, instante exacto de corte ni paquetes
 ya encolados. No activa interfaces host, topología MACVLAN ni forwarding productivo.
+
+### Observación nativa de tráfico al caducar
+
+En Debian 13 AMD64, `gate-traffic` pasó con resultados PASS explícitos del helper,
+cliente y servidor aislados. La misma conexión TCP y socket UDP funcionaron antes
+de caducar el token del kernel y agotaron su plazo después; se ejercitaron los
+contadores established. Direcciones, rutas, reglas, forwarding dual-stack,
+nftables y mounts del host permanecieron iguales. El cgroup consumió 0,881 segundos
+de CPU y 29.634.560 bytes de memoria pico; el escenario cliente duró 12,66 segundos.
+Son observaciones del ensayo, no garantías de capacidad o latencia de corte.
+Recuperación DHCP real, selección durable, suspensión e Internet/SNAT requieren
+validaciones independientes.

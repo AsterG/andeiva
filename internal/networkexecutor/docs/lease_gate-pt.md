@@ -120,7 +120,18 @@ O harness verifica estrutura do gate e política intactas (exceto contadores),
 uso da aceitação established, estado de endereços LAN e IPv6 fechado. Desativa
 encaminhamento IPv4 antes de limpar, termina/recolhe seus filhos; o namespace PID
 limita a limpeza em falhas. O supervisor externo deve verificar invariantes
-dual-stack/mount do host, limpeza do cgroup e CPU/memória pico. O novo modo não
-tem PASS nativo ou medições comprovadas. Não prova autenticidade DHCP, trabalho
+dual-stack/mount do host, limpeza do cgroup e CPU/memória pico. A observação nativa abaixo qualifica apenas este modo isolado. Não prova autenticidade DHCP, trabalho
 durável, recuperação, suspensão, instante exato do corte ou pacotes já enfileirados.
 Não ativa interfaces host, topologia MACVLAN ou encaminhamento produtivo.
+
+### Observação nativa de tráfego na expiração
+
+No Debian 13 AMD64, `gate-traffic` passou com resultados PASS explícitos do helper,
+cliente e servidor isolados. A mesma conexão TCP e socket UDP funcionaram antes
+da expiração do token do kernel e atingiram timeout depois; contadores established
+foram exercitados. Endereços, rotas, regras, encaminhamento dual-stack, nftables
+e mounts do host permaneceram iguais. O cgroup consumiu 0,881 segundos de CPU e
+29.634.560 bytes de memória máxima; o cenário cliente durou 12,66 segundos.
+São observações do ensaio, não garantias de capacidade ou latência de corte.
+Recuperação DHCP real, seleção durável, suspensão e Internet/SNAT exigem
+validações independentes.

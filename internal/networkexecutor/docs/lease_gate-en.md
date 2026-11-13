@@ -125,7 +125,19 @@ counters), an exercised established accept, LAN address state and IPv6 closure.
 It disables IPv4 forwarding before cleanup and kills/reaps retained child
 processes; PID-namespace teardown bounds failure cleanup. The outer supervisor
 must still prove host dual-stack/mount invariants and cgroup cleanup and record
-CPU/peak memory. No native PASS or resource result is claimed for this new mode.
+CPU/peak memory. The native observation below qualifies only this isolated mode.
 This fixture does not qualify DHCP authenticity, selected durable work, restart
 recovery, suspend safety, exact cutoff time or packets already queued before
 expiry. No host links, MACVLAN topology or production forwarding are activated.
+
+### Native expiry traffic observation
+
+On Debian 13 AMD64, the isolated `gate-traffic` qualification passed with explicit
+helper, client and server PASS results. The same TCP connection and UDP socket
+worked before kernel token expiry and timed out afterwards; established-rule
+counters were exercised. Host dual-stack addresses, routes, rules, forwarding,
+nftables and mount state remained unchanged. Total cgroup CPU was 0.881 seconds
+and peak memory 29,634,560 bytes; the client scenario took 12.66 seconds. These
+are fixture observations, not appliance capacity or cutoff-latency guarantees.
+Real DHCP recovery, selected durable work, suspend safety and Internet/SNAT
+acceptance remain separate requirements.
