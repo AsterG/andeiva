@@ -17,6 +17,17 @@ import (
 )
 
 func run(args []string) error {
+	if len(args) > 0 && (args[0] == previewruntime.RoutedDHCPOwnerRoleV3 || args[0] == previewruntime.RoutedDHCPDeferredOwnerRoleV4) {
+		if len(args) != 1 {
+			return previewruntime.ErrConfiguration
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer cancel()
+		if args[0] == previewruntime.RoutedDHCPOwnerRoleV3 {
+			return previewruntime.RunRoutedDHCPOwnerRoleV3(ctx)
+		}
+		return previewruntime.RunRoutedDHCPDeferredOwnerRoleV4(ctx)
+	}
 	if len(args) > 0 && (args[0] == previewruntime.RoutedHelperRoleV3 || args[0] == previewruntime.RoutedAPIRoleV3) {
 		if len(args) != 1 {
 			return previewruntime.ErrConfiguration
@@ -94,6 +105,8 @@ func run(args []string) error {
 		return previewruntime.PrepareRoutedNodeLinksV3(ctx, c, os.Stdin)
 	case "grouped-retirement-slot":
 		return previewruntime.PrepareRoutedRetirementSlotV3(ctx, c)
+	case "grouped-scope-slot":
+		return previewruntime.PrepareRoutedScopeRecoverySlotV3(ctx, c)
 	case "grouped-accounts":
 		digest, err := previewruntime.PrepareRoutedAccountsV3(ctx, c)
 		if err != nil {

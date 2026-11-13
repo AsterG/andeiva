@@ -50,6 +50,10 @@ func TestMain(m *testing.M) {
 		defer cancel()
 		var err error
 		switch os.Args[1] {
+		case RoutedDHCPOwnerRoleV3:
+			err = RunRoutedDHCPOwnerRoleV3(ctx)
+		case RoutedDHCPDeferredOwnerRoleV4:
+			err = RunRoutedDHCPDeferredOwnerRoleV4(ctx)
 		case nativeAccountsAPIRoleV3, nativeAccountsHelperRoleV3, nativeAccountsReaderRoleV3, nativeAccountsMissingRoleV3:
 			err = nativeAccountsRoleV3(os.Args[1])
 		case RoutedHelperRoleV3, RoutedAPIRoleV3:
