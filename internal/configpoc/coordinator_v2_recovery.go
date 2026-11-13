@@ -62,6 +62,12 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 	op.RetainUntil = &until
 	op.Outcome = &outcome
 	op.Pinned = pin
+	if code == "failed_rolled_back" && (op.Request.Kind == OpCommit || op.Request.Kind == OpRollback) && op.Reserve != nil && op.Reserve.PlanScope != nil && op.Reserve.PlanScope.Lease != "" {
+		if _, err := reserveCompensationResolutionV2(op); err != nil {
+			return v2Operation{}, err
+		}
+		addFeatureV2(&st, v2ReserveCompensationFeature)
+	}
 	if op.Request.Kind == OpConfirm && originID != "" && (code == "applied" || code == "failed_rolled_back") && target.Pending == nil {
 		origin, e := s.lookupRetained(op.Subject, originID)
 		if e != nil {

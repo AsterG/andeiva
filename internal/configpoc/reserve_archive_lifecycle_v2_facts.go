@@ -74,12 +74,12 @@ func validateArchiveFinalityWithWorkV2(archive v2ReserveArchive, state v2State, 
 		return errV2Unavailable
 	}
 	var facts v2ReserveFinality
-	if validateArchiveCapsulesV2(archive) != nil || load == nil || load(archive.FinalWork, &facts) != nil || facts.Format != v2Format || facts.Version != 1 || facts.Lineage != state.Lineage || archive.Lineage != state.Lineage || !validReserveWorkRefV2(facts.Origin) || facts.Origin.ID != archive.Origin || facts.Resolution != archive.LeaseResolution {
+	if validateArchiveCapsulesV2(archive) != nil || load == nil || load(archive.FinalWork, &facts) != nil || facts.Format != v2Format || (facts.Version != 1 && facts.Version != 2) || (facts.Version == 2 && !hasFeatureV2(state, v2ReserveCompensationFeature)) || facts.Lineage != state.Lineage || archive.Lineage != state.Lineage || !validReserveWorkRefV2(facts.Origin) || facts.Origin.ID != archive.Origin || facts.Resolution != archive.LeaseResolution {
 		return errV2Unavailable
 	}
 	if facts.Kind == "system" {
 		var record v2RecoveryRecord
-		if facts.Child != nil || facts.Recovery != nil || facts.Resolution != "" || archive.Child != "" || load(facts.Origin.Object, &record) != nil || !validRecoveryRecordV2(record, state.Lineage) || record.ID != facts.Origin.ID || record.State != "final" || record.Pinned || record.Audit != archive.Audit {
+		if facts.Version != 1 || facts.Child != nil || facts.Recovery != nil || facts.Resolution != "" || archive.Child != "" || load(facts.Origin.Object, &record) != nil || !validRecoveryRecordV2(record, state.Lineage) || record.ID != facts.Origin.ID || record.State != "final" || record.Pinned || record.Audit != archive.Audit {
 			return errV2Unavailable
 		}
 		if record.SupersededBy != "" && (!hasFeatureV2(state, v2RoutedBootBoundaryFeature) || validateRoutedBootSupersessionV2(record, state.Lineage, load) != nil) {
@@ -142,8 +142,11 @@ func validateArchiveFinalityWithWorkV2(archive v2ReserveArchive, state v2State, 
 	} else if len(archive.UnusedEscrow) != 0 {
 		return errV2Unavailable
 	}
+	if facts.Version == 2 {
+		return validateReserveCompensationV2(archive, facts, origin, load)
+	}
 	if origin.Outcome.ConfirmationLease == "" {
-		if facts.Resolution != "" || facts.Child != nil || facts.Recovery != nil {
+		if facts.Resolution != "" || facts.Child != nil || facts.Recovery != nil || (origin.Reserve != nil && origin.Reserve.PlanScope != nil && origin.Reserve.PlanScope.Lease != "") {
 			return errV2Unavailable
 		}
 		return nil

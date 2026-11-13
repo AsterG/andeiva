@@ -14,6 +14,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  reserve-compensation-compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check out the actual pre-compensation reader
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 7fe62a0634ed3de00a652dff95aff31f306ec1ff
+          path: .tmp/prior-compensation-reader
+          persist-credentials: false
+      - name: Compile the unchanged prior reader
+        working-directory: .tmp/prior-compensation-reader
+        run: go test -c -o "${RUNNER_TEMP}/andeiva-prior-compensation-reader.test" ./internal/configpoc
+      - name: Verify old-reader refusal before, during and after retirement
+        run: |
+          go test -race ./internal/configpoc -count=1 -timeout=3m \
+            -run '^TestReserveCompensationActualPriorReaderRefusal$' \
+            -reclaim-old-reader="${RUNNER_TEMP}/andeiva-prior-compensation-reader.test"
+
   source:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

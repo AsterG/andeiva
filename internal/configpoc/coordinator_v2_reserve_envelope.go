@@ -45,6 +45,7 @@ func reserveNormalizeEnvelopeScalarsV2(st *v2State) {
 	st.RequiredFeatures = append([]string(nil), st.RequiredFeatures...)
 	addFeatureV2(st, v2BootFeature)
 	addFeatureV2(st, v2LocalFeature)
+	addFeatureV2(st, v2ReserveCompensationFeature)
 	if st.Configuration != nil {
 		cfg := *st.Configuration
 		cfg.AuditSequence = high

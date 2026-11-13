@@ -27,9 +27,12 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 }
 
 func validFeaturesV2(state v2State) bool {
+	if hasFeatureV2(state, v2ReserveCompensationFeature) && state.RecoveryReserveVersion != 1 {
+		return false
+	}
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
+		if (feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
 			return false
 		}
 		last = feature
