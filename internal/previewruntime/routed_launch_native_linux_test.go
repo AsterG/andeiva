@@ -242,6 +242,9 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 	return RoutedLaunchFactoriesV3{
 		Helper: func(ctx context.Context, c RoutedLaunchContextV3) (out RoutedHelperComponentsV3, err error) {
 			if c.DHCPJobsEnabled {
+				if err = nativeDHCPJobsSocketReportV4(c); err != nil {
+					return out, err
+				}
 				return openRoutedApplianceHelperV3(ctx, c)
 			}
 			identity := networkexecutor.OwnedNamespaceIdentity{UID: c.Identities.HelperUID, GID: c.Identities.IPCGID, Namespace: c.Metadata.GatewayNamespace, Host: c.Metadata.HostNamespace, BootID: c.Metadata.BootID, RunID: c.Metadata.RunID}

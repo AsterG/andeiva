@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -224,7 +226,7 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 	}
 	defer supervisor.Close()
 	helper, api := supervisor.PIDs()
-	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata)
+	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata, &logs)
 	bound := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "bound")
 	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], bound.Grant.Snapshot)
 	renewed := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "renewed")
@@ -239,7 +241,7 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 	if helper != h2 || api == a2 {
 		t.Fatal("API restart replaced helper or reused API PID")
 	}
-	nativeDHCPJobsPrivilegesV4(t, h2, a2, metadata)
+	nativeDHCPJobsPrivilegesV4(t, h2, a2, metadata, &logs)
 	restarted := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "restarted")
 	if restarted.Running != bound.Running || restarted.Grant.Snapshot.Fact().Owner != bound.Grant.Snapshot.Fact().Owner || restarted.Grant.Epoch < renewed.Grant.Epoch {
 		t.Fatal("API restart lost selected policy or real producer incarnation")
@@ -575,11 +577,93 @@ func nativeDHCPJobsLeaseV4(parent context.Context, r *RoutedOperationsRuntimeV3,
 	}
 }
 
-func nativeDHCPJobsPrivilegesV4(t *testing.T, helper, api int, m Metadata) {
+type nativeDHCPJobsSocketV4 struct {
+	PID    int    `json:"pid"`
+	Run    string `json:"run"`
+	Socket string `json:"socket"`
+}
+
+func nativeDHCPJobsSocketIdentityV4(conn *net.UnixConn, peer routedDHCPJobPeerV4) (string, error) {
+	if conn == nil || peer.pid <= 1 {
+		return "", ErrIdentity
+	}
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		return "", err
+	}
+	var identity string
+	err = raw.Control(func(fd uintptr) {
+		if fd > math.MaxInt32 {
+			return
+		}
+		var stat unix.Stat_t
+		kind, e := unix.GetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_TYPE)
+		cred, ce := unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+		if e == nil && ce == nil && kind == unix.SOCK_SEQPACKET && unix.Fstat(int(fd), &stat) == nil && stat.Mode&unix.S_IFMT == unix.S_IFSOCK && stat.Ino != 0 && int(cred.Pid) == peer.pid && cred.Uid == peer.uid && cred.Gid == peer.gid {
+			identity = fmt.Sprintf("socket:[%d]", stat.Ino)
+		}
+	})
+	if err != nil || identity == "" {
+		return "", ErrIdentity
+	}
+	return identity, nil
+}
+
+// FD15 is validated at exec adoption, then net.FileConn duplicates it and the
+// original closes. Report the adopted endpoint; its descriptor number can move.
+func nativeDHCPJobsSocketReportV4(c RoutedLaunchContextV3) error {
+	if !c.DHCPJobsEnabled || !c.Integrity || c.dhcpJobs == nil || c.dhcpJobs.peer.pid != os.Getppid() || c.dhcpJobs.peer.uid != 0 || c.dhcpJobs.peer.gid != 0 {
+		return ErrIdentity
+	}
+	identity, err := nativeDHCPJobsSocketIdentityV4(c.dhcpJobs.conn, c.dhcpJobs.peer)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(nativeDHCPJobsSocketV4{os.Getpid(), c.Metadata.RunID, identity})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(os.Stderr, "ANDEIVA_NATIVE_DHCP_SOCKET %s\n", data)
+	return err
+}
+
+func nativeDHCPJobsSocketPresentV4(pid int, identity string) (bool, error) {
+	fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+	if err != nil {
+		return false, err
+	}
+	for _, fd := range fds {
+		link, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", pid, fd.Name()))
+		if errors.Is(err, os.ErrNotExist) {
+			continue // A concurrent close, including ReadDir's own descriptor.
+		}
+		if err != nil {
+			return false, err
+		}
+		if link == identity {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func nativeDHCPJobsPrivilegesV4(t *testing.T, helper, api int, m Metadata, logs *nativeLogV3) {
 	t.Helper()
-	jobSocket, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/15", helper))
-	if err != nil || !strings.HasPrefix(jobSocket, "socket:[") {
-		t.Fatal("helper missing private FD15", err)
+	var reported nativeDHCPJobsSocketV4
+	count := 0
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if payload, ok := strings.CutPrefix(line, "ANDEIVA_NATIVE_DHCP_SOCKET "); ok {
+			if err := json.Unmarshal([]byte(payload), &reported); err != nil {
+				t.Fatal("invalid helper socket report", err)
+			}
+			count++
+		}
+	}
+	if count != 1 || reported.PID != helper || reported.Run != m.RunID || !strings.HasPrefix(reported.Socket, "socket:[") {
+		t.Fatal("helper socket report differs from supervised child")
+	}
+	if found, err := nativeDHCPJobsSocketPresentV4(helper, reported.Socket); err != nil || !found {
+		t.Fatal("helper missing adopted private endpoint", err)
 	}
 	for _, process := range []struct {
 		pid    int
@@ -598,14 +682,62 @@ func nativeDHCPJobsPrivilegesV4(t *testing.T, helper, api int, m Metadata) {
 			t.Fatal("native child namespace", err)
 		}
 	}
-	fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", api))
+	if found, err := nativeDHCPJobsSocketPresentV4(api, reported.Socket); err != nil || found {
+		t.Fatal("API inherited private DHCP job endpoint or could not be inspected", err)
+	}
+}
+
+func TestRoutedDHCPJobsV4NativeSocketAdoption(t *testing.T) {
+	root, inherited, err := routedDHCPJobPairV4()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, fd := range fds {
-		link, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", api, fd.Name()))
-		if err == nil && link == jobSocket {
-			t.Fatal("API inherited private DHCP job endpoint")
+	defer root.Close()
+	defer inherited.Close()
+	path := fmt.Sprintf("/proc/self/fd/%d", inherited.Fd())
+	want, err := os.Readlink(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := routedDHCPJobSocketV4(inherited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adopted.Close()
+	regular, err := os.CreateTemp(t.TempDir(), "reused-descriptor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer regular.Close()
+	// Replace our still-owned original descriptor atomically, without a race
+	// against unrelated opens. The production FileConn duplicate remains live.
+	if err = unix.Dup3(int(regular.Fd()), int(inherited.Fd()), unix.O_CLOEXEC); err != nil {
+		t.Fatal(err)
+	}
+	if observed, err := os.Readlink(path); err != nil || strings.HasPrefix(observed, "socket:[") {
+		t.Fatal("fixture did not reuse original descriptor for a regular file", err)
+	}
+	peer := routedDHCPJobPeerV4{pid: os.Getpid(), uid: uint32(os.Geteuid()), gid: uint32(os.Getegid())}
+	got, err := nativeDHCPJobsSocketIdentityV4(adopted, peer)
+	if err != nil || got != want {
+		t.Fatal("adopted endpoint changed", err)
+	}
+	if found, err := nativeDHCPJobsSocketPresentV4(os.Getpid(), got); err != nil || !found {
+		t.Fatal("adopted endpoint not found after descriptor reuse", err)
+	}
+	other, err := nativeDHCPJobsSocketIdentityV4(root, peer)
+	if err != nil || other == got {
+		t.Fatal("different socket confused with helper endpoint", err)
+	}
+	for _, wrong := range []routedDHCPJobPeerV4{{pid: peer.pid + 1, uid: peer.uid, gid: peer.gid}, {pid: peer.pid, uid: peer.uid ^ 1, gid: peer.gid}, {pid: peer.pid, uid: peer.uid, gid: peer.gid ^ 1}} {
+		if identity, err := nativeDHCPJobsSocketIdentityV4(adopted, wrong); err == nil || identity != "" {
+			t.Fatal("socket accepted with wrong peer credentials")
 		}
+	}
+	if err = adopted.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := nativeDHCPJobsSocketPresentV4(os.Getpid(), got); err != nil || found {
+		t.Fatal("closed endpoint confused with another live socket", err)
 	}
 }
