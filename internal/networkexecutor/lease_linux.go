@@ -70,7 +70,7 @@ func leaseForwardingClosed(options LeaseOptions) error {
 		}
 	}
 	for _, path := range paths {
-		f, err := os.Open(path)
+		f, err := os.Open(path) // #nosec G304 -- Fixed proc sysctl suffix and family constants; interface names validated above.
 		if err != nil {
 			return ErrScope
 		}

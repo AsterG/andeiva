@@ -110,13 +110,13 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 	lock := os.NewFile(uintptr(fd), "dhcp-owner")
 	var st unix.Stat_t
 	if unix.Fstat(fd, &st) != nil || st.Uid != 0 || st.Mode&07777 != 0600 || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 || unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) != nil {
-		lock.Close()
+		_ = lock.Close()
 		return nil, ErrScope
 	}
 	failed := true
 	defer func() {
 		if failed {
-			lock.Close()
+			_ = lock.Close()
 		}
 	}()
 	// Configuration cannot import host defaults, hooks or paths.
@@ -134,12 +134,12 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 	}
 	now, err := bootNow()
 	if err != nil {
-		r.Close()
-		w.Close()
+		_ = r.Close()
+		_ = w.Close()
 		return nil, err
 	}
 	c := &Client{lock: lock, output: r, done: make(chan struct{}), iface: scope.Interface, lastGrant: now}
-	cmd := exec.Command("/usr/sbin/dhcpcd", "-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath, scope.Interface)
+	cmd := exec.Command("/usr/sbin/dhcpcd", "-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath, scope.Interface) // #nosec G204 -- Fixed engine, hook and config; allowlisted interface bound to pinned namespaces; no shell.
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout = w
 	// No raw lease/options or engine diagnostics escape through public output.
@@ -192,7 +192,7 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 	err = <-started
 	_ = w.Close()
 	if err != nil {
-		r.Close()
+		_ = r.Close()
 		return nil, err
 	}
 	failed = false
