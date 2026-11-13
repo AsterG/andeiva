@@ -16,13 +16,16 @@ func (c *v2Coordinator) recoverRoutedDHCPAtOpenV3(ctx context.Context) error {
 	if d == nil {
 		return nil
 	}
-	if d.Phase == "withdrawn" {
+	if routedDHCPTerminalV3(d) {
 		if s.reserves == nil || s.reserves.verifySelected(s) != nil {
 			return ErrRecovery
 		}
 		return s.reserves.maintain(s)
 	}
 	w, err := loadRoutedDHCPWorkV3(d.Work, s.state.Lineage, s.readObject)
+	if err == nil && w.Snapshot.Identity != c.options.RoutedIdentity {
+		return c.retireDHCPScopeV3(ctx, w)
+	}
 	if err != nil || validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil || c.options.DHCPRecovery == nil || c.options.BootID == nil || string(*c.options.BootID) != w.Snapshot.Identity.BootID || c.options.RoutedIdentity != w.Snapshot.Identity || s.reserves == nil || s.reserves.verifySelected(s) != nil {
 		return ErrRecovery
 	}

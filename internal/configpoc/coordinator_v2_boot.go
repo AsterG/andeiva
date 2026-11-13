@@ -35,7 +35,7 @@ func validFeaturesV2(state v2State) bool {
 	}
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
+		if (feature != v3RoutedFreshScopeFeature && feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
 			return false
 		}
 		last = feature
@@ -50,6 +50,9 @@ func validFeaturesV2(state v2State) bool {
 		return false
 	}
 	if hasFeatureV2(state, v2RoutedBootFeature) && !hasFeatureV2(state, v2RoutedFeature) {
+		return false
+	}
+	if hasFeatureV2(state, v3RoutedFreshScopeFeature) && (!hasFeatureV2(state, v2RoutedFeature) || !hasFeatureV2(state, v2SharedReaderFeature) || state.RecoveryReserveVersion != 1) {
 		return false
 	}
 	if hasFeatureV2(state, v2RoutedNoNetworkFeature) && !hasFeatureV2(state, v2RoutedBootFeature) {
@@ -147,12 +150,29 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 		}
 	}
 	current := clone(*s.state.Configuration)
+	previousFresh := c.bootFreshScope
+	defer func() { c.bootFreshScope = previousFresh }()
+	if c.bootBoundary != nil && c.bootBoundary.FreshScope != nil {
+		c.bootFreshScope = clone(c.bootBoundary.FreshScope)
+	} else if routed && s.state.RoutedActive != nil {
+		old, err := loadRoutedWorkV2(s.state.RoutedActive.Work, s.state.Lineage, s.readObject)
+		if err != nil {
+			return ErrRecovery
+		}
+		if old.Scope().Identity.BootID == string(id) && old.Scope().Identity != c.options.RoutedIdentity {
+			proof, err := c.proveFreshScopeV3(ctx, old.Scope().Identity, s.state.RoutedActive.Work)
+			if err != nil {
+				return err
+			}
+			c.bootFreshScope = proof
+		}
+	}
 	if current.LastCompletedBoot != "" {
 		var completed v2RecoveryRecord
 		if s.readObject(current.LastCompletedBoot, &completed) != nil || !validRecoveryRecordV2(completed, s.state.Lineage) || completed.Kind != v2BootKind || completed.State != "final" {
 			return ErrRecovery
 		}
-		if *completed.BootID == id {
+		if *completed.BootID == id && c.bootFreshScope == nil {
 			if routed && c.resumeRoutedLockedV2(ctx) != nil {
 				return ErrRecovery
 			}
@@ -202,6 +222,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	}
 	record := v2RecoveryRecord{Format: v2Format, ID: issued, BootID: &id, Kind: v2BootKind, State: "pending", Previous: previousHash, Target: targetHash, Lineage: s.state.Lineage, Started: c.recoveryNow(), Pinned: true}
 	st := clone(s.state)
+	if c.bootFreshScope != nil {
+		addFeatureV2(&st, v3RoutedFreshScopeFeature)
+	}
 	if c.bootBoundary != nil {
 		c.bootBoundary.NewOperation = issued
 		st.RoutedBootBoundary = clone(c.bootBoundary)
@@ -234,6 +257,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	addFeatureV2(&st, v2BootFeature)
 	if routed {
 		addFeatureV2(&st, v2RoutedBootFeature)
+		if c.bootFreshScope != nil {
+			addFeatureV2(&st, v3RoutedFreshScopeFeature)
+		}
 		if routedConfigurationUsesDHCPV3(target) {
 			addFeatureV2(&st, v3RoutedDHCPFeature)
 		}

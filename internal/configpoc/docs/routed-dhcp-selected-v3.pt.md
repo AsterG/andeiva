@@ -22,6 +22,11 @@ trabalho por leitura independente e retirar somente o delta WAN próprio exato.
 Sem prova, com drift ou outro boot/run, a abertura é bloqueada. `withdrawn`
 significa LAN original e WAN vazia observadas, não uma concessão restaurada.
 
+A [capacidade de novo scope](../../previewruntime/docs/routed-fresh-scope-v3.pt.md)
+permite outro run/namespace no mesmo boot do OS após retirada comprovada por root.
+Seu terminal `scope_retired` difere de `withdrawn`: exige comprovante herdado e
+novo scope realmente vazio, nunca endereços coincidentes.
+
 Evidência atual: testes unitários com arquivos e pools reais, com autoridade de
 kernel explicitamente simulada; cobrem arquivo/reutilização, replay, perda de
 autoridade, fase errada e boot diferente. Runtime DHCP selecionado nativo,

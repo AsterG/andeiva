@@ -19,7 +19,8 @@ func (a dhcpBootAuthorityTestV3) Prepare(ctx context.Context, target RoutedActiv
 	return p, err
 }
 
-func TestRoutedDHCPSelectedV3IndependentFullReaderAndRetirement(t *testing.T) {
+func selectedDHCPReaderFixtureV3(t *testing.T) (*RoutedSelectionReaderV2, *v2Coordinator, *boundaryAuthorityFixtureV2, *RoutedDHCPSelectedStoreV3, *dhcpAuthorityFixtureV3) {
+	t.Helper()
 	c, authority, principal, _ := boundaryCoordinatorLocalFixtureV2(t, true)
 	r := sharedBoundaryReaderV2(t, c, authority)
 	snap := dhcpSnapshotFixtureV3(t)
@@ -65,6 +66,13 @@ func TestRoutedDHCPSelectedV3IndependentFullReaderAndRetirement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return r, c, authority, w, a
+}
+
+func TestRoutedDHCPSelectedV3IndependentFullReaderAndRetirement(t *testing.T) {
+	r, c, _, w, a := selectedDHCPReaderFixtureV3(t)
+	snap := a.grant.Snapshot
+	var err error
 	ctx := context.Background()
 	if err = r.VerifyDHCPReleasedV3(ctx); err != nil {
 		t.Fatal("initial read", err)

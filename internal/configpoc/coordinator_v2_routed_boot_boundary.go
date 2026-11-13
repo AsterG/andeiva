@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -13,6 +14,7 @@ const v2RoutedBootBoundaryFeature = "configuration.routed-boot-boundary.v1"
 // A boundary preserves the original work and its deadline. It is evidence of
 // an OS incarnation change, never proof that the old target was restored.
 type v2RoutedBootBoundary struct {
+	FreshScope    *RoutedFreshScopeEvidenceV3            `json:"fresh_scope,omitempty"`
 	Source        string                                 `json:"source_configuration"`
 	OldWork       string                                 `json:"old_work"`
 	Origin        *v2ReserveWorkRef                      `json:"origin,omitempty"`
@@ -26,6 +28,9 @@ type v2RoutedBootBoundary struct {
 func validRoutedBootBoundaryShapeV2(b *v2RoutedBootBoundary) bool {
 	if b == nil {
 		return true
+	}
+	if b.FreshScope != nil && (!ValidRoutedFreshScopeEvidenceV3(*b.FreshScope) || b.FreshScope.New != b.NewIdentity || b.FreshScope.Work != b.OldWork) {
+		return false
 	}
 	if !validHash(b.Source) || !validHash(b.OldWork) || b.NewOperation == "" || len(b.NewOperation) > 128 || !validRoutedIdentityV1(b.NewIdentity) || (b.Origin == nil) == (b.OldBoot == nil) {
 		return false
@@ -51,7 +56,10 @@ func routedBootBoundarySourceV2(b v2RoutedBootBoundary, lineage string, load fun
 		return source, RoutedSelectedPlanV1{}, ErrRecovery
 	}
 	old, err := loadRoutedWorkV2(b.OldWork, lineage, load)
-	if err != nil || old.work.Boundary != nil || old.Scope().Identity.BootID == b.NewIdentity.BootID || old.Scope().Identity.RunID == b.NewIdentity.RunID || old.Scope().Identity.UID != b.NewIdentity.UID || old.Scope().Identity.GID != b.NewIdentity.GID {
+	if err != nil || old.work.Boundary != nil || old.Scope().Identity.BootID == b.NewIdentity.BootID && !freshScopeMatchesV3(b.FreshScope, old.Scope().Identity, b.NewIdentity, b.OldWork) || old.Scope().Identity.RunID == b.NewIdentity.RunID || old.Scope().Identity.UID != b.NewIdentity.UID || old.Scope().Identity.GID != b.NewIdentity.GID {
+		return source, old, ErrRecovery
+	}
+	if b.FreshScope != nil && !freshScopeMatchesV3(b.FreshScope, old.Scope().Identity, b.NewIdentity, b.OldWork) {
 		return source, old, ErrRecovery
 	}
 	if b.Origin != nil {
@@ -95,7 +103,7 @@ func preservesRoutedBootBoundaryV2(previous, next v2State) bool {
 		return false
 	}
 	if old := previous.Configuration.Intent; old != nil {
-		return b.OldBoot != nil && old.Operation == b.OldBoot.ID && old.Kind == v2BootKind && old.RoutedWork == b.OldWork && old.BootID != nil && *old.BootID != *in.BootID
+		return b.OldBoot != nil && old.Operation == b.OldBoot.ID && old.Kind == v2BootKind && old.RoutedWork == b.OldWork && old.BootID != nil && (*old.BootID != *in.BootID || b.FreshScope != nil)
 	}
 	return previous.Configuration.Pending != nil && b.Origin != nil && previous.Configuration.Pending.OriginCommit == b.Origin.ID
 }
@@ -176,7 +184,13 @@ func (c *v2Coordinator) openRoutedBootBoundaryV2(ctx context.Context) (bool, err
 		return true, ErrRecovery
 	}
 	if old.Scope().Identity.BootID == identity.BootID {
-		return false, nil
+		if old.Scope().Identity == identity {
+			return false, nil
+		}
+		b.FreshScope, err = c.proveFreshScopeV3(ctx, old.Scope().Identity, oldWork)
+		if err != nil {
+			return true, err
+		}
 	}
 	if old.work.Boundary != nil || old.Scope().Identity.RunID == identity.RunID || old.Scope().Identity.UID != identity.UID || old.Scope().Identity.GID != identity.GID {
 		return true, ErrRecovery
@@ -213,14 +227,14 @@ func (c *v2Coordinator) openRoutedBootBoundaryV2(ctx context.Context) (bool, err
 	c.bootBoundary = &b
 	defer func() { c.bootBoundary = nil }()
 	if err = c.bootStartupLocked(ctx, *c.options.BootID); err != nil {
-		return true, err
+		return true, fmt.Errorf("fresh boundary boot: %w", err)
 	}
 	if err = c.finishRoutedBootBoundaryV2(); err != nil {
-		return true, err
+		return true, fmt.Errorf("fresh boundary completion: %w", err)
 	}
 	if s.reserves != nil {
 		if err = s.reserves.maintain(s); err != nil {
-			return true, err
+			return true, fmt.Errorf("fresh boundary retirement: %w", err)
 		}
 	}
 	return true, c.publishLocalLocked()
@@ -386,6 +400,9 @@ func validateRoutedBootBoundaryV2(state v2State, load func(string, any) error) e
 	if !hasFeatureV2(state, v2RoutedBootBoundaryFeature) || state.Configuration == nil || !validRoutedBootBoundaryShapeV2(b) {
 		return ErrRecovery
 	}
+	if b.FreshScope != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
+		return ErrRecovery
+	}
 	source, _, err := routedBootBoundarySourceV2(*b, state.Lineage, load)
 	if err != nil {
 		return err
@@ -457,7 +474,7 @@ func (s *v2Store) preservesRoutedBootBoundaryStateV2(next v2State) bool {
 	if bundle == nil {
 		return false
 	}
-	reader := &v2Store{root: s.root, state: next}
+	reader := &v2Store{root: s.root, state: next, access: s.access, readOnly: s.readOnly}
 	archive, found, err := reader.reserveArchiveBundleLookupV2(next.ReserveArchiveRoot, v2ReserveArchiveEntry{Claim: bundle.Claims.Admission}, "claim")
 	return err == nil && found && validateArchiveFinalityV2(archive, next, reader.readObject) == nil
 }

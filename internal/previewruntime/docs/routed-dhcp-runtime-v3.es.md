@@ -35,8 +35,9 @@ API/helper sigan vivos. La recuperación seleccionada precede al boot LAN,
 retira únicamente el delta WAN autenticado, lo archiva y libera el adapter LAN.
 Sólo un terminal seleccionado exacto de retirada permite reconstruir un gate
 cerrado; nunca un token vivo. Un namespace distinto necesita prueba de ámbito
-nuevo; el reinicio normal del servicio con igual BootID y la retirada del ámbito
-siguen pendientes de integración. Una prueba insuficiente bloquea recuperación.
+nuevo; el reinicio normal con igual BootID usa el
+[contrato separado de recibo](routed-fresh-scope-v3.es.md). Su calificación nativa
+combinada está pendiente. Una prueba insuficiente bloquea recuperación.
 
 Las pruebas focales con race cubren negociación, rechazo de autoridad en
 peticiones, historia real del almacén, orden de efectos, pérdida del propietario,
@@ -51,7 +52,7 @@ go vet ./internal/networkexecutor ./internal/firewallipc ./internal/configpoc ./
 
 Pendientes: calificación nativa productor/runtime seleccionado, excepciones de
 control local DHCP con política real, readback del perfil forwarding/sysctl,
-recuperación de ámbito nuevo con igual BootID, recursos y revisión independiente.
+recuperación nativa de ámbito nuevo con igual BootID, recursos y revisión independiente.
 Las pruebas aisladas anteriores de lease/gate no prueban estas combinaciones.
 Sólo ejecución continua: no se garantiza suspensión, pausa/snapshot de VM ni
 retirada de paquetes ya encolados. No se afirma readiness productivo ni activación

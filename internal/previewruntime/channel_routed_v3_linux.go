@@ -59,3 +59,13 @@ func ConnectInheritedRoutedDHCPV3(ctx context.Context, c *net.UnixConn, uid, gid
 	}
 	return firewallipc.ConnectRoutedDHCPV3(ctx, c, runtimeRun, namespace)
 }
+
+func ConnectInheritedRoutedFreshScopeV3(ctx context.Context, c *net.UnixConn, uid, gid uint32, pid int32, run string, namespace uint64, dhcp bool) (*firewallipc.RoutedClientV3, error) {
+	if inheritedPeerV2(c, uid, gid, pid) != nil {
+		if c != nil {
+			_ = c.Close()
+		}
+		return nil, ErrIdentity
+	}
+	return firewallipc.ConnectRoutedFreshScopeV3(ctx, c, run, namespace, dhcp)
+}

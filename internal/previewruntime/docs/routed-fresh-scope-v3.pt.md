@@ -1,0 +1,45 @@
+# Âmbito novo após parada normal do serviço
+
+Integração experimental do armazenamento selecionado distingue boot do sistema
+e instância do serviço. O mesmo BootID pode usar outro RunID e namespace gateway
+somente com recibo root autenticado e readback real de IPv4/tabelas vazias.
+As regras de propriedade dos snapshots estáticos permanecem iguais.
+
+Root pré-aloca um arquivo regular de 4096 bytes, proprietário/grupo 0:0, modo
+0600, um link, sem ACL. Depois de esperar os filhos e fechar o namespace anterior,
+grava `RootRetirementReceiptV3` no mesmo arquivo e executa fsync. O codec contém
+âmbito anterior, digest de metadata, instante BOOTTIME original da drenagem e
+digest do JSON canônico sem seu campo de integridade; espaços completam o slot.
+O digest detecta gravações incompletas; a origem root do FD autentica o emissor.
+
+Root vincula o digest dos 4096 bytes à nova identidade e entrega ao helper apenas
+FD O_RDONLY e `RoutedFreshScopeBindingV3`. O helper duplica e revalida o FD, lê o
+trabalho selecionado, reutiliza `PrepareBoot`/`Observe`, exige ausência de todas
+as tabelas (incluindo gate de lease) e observa forwarding IPv4/IPv6 fechado.
+Root deve atrasar sockets do motor DHCP até boot LAN; a verificação real de
+ausência de listeners não é ignorada.
+
+A API negocia `routed_fresh_scope.v3` com integridade e inventário; DHCP é
+independente. `fresh_scope` recebe apenas referência de trabalho selecionado.
+Pedidos não aceitam recibo, identidade, deadline ou flag de prova. O mesmo
+armazenamento registra `configuration.routed-fresh-scope.v3` persistente. DHCP
+termina como `scope_retired`, não `withdrawn` nem `restored`; mantém trabalho e
+deadline original. Boot preserva outcomes e deadlines de confirmação pendentes
+e seleciona novo Startup antes dos efeitos. Histórico selecionado e recibo
+retido pelo helper devem coincidir; endereço IP ou token anterior não bastam.
+
+Testes focais usam arquivos/pools reais e doubles explícitos de autoridade física.
+Cobrem reinício completo/pendente com mesmo BootID, deadlines intactos,
+continuação do audit exato de retirada, rejeição de prova enviada pelo caller e
+FD inválido. Qualificação nativa root drain/recibo/FD/namespace/helper e recursos
+permanecem pendentes. Morte de root sem recibo completo bloqueia recuperação;
+limpeza ExecStopPost/crash continua como gate separado pendente. Suspensão,
+pausa de VM e snapshots não são suportados. Não há alegação de ativação do host.
+Paradas repetidas durante recuperação boot-boundary ainda pendente podem reter
+ambos os slots System; outro boundary permanece bloqueado até existir retirada
+comprovada separadamente. Este incremento não descarta essas reservas.
+
+```sh
+go test -race ./internal/configpoc ./internal/previewruntime ./internal/firewallipc -run 'Test(RoutedFreshScopeV3|RootRetirementReceiptV3|RoutedOSBootBoundary|ColdContinuationV1)' -count=1
+go vet ./internal/configpoc ./internal/previewruntime ./internal/firewallipc
+```

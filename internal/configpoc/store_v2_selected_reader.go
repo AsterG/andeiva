@@ -373,7 +373,21 @@ func (r *RoutedSelectionReaderV2) prepareView(ctx context.Context, reference *Se
 	if reference != nil && *reference != v.ref {
 		return out, ErrConflict
 	}
-	cfg := v.store.state.Configuration
+	out, err = routedPrepareViewFromStoreV2(v.store)
+	if err != nil {
+		return out, err
+	}
+	if err = r.revalidate(ctx, v); err != nil {
+		return RoutedPrepareViewV2{}, err
+	}
+	return out, nil
+}
+
+func routedPrepareViewFromStoreV2(store *v2Store) (out RoutedPrepareViewV2, err error) {
+	cfg := store.state.Configuration
+	if cfg == nil {
+		return out, ErrRecovery
+	}
 	out.Current, err = bundleFromConfigurationV2(*cfg)
 	if err != nil {
 		return out, err
@@ -382,8 +396,8 @@ func (r *RoutedSelectionReaderV2) prepareView(ctx context.Context, reference *Se
 	if err != nil {
 		return out, err
 	}
-	if active := v.store.state.RoutedActive; active != nil {
-		p, e := loadRoutedWorkV2(active.Work, v.store.state.Lineage, v.store.readObject)
+	if active := store.state.RoutedActive; active != nil {
+		p, e := loadRoutedWorkV2(active.Work, store.state.Lineage, store.readObject)
 		if e != nil {
 			return out, e
 		}
@@ -399,11 +413,8 @@ func (r *RoutedSelectionReaderV2) prepareView(ctx context.Context, reference *Se
 	default:
 		return out, ErrRecovery
 	}
-	if routedHistoricalWitnessV2(*cfg, out.Saved.Composite.Hash, v.store.readObject) != nil {
+	if routedHistoricalWitnessV2(*cfg, out.Saved.Composite.Hash, store.readObject) != nil {
 		return RoutedPrepareViewV2{}, ErrRecovery
-	}
-	if err = r.revalidate(ctx, v); err != nil {
-		return RoutedPrepareViewV2{}, err
 	}
 	return out, nil
 }

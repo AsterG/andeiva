@@ -12,6 +12,7 @@ import (
 )
 
 type v2CoordinatorOptions struct {
+	FreshScope        RoutedFreshScopeAuthorityV3
 	DHCPRecovery      RoutedDHCPRecoveryV3
 	integrityAttached bool // Set only after the trusted pre-coordinator Attach.
 	Integrity         RuntimeIntegrityV1
@@ -29,16 +30,17 @@ type v2CoordinatorOptions struct {
 	ManualTimeout bool
 }
 type v2Coordinator struct {
-	integrity    runtimeIntegrityStateV1
-	bootBoundary *v2RoutedBootBoundary
-	store        *v2Store
-	firewall     []Engine
-	local        []Engine
-	options      v2CoordinatorOptions
-	timer        *time.Timer
-	timerLease   string
-	timerOrigin  string
-	closed       bool
+	integrity      runtimeIntegrityStateV1
+	bootBoundary   *v2RoutedBootBoundary
+	bootFreshScope *RoutedFreshScopeEvidenceV3
+	store          *v2Store
+	firewall       []Engine
+	local          []Engine
+	options        v2CoordinatorOptions
+	timer          *time.Timer
+	timerLease     string
+	timerOrigin    string
+	closed         bool
 }
 
 func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []Engine, options v2CoordinatorOptions) (*v2Coordinator, error) {

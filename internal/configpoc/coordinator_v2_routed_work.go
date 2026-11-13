@@ -3,6 +3,7 @@ package configpoc
 import (
 	"context"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"reflect"
 	"time"
 )
 
@@ -216,7 +217,7 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	boot := work.Kind == v2BootKind
-	if work.Boundary != nil && !boot {
+	if (work.Boundary != nil || work.FreshScope != nil) && !boot {
 		return plan, errV2Unavailable
 	}
 	if work.Kind != "" && work.Kind != OpCommit && work.Kind != OpRollback && !boot || boot && (work.Subject != "" || !work.Cold || !validHash(work.BootRecord) || work.Lease != work.Operation || work.BootBaseline == nil) || !boot && (work.Subject == "" || work.BootRecord != "" || work.BootBaseline != nil) {
@@ -275,6 +276,9 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	if work.Baseline != "" {
+		if work.FreshScope != nil {
+			return plan, errV2Unavailable
+		}
 		baseline, err := loadRoutedWorkDepthV2(work.Baseline, lineage, load, true, validConfiguration)
 		if err != nil || baseline.work.Scope.Identity != work.Scope.Identity || baseline.work.Generation >= work.Generation {
 			return plan, errV2Unavailable
@@ -285,6 +289,19 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		if boot {
 			plan.baseline = clone(work.BootBaseline)
 		}
+	}
+	if proof := work.FreshScope; proof != nil {
+		var old v2RoutedWork
+		_, beforeHash, e1 := v2Canonical(plan.preparation.Before)
+		_, depsHash, e2 := v2Canonical(plan.preparation.Dependencies)
+		if !ValidRoutedFreshScopeEvidenceV3(*proof) || proof.New != work.Scope.Identity || load(proof.Work, &old) != nil || old.Scope.Identity != proof.Old || e1 != nil || e2 != nil || beforeHash != proof.Before || depsHash != proof.Dependencies {
+			return plan, errV2Unavailable
+		}
+		if work.Boundary != nil && !reflect.DeepEqual(work.Boundary.FreshScope, proof) {
+			return plan, errV2Unavailable
+		}
+	} else if work.Boundary != nil && work.Boundary.FreshScope != nil {
+		return plan, errV2Unavailable
 	}
 	if !routedBaselineDependenciesMatchV2(plan.preparation.Dependencies, plan.baseline.Dependencies) {
 		return plan, errV2Unavailable

@@ -94,7 +94,7 @@ func (s *v2Store) releaseArchivedReserveV2(archive v2ReserveArchive) error {
 	}
 	st.ActiveReserves = kept
 	if d := st.RoutedDHCP; d != nil && reserveWorkV2(d.Bundle) == archive.Origin {
-		if d.Phase != "withdrawn" {
+		if !routedDHCPTerminalV3(d) {
 			return ErrRecovery
 		}
 		var facts v2ReserveFinality

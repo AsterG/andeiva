@@ -4,7 +4,14 @@ import "github.com/AsterG/andeiva/internal/recoveryreserve"
 
 func validateRoutedDHCPTerminalV3(d v3RoutedDHCPState, lineage string, load func(string, any) error) error {
 	w, err := loadRoutedDHCPWorkV3(d.Work, lineage, load)
-	if err != nil || d.Phase != "withdrawn" || !validHash(d.Audit) || !validReserveBundleV2(d.Bundle) || d.Bundle.Scope.Kind != "recovery" || d.Bundle.Scope.Domain != "routed" || d.Bundle.Scope.Lineage != lineage || d.Bundle.Scope.Fingerprint != d.Work || d.Bundle.Scope.Global != w.Generation || d.Bundle.Scope.Generation != w.Generation || d.Bundle.ClosingEscrow != nil || d.Bundle.PlanIntent == nil {
+	if err != nil || !routedDHCPTerminalV3(&d) || !validHash(d.Audit) || !validReserveBundleV2(d.Bundle) || d.Bundle.Scope.Kind != "recovery" || d.Bundle.Scope.Domain != "routed" || d.Bundle.Scope.Lineage != lineage || d.Bundle.Scope.Fingerprint != d.Work || d.Bundle.Scope.Global != w.Generation || d.Bundle.Scope.Generation != w.Generation || d.Bundle.ClosingEscrow != nil || d.Bundle.PlanIntent == nil {
+		return ErrRecovery
+	}
+	if d.Phase == "scope_retired" {
+		if d.Retirement == nil || !freshScopeMatchesV3(d.Retirement, w.Snapshot.Identity, d.Retirement.New, d.Work) {
+			return ErrRecovery
+		}
+	} else if d.Retirement != nil {
 		return ErrRecovery
 	}
 	in := d.Bundle.PlanIntent
@@ -12,7 +19,7 @@ func validateRoutedDHCPTerminalV3(d v3RoutedDHCPState, lineage string, load func
 		return ErrRecovery
 	}
 	var audit v2CoordinatorAudit
-	if load(d.Audit, &audit) != nil || audit.Format != v2Format || audit.Operation != in.Operation || audit.Kind != v3RoutedDHCPKind || audit.Result != "withdrawn" || audit.Generation != w.Generation || audit.Running != w.Running || audit.Sequence == 0 {
+	if load(d.Audit, &audit) != nil || audit.Format != v2Format || audit.Operation != in.Operation || audit.Kind != v3RoutedDHCPKind || audit.Result != d.Phase || audit.Generation != w.Generation || audit.Running != w.Running || audit.Sequence == 0 {
 		return ErrRecovery
 	}
 	return nil
@@ -24,6 +31,9 @@ func validateRoutedDHCPArchiveV3(archive v2ReserveArchive, facts v2ReserveFinali
 	}
 	var d v3RoutedDHCPState
 	if load(facts.Origin.Object, &d) != nil || validateRoutedDHCPTerminalV3(d, state.Lineage, load) != nil || reserveWorkV2(d.Bundle) != facts.Origin.ID || d.Audit != archive.Audit || !archiveMatchesBundleV2(archive, d.Bundle, false) {
+		return ErrRecovery
+	}
+	if d.Phase == "scope_retired" && !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
 		return ErrRecovery
 	}
 	return nil

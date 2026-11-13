@@ -52,7 +52,7 @@ func DecodeRoutedHelloV3(data []byte, reply bool) (RoutedHelloV3, error) {
 	if reply {
 		required = append(required, "run", "epoch")
 	}
-	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || (len(h.RequiredFeatures) < 3 || len(h.RequiredFeatures) > 6) || (len(h.RequiredFeatures) >= 4 && h.RequiredFeatures[3] != RoutedIntegrityCapabilityV3) || (len(h.RequiredFeatures) >= 5 && h.RequiredFeatures[4] != RoutedInventoryCapabilityV3) || (len(h.RequiredFeatures) == 6 && h.RequiredFeatures[5] != RoutedDHCPCapabilityV3) || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
+	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || (len(h.RequiredFeatures) < 3 || len(h.RequiredFeatures) > 7) || (len(h.RequiredFeatures) >= 4 && h.RequiredFeatures[3] != RoutedIntegrityCapabilityV3) || (len(h.RequiredFeatures) >= 5 && h.RequiredFeatures[4] != RoutedInventoryCapabilityV3) || !validRoutedScopeCapabilitiesV3(h.RequiredFeatures) || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
 		return RoutedHelloV3{}, ErrChannel
 	}
 	return h, nil
@@ -106,13 +106,14 @@ func ValidRoutedIntegrityResultV3(r configpoc.IntegrityResultV1) bool {
 }
 
 type RoutedCommandV3 struct {
-	DHCP      RoutedDHCPRequestV3
-	Integrity RoutedIntegrityV3
-	Verb      string
-	Target    configpoc.RoutedActivationBundleV1
-	Reference RoutedReferenceV3
-	Side      string
-	Baseline  string
+	FreshScope RoutedFreshScopeRequestV3
+	DHCP       RoutedDHCPRequestV3
+	Integrity  RoutedIntegrityV3
+	Verb       string
+	Target     configpoc.RoutedActivationBundleV1
+	Reference  RoutedReferenceV3
+	Side       string
+	Baseline   string
 }
 
 func canonicalBundleV3(b configpoc.RoutedActivationBundleV1) bool {
@@ -138,6 +139,12 @@ func DecodeRoutedRequestV3(data []byte, run string, namespace, last uint64) (Rou
 		return r, c, ErrChannel
 	}
 	c.Verb = r.Verb
+	if r.Verb == "fresh_scope" {
+		if exactRoutedV3(r.Payload, &c.FreshScope, []string{"work"}) != nil || !hashV2(c.FreshScope.Work) {
+			return r, c, ErrChannel
+		}
+		return r, c, nil
+	}
 	if RoutedDHCPVerbV3(r.Verb) {
 		p, err := decodeRoutedDHCPRequestV3(r.Verb, r.Payload)
 		c.DHCP = p
@@ -213,6 +220,7 @@ type RoutedPreparedV3 struct {
 	Preparation configpoc.RoutedPreparationV1 `json:"preparation"`
 }
 type RoutedResultV3 struct {
+	FreshScope  configpoc.RoutedFreshScopeEvidenceV3
 	DHCP        RoutedDHCPGrantV3
 	Inventory   networkinventory.Snapshot
 	Integrity   configpoc.IntegrityResultV1
@@ -239,6 +247,13 @@ func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, R
 		return reply, result, err
 	}
 	switch reply.Verb {
+	case "fresh_scope":
+		var value RoutedFreshScopeResultV3
+		var expected RoutedFreshScopeRequestV3
+		if exactRoutedV3(request.Payload, &expected, []string{"work"}) != nil || exactRoutedV3(reply.Payload, &value, []string{"evidence"}) != nil || !configpoc.ValidRoutedFreshScopeEvidenceV3(value.Evidence) || value.Evidence.Work != expected.Work || value.Evidence.New.Namespace != request.Namespace {
+			return reply, result, ErrChannel
+		}
+		result.FreshScope = value.Evidence
 	case "inventory":
 		value, e := decodeRoutedInventoryV3(reply.Payload)
 		if e != nil {

@@ -188,12 +188,20 @@ func (c *v2Coordinator) publishRoutedBootWorkV2(ctx context.Context, record v2Re
 	if err != nil {
 		return fmt.Errorf("routed boot preparation validation: %w", err)
 	}
+	if c.bootFreshScope != nil {
+		_, beforeHash, e1 := v2Canonical(prepared.Before)
+		_, depsHash, e2 := v2Canonical(prepared.Dependencies)
+		if e1 != nil || e2 != nil || c.bootFreshScope.Before != beforeHash || c.bootFreshScope.Dependencies != depsHash || c.bootFreshScope.New != c.options.RoutedIdentity {
+			return ErrRecovery
+		}
+	}
 	original, err := c.store.object(record)
 	if err != nil {
 		return err
 	}
 	work := v2RoutedWork{Version: 1, Kind: v2BootKind, BootRecord: original, BootBaseline: &baseline, Lineage: c.store.state.Lineage, Operation: record.ID, Generation: intent.TargetGeneration, Lease: record.ID, Deadline: record.Started.Add(10 * time.Second), Cold: true, Transition: RoutedTransitionV1{Version: 1, Operation: record.ID, Previous: intent.Previous, Target: intent.Target}}
 	work.Scope = RoutedWorkScopeV1{Version: 1, Identity: c.options.RoutedIdentity, Lineage: work.Lineage, Generation: work.Generation}
+	work.FreshScope = clone(c.bootFreshScope)
 	if c.bootBoundary != nil {
 		work.Boundary = clone(c.bootBoundary)
 	}

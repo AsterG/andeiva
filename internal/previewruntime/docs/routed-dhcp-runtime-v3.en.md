@@ -34,8 +34,9 @@ alive. Selected recovery runs before LAN boot recovery, withdraws only the
 authenticated WAN delta, archives it, then releases the LAN adapter's lease
 lane. A closed gate may be reconstructed from an exact selected withdrawal
 terminal, never from a live token. A different namespace requires fresh scope
-proof; normal same-BootID service restart and scope retirement remain a separate
-integration gate. A failed proof leaves recovery blocked.
+proof. Normal same-BootID service restart uses the separate
+[fresh-scope receipt contract](routed-fresh-scope-v3.en.md). A failed proof leaves
+recovery blocked; native qualification of that combined path remains pending.
 
 Validation: focused race tests cover channel negotiation, rejected request
 authority, actual selected-store history, lifecycle ordering, owner loss,
@@ -50,7 +51,7 @@ go vet ./internal/networkexecutor ./internal/firewallipc ./internal/configpoc ./
 
 Pending: native producer-to-selected-runtime qualification, DHCP local-control
 exceptions under the actual local policy, forwarding/sysctl profile readback,
-same-BootID fresh-scope recovery, resource measurements and independent review.
+native same-BootID fresh-scope recovery, resource measurements and independent review.
 Existing isolated lease/gate packet tests do not establish these combinations.
 Continuous execution only: suspend, VM pause/snapshot and queued-packet removal
 are not guaranteed. No production readiness or host activation is claimed.

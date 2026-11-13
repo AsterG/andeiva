@@ -65,7 +65,7 @@ func (m *v2ReserveManager) maintainWork(s *v2Store, preferred string) error {
 		if work == nil && s.state.SystemBundle != nil && s.state.SystemBundle.CanonicalHeld {
 			work = clone(s.state.SystemBundle)
 		}
-		if d := s.state.RoutedDHCP; work == nil && d != nil && d.Phase == "withdrawn" {
+		if d := s.state.RoutedDHCP; work == nil && routedDHCPTerminalV3(d) {
 			work = &v2ActiveReserve{Work: reserveWorkV2(d.Bundle), Bundle: clone(d.Bundle), CanonicalHeld: true}
 		}
 		if work == nil {
@@ -310,7 +310,7 @@ func (m *v2ReserveManager) buildTerminalArchive(s *v2Store, active v2ActiveReser
 	bundles := []*v2ReserveBundle{active.Bundle}
 	if active.Bundle.PlanIntent != nil && active.Bundle.PlanIntent.DHCPWork != "" {
 		d := s.state.RoutedDHCP
-		if d == nil || d.Phase != "withdrawn" || !reserveJSONEqualV2(d.Bundle, active.Bundle) || validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+		if !routedDHCPTerminalV3(d) || !reserveJSONEqualV2(d.Bundle, active.Bundle) || validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
 			return archive, ErrRecovery
 		}
 		facts.Kind = v3RoutedDHCPKind

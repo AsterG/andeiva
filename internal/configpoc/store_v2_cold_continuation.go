@@ -112,7 +112,7 @@ func (r *RoutedSelectionReaderV2) resolveColdContinuationV1(ctx context.Context,
 	if plan.Reference() != expected || plan.Scope().Identity != r.options.Identity {
 		return out, ErrConflict
 	}
-	if !selectedPurposeV2(v.store, plan, purpose) || (!coldContinuationLinkedV1(anchor, plan, purpose) && !coldCompletedPredecessorV1(v, anchor, plan, purpose)) {
+	if !selectedPurposeV2(v.store, plan, purpose) || (!coldContinuationLinkedV1(anchor, plan, purpose) && !coldCompletedPredecessorV1(v, anchor, plan, purpose) && !coldDHCPScopeRetirementV3(v, anchor, anchoredState, plan, purpose)) {
 		return out, ErrDenied
 	}
 	if fenced && !fencedContinuationAllowedV1(anchor, v.store.state.Configuration, purpose) {

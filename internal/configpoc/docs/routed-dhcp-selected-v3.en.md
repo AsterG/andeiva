@@ -22,6 +22,11 @@ resolve selected work and withdraw only the exact owned WAN delta. Missing proof
 drift or a different boot/run blocks opening. `withdrawn` means the original LAN
 plus empty WAN was observed; it does not mean an earlier lease was restored.
 
+A separate [fresh-scope capability](../../previewruntime/docs/routed-fresh-scope-v3.en.md)
+permits the same OS boot to use a new service run/namespace after verified root
+retirement. Its terminal `scope_retired` is distinct from `withdrawn`; it requires
+the inherited receipt and actual empty new scope, never matching addresses.
+
 Current evidence: unit tests use real selected-store files and reserve pools with
 an explicitly simulated kernel authority. They cover repeated archive/reuse,
 replay, authority loss, wrong phase, and wrong boot. Native selected-DHCP runtime,

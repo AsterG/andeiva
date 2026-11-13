@@ -34,9 +34,9 @@ através do helper retido. A expiração kernel não depende da sobrevivência d
 API/helper. A recuperação selecionada precede o boot LAN, retira somente o delta
 WAN autenticado, arquiva e libera o adapter LAN. Somente um terminal selecionado
 exato de retirada permite reconstruir gate fechado; nunca um token ativo.
-Outro namespace exige prova de âmbito novo; reinício normal do serviço com
-o mesmo BootID e retirada do âmbito continuam pendentes de integração. Prova
-insuficiente bloqueia a recuperação.
+Outro namespace exige prova de âmbito novo; reinício normal com o mesmo BootID
+usa o [contrato separado de recibo](routed-fresh-scope-v3.pt.md). A qualificação
+nativa combinada está pendente. Prova insuficiente bloqueia a recuperação.
 
 Testes focais com race cobrem negociação, rejeição de autoridade em pedidos,
 histórico real do armazenamento, ordem dos efeitos, perda do proprietário,
@@ -51,7 +51,7 @@ go vet ./internal/networkexecutor ./internal/firewallipc ./internal/configpoc ./
 
 Pendentes: qualificação nativa produtor/runtime selecionado, exceções de controle
 local DHCP sob política real, readback do perfil forwarding/sysctl, recuperação
-de âmbito novo com mesmo BootID, recursos e revisão independente. Testes isolados
+nativa de âmbito novo com mesmo BootID, recursos e revisão independente. Testes isolados
 anteriores de lease/gate não comprovam essas combinações. Apenas execução
 contínua: suspensão, pausa/snapshot de VM e retirada de pacotes já enfileirados
 não são garantidos. Não se afirma prontidão de produção nem ativação do host.

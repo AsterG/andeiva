@@ -23,6 +23,7 @@ type RoutedReaderRootV3 struct {
 	Profile recoveryreserve.ProfileV2
 }
 type RoutedHelperOptionsV3 struct {
+	FreshScope                 *RoutedFreshScopeOptionsV3
 	DHCP                       *RoutedDHCPRuntimeOptionsV3
 	NetworkInventory           func(context.Context) (networkinventory.Snapshot, error) // Trusted helper provider; nil keeps the prior profile.
 	IntegrityRoot              *os.Root                                                 // Explicit trusted resource; nil preserves full-reader profile.
@@ -48,7 +49,7 @@ type RoutedHelperRuntimeV3 struct {
 }
 
 func routedHelperReadinessV3(m Metadata, ids Identities, o RoutedHelperOptionsV3) error {
-	if o.DHCP != nil && (o.IntegrityRoot == nil || o.NetworkInventory == nil) {
+	if (o.DHCP != nil || o.FreshScope != nil) && (o.IntegrityRoot == nil || o.NetworkInventory == nil) {
 		return ErrIdentity
 	}
 	if (o.NetworkInventory != nil && o.IntegrityRoot == nil) || m.ValidateRouted() != nil || ids.Validate() != nil || o.Authority == nil || o.Store == nil || o.Access.Version != 1 || o.Access.OwnerUID != ids.APIUID || o.Access.ReaderGID == 0 || o.Access.ReaderGID == ids.APIGID || o.Access.CheckDirectory(o.Store) != nil {
@@ -184,6 +185,12 @@ func assembleRoutedHelperV3(ctx context.Context, m Metadata, ids Identities, o R
 		return nil, e
 	}
 	result.session.inventory = o.NetworkInventory
+	if o.FreshScope != nil {
+		result.session.freshScope, e = newRoutedFreshScopeV3(m, *o.FreshScope, full, o.Authority)
+		if e != nil {
+			return nil, e
+		}
+	}
 	if o.DHCP != nil {
 		result.session.dhcp, result.dhcpClose, e = assembleRoutedDHCPRuntimeV3(lifetime, *o.DHCP, o.Authority.Identity(), o.Access.ReaderGID, full, o.Authority, result.session.integrity)
 		if e != nil {
@@ -236,6 +243,9 @@ func (r *RoutedHelperRuntimeV3) Close() error {
 	}
 	r.closed = true
 	var failures []error
+	if r.session != nil && r.session.freshScope != nil {
+		failures = append(failures, r.session.freshScope.Close())
+	}
 	if r.dhcpClose != nil {
 		failures = append(failures, r.dhcpClose())
 	}

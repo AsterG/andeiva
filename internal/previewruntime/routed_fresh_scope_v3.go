@@ -2,15 +2,23 @@ package previewruntime
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"strings"
 
+	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 )
 
 const RootRetirementReceiptSizeV3 = 4096
+
+type routedFreshScopeProofV3 interface {
+	configpoc.RoutedFreshScopeAuthorityV3
+	verifyPlan(context.Context, configpoc.RoutedSelectedPlanV1) error
+	Close() error
+}
 
 // RootRetirementReceiptV3 is an operational supervisor receipt, never a
 // configuration request. Root writes the preallocated slot only after all

@@ -34,6 +34,14 @@ func (r *v2ReachabilityReader) routedWork(hash, key string, state v2State, depth
 				return err
 			}
 		}
+		if proof := plan.work.FreshScope; proof != nil {
+			if !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
+				return errV2Unavailable
+			}
+			if err := r.routedWork(proof.Work, key, state, depth+1); err != nil {
+				return err
+			}
+		}
 		if plan.work.Baseline != "" {
 			if err := r.routedWork(plan.work.Baseline, key, state, depth+1); err != nil {
 				return err

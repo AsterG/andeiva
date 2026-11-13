@@ -23,10 +23,15 @@ type v3RoutedDHCPWork struct {
 }
 
 type v3RoutedDHCPState struct {
-	Work   string           `json:"work"`
-	Phase  string           `json:"phase"`
-	Bundle *v2ReserveBundle `json:"bundle"`
-	Audit  string           `json:"audit,omitempty"`
+	Work       string                      `json:"work"`
+	Phase      string                      `json:"phase"`
+	Bundle     *v2ReserveBundle            `json:"bundle"`
+	Audit      string                      `json:"audit,omitempty"`
+	Retirement *RoutedFreshScopeEvidenceV3 `json:"scope_retirement,omitempty"`
+}
+
+func routedDHCPTerminalV3(d *v3RoutedDHCPState) bool {
+	return d != nil && (d.Phase == "withdrawn" || d.Phase == "scope_retired")
 }
 
 // RoutedDHCPSelectedV3 has no exported authority fields. Only the selected
@@ -56,10 +61,17 @@ func validRoutedDHCPShapeV3(st v2State) bool {
 	if !hasFeatureV2(st, v3RoutedDHCPFeature) || st.RecoveryReserveVersion != 1 || st.Configuration == nil || !validHash(d.Work) || !validReserveBundleV2(d.Bundle) || d.Bundle.Scope.Kind != "recovery" || d.Bundle.Scope.Domain != "routed" || d.Bundle.Scope.Fingerprint != d.Work || d.Bundle.Scope.Lineage != st.Lineage || d.Bundle.PlanIntent == nil || d.Bundle.PlanIntent.DHCPWork != d.Work || d.Bundle.PlanIntent.RoutedWork != "" || d.Bundle.PlanIntent.Kind != v3RoutedDHCPKind || !d.Bundle.PlanIntent.Recovery || d.Bundle.PlanIntent.BootID != nil || d.Bundle.PlanIntent.GuardDeadline != nil || d.Bundle.ClosingEscrow != nil {
 		return false
 	}
-	if d.Phase != "prepared" && d.Phase != "applied" && d.Phase != "withdrawn" {
+	if d.Phase != "prepared" && d.Phase != "applied" && !routedDHCPTerminalV3(d) {
 		return false
 	}
-	return (d.Phase == "withdrawn" && validHash(d.Audit)) || (d.Phase != "withdrawn" && d.Audit == "")
+	if d.Phase == "scope_retired" {
+		if !hasFeatureV2(st, v3RoutedFreshScopeFeature) || d.Retirement == nil || !ValidRoutedFreshScopeEvidenceV3(*d.Retirement) {
+			return false
+		}
+	} else if d.Retirement != nil {
+		return false
+	}
+	return (routedDHCPTerminalV3(d) && validHash(d.Audit)) || (!routedDHCPTerminalV3(d) && d.Audit == "")
 }
 
 func preservesRoutedDHCPV3(before, next v2State) bool {
@@ -69,15 +81,15 @@ func preservesRoutedDHCPV3(before, next v2State) bool {
 	}
 	if b == nil {
 		_, hash, err := v2Canonical(a)
-		return a.Phase == "withdrawn" && err == nil && next.RoutedDHCPLast == hash
+		return routedDHCPTerminalV3(a) && err == nil && next.RoutedDHCPLast == hash
 	}
 	if before.RoutedDHCPLast != next.RoutedDHCPLast || a.Work != b.Work || !reserveJSONEqualV2(a.Bundle, b.Bundle) || before.Generation != next.Generation {
 		return false
 	}
 	if a.Phase == b.Phase {
-		return a.Audit == b.Audit
+		return a.Audit == b.Audit && reflect.DeepEqual(a.Retirement, b.Retirement)
 	}
-	return (a.Phase == "prepared" && (b.Phase == "applied" || b.Phase == "withdrawn")) || (a.Phase == "applied" && b.Phase == "withdrawn")
+	return (a.Phase == "prepared" && (b.Phase == "applied" || routedDHCPTerminalV3(b))) || (a.Phase == "applied" && routedDHCPTerminalV3(b))
 }
 
 func loadRoutedDHCPWorkV3(hash, lineage string, load func(string, any) error) (v3RoutedDHCPWork, error) {
@@ -109,6 +121,9 @@ func validateRoutedDHCPSelectedV3(st v2State, load func(string, any) error) erro
 		if load(st.RoutedDHCPLast, &last) != nil || validateRoutedDHCPTerminalV3(last, st.Lineage, load) != nil {
 			return ErrRecovery
 		}
+		if last.Phase == "scope_retired" && !hasFeatureV2(st, v3RoutedFreshScopeFeature) {
+			return ErrRecovery
+		}
 	}
 	d := st.RoutedDHCP
 	if d == nil {
@@ -122,9 +137,12 @@ func validateRoutedDHCPSelectedV3(st v2State, load func(string, any) error) erro
 	if in.Operation != reserveWorkV2(d.Bundle) || in.Previous != w.Configuration || in.Target != w.Configuration || in.TargetGeneration != w.Generation || in.Subject != "" || in.Lease != "" || in.OriginCommit != "" || !d.Bundle.Scope.Deadline.IsZero() || d.Bundle.Scope.Lease != "" {
 		return ErrRecovery
 	}
-	if d.Phase == "withdrawn" {
+	if d.Phase == "scope_retired" && !freshScopeMatchesV3(d.Retirement, w.Snapshot.Identity, d.Retirement.New, d.Work) {
+		return ErrRecovery
+	}
+	if routedDHCPTerminalV3(d) {
 		var audit v2CoordinatorAudit
-		if load(d.Audit, &audit) != nil || audit.Operation != in.Operation || audit.Kind != v3RoutedDHCPKind || audit.Result != "withdrawn" || audit.Generation != w.Generation || audit.Running != w.Running || audit.Sequence > st.Configuration.AuditSequence {
+		if load(d.Audit, &audit) != nil || audit.Operation != in.Operation || audit.Kind != v3RoutedDHCPKind || audit.Result != d.Phase || audit.Generation != w.Generation || audit.Running != w.Running || audit.Sequence > st.Configuration.AuditSequence {
 			return ErrRecovery
 		}
 	}

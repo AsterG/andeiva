@@ -71,6 +71,9 @@ func validateArchiveFinalityWithWorkV2(archive v2ReserveArchive, state v2State, 
 			if routedWorkUsesDHCPV3(plan) && !hasFeatureV2(state, v3RoutedDHCPFeature) {
 				return ErrRecovery
 			}
+			if plan.work.FreshScope != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
+				return ErrRecovery
+			}
 		}
 	}
 	if validateArchiveGuardDeadlinesV2(archive, state, load) != nil {
