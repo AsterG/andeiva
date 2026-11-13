@@ -332,8 +332,23 @@ func provisionMigrationPrivateRootsV3(ids Identities) error {
 		return ErrIdentity
 	}
 	// #nosec G301 -- Fixed root-owned traversal-only parent for distinct API/helper identities; every policy/history root remains private 0700 and files 0600.
-	if err := os.Mkdir(routedDeploymentDataV3, 0755); err != nil && !os.IsExist(err) {
+	err := os.Mkdir(routedDeploymentDataV3, 0755)
+	if err != nil && !os.IsExist(err) {
 		return err
+	}
+	if err == nil {
+		// systemd uses UMask=0077. Set traversal permissions on the newly
+		// created descriptor only; never repair or adopt an existing parent.
+		parent, openErr := os.OpenFile(routedDeploymentDataV3, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+		if openErr != nil {
+			return openErr
+		}
+		modeErr := parent.Chmod(0755) // #nosec G302 -- Newly created root-owned traversal parent; each configuration/history child remains private 0700.
+		syncErr := parent.Sync()
+		closeErr := parent.Close()
+		if err = errors.Join(modeErr, syncErr, closeErr); err != nil {
+			return err
+		}
 	}
 	if ownedDirectory(routedDeploymentDataV3, 0, 0, 0755) != nil {
 		return ErrIdentity
