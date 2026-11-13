@@ -80,7 +80,11 @@ func (r *RoutedSelectionReaderV2) pools() [3]*recoveryreserve.ReadOnlyPoolV2 {
 	return [3]*recoveryreserve.ReadOnlyPoolV2{r.options.Admission, r.options.Plan, r.options.Emergency}
 }
 
-func (r *RoutedSelectionReaderV2) read(ctx context.Context) (result *selectedViewV2, resultErr error) {
+func (r *RoutedSelectionReaderV2) read(ctx context.Context) (*selectedViewV2, error) {
+	return r.readWithGateV2(ctx, nil)
+}
+
+func (r *RoutedSelectionReaderV2) readWithGateV2(ctx context.Context, beforeGraph func(*selectedViewV2) error) (result *selectedViewV2, resultErr error) {
 	if ctx == nil || ctx.Err() != nil || r.area == nil || r.options.Access.CheckDirectory(r.area) != nil {
 		return nil, ErrRecovery
 	}
@@ -118,6 +122,11 @@ func (r *RoutedSelectionReaderV2) read(ctx context.Context) (result *selectedVie
 	}
 	if s.state.Configuration == nil || s.state.RecoveryReserveVersion != 1 || !hasFeatureV2(s.state, v2SharedReaderFeature) || !hasFeatureV2(s.state, v2RoutedFeature) {
 		return nil, ErrRecovery
+	}
+	if beforeGraph != nil {
+		if err := beforeGraph(view); err != nil {
+			return nil, err
+		}
 	}
 	if graph.action != nil {
 		s.archiveObserver = func(ref v2ReserveArchiveRef) error {
