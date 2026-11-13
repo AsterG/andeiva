@@ -89,3 +89,5 @@ systemd-run --unit=andeiva-preview-grouped.service --wait --pipe \
   /ROOT_OWNED_FIXTURE/routed-scope-store-native.test \
   -test.run=^TestRoutedScopeRecoveryV3NativeStore$ -test.v -test.timeout=30s
 ```
+
+Creation-time capture now also verifies the system manager reports this Root process as MainPID, the fixed cgroup and Delegate=no. The manifest records its InvocationID; delegated or group/other-writable cgroup controls are refused. The old events parser distinguishes live populated state from ENODEV on the exact original FD, but neither observation is wired to teardown authority. Crash retirement still requires an authenticated full G1/R2 reader and the existing writer publication lock; no current selected proof is manufactured from the manifest.

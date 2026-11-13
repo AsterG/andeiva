@@ -83,7 +83,7 @@ func validateScopeRecoveryAnchorsV3(a RoutedScopeRecoveryAnchorsV3, r RoutedScop
 			}
 		case 5:
 			var fs unix.Statfs_t
-			if st.Mode&unix.S_IFMT != unix.S_IFDIR || st.Uid != 0 || st.Gid != 0 || unix.Fstatfs(int(f.Fd()), &fs) != nil || fs.Type != unix.CGROUP2_SUPER_MAGIC {
+			if st.Mode&unix.S_IFMT != unix.S_IFDIR || st.Mode&0022 != 0 || st.Uid != 0 || st.Gid != 0 || unix.Fstatfs(int(f.Fd()), &fs) != nil || fs.Type != unix.CGROUP2_SUPER_MAGIC {
 				return ErrIdentity
 			}
 		case 6:
@@ -188,7 +188,11 @@ func PrepareRoutedScopeRecoveryRecordV3(ctx context.Context, m Metadata, ids Ide
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || m.ValidateRouted() != nil || ids.Validate() != nil {
 		return nil, ErrIdentity
 	}
-	r := RoutedScopeRecoveryRecordV3{Version: 3, Phase: "pinned", Metadata: m, Identities: ids, MetadataSHA256: retirementDigestV3(marshal(m))}
+	unit, err := readScopeRecoveryUnitV3(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r := RoutedScopeRecoveryRecordV3{Version: 3, Phase: "pinned", Metadata: m, Identities: ids, MetadataSHA256: retirementDigestV3(marshal(m)), CgroupInvocation: unit.invocation}
 	destinations := []*RoutedScopeRecoveryFileV3{&r.Gateway, &r.Mount, &r.Underlay, &r.Directory, &r.Cgroup, &r.CgroupEvents}
 	for i, f := range []*os.File{a.Gateway, a.Mount, a.Underlay, a.Directory, a.Cgroup, a.CgroupEvents} {
 		id, _, err := scopeRecoveryIdentityV3(f)
@@ -222,7 +226,7 @@ func PrepareRoutedScopeRecoveryRecordV3(ctx context.Context, m Metadata, ids Ide
 	}
 	defer group.Close()
 	actualGroup, _, err := scopeRecoveryIdentityV3(group)
-	if err != nil || actualGroup != r.Cgroup || waitRoutedCgroupDrainedV3() != nil || ctx.Err() != nil {
+	if err != nil || actualGroup != r.Cgroup || scopeRecoveryCgroupControlsV3(a.Cgroup) != nil || waitRoutedCgroupDrainedV3() != nil || ctx.Err() != nil {
 		return nil, ErrIdentity
 	}
 	eventsFD, err := unix.Openat(int(a.Cgroup.Fd()), "cgroup.events", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)

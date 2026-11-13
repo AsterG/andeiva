@@ -87,3 +87,5 @@ systemd-run --unit=andeiva-preview-grouped.service --wait --pipe \
   /ROOT_OWNED_FIXTURE/routed-scope-store-native.test \
   -test.run=^TestRoutedScopeRecoveryV3NativeStore$ -test.v -test.timeout=30s
 ```
+
+A captura inicial também verifica que o manager identifica este processo Root como MainPID, o cgroup fixo e Delegate=no. O manifest registra InvocationID; rejeita controles do cgroup delegados ou graváveis por grupo/outros. O parser do events antigo distingue estado populated vivo de ENODEV no FD original exato, mas nenhuma observação habilita teardown. A retirada após queda ainda exige leitor G1/R2 completo autenticado e o bloqueio de publicação existente; o manifest não fabrica prova do estado selecionado.

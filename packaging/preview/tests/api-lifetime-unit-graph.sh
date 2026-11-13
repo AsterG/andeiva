@@ -28,3 +28,5 @@ printf 'PASS: administration stop/failure does not propagate to helper or namesp
 [[ $(value andeiva-preview-grouped.service FileDescriptorStorePreserve) = yes ]]
 [[ $(value andeiva-preview-grouped.service ReadWritePaths) = $'/var/lib/andeiva-preview/grouped /var/lib/andeiva-preview/audit /run/andeiva-preview/grouped\n/var/lib/andeiva-preview-package/grouped-retirement-v3 /var/lib/andeiva-preview-package/grouped-scope-v3' ]]
 printf 'PASS: grouped Root FD store is bounded and main-only; writes use exact preallocated slots\n'
+
+[[ $(value andeiva-preview-grouped.service Delegate) = no ]]

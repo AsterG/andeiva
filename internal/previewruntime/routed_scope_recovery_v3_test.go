@@ -8,7 +8,7 @@ import (
 
 func scopeRecoveryRecordFixtureV3() RoutedScopeRecoveryRecordV3 {
 	m := Metadata{SchemaVersion: RoutedMetadataSchemaVersion, RunID: strings.Repeat("a", 32), BootID: "12345678-1234-1234-1234-123456789abc", HostNamespace: 40, GatewayNamespace: 42}
-	return RoutedScopeRecoveryRecordV3{Version: 3, Phase: "pinned", Metadata: m, Identities: Identities{SchemaVersion: 1, APIUID: 62001, APIGID: 62001, HelperUID: 62002, IPCGID: 62003}, MetadataSHA256: retirementDigestV3(marshal(m)), Gateway: RoutedScopeRecoveryFileV3{4, 42}, Mount: RoutedScopeRecoveryFileV3{4, 45}, Underlay: RoutedScopeRecoveryFileV3{1, 55}, Directory: RoutedScopeRecoveryFileV3{1, 56}, Cgroup: RoutedScopeRecoveryFileV3{2, 57}, CgroupEvents: RoutedScopeRecoveryFileV3{2, 58}}
+	return RoutedScopeRecoveryRecordV3{Version: 3, Phase: "pinned", CgroupInvocation: strings.Repeat("c", 32), Metadata: m, Identities: Identities{SchemaVersion: 1, APIUID: 62001, APIGID: 62001, HelperUID: 62002, IPCGID: 62003}, MetadataSHA256: retirementDigestV3(marshal(m)), Gateway: RoutedScopeRecoveryFileV3{4, 42}, Mount: RoutedScopeRecoveryFileV3{4, 45}, Underlay: RoutedScopeRecoveryFileV3{1, 55}, Directory: RoutedScopeRecoveryFileV3{1, 56}, Cgroup: RoutedScopeRecoveryFileV3{2, 57}, CgroupEvents: RoutedScopeRecoveryFileV3{2, 58}}
 }
 func TestRoutedScopeRecoveryV3ExactRecord(t *testing.T) {
 	r := scopeRecoveryRecordFixtureV3()

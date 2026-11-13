@@ -10,18 +10,19 @@ const RoutedScopeRecoveryRecordSizeV3 = 4096
 // This operational record binds retained descriptors. It is neither selected
 // configuration nor evidence that processes or the namespace were retired.
 type RoutedScopeRecoveryRecordV3 struct {
-	Version         int                       `json:"version"`
-	Phase           string                    `json:"phase"`
-	Metadata        Metadata                  `json:"metadata"`
-	Identities      Identities                `json:"identities"`
-	MetadataSHA256  string                    `json:"metadata_sha256"`
-	Gateway         RoutedScopeRecoveryFileV3 `json:"gateway"`
-	Mount           RoutedScopeRecoveryFileV3 `json:"mount"`
-	Underlay        RoutedScopeRecoveryFileV3 `json:"underlay"`
-	Directory       RoutedScopeRecoveryFileV3 `json:"directory"`
-	Cgroup          RoutedScopeRecoveryFileV3 `json:"cgroup"`
-	CgroupEvents    RoutedScopeRecoveryFileV3 `json:"cgroup_events"`
-	IntegritySHA256 string                    `json:"integrity_sha256,omitempty"`
+	Version          int                       `json:"version"`
+	Phase            string                    `json:"phase"`
+	Metadata         Metadata                  `json:"metadata"`
+	Identities       Identities                `json:"identities"`
+	MetadataSHA256   string                    `json:"metadata_sha256"`
+	Gateway          RoutedScopeRecoveryFileV3 `json:"gateway"`
+	Mount            RoutedScopeRecoveryFileV3 `json:"mount"`
+	Underlay         RoutedScopeRecoveryFileV3 `json:"underlay"`
+	Directory        RoutedScopeRecoveryFileV3 `json:"directory"`
+	Cgroup           RoutedScopeRecoveryFileV3 `json:"cgroup"`
+	CgroupEvents     RoutedScopeRecoveryFileV3 `json:"cgroup_events"`
+	CgroupInvocation string                    `json:"cgroup_invocation"`
+	IntegritySHA256  string                    `json:"integrity_sha256,omitempty"`
 }
 
 type RoutedScopeRecoveryFileV3 struct {
@@ -30,7 +31,7 @@ type RoutedScopeRecoveryFileV3 struct {
 }
 
 func (r RoutedScopeRecoveryRecordV3) valid() bool {
-	if r.Version != 3 || r.Phase != "pinned" || r.Metadata.ValidateRouted() != nil || r.Identities.Validate() != nil || r.MetadataSHA256 != retirementDigestV3(marshal(r.Metadata)) || r.Gateway.Inode != r.Metadata.GatewayNamespace {
+	if !validHex(r.CgroupInvocation, 16) || r.Version != 3 || r.Phase != "pinned" || r.Metadata.ValidateRouted() != nil || r.Identities.Validate() != nil || r.MetadataSHA256 != retirementDigestV3(marshal(r.Metadata)) || r.Gateway.Inode != r.Metadata.GatewayNamespace {
 		return false
 	}
 	seen := map[RoutedScopeRecoveryFileV3]bool{}
