@@ -82,6 +82,10 @@ func routedIPCSharedAreaV3(t *testing.T, area *os.Root) recoveryreserve.ReaderAc
 }
 
 func newRoutedIPCFixtureV3(t *testing.T) *routedIPCFixtureV3 {
+	return newRoutedIPCFixtureWithPolicyV3(t, configpoc.SelectionFullHistoryV2)
+}
+
+func newRoutedIPCFixtureWithPolicyV3(t *testing.T, readerPolicy configpoc.SelectionReaderPolicyV2) *routedIPCFixtureV3 {
 	t.Helper()
 	if os.Geteuid() == 0 || os.Getegid() == 0 {
 		t.Skip("shared reader requires a non-root Linux test account")
@@ -216,7 +220,21 @@ func newRoutedIPCFixtureV3(t *testing.T) *routedIPCFixtureV3 {
 		r := readPools[i]
 		t.Cleanup(func() { _ = r.Close(); _ = p.Close() })
 	}
-	f.reader, err = configpoc.NewRoutedSelectionReaderV2(f.area, configpoc.SelectionReaderOptionsV2{Access: f.access, Identity: f.identity, Admission: readPools[0], Plan: readPools[1], Emergency: readPools[2], Budget: configpoc.SelectionReadBudgetV2{Entries: 20000, Objects: 16000, Edges: 200000, IOCalls: 2000000, Bytes: 256 << 20, ActiveBytes: 16 << 20, Depth: 128}})
+	readerOptions := configpoc.SelectionReaderOptionsV2{Access: f.access, Identity: f.identity, Admission: readPools[0], Plan: readPools[1], Emergency: readPools[2], Budget: configpoc.SelectionReadBudgetV2{Entries: 20000, Objects: 16000, Edges: 200000, IOCalls: 2000000, Bytes: 256 << 20, ActiveBytes: 16 << 20, Depth: 128}}
+	if readerPolicy == configpoc.SelectionActionAuthorityV2 {
+		// Test-only opt-in: establish initial full integrity with all private
+		// writers closed. This does not implement a runtime corruption latch or
+		// ongoing inspection scheduling and must not enable an appliance factory.
+		fullReader, e := configpoc.NewRoutedSelectionReaderV2(f.area, readerOptions)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = fullReader.Observe(context.Background()); e != nil {
+			t.Fatal("initial full integrity", e)
+		}
+	}
+	readerOptions.Policy = readerPolicy
+	f.reader, err = configpoc.NewRoutedSelectionReaderV2(f.area, readerOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +361,16 @@ func (s routedIPCObservedSourceV3) Resolve(ctx context.Context, ref firewallipc.
 }
 
 func TestRoutedIPCV3SharedStoreLifecycle(t *testing.T) {
-	f := newRoutedIPCFixtureV3(t)
+	testRoutedIPCV3SharedStoreLifecycle(t, configpoc.SelectionFullHistoryV2)
+}
+
+func TestRoutedIPCV3ActionReaderSharedStoreLifecycle(t *testing.T) {
+	testRoutedIPCV3SharedStoreLifecycle(t, configpoc.SelectionActionAuthorityV2)
+}
+
+func testRoutedIPCV3SharedStoreLifecycle(t *testing.T, readerPolicy configpoc.SelectionReaderPolicyV2) {
+	t.Helper()
+	f := newRoutedIPCFixtureWithPolicyV3(t, readerPolicy)
 	ctx := context.Background()
 	data, present, err := f.kernel.Observe(ctx, routedactivation.LegacyTable)
 	if err != nil || !present {

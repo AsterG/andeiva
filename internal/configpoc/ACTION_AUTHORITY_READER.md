@@ -1,5 +1,7 @@
 # Selected action-authority reader
 
+[Español](ACTION_AUTHORITY_READER_ES.md) · [Português](ACTION_AUTHORITY_READER_PT.md)
+
 The selected helper reader defaults to the existing complete G1 history walk.
 `SelectionReaderOptionsV2.Policy = SelectionActionAuthorityV2` is an explicit
 trusted assembly opt-in. No runtime factory selects it in this increment.
@@ -57,3 +59,16 @@ simulated/preparation-only engines. A differential test removes a retained
 historical object reached by full G1 but outside the current action closure:
 the action read succeeds without requesting it and full G1 still rejects it.
 This is a scope assertion, not permission to reclaim that object.
+
+A separate shared-store/Unix-IPC lifecycle test opts into the policy after an
+initial full-G1 read with writers closed. With simulated kernel/network I/O it
+passed under the unchanged three-second RPC deadlines and the race detector:
+56.58 s overall, maximum logged source resolution 1.883935121 s. It exercises
+Boot4, Candidate/Validate, Commit/Confirm/Save, routed activation, helper restart
+and inverse rollback. This does not enable an appliance factory or qualify
+native action-reader timing, corruption fencing or periodic inspection.
+
+```sh
+go test -race ./internal/previewruntime \
+  -run '^TestRoutedIPCV3ActionReaderSharedStoreLifecycle$' -count=1 -timeout=100s -v
+```
