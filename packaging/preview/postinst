@@ -64,7 +64,8 @@ reader_entry=$(getent group "$reader_name")
 reader_gid=$(printf '%s\n' "$reader_entry" | cut -d: -f3)
 case "$reader_gid" in ''|0|*[!0-9]*) echo ANDEIVA_PREVIEW_READER_IDENTITY >&2; exit 1;; esac
 [ -z "$(printf '%s\n' "$reader_entry" | cut -d: -f4)" ] || { echo ANDEIVA_PREVIEW_READER_MEMBERS >&2; exit 1; }
-getent passwd | awk -F: -v gid="$reader_gid" '$4==gid {found=1} END {exit found}' || { echo ANDEIVA_PREVIEW_READER_MEMBERS >&2; exit 1; }
+reader_accounts=$(getent passwd) || { echo ANDEIVA_PREVIEW_READER_MEMBERS >&2; exit 1; }
+printf '%s\n' "$reader_accounts" | awk -F: -v gid="$reader_gid" '$4==gid {found=1} END {exit found}' || { echo ANDEIVA_PREVIEW_READER_MEMBERS >&2; exit 1; }
 for name in andeiva-preview-api andeiva-preview-helper andeiva-preview-ipc; do
   [ "$(getent group "$name" | cut -d: -f3)" != "$reader_gid" ] || { echo ANDEIVA_PREVIEW_READER_IDENTITY >&2; exit 1; }
 done

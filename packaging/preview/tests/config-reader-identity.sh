@@ -9,6 +9,7 @@ mkdir "$area/bin"
 cat > "$area/bin/getent" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ ${REFUSE_PASSWD_SCAN:-0} != 1 || $# != 1 || $1 != passwd ]] || exit 2
 case "$1" in
   group) file=$FIXTURE/groups;;
   passwd) file=$FIXTURE/passwd;;
@@ -86,6 +87,10 @@ fixture primary-member
 run
 printf 'intruder:x:62010:62004::/nonexistent:/usr/sbin/nologin\n' >> "$FIXTURE/passwd"
 refuse primary-member
+fixture unavailable-nss
+export REFUSE_PASSWD_SCAN=1
+refuse unavailable-nss
+unset REFUSE_PASSWD_SCAN
 fixture writable-record
 run
 chmod 0660 "$FIXTURE/identity/config-reader-v1"
