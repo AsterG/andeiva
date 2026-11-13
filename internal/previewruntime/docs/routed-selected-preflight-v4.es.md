@@ -12,5 +12,16 @@ barrera de publicación hasta terminar el efecto. No se admiten rutas, identidad
 ejecutable ni leases en caché enviados por API.
 
 Pruebas unitarias cubren proceso, codec y almacenamiento seleccionado real con
-I/O físico simulado. Faltan lanzamiento root y ciclo nativo; este lector no
-demuestra retirada del namespace ni preparación DHCP.
+I/O físico simulado. Otra prueba nativa Debian 13 ejecuta el lector sin capacidades
+después de bootstrap, readback y reinicio API conservando helper. Tras salir el
+escritor, root retiene su checkpoint lock original: admite selección actual y
+rechaza un ámbito ajeno. No demuestra retirada del namespace, preparación DHCP
+ni la barrera de publicación del DHCP en vivo.
+
+Usar las condiciones de aislamiento de [la guía nativa](routed-launch-native-v3.es.md)
+y el modo `--isolated-selected-preflight-lab` de
+`packaging/preview/tests/routed-launch-native.sh`. Exigir PASS de
+`TestNativeRoutedSelectedPreflightV4` y `ANDEIVA_NATIVE_LAUNCH_CLEANUP_OK`; SKIP
+no es evidencia. Comparar direcciones, rutas, reglas y forwarding del host.
+Una ejecución duró 1,76 s; el arnés completo consumió 1,883 s de CPU y un pico de
+36,7 MiB. Son mediciones de prueba, no presupuestos del servicio permanente.

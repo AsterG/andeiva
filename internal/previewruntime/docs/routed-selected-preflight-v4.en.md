@@ -12,5 +12,17 @@ the existing publication barrier until its effect finishes. No API-supplied
 path, identity, executable or cached lease is accepted.
 
 Unit tests cover the process/codec boundary and real selected storage with
-simulated physical I/O. Root launch and native lifecycle qualification remain
-required; this reader does not establish namespace retirement or DHCP readiness.
+simulated physical I/O. A separate Debian 13 native test launches the actual
+capless child after grouped bootstrap, readback and retained-helper API restart.
+After the writer exits, root holds its original checkpoint lock; current selection
+is accepted and a foreign old scope is rejected. This does not establish namespace
+retirement, DHCP readiness or the live DHCP publication barrier.
+
+Use the prerequisites and private-mount/cgroup containment in
+[native launch qualification](routed-launch-native-v3.en.md), selecting mode
+`--isolated-selected-preflight-lab` in `packaging/preview/tests/routed-launch-native.sh`.
+Require `TestNativeRoutedSelectedPreflightV4` PASS and
+`ANDEIVA_NATIVE_LAUNCH_CLEANUP_OK`; skipped tests are not native evidence. Compare
+host addresses, routes, rules and forwarding before and after. One native run took
+1.76 seconds; the entire harness used 1.883 CPU seconds and peaked at 36.7 MiB.
+These are test measurements, not permanent-service budgets.
