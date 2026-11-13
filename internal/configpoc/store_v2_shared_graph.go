@@ -66,7 +66,12 @@ func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]b
 	// A concurrent enlargement must not allocate the uncharged caller limit.
 	// The profile reader checks the size before allocating its bounded buffer.
 	readLimit := max(size, 1)
-	data, err := r.shared.ReadFile(r.ctx, r.area, name, int(readLimit))
+	var data []byte
+	if r.ownerRead {
+		data, err = r.shared.ReadOwnedFile(r.ctx, r.area, name, int(readLimit))
+	} else {
+		data, err = r.shared.ReadFile(r.ctx, r.area, name, int(readLimit))
+	}
 	if err != nil || int64(len(data)) != size {
 		r.active -= n
 		return nil, noop, errV2Unavailable

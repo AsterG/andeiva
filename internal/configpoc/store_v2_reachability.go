@@ -34,16 +34,17 @@ type v2ReachabilityReport struct {
 }
 
 type v2ReachabilityReader struct {
-	ctx     context.Context
-	area    *os.Root
-	budget  v2ReachabilityBudget
-	report  v2ReachabilityReport
-	active  uint64
-	objects map[string]bool
-	edges   map[string]uint8
-	root    os.FileInfo
-	shared  *recoveryreserve.ReaderAccessV2
-	cache   *selectedReadCacheV2
+	ctx       context.Context
+	area      *os.Root
+	budget    v2ReachabilityBudget
+	report    v2ReachabilityReport
+	active    uint64
+	objects   map[string]bool
+	edges     map[string]uint8
+	root      os.FileInfo
+	shared    *recoveryreserve.ReaderAccessV2
+	ownerRead bool // Writer-owned maintenance only; helper readers remain group-scoped.
+	cache     *selectedReadCacheV2
 }
 
 func (r *v2ReachabilityReader) step() error {

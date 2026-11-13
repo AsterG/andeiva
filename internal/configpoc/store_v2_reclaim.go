@@ -139,7 +139,7 @@ func (s *v2Store) reclaimIndexPages(ctx context.Context, budget v2ReachabilityBu
 	}()
 	report.Tracked = uint64(len(r.pages))
 	report.AuthorityRevoked = r.revoked
-	reader := &v2ReachabilityReader{ctx: ctx, area: s.root, root: r.root, shared: s.access, budget: budget, objects: make(map[string]bool), edges: make(map[string]uint8)}
+	reader := &v2ReachabilityReader{ctx: ctx, area: s.root, root: r.root, shared: s.access, ownerRead: true, budget: budget, objects: make(map[string]bool), edges: make(map[string]uint8)}
 	if err := reader.verifyScope(s.lock); err != nil {
 		return report, err
 	}

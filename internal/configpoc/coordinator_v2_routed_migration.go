@@ -29,7 +29,7 @@ func (c *v2Coordinator) prepareRoutedCompositeLockedV2(ctx context.Context, budg
 	if err != nil {
 		return errV2Unavailable
 	}
-	reader := &v2ReachabilityReader{ctx: ctx, area: s.root, root: root, shared: s.access, budget: budget, objects: map[string]bool{}, edges: map[string]uint8{}}
+	reader := &v2ReachabilityReader{ctx: ctx, area: s.root, root: root, shared: s.access, ownerRead: true, budget: budget, objects: map[string]bool{}, edges: map[string]uint8{}}
 	closure, err := reader.traceLocked(s.lock)
 	if err != nil || !closure.Complete || closure.Current != s.selector.Current || closure.Previous != s.selector.Previous || closure.State != s.selection.State {
 		return ErrRecovery
