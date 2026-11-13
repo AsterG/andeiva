@@ -170,3 +170,62 @@ func (s *routedRetirementSlot) Close() error {
 	s.file = nil
 	return err
 }
+
+func openRoutedRetirementResourceV3(metadata Metadata, ids Identities) (*RoutedFreshScopeOptionsV3, error) {
+	if os.Getuid() != 0 || os.Geteuid() != 0 || ids.Validate() != nil || metadata.ValidateRouted() != nil || safeParents(routedRetirementDirectoryV3+"/"+routedRetirementSlotV3) != nil {
+		return nil, ErrIdentity
+	}
+	area, err := os.OpenRoot(routedRetirementDirectoryV3)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer area.Close()
+	directory, err := area.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	var parent unix.Stat_t
+	if unix.Fstat(int(directory.Fd()), &parent) != nil || parent.Mode != unix.S_IFDIR|0700 || parent.Uid != 0 || parent.Gid != 0 || !fenceNoACLV3(directory, true) {
+		return nil, ErrIdentity
+	}
+	before, err := area.Lstat(routedRetirementSlotV3)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil || !before.Mode().IsRegular() {
+		return nil, ErrIdentity
+	}
+	file, err := area.OpenFile(routedRetirementSlotV3, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	accepted := false
+	defer func() {
+		if !accepted {
+			_ = file.Close()
+		}
+	}()
+	slot := &routedRetirementSlot{file: file, area: area}
+	actual, err := file.Stat()
+	if err != nil || !os.SameFile(before, actual) || slot.sameFile() != nil {
+		return nil, ErrIdentity
+	}
+	raw := make([]byte, RootRetirementReceiptSizeV3)
+	if _, err = file.ReadAt(raw, 0); err != nil || slot.sameFile() != nil {
+		return nil, ErrIdentity
+	}
+	if bytes.Equal(raw, make([]byte, len(raw))) {
+		return nil, nil // Preallocated first activation; no prior retirement proof.
+	}
+	identity := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: metadata.GatewayNamespace, Host: metadata.HostNamespace, BootID: metadata.BootID, RunID: metadata.RunID}
+	binding := RoutedFreshScopeBindingV3{ReceiptSHA256: retirementDigestV3(raw), NewIdentity: identity}
+	if _, err = readRetirementFileV3(file, binding); err != nil {
+		return nil, err
+	}
+	accepted = true
+	return &RoutedFreshScopeOptionsV3{Receipt: file, Binding: binding}, nil
+}

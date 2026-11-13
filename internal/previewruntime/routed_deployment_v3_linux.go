@@ -189,6 +189,13 @@ func openRoutedDeploymentV3(ctx context.Context, c Config) (resources *routedDep
 		}
 	}()
 	r.launch = RoutedLaunchResourcesV3{LocalOrigin: cloneRoutedLocalOriginV3(record.LocalOrigin), Metadata: m, Identities: ids, Budget: record.ReadBudget.budget(), StoreBudget: configpoc.BudgetV2{Bytes: record.WriteBudget.Bytes, Inodes: record.WriteBudget.Inodes}}
+	r.launch.FreshScope, err = openRoutedRetirementResourceV3(m, ids)
+	if err != nil {
+		return nil, err
+	}
+	if r.launch.FreshScope != nil {
+		r.files = append(r.files, r.launch.FreshScope.Receipt)
+	}
 	gateway, err := openRoutedNamespacePinV3(filepath.Join(routedDeploymentRunV3, "netns", "gateway"), m.GatewayNamespace)
 	if err != nil {
 		return nil, err

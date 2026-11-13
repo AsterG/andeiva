@@ -3,13 +3,15 @@ set -euo pipefail
 
 # Explicit root laboratory harness. Run inside a private mount namespace with
 # a private /run/netns mount and a supervisor-owned process cgroup.
-if [[ $# != 2 || ( $1 != --isolated-lab && $1 != --isolated-integrity-lab ) || ${EUID} != 0 || -n ${CI:-} ]]; then
-  printf '%s\n' 'Use --isolated-lab or --isolated-integrity-lab TEST_BINARY only in an authorized root laboratory.' >&2
+if [[ $# != 2 || ( $1 != --isolated-lab && $1 != --isolated-integrity-lab && $1 != --isolated-fresh-scope-lab ) || ${EUID} != 0 || -n ${CI:-} ]]; then
+  printf '%s\n' 'Use an isolated laboratory mode and TEST_BINARY only in an authorized root laboratory.' >&2
   exit 2
 fi
 pattern='^TestNativeRoutedLaunchV3$'
 if [[ $1 == --isolated-integrity-lab ]]; then
   pattern='^TestNativeRoutedIntegrityLaunchV3$'
+elif [[ $1 == --isolated-fresh-scope-lab ]]; then
+  pattern='^TestNativeRoutedIntegrityFreshScopeLaunchV3$'
 fi
 grep -qx 'ID=debian' /etc/os-release
 grep -qx 'VERSION_ID="13"' /etc/os-release

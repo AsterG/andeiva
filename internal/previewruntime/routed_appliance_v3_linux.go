@@ -130,7 +130,7 @@ func NewRoutedApplianceFactoriesV3(c Config) (RoutedLaunchFactoriesV3, error) {
 			if _, err = fs.Stat(assets.FS(), "index.html"); err != nil {
 				return out, cleanup, ErrStorage
 			}
-			out = OperationsRuntimeOptionsV2{RoutedInventory: true, Store: launch.Store, Budget: launch.StoreBudget, Auth: auth, Origin: c.Origin(), Static: routedApplianceStaticV3(assets.FS()), Local: []configpoc.Engine{routedApplianceLocalV3{}}, Runtime: configpoc.RuntimeOptionsV2{SharedReader: &launch.Access, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}, BootID: launch.Metadata.BootID, GuardDeadlines: true}}
+			out = OperationsRuntimeOptionsV2{RoutedFreshScope: launch.FreshScopeEnabled, RoutedInventory: true, Store: launch.Store, Budget: launch.StoreBudget, Auth: auth, Origin: c.Origin(), Static: routedApplianceStaticV3(assets.FS()), Local: []configpoc.Engine{routedApplianceLocalV3{}}, Runtime: configpoc.RuntimeOptionsV2{SharedReader: &launch.Access, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}, BootID: launch.Metadata.BootID, GuardDeadlines: true}}
 			return out, cleanup, nil
 		},
 		ServeAPI: func(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error) error {
@@ -186,6 +186,18 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 	if err != nil {
 		return out, err
 	}
+	legacy := view.Saved
+	if c.FreshScope != nil {
+		receipt, e := readRetirementFileV3(c.FreshScope.Receipt, c.FreshScope.Binding)
+		if e != nil {
+			return out, e
+		}
+		restart, e := reader.PrepareServiceRestartViewV3(ctx, receipt.Old)
+		if e != nil {
+			return out, e
+		}
+		legacy = restart.Saved
+	}
 	kernel, err := newRoutedKernelV3(c.Metadata)
 	if err != nil {
 		return out, err
@@ -207,7 +219,7 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 	if err != nil {
 		return out, err
 	}
-	authority, err := NewRoutedAuthority(kernel, network, listeners, routedactivation.Options{Legacy: view.Saved.Firewall, Local: &view.Saved.LocalServices, ObservedBindings: bindings}, identity)
+	authority, err := NewRoutedAuthority(kernel, network, listeners, routedactivation.Options{Legacy: legacy.Firewall, Local: &legacy.LocalServices, ObservedBindings: bindings}, identity)
 	if err != nil {
 		return out, err
 	}

@@ -27,6 +27,8 @@ import (
 // their trusted deployment configuration, but cannot replace these descriptors,
 // invent a peer identity or open a configuration writer before the V3 factory.
 type RoutedLaunchContextV3 struct {
+	FreshScopeEnabled          bool
+	FreshScope                 *RoutedFreshScopeOptionsV3 // Helper only, borrowed root descriptor.
 	LocalOrigin                *RoutedLocalOriginV3
 	Integrity                  bool
 	IntegrityRoot              *os.Root // Helper only; always nil in the API role.
@@ -58,6 +60,7 @@ type RoutedLaunchFactoriesV3 struct {
 }
 
 type routedLaunchFilesV3 struct {
+	retirementFile *os.File
 	managementFile *os.File
 	integrityFile  *os.File
 	integrityRoot  *os.Root
@@ -66,6 +69,9 @@ type routedLaunchFilesV3 struct {
 }
 
 func (f *routedLaunchFilesV3) close() {
+	if f.retirementFile != nil {
+		_ = f.retirementFile.Close()
+	}
 	if f.managementFile != nil {
 		_ = f.managementFile.Close()
 	}
@@ -179,7 +185,20 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 	} else if role != RoutedAPIRoleV3 || b.Epoch == 0 || b.Epoch > 0xffffffff || b.HelperPID <= 1 {
 		return fail()
 	}
-	// Adopt FD13 before opening any roots: those opens may reuse an absent FD13.
+	if (!b.FreshScope && b.FreshScopeBinding != nil) || (b.FreshScope && !b.Integrity) || (role == RoutedAPIRoleV3 && b.FreshScopeBinding != nil) {
+		return fail()
+	}
+	// Adopt optional descriptors before opening roots, which may reuse gaps.
+	if b.FreshScope && role == RoutedHelperRoleV3 {
+		if b.FreshScopeBinding == nil {
+			return fail()
+		}
+		f.retirementFile = os.NewFile(14, "root-retirement-receipt")
+		if _, err := readRetirementFileV3(f.retirementFile, *b.FreshScopeBinding); err != nil {
+			return fail()
+		}
+		unix.CloseOnExec(14)
+	}
 	if b.Integrity && role == RoutedHelperRoleV3 {
 		f.integrityFile = os.NewFile(13, "routed-integrity-root")
 		var other []os.FileInfo
@@ -229,6 +248,9 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 		}
 	}
 	resources := RoutedLaunchResourcesV3{Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Directory: f.roots[0], IntegrityRoot: f.integrityRoot, Store: RoutedReaderRootV3{Root: f.roots[1], Access: b.Access[0]}, Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget}
+	if f.retirementFile != nil {
+		resources.FreshScope = &RoutedFreshScopeOptionsV3{Receipt: f.retirementFile, Binding: *b.FreshScopeBinding}
+	}
 	if validateRoutedLaunchV3(resources) != nil {
 		return fail()
 	}
@@ -292,7 +314,11 @@ func (f *routedLaunchFilesV3) context(b routedLaunchBootstrapV3) RoutedLaunchCon
 	if b.StoreBudget != nil {
 		value = *b.StoreBudget
 	}
-	return RoutedLaunchContextV3{LocalOrigin: cloneRoutedLocalOriginV3(b.LocalOrigin), StoreBudget: value, Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Management: f.managementFile, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
+	out := RoutedLaunchContextV3{FreshScopeEnabled: b.FreshScope, LocalOrigin: cloneRoutedLocalOriginV3(b.LocalOrigin), StoreBudget: value, Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Management: f.managementFile, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
+	if f.retirementFile != nil && b.FreshScopeBinding != nil {
+		out.FreshScope = &RoutedFreshScopeOptionsV3{Receipt: f.retirementFile, Binding: *b.FreshScopeBinding}
+	}
+	return out
 }
 
 // RunRoutedLaunchRoleV3 handles only the two fixed, root-launched child roles.
@@ -434,6 +460,9 @@ func runRoutedHelperLaunchV3(ctx context.Context, cancel context.CancelFunc, f *
 		return ErrIdentity
 	}
 	o := RoutedHelperOptionsV3{NetworkInventory: c.NetworkInventory, IntegrityRoot: f.integrityRoot, Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Authority: c.Authority}
+	if b.FreshScope {
+		o.FreshScope = &RoutedFreshScopeOptionsV3{Receipt: f.retirementFile, Binding: *b.FreshScopeBinding}
+	}
 	runtime, e := OpenRoutedHelperV3(ctx, b.Metadata, b.Identities, o)
 	if e != nil {
 		return e
