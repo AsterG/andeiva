@@ -58,8 +58,15 @@ Native only: compile `go test -c ./internal/dhcpclient` and the hook, then run
 `ANDEIVA_DHCP_LAB_AUTHORIZED=1` opt-in and a reviewed bounded systemd unit with
 KillMode=control-group are required. The harness creates only disposable namespaces
 and private mounts; never run it privileged in WSL or on a customer appliance.
-Native qualification and resource measurement are pending until recorded by the
-orchestrator. Docker/EKS activation is outside this laboratory profile.
+The Debian 13 fixture passed with dhcpcd 10.1.0 and BusyBox: acquisition,
+exclusive ownership, an actual RENEW ACK after explicit fixture WAN addressing,
+rebind, restart, expiry without a server, offline restart refusal and restoration
+of the nonempty LAN baseline. It took 142.14 s; the complete unit used 0.445799 s
+CPU and peaked at 19,038,208 bytes. A separate early-server-death test passed in
+35.02 s without lease evidence. These are test measurements, not appliance sizing.
+Host nftables, routes and forwarding were unchanged. Acquisition-only renewal
+without the fixture's L3 application did not pass and remains a documented boundary.
+Docker/EKS activation is outside this laboratory profile.
 Run a separate fresh fixture with `ANDEIVA_DHCP_EARLY_SERVER_DEATH=1` to kill and
 observe server termination through a pidfd before starting the client. That
 negative requires no lease evidence for 35 seconds and unchanged LAN state.

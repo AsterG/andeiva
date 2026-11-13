@@ -2,8 +2,16 @@
 # Native Debian laboratory only. Invoke from a bounded systemd service whose
 # cgroup owns all descendants; never invoke this in WSL or a customer appliance.
 set -euo pipefail
-if [[ ${EUID} != 0 || ${ANDEIVA_DHCP_LAB_AUTHORIZED:-} != 1 ]]; then exit 64; fi
+if [[ ${EUID} != 0 || ${ANDEIVA_DHCP_LAB_AUTHORIZED:-} != 1 || -n ${CI:-} ]]; then exit 64; fi
 if [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] || [[ $(uname -r) == *[Mm]icrosoft* ]]; then exit 64; fi
+grep -qx 'ID=debian' /etc/os-release
+grep -qx 'VERSION_ID="13"' /etc/os-release
+for artifact in "$0" ./dhcp-native.test ./andeiva-dhcp-hook; do
+  [[ -f $artifact && ! -L $artifact && $(stat -c '%u:%h' "$artifact") == 0:1 ]]
+  mode=$(stat -c '%a' "$artifact")
+  [[ $mode =~ ^[0-7]{3,4}$ ]]
+  (( (8#$mode & 0022) == 0 ))
+done
 if [[ $# == 0 ]]; then
   [[ -x /usr/sbin/dhcpcd && -x /usr/bin/busybox ]]
   [[ -x ./dhcp-native.test && -x ./andeiva-dhcp-hook ]]

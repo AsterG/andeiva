@@ -58,6 +58,12 @@ jobs:
         working-directory: frontend
       - run: bash scripts/check.sh
       - run: go test -race ./cmd/... ./internal/...
+      - name: DHCP laboratory guard without privileged network operations
+        run: |
+          bash -n scripts/dhcp-native-isolated.sh
+          refusal=0
+          CI=1 ANDEIVA_DHCP_LAB_AUTHORIZED=1 bash scripts/dhcp-native-isolated.sh isolated || refusal=$?
+          test "$refusal" -eq 64
       - name: Local service policy contracts without runtime activation
         run: |
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./internal/localpolicy
