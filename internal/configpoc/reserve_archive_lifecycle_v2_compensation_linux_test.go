@@ -577,3 +577,84 @@ func TestReserveCompensationValidationResourceSample(t *testing.T) {
 	}
 	t.Logf("source-only sample: resolution_bytes=%d validation_allocs=%.0f mean_wall=%s (filesystem and host dependent; not appliance sizing)", len(raw), allocations, time.Since(start)/10)
 }
+
+func TestReserveCompensatedLocalRollbackRetiresAndReplays(t *testing.T) {
+	c, area, engines, p, now := coordinatorV2Fixture(t, false)
+	attachReserveManagerV2(t, c)
+	c.options.LocalPolicy = localFaultPolicyV2{}
+	initial := clone(*c.store.state.Configuration)
+	config := localSample(t, 18443)
+	if _, _, err := localFaultRequestV2(t, c, p, v2Request{Kind: OpStage, Config: &config}); err != nil {
+		t.Fatal(err)
+	}
+	seconds := uint64(30)
+	_, committed, err := localFaultRequestV2(t, c, p, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = localFaultRequestV2(t, c, p, v2Request{Kind: OpConfirm, Origin: committed.Operation.ID, Target: committed.Current.Running.Hash}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = localFaultRequestV2(t, c, p, v2Request{Kind: OpSave}); err != nil {
+		t.Fatal(err)
+	}
+	before := clone(*c.store.state.Configuration)
+	if initial.LocalServices.Running.Hash == before.LocalServices.Running.Hash {
+		t.Fatal("rollback must target a distinct verified revision")
+	}
+	engines[2].base.FailNext("after")
+	_, result, err := localFaultRequestV2(t, c, p, v2Request{Kind: OpRollback, Target: initial.Running.Hash})
+	if !errors.Is(err, ErrEngine) || result.Operation.Outcome == nil || result.Operation.Outcome.Code != "failed_rolled_back" {
+		t.Fatal("rollback compensation", err)
+	}
+	op := result.Operation
+	if op.Request.Kind != OpRollback || op.Domain != "local_services" || op.Outcome.ConfirmationLease != "" || op.Outcome.ConfirmationDeadline != nil || result.Current.Pending != nil || result.Current.Intent != nil || result.Current.RecoveryRequired {
+		t.Fatal("unpublished rollback became a confirmation outcome")
+	}
+	if !reflect.DeepEqual(result.Current.Firewall, before.Firewall) || !reflect.DeepEqual(result.Current.LocalServices, before.LocalServices) || result.Current.Running.Hash != before.Running.Hash || result.Current.Startup.Hash != before.Startup.Hash || !c.readback(result.Current) {
+		t.Fatal("failed rollback changed prior verified state")
+	}
+	if len(c.store.state.ActiveReserves) != 0 || len(c.store.state.ClosingCredits) != 0 || c.store.state.ReservedBytes != 0 || c.store.state.ReservedInodes != 0 {
+		t.Fatal("rollback compensation did not retire its reserves")
+	}
+	archive, facts, proof := compensationArchiveV2(t, c, op)
+	if facts.Version != 2 || proof.Version != 2 || proof.Kind != "operation_compensated" || proof.Origin != op.ID || proof.Lease == "" || proof.Lease != op.Reserve.PlanScope.Lease || !proof.Deadline.Equal(now.Add(30*time.Second)) || !proof.Deadline.Equal(op.Reserve.PlanScope.Deadline) || proof.Plan != *op.Reserve.Plan || archive.LeaseResolution != facts.Resolution {
+		t.Fatal("rollback plan scope or original deadline lost")
+	}
+	var target v2Configuration
+	if c.store.readObject(proof.Target, &target) != nil || target.Pending == nil || target.Pending.OriginCommit != op.ID || target.Pending.Domain != "local_services" || target.LocalServices.Running.Hash != initial.LocalServices.Running.Hash || target.Pending.Lease != proof.Lease || !target.Pending.Deadline.Equal(proof.Deadline) {
+		t.Fatal("resolution does not bind the actual prospective rollback")
+	}
+	resumed, err := reopenCoordinatorV2(t, c, area)
+	if err != nil {
+		t.Fatal("rollback reopen", err)
+	}
+	var applies int64
+	for _, engine := range engines {
+		applies += engine.applies.Load()
+	}
+	resumed.store.mu.Lock()
+	replay, err := resumed.executeLocalLocked(context.Background(), p, op.ID, localFaultHandleV2{})
+	resumed.store.mu.Unlock()
+	if err != nil || !reflect.DeepEqual(replay.Operation, op) || replay.Current.Pending != nil || replay.Current.Running.Hash != before.Running.Hash {
+		t.Fatal("rollback replay changed terminal facts", err)
+	}
+	for _, engine := range engines {
+		applies -= engine.applies.Load()
+	}
+	if applies != 0 {
+		t.Fatal("rollback replay repeated effects")
+	}
+	again, _, againProof := compensationArchiveV2(t, resumed, replay.Operation)
+	if !reflect.DeepEqual(again, archive) || !reflect.DeepEqual(againProof, proof) {
+		t.Fatal("rollback archive changed during reopen/replay")
+	}
+	resumed.close()
+	if err = resumed.store.close(); err != nil {
+		t.Fatal(err)
+	}
+	report, err := inspectReachabilityV2(context.Background(), area, reachabilityBudgetV2())
+	if err != nil || !report.Complete {
+		t.Fatal("rollback archive graph", err)
+	}
+}
