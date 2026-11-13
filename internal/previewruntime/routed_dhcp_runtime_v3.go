@@ -157,6 +157,18 @@ func (r *RoutedDHCPRuntimeV3) begin(ctx context.Context) (configpoc.RoutedDHCPGr
 	if r.reader.VerifyDHCPReleasedV3(ctx) != nil {
 		return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
 	}
+	// Probe before any gate/forwarding/lease mutation. Only explicit initial
+	// waiting is retryable; an unavailable or changed owner remains recovery.
+	x, currentErr := r.current(ctx)
+	if currentErr != nil {
+		if currentErr == errRoutedDHCPInitialWaitingV1 && x == (RoutedDHCPOwnerFactV3{}) && r.lease == nil && r.work == "" && !r.opened && !r.withdrawn && r.forward.VerifyClosed(ctx) == nil && (r.gate == nil || r.gate.VerifyClosedSelectedV3(ctx) == nil) && r.reader.VerifyDHCPReleasedV3(ctx) == nil && r.ready() == nil && ctx.Err() == nil {
+			return configpoc.RoutedDHCPGrantV3{}, errRoutedDHCPInitialWaitingV1
+		}
+		return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
+	}
+	if ctx.Err() != nil || x.Epoch == 0 || x.Fact.Owner != r.owner || x.Fact.Revoked {
+		return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
+	}
 	if r.gate == nil {
 		if r.forward.VerifyClosed(ctx) != nil {
 			return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery

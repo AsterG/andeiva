@@ -193,7 +193,7 @@ func DecodeRoutedRequestV3(data []byte, run string, namespace, last uint64) (Rou
 }
 
 func routedErrorV3(code string) bool {
-	return code == "" || code == "ANDEIVA_ADMIN_HELPER_UNAVAILABLE" || code == "ANDEIVA_CONFIG_RECOVERY_REQUIRED" || code == "ANDEIVA_CONFIG_CONFLICT"
+	return code == "" || code == "ANDEIVA_ADMIN_HELPER_UNAVAILABLE" || code == "ANDEIVA_CONFIG_RECOVERY_REQUIRED" || code == "ANDEIVA_CONFIG_CONFLICT" || code == ErrRoutedDHCPWaitingV1.Error()
 }
 
 type RoutedReplyV3 struct {
@@ -239,7 +239,7 @@ func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, R
 	}
 	if reply.Error != "" {
 		var empty struct{}
-		if exactRoutedV3(reply.Payload, &empty, nil) != nil {
+		if exactRoutedV3(reply.Payload, &empty, nil) != nil || reply.Error == ErrRoutedDHCPWaitingV1.Error() && reply.Verb != "dhcp_begin" {
 			return reply, result, ErrChannel
 		}
 		return reply, result, nil

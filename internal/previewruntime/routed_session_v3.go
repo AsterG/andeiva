@@ -156,12 +156,18 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		}
 		call, cancel := context.WithTimeout(ctx, timeout)
 		payload, operationErr := s.dispatch(call, command)
+		if operationErr == errRoutedDHCPInitialWaitingV1 && call.Err() != nil {
+			operationErr = configpoc.ErrRecovery
+		}
 		cancel()
 		reply := firewallipc.RoutedReplyV3{ProtocolVersion: firewallipc.RoutedProtocolV3, Run: runtimeRun, Sequence: last, Namespace: identity.Namespace, Domain: "routed", Verb: command.Verb}
 		if operationErr != nil {
 			reply.Error = "ANDEIVA_CONFIG_RECOVERY_REQUIRED"
 			if errors.Is(operationErr, configpoc.ErrConflict) {
 				reply.Error = "ANDEIVA_CONFIG_CONFLICT"
+			}
+			if command.Verb == "dhcp_begin" && operationErr == errRoutedDHCPInitialWaitingV1 {
+				reply.Error = firewallipc.ErrRoutedDHCPWaitingV1.Error()
 			}
 			payload = struct{}{}
 		}

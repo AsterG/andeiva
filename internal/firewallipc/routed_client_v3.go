@@ -131,8 +131,9 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	initialWaiting := false
 	defer func() {
-		if callErr != nil && routedEffectVerbV3(verb) {
+		if callErr != nil && routedEffectVerbV3(verb) && !initialWaiting {
 			c.publicationAllowed.Store(false)
 			c.closingAllowed.Store(false)
 		}
@@ -204,6 +205,13 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 				c.closingAllowed.Store(true)
 			}
 			return out.result, nil
+		case "ANDEIVA_ROUTED_DHCP_WAITING_V1":
+			if verb != "dhcp_begin" || ctx.Err() != nil {
+				c.closeLocked()
+				return RoutedResultV3{}, ErrChannel
+			}
+			initialWaiting = true
+			return RoutedResultV3{}, ErrRoutedDHCPWaitingV1
 		case "ANDEIVA_CONFIG_RECOVERY_REQUIRED":
 			return RoutedResultV3{}, configpoc.ErrRecovery
 		case "ANDEIVA_CONFIG_CONFLICT":
