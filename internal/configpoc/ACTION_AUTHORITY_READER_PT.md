@@ -42,7 +42,8 @@ go build ./...
 ```
 
 Uma prova separada com armazenamento/IPC Unix reais seleciona esse perfil após
-G1 completo sem escritores. Com kernel/rede simulados passou no detector de
+G1 completo sem coordenador aberto nem publicações ativas; os handles compartilhados
+das reservas já estão abertos. Com kernel/rede simulados passou no detector de
 corridas e nos prazos RPC originais de três segundos: 56,58 s total e máximo
 observado de resolução 1,883935121 s. Verifica Boot4, Candidate/Validate,
 Commit/Confirm/Save, ativação roteada, reinicialização do helper e rollback

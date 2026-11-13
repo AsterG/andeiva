@@ -42,7 +42,8 @@ go build ./...
 ```
 
 Una prueba separada con almacén/IPC Unix reales selecciona este perfil tras G1
-completo sin escritores. Con kernel/red simulados pasó con detector de carreras
+completo sin coordinador abierto ni publicaciones activas; los handles compartidos
+de las reservas ya están abiertos. Con kernel/red simulados pasó con detector de carreras
 y plazos RPC originales de tres segundos: 56,58 s total y máximo observado de
 resolución 1,883935121 s. Comprueba Boot4, Candidate/Validate, Commit/Confirm/Save,
 activación enrutada, reinicio del helper y rollback inverso. No habilita fábricas

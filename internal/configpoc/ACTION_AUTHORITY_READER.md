@@ -61,7 +61,8 @@ the action read succeeds without requesting it and full G1 still rejects it.
 This is a scope assertion, not permission to reclaim that object.
 
 A separate shared-store/Unix-IPC lifecycle test opts into the policy after an
-initial full-G1 read with writers closed. With simulated kernel/network I/O it
+initial full-G1 read with the coordinator closed and no active publications.
+Shared pool handles are already open. With simulated kernel/network I/O it
 passed under the unchanged three-second RPC deadlines and the race detector:
 56.58 s overall, maximum logged source resolution 1.883935121 s. It exercises
 Boot4, Candidate/Validate, Commit/Confirm/Save, routed activation, helper restart
