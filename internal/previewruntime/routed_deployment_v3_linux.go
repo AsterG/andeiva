@@ -138,6 +138,19 @@ func (r *routedDeploymentResourcesV3) Close() error {
 }
 
 func openRoutedDeploymentV3(ctx context.Context, c Config) (resources *routedDeploymentResourcesV3, result error) {
+	return openRoutedDeploymentResourcesV3(ctx, c, nil)
+}
+
+// A named-activation consumer has already adopted and classified every FD.
+// This path must never reopen FD3 or fall back to the older unnamed profile.
+func openRoutedDeploymentWithManagementV3(ctx context.Context, c Config, management *os.File) (*routedDeploymentResourcesV3, error) {
+	if management == nil {
+		return nil, ErrIdentity
+	}
+	return openRoutedDeploymentResourcesV3(ctx, c, management)
+}
+
+func openRoutedDeploymentResourcesV3(ctx context.Context, c Config, management *os.File) (resources *routedDeploymentResourcesV3, result error) {
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || c.Validate() != nil {
 		return nil, ErrIdentity
 	}
@@ -272,15 +285,19 @@ func openRoutedDeploymentV3(ctx context.Context, c Config) (resources *routedDep
 	if validateRoutedLaunchV3(r.launch) != nil {
 		return nil, ErrIdentity
 	}
-	r.listener, err = inheritedListener(c)
-	if err != nil {
-		return nil, err
+	if management != nil {
+		r.launch.Management, err = duplicateRoutedManagementV3(c, management)
+	} else {
+		r.listener, err = inheritedListener(c)
+		if err != nil {
+			return nil, err
+		}
+		tcp, ok := r.listener.(*net.TCPListener)
+		if !ok {
+			return nil, ErrIdentity
+		}
+		r.launch.Management, err = tcp.File()
 	}
-	tcp, ok := r.listener.(*net.TCPListener)
-	if !ok {
-		return nil, ErrIdentity
-	}
-	r.launch.Management, err = tcp.File()
 	if err != nil {
 		return nil, ErrIdentity
 	}
@@ -359,11 +376,23 @@ func openRoutedNamespacePinV3(path string, expected uint64) (*os.File, error) {
 
 // RunRoutedSupervisorV3 consumes only an explicitly prepared deployment and
 // root-manager namespace pins. It creates no namespace or policy itself.
-func RunRoutedSupervisorV3(ctx context.Context, c Config) (result error) {
+func RunRoutedSupervisorV3(ctx context.Context, c Config) error {
 	resources, err := openRoutedDeploymentV3(ctx, c)
 	if err != nil {
 		return err
 	}
+	return runRoutedSupervisorResourcesV3(ctx, resources)
+}
+
+func runRoutedSupervisorWithManagementV3(ctx context.Context, c Config, management *os.File) error {
+	resources, err := openRoutedDeploymentWithManagementV3(ctx, c, management)
+	if err != nil {
+		return err
+	}
+	return runRoutedSupervisorResourcesV3(ctx, resources)
+}
+
+func runRoutedSupervisorResourcesV3(ctx context.Context, resources *routedDeploymentResourcesV3) (result error) {
 	defer func() { result = errors.Join(result, resources.Close()) }()
 	supervisor, err := StartRoutedLaunchV3(ctx, resources.launch, os.Stderr)
 	if err != nil {
