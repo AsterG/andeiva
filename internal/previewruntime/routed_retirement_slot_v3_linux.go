@@ -171,7 +171,12 @@ func (s *routedRetirementSlot) Close() error {
 	return err
 }
 
-func openRoutedRetirementResourceV3(metadata Metadata, ids Identities) (*RoutedFreshScopeOptionsV3, error) {
+type routedRetirementResourceV4 struct {
+	FreshScope  *RoutedFreshScopeOptionsV3
+	RebootScope *RoutedRebootScopeOptionsV4
+}
+
+func openRoutedRetirementResourceV3(metadata Metadata, ids Identities) (*routedRetirementResourceV4, error) {
 	if os.Getuid() != 0 || os.Geteuid() != 0 || ids.Validate() != nil || metadata.ValidateRouted() != nil || safeParents(routedRetirementDirectoryV3+"/"+routedRetirementSlotV3) != nil {
 		return nil, ErrIdentity
 	}
@@ -222,10 +227,32 @@ func openRoutedRetirementResourceV3(metadata Metadata, ids Identities) (*RoutedF
 		return nil, nil // Preallocated first activation; no prior retirement proof.
 	}
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: metadata.GatewayNamespace, Host: metadata.HostNamespace, BootID: metadata.BootID, RunID: metadata.RunID}
-	binding := RoutedFreshScopeBindingV3{ReceiptSHA256: retirementDigestV3(raw), NewIdentity: identity}
-	if _, err = readRetirementFileV3(file, binding); err != nil {
+	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return nil, ErrIdentity
+	}
+	actualBoot, err := canonicalBoot(boot)
+	if err != nil || actualBoot != identity.BootID {
+		return nil, ErrIdentity
+	}
+	receipt, err := DecodeRootRetirementReceiptV3(raw)
+	if err != nil {
 		return nil, err
 	}
+	binding := RoutedFreshScopeBindingV3{ReceiptSHA256: retirementDigestV3(raw), NewIdentity: identity}
+	resource := &routedRetirementResourceV4{}
+	if receipt.Old.BootID == actualBoot {
+		if _, err = readRetirementFileV3(file, binding); err != nil {
+			return nil, err
+		}
+		resource.FreshScope = &RoutedFreshScopeOptionsV3{Receipt: file, Binding: binding}
+	} else {
+		reboot := RoutedRebootScopeBindingV4(binding)
+		if _, err = readRebootRetirementFileV4(file, reboot); err != nil {
+			return nil, err
+		}
+		resource.RebootScope = &RoutedRebootScopeOptionsV4{Receipt: file, Binding: reboot}
+	}
 	accepted = true
-	return &RoutedFreshScopeOptionsV3{Receipt: file, Binding: binding}, nil
+	return resource, nil
 }

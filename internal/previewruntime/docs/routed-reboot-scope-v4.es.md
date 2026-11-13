@@ -46,3 +46,22 @@ go vet ./internal/configpoc ./internal/firewallipc ./internal/previewruntime
 go build ./...
 bash scripts/check-config-platforms.sh
 ```
+
+El recurso Root agrupado compara BootID actual del kernel con metadata y el
+recibo decodificado. Selecciona un único perfil: v3 para el mismo BootID, v4
+cuando cambia. Ambos conservan FD14 exclusivo del helper; la API sólo recibe
+una bandera de capacidad, sin binding del recibo. Rechaza perfiles mezclados,
+falta de binding del helper y una factory API con perfil distinto al bootstrap.
+La factory v4 usa `PrepareRebootScopeViewV4(...).Saved` para el motor baseline.
+
+Boot admite inventario local distinto sin servicios únicamente mediante
+`RoutedNoServicesTransitionV3`: Saved/historia autenticados, interfaces canónicas
+derivadas exactamente de la red y cero definiciones de servicios en ambos lados.
+No reescribe Saved. La ausencia real de listeners y el trabajo seleccionado siguen
+siendo requisitos independientes. Tests cubren inventario estático y LAN DHCP;
+rechazan historia ausente, inventario modificado, Saved sustituido y estado local
+inesperado. No acreditan reboot OS nativo ni transferencia FD root del perfil v4.
+
+```sh
+go test -race ./internal/configpoc ./internal/previewruntime -run 'TestRouted(BootNoServicesV3|RetirementBootstrapV[34])' -count=1
+```

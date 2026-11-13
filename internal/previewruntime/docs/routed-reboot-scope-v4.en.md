@@ -47,3 +47,22 @@ go vet ./internal/configpoc ./internal/firewallipc ./internal/previewruntime
 go build ./...
 bash scripts/check-config-platforms.sh
 ```
+
+The grouped Root resource opener compares current kernel BootID with metadata and
+the decoded receipt. It selects exactly one profile: v3 for the same BootID, v4
+for a changed BootID. Both retain helper-only FD14; the API receives only a
+capability flag, without a receipt binding. A mismatched factory profile, mixed
+profiles or missing helper binding is rejected. The v4 appliance factory uses
+`PrepareRebootScopeViewV4(...).Saved` to configure the baseline engine.
+
+Boot admits a changed empty-service inventory only through
+`RoutedNoServicesTransitionV3`, with authenticated Saved/history, canonical exact
+network-derived interfaces and zero service definitions on both sides. Saved is
+not rewritten. Real absence of listeners and selected work remain independent
+requirements. Unit tests cover static and DHCP LAN inventory and reject missing
+history, caller-modified inventory, substituted Saved and unexpected local state.
+These tests do not qualify a native OS reboot or the v4 root FD handoff.
+
+```sh
+go test -race ./internal/configpoc ./internal/previewruntime -run 'TestRouted(BootNoServicesV3|RetirementBootstrapV[34])' -count=1
+```

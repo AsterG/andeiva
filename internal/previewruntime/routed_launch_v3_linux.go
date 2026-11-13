@@ -36,7 +36,8 @@ const (
 // Callers retain every descriptor and own namespace teardown. This opt-in does
 // not provision identities, storage, interfaces, listeners or deployed units.
 type RoutedLaunchResourcesV3 struct {
-	FreshScope                        *RoutedFreshScopeOptionsV3 // Root-opened receipt; helper only.
+	FreshScope                        *RoutedFreshScopeOptionsV3  // Root-opened receipt; helper only.
+	RebootScope                       *RoutedRebootScopeOptionsV4 // Mutually exclusive OS reboot profile.
 	LocalOrigin                       *RoutedLocalOriginV3
 	Metadata                          Metadata
 	Identities                        Identities
@@ -51,21 +52,23 @@ type RoutedLaunchResourcesV3 struct {
 }
 
 type routedLaunchBootstrapV3 struct {
-	FreshScope        bool                              `json:"fresh_scope,omitempty"`
-	FreshScopeBinding *RoutedFreshScopeBindingV3        `json:"fresh_scope_binding,omitempty"`
-	LocalOrigin       *RoutedLocalOriginV3              `json:"local_origin,omitempty"`
-	Version           int                               `json:"version"`
-	Integrity         bool                              `json:"integrity,omitempty"`
-	Management        bool                              `json:"management,omitempty"`
-	StoreBudget       *configpoc.BudgetV2               `json:"store_budget,omitempty"`
-	Metadata          Metadata                          `json:"metadata"`
-	Identities        Identities                        `json:"identities"`
-	Access            [4]recoveryreserve.ReaderAccessV2 `json:"access"`
-	Profiles          [3]recoveryreserve.ProfileV2      `json:"profiles"`
-	Budget            configpoc.SelectionReadBudgetV2   `json:"budget"`
-	ParentPID         int                               `json:"parent_pid"`
-	HelperPID         int32                             `json:"helper_pid"`
-	Epoch             uint64                            `json:"epoch"`
+	FreshScope         bool                              `json:"fresh_scope,omitempty"`
+	RebootScope        bool                              `json:"reboot_scope,omitempty"`
+	RebootScopeBinding *RoutedRebootScopeBindingV4       `json:"reboot_scope_binding,omitempty"`
+	FreshScopeBinding  *RoutedFreshScopeBindingV3        `json:"fresh_scope_binding,omitempty"`
+	LocalOrigin        *RoutedLocalOriginV3              `json:"local_origin,omitempty"`
+	Version            int                               `json:"version"`
+	Integrity          bool                              `json:"integrity,omitempty"`
+	Management         bool                              `json:"management,omitempty"`
+	StoreBudget        *configpoc.BudgetV2               `json:"store_budget,omitempty"`
+	Metadata           Metadata                          `json:"metadata"`
+	Identities         Identities                        `json:"identities"`
+	Access             [4]recoveryreserve.ReaderAccessV2 `json:"access"`
+	Profiles           [3]recoveryreserve.ProfileV2      `json:"profiles"`
+	Budget             configpoc.SelectionReadBudgetV2   `json:"budget"`
+	ParentPID          int                               `json:"parent_pid"`
+	HelperPID          int32                             `json:"helper_pid"`
+	Epoch              uint64                            `json:"epoch"`
 }
 type routedLaunchControlV3 struct {
 	Epoch uint64 `json:"epoch"`
@@ -176,6 +179,18 @@ func validateRoutedLaunchV3(r RoutedLaunchResourcesV3) error {
 			return ErrIdentity
 		}
 	}
+	if r.FreshScope != nil && r.RebootScope != nil {
+		return ErrIdentity
+	}
+	if r.RebootScope != nil {
+		want := networkexecutor.OwnedNamespaceIdentity{UID: r.Identities.HelperUID, GID: r.Identities.IPCGID, Namespace: r.Metadata.GatewayNamespace, Host: r.Metadata.HostNamespace, BootID: r.Metadata.BootID, RunID: r.Metadata.RunID}
+		if r.IntegrityRoot == nil || r.RebootScope.Binding.NewIdentity != want {
+			return ErrIdentity
+		}
+		if _, err := readRebootRetirementFileV4(r.RebootScope.Receipt, r.RebootScope.Binding); err != nil {
+			return err
+		}
+	}
 	if r.FreshScope != nil {
 		want := networkexecutor.OwnedNamespaceIdentity{UID: r.Identities.HelperUID, GID: r.Identities.IPCGID, Namespace: r.Metadata.GatewayNamespace, Host: r.Metadata.HostNamespace, BootID: r.Metadata.BootID, RunID: r.Metadata.RunID}
 		if r.IntegrityRoot == nil || r.FreshScope.Binding.NewIdentity != want {
@@ -280,6 +295,13 @@ func (s *RoutedLaunchSupervisorV3) bootstrap(helper int32, epoch uint64) routedL
 			b.FreshScopeBinding = &binding
 		}
 	}
+	if r.RebootScope != nil {
+		b.RebootScope = true
+		if helper == 0 {
+			binding := r.RebootScope.Binding
+			b.RebootScopeBinding = &binding
+		}
+	}
 	if r.StoreBudget != (configpoc.BudgetV2{}) {
 		value := r.StoreBudget
 		b.StoreBudget = &value
@@ -376,7 +398,7 @@ func (s *RoutedLaunchSupervisorV3) startChild(role string) (*routedLaunchChildV3
 		defer private.Close()
 		cmd.ExtraFiles = append(cmd.ExtraFiles, private) // FD13 is never inherited by the API.
 	}
-	if role == RoutedHelperRoleV3 && s.resources.FreshScope != nil {
+	if role == RoutedHelperRoleV3 && (s.resources.FreshScope != nil || s.resources.RebootScope != nil) {
 		// The integrity directory occupies FD13. Only the helper receives FD14;
 		// the API learns the negotiated capability without this root-only file.
 		if s.resources.IntegrityRoot == nil {
@@ -385,7 +407,11 @@ func (s *RoutedLaunchSupervisorV3) startChild(role string) (*routedLaunchChildV3
 			_ = eventR.Close()
 			return nil, ErrIdentity
 		}
-		cmd.ExtraFiles = append(cmd.ExtraFiles, s.resources.FreshScope.Receipt)
+		if s.resources.FreshScope != nil {
+			cmd.ExtraFiles = append(cmd.ExtraFiles, s.resources.FreshScope.Receipt)
+		} else {
+			cmd.ExtraFiles = append(cmd.ExtraFiles, s.resources.RebootScope.Receipt)
+		}
 	}
 	if role == RoutedAPIRoleV3 && s.resources.Management != nil {
 		cmd.ExtraFiles = append(cmd.ExtraFiles, s.resources.Management)

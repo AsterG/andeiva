@@ -27,6 +27,8 @@ import (
 // their trusted deployment configuration, but cannot replace these descriptors,
 // invent a peer identity or open a configuration writer before the V3 factory.
 type RoutedLaunchContextV3 struct {
+	RebootScopeEnabled         bool
+	RebootScope                *RoutedRebootScopeOptionsV4 // Helper-only borrowed root descriptor.
 	FreshScopeEnabled          bool
 	FreshScope                 *RoutedFreshScopeOptionsV3 // Helper only, borrowed root descriptor.
 	LocalOrigin                *RoutedLocalOriginV3
@@ -185,16 +187,13 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 	} else if role != RoutedAPIRoleV3 || b.Epoch == 0 || b.Epoch > 0xffffffff || b.HelperPID <= 1 {
 		return fail()
 	}
-	if (!b.FreshScope && b.FreshScopeBinding != nil) || (b.FreshScope && !b.Integrity) || (role == RoutedAPIRoleV3 && b.FreshScopeBinding != nil) {
+	if !validRoutedScopeBootstrapV4(b, role) {
 		return fail()
 	}
 	// Adopt optional descriptors before opening roots, which may reuse gaps.
-	if b.FreshScope && role == RoutedHelperRoleV3 {
-		if b.FreshScopeBinding == nil {
-			return fail()
-		}
+	if (b.FreshScope || b.RebootScope) && role == RoutedHelperRoleV3 {
 		f.retirementFile = os.NewFile(14, "root-retirement-receipt")
-		if _, err := readRetirementFileV3(f.retirementFile, *b.FreshScopeBinding); err != nil {
+		if err := validateRoutedScopeReceiptV4(f.retirementFile, b); err != nil {
 			return fail()
 		}
 		unix.CloseOnExec(14)
@@ -248,7 +247,10 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 		}
 	}
 	resources := RoutedLaunchResourcesV3{Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Directory: f.roots[0], IntegrityRoot: f.integrityRoot, Store: RoutedReaderRootV3{Root: f.roots[1], Access: b.Access[0]}, Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget}
-	if f.retirementFile != nil {
+	if f.retirementFile != nil && b.RebootScopeBinding != nil {
+		resources.RebootScope = &RoutedRebootScopeOptionsV4{Receipt: f.retirementFile, Binding: *b.RebootScopeBinding}
+	}
+	if f.retirementFile != nil && b.FreshScopeBinding != nil {
 		resources.FreshScope = &RoutedFreshScopeOptionsV3{Receipt: f.retirementFile, Binding: *b.FreshScopeBinding}
 	}
 	if validateRoutedLaunchV3(resources) != nil {
@@ -314,7 +316,10 @@ func (f *routedLaunchFilesV3) context(b routedLaunchBootstrapV3) RoutedLaunchCon
 	if b.StoreBudget != nil {
 		value = *b.StoreBudget
 	}
-	out := RoutedLaunchContextV3{FreshScopeEnabled: b.FreshScope, LocalOrigin: cloneRoutedLocalOriginV3(b.LocalOrigin), StoreBudget: value, Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Management: f.managementFile, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
+	out := RoutedLaunchContextV3{RebootScopeEnabled: b.RebootScope, FreshScopeEnabled: b.FreshScope, LocalOrigin: cloneRoutedLocalOriginV3(b.LocalOrigin), StoreBudget: value, Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Management: f.managementFile, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
+	if f.retirementFile != nil && b.RebootScopeBinding != nil {
+		out.RebootScope = &RoutedRebootScopeOptionsV4{Receipt: f.retirementFile, Binding: *b.RebootScopeBinding}
+	}
 	if f.retirementFile != nil && b.FreshScopeBinding != nil {
 		out.FreshScope = &RoutedFreshScopeOptionsV3{Receipt: f.retirementFile, Binding: *b.FreshScopeBinding}
 	}
@@ -356,7 +361,7 @@ func runRoutedAPILaunchV3(ctx context.Context, f *routedLaunchFilesV3, b routedL
 	if e != nil {
 		return e
 	}
-	if o.Store != f.roots[1] || o.Runtime.SharedReader == nil || *o.Runtime.SharedReader != b.Access[0] || o.Runtime.BootID != b.Metadata.BootID || !o.Runtime.GuardDeadlines {
+	if o.RoutedFreshScope != b.FreshScope || o.RoutedRebootScope != b.RebootScope || o.Store != f.roots[1] || o.Runtime.SharedReader == nil || *o.Runtime.SharedReader != b.Access[0] || o.Runtime.BootID != b.Metadata.BootID || !o.Runtime.GuardDeadlines {
 		return ErrIdentity
 	}
 	routed, e := dialRoutedLaunchV3(ctx, f.roots[0], "routed.sock", b)
@@ -460,6 +465,9 @@ func runRoutedHelperLaunchV3(ctx context.Context, cancel context.CancelFunc, f *
 		return ErrIdentity
 	}
 	o := RoutedHelperOptionsV3{NetworkInventory: c.NetworkInventory, IntegrityRoot: f.integrityRoot, Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Authority: c.Authority}
+	if b.RebootScope {
+		o.RebootScope = &RoutedRebootScopeOptionsV4{Receipt: f.retirementFile, Binding: *b.RebootScopeBinding}
+	}
 	if b.FreshScope {
 		o.FreshScope = &RoutedFreshScopeOptionsV3{Receipt: f.retirementFile, Binding: *b.FreshScopeBinding}
 	}
@@ -565,4 +573,35 @@ func startRoutedLaunchServersV3(ctx context.Context, listeners [2]*net.UnixListe
 		}
 	}()
 	return s
+}
+
+// The API receives a capability choice, never the root receipt or its binding.
+func validRoutedScopeBootstrapV4(b routedLaunchBootstrapV3, role string) bool {
+	if role != RoutedHelperRoleV3 && role != RoutedAPIRoleV3 {
+		return false
+	}
+	if b.FreshScope && b.RebootScope || !b.FreshScope && b.FreshScopeBinding != nil || !b.RebootScope && b.RebootScopeBinding != nil {
+		return false
+	}
+	if (b.FreshScope || b.RebootScope) && !b.Integrity {
+		return false
+	}
+	if role == RoutedAPIRoleV3 {
+		return b.FreshScopeBinding == nil && b.RebootScopeBinding == nil
+	}
+	return (!b.FreshScope || b.FreshScopeBinding != nil) && (!b.RebootScope || b.RebootScopeBinding != nil)
+}
+func validateRoutedScopeReceiptV4(file *os.File, b routedLaunchBootstrapV3) error {
+	if !validRoutedScopeBootstrapV4(b, RoutedHelperRoleV3) {
+		return ErrIdentity
+	}
+	if b.FreshScope {
+		_, err := readRetirementFileV3(file, *b.FreshScopeBinding)
+		return err
+	}
+	if b.RebootScope {
+		_, err := readRebootRetirementFileV4(file, *b.RebootScopeBinding)
+		return err
+	}
+	return ErrIdentity
 }
