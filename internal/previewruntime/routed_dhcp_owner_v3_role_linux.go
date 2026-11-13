@@ -24,7 +24,13 @@ type routedDHCPOwnerSourceV3 interface {
 type routedDHCPOwnerClientV3 struct{ client *dhcpclient.Client }
 
 func (s routedDHCPOwnerClientV3) Current() (routedDHCPOwnerLeaseV3, error) {
-	l, err := s.client.Current()
+	l, state, err := s.client.AcquisitionSnapshot()
+	if err == nil && state == dhcpclient.AcquisitionInitialWaiting {
+		return routedDHCPOwnerLeaseV3{}, errRoutedDHCPInitialWaitingV1
+	}
+	if err != nil || state != dhcpclient.AcquisitionGranted {
+		return routedDHCPOwnerLeaseV3{}, ErrUnavailable
+	}
 	return routedDHCPOwnerLeaseV3{l.Event, l.Epoch, l.DeadlineBootNS}, err
 }
 

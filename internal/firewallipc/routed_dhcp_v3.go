@@ -2,6 +2,7 @@ package firewallipc
 
 import (
 	"context"
+	"errors"
 	"io"
 	"reflect"
 
@@ -9,6 +10,10 @@ import (
 )
 
 const RoutedDHCPCapabilityV3 = "routed_dhcp_selected.v3"
+
+// This versioned error is a no-effect initial wait, never a grant or readiness.
+// Older peers reject the unknown code; no compatibility fallback is permitted.
+var ErrRoutedDHCPWaitingV1 = errors.New("ANDEIVA_ROUTED_DHCP_WAITING_V1")
 
 // Requests carry correlation only. Neither owner identity, route, lease time,
 // epoch nor a serialized selected plan can be supplied by the controller.

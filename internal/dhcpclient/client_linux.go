@@ -60,6 +60,7 @@ type Client struct {
 	iface                string
 	pid                  int
 	failed               bool
+	initialWaiting       bool
 	failure              string
 	lastReason           string
 	exitCode             int
@@ -148,7 +149,7 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		_ = w.Close()
 		return nil, err
 	}
-	c := &Client{lock: lock, output: r, done: make(chan struct{}), iface: scope.Interface, lastGrant: now, diagnostic: diagnostic}
+	c := &Client{lock: lock, output: r, done: make(chan struct{}), iface: scope.Interface, lastGrant: now, initialWaiting: true, diagnostic: diagnostic}
 	cmd := exec.Command("/usr/sbin/dhcpcd", "-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath, scope.Interface) // #nosec G204 -- Fixed engine, hook and config; allowlisted interface bound to pinned namespaces; no shell.
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout = w
@@ -275,6 +276,9 @@ func (c *Client) accept(e Event, now int64) error {
 	}
 	c.lastEvent = e.BootNS
 	c.lastReason = e.Reason
+	if e.Reason != "PREINIT" && e.Reason != "CARRIER" {
+		c.initialWaiting = false
+	}
 	if granting(e.Reason) {
 		// The hook does not expose the ACK acquisition clock. The previous
 		// grant hook (or process start for the first) precedes this ACK. Use
@@ -307,14 +311,51 @@ func (c *Client) Current() (Lease, error) {
 	return c.currentAt(now)
 }
 func (c *Client) currentAt(now int64) (Lease, error) {
+	l, state, err := c.acquisitionAt(now)
+	if state != AcquisitionGranted {
+		return Lease{}, ErrUnavailable
+	}
+	return l, err
+}
+
+// AcquisitionState distinguishes initial waiting from lost or expired evidence.
+// None of these states authorize configuration or traffic.
+type AcquisitionState uint8
+
+const (
+	AcquisitionUnavailable AcquisitionState = iota
+	AcquisitionInitialWaiting
+	AcquisitionGranted
+)
+
+// AcquisitionSnapshot observes the lease and initial phase in one critical
+// section. Separate Current/phase reads could straddle BOUND and falsely fence.
+func (c *Client) AcquisitionSnapshot() (Lease, AcquisitionState, error) {
+	if c == nil {
+		return Lease{}, AcquisitionUnavailable, ErrUnavailable
+	}
+	now, err := bootNow()
+	if err != nil {
+		return Lease{}, AcquisitionUnavailable, ErrUnavailable
+	}
+	return c.acquisitionAt(now)
+}
+
+func (c *Client) acquisitionAt(now int64) (Lease, AcquisitionState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.failed || c.lease.DeadlineBootNS <= now || c.lease.DeadlineBootNS == 0 {
-		return Lease{}, ErrUnavailable
+	if c.failed || now <= 0 {
+		return Lease{}, AcquisitionUnavailable, ErrUnavailable
+	}
+	if c.initialWaiting && c.epoch == 0 && c.lease.Epoch == 0 && c.lease.DeadlineBootNS == 0 {
+		return Lease{}, AcquisitionInitialWaiting, nil
+	}
+	if c.lease.DeadlineBootNS <= now || c.lease.DeadlineBootNS == 0 {
+		return Lease{}, AcquisitionUnavailable, ErrUnavailable
 	}
 	l := c.lease
 	l.Event.DNS = append([]string(nil), l.Event.DNS...)
-	return l, nil
+	return l, AcquisitionGranted, nil
 }
 
 // Renew requests a fresh renewal through dhcpcd 10.1.0's SIGUSR1 operation.

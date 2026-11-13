@@ -305,9 +305,12 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 		decode = decodeRoutedDHCPOwnerReplyV3
 	}
 	lease, unavailable, err := decode(r.scanner.Bytes(), q)
-	if err != nil || ctx.Err() != nil || !r.alive() {
+	if err != nil && (r.profile != 4 || err != errRoutedDHCPInitialWaitingV1) || ctx.Err() != nil || !r.alive() {
 		r.closeLocked()
 		return empty, ErrUnavailable
+	}
+	if err == errRoutedDHCPInitialWaitingV1 {
+		return empty, err
 	}
 	if unavailable {
 		return empty, r.facts.revoke()
