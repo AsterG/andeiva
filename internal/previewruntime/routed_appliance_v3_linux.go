@@ -143,7 +143,7 @@ func NewRoutedApplianceFactoriesV3(c Config) (RoutedLaunchFactoriesV3, error) {
 			if err != nil || observed.Observed.Revision == "" {
 				return ErrUnavailable
 			}
-			stop, err := startHealth(ctx, identity, routedApplianceHealthV3{runtime: r}, auditLog)
+			stop, err := startHealthAtV3(ctx, routedDeploymentRunV3+"/api/health.sock", identity, routedApplianceHealthV3{runtime: r}, auditLog)
 			if err != nil {
 				return err
 			}

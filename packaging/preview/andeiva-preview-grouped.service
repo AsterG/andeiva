@@ -1,0 +1,45 @@
+[Unit]
+Description=ANDEIVA explicitly prepared grouped runtime supervisor
+Wants=andeiva-preview-grouped.socket
+# Losing the management socket must not stop the guardian parent.
+After=andeiva-preview-grouped.socket
+ConditionPathExists=/etc/andeiva-preview/grouped.json
+ConditionPathExists=/run/andeiva-preview/grouped/runtime.json
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+# Root owns only the inherited-resource supervisor. It launches an API without
+# capabilities and a namespace-bound helper with NET_ADMIN through fixed roles.
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/lib/andeiva-preview/andeiva-preview grouped-supervisor
+Restart=no
+OOMPolicy=continue
+TimeoutStartSec=120
+TimeoutStopSec=20
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_READ_SEARCH CAP_KILL
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ReadWritePaths=/var/lib/andeiva-preview/grouped /var/lib/andeiva-preview/audit /run/andeiva-preview/grouped/ipc /run/andeiva-preview/grouped/api
+InaccessiblePaths=-/var/lib/andeiva-preview/operator
+TasksMax=128
+LimitNOFILE=256
+StandardOutput=journal
+StandardError=journal
+# No Install section: packaging never enables this incomplete deployment path.
+# L2-manager, offline migration and recovery/resource gates remain mandatory.

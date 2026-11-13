@@ -1,0 +1,17 @@
+[Unit]
+PartOf=andeiva-preview-grouped.service
+Description=ANDEIVA explicitly prepared grouped administration listener
+ConditionPathExists=/etc/andeiva-preview/grouped.json
+ConditionPathExists=/etc/systemd/system/andeiva-preview-grouped.socket.d/listen.conf
+After=network-online.target
+Wants=network-online.target
+
+[Socket]
+# Explicit offline provisioning must bind the exact authorized address/device.
+# The placeholder is loopback only and cannot satisfy an unrelated LAN config.
+ListenStream=127.0.0.1:9443
+BindToDevice=lo
+Accept=no
+Service=andeiva-preview-grouped.service
+NoDelay=yes
+Backlog=32

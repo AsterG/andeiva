@@ -61,6 +61,14 @@ func run(args []string) error {
 			return e
 		}
 		return json.NewEncoder(os.Stdout).Encode(map[string]bool{"provisioned": true})
+	case "grouped-supervisor":
+		return previewruntime.RunRoutedSupervisorV3(ctx, c)
+	case "grouped-health":
+		result, err := previewruntime.GroupedHealthV3(ctx, c)
+		if encode := json.NewEncoder(os.Stdout).Encode(result); err == nil {
+			err = encode
+		}
+		return err
 	case "api":
 		return previewruntime.API(ctx, c)
 	case "helper":

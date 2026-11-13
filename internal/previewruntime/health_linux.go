@@ -45,11 +45,14 @@ func available(ctx context.Context, observer healthObserver, audit *auditLog) bo
 }
 
 func startHealth(ctx context.Context, ids Identities, observer healthObserver, audit *auditLog) (func(), error) {
-	l, e := listenPrivate(HealthSocket, ids.APIUID, ids.APIGID)
+	return startHealthAtV3(ctx, HealthSocket, ids, observer, audit)
+}
+func startHealthAtV3(ctx context.Context, path string, ids Identities, observer healthObserver, audit *auditLog) (func(), error) {
+	l, e := listenPrivate(path, ids.APIUID, ids.APIGID)
 	if e != nil {
 		return nil, e
 	}
-	st, e := os.Lstat(HealthSocket)
+	st, e := os.Lstat(path)
 	if e != nil {
 		_ = l.Close()
 		return nil, ErrStorage
@@ -58,7 +61,7 @@ func startHealth(ctx context.Context, ids Identities, observer healthObserver, a
 	done := make(chan struct{})
 	// The listener and accepted sockets are terminal after Close; replies are
 	// written synchronously, so a close error cannot hide an unwritten buffer.
-	stop := func() { once.Do(func() { _ = l.Close(); <-done; removeSocket(HealthSocket, st) }) }
+	stop := func() { once.Do(func() { _ = l.Close(); <-done; removeSocket(path, st) }) }
 	go func() {
 		defer close(done)
 		for {
@@ -86,15 +89,21 @@ func startHealth(ctx context.Context, ids Identities, observer healthObserver, a
 	return stop, nil
 }
 func Health(ctx context.Context, c Config) (HealthResult, error) {
+	return healthAtV3(ctx, c, HealthSocket)
+}
+func GroupedHealthV3(ctx context.Context, c Config) (HealthResult, error) {
+	return healthAtV3(ctx, c, routedDeploymentRunV3+"/api/health.sock")
+}
+func healthAtV3(ctx context.Context, c Config, path string) (HealthResult, error) {
 	ids, e := LoadIdentities(c)
 	if e != nil {
 		return HealthResult{}, e
 	}
-	if socketInfo(HealthSocket, ids.APIUID, ids.APIGID) != nil {
+	if socketInfo(path, ids.APIUID, ids.APIGID) != nil {
 		return HealthResult{}, ErrIdentity
 	}
 	dial := net.Dialer{Timeout: 3 * time.Second}
-	conn, e := dial.DialContext(ctx, "unix", HealthSocket)
+	conn, e := dial.DialContext(ctx, "unix", path)
 	if e != nil {
 		return HealthResult{}, ErrUnavailable
 	}
