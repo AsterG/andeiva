@@ -15,3 +15,8 @@ GOPROXY=off GOSUMDB=off go test -race ./internal/configpoc -run '^TestColdContin
 ```
 
 Use Go 1.27.4 with offline dependencies already present. No deployed runtime, network or multi-user performance qualification is claimed.
+
+
+## Persistent fence
+
+ResolveFencedContinuationV1 reuses the same bounded action graph and final revalidation. It permits original compensation and readback; it rejects Arm, Apply, Bootstrap and Resume. Confirm requires an already selected Confirm or boot Intent whose complete typed content still matches the captured Intent. A Pending-only anchor cannot authorize a newly admitted Confirm while fenced. This does not clear a fence or qualify full integrity. Confirmed corruption also blocks the entire writer, including internal identity and maintenance publications.

@@ -55,6 +55,10 @@ func (r *RoutedSelectionReaderV2) CaptureColdAnchorV1(ctx context.Context) (Rout
 // relates it to the selection captured at attach. It cannot authorize a new
 // ordinary Arm/Apply. The caller retains the writer barrier and guardian CAS.
 func (r *RoutedSelectionReaderV2) ResolveColdContinuationV1(ctx context.Context, anchor RoutedColdAnchorV1, expected RoutedWorkReferenceV1, purpose RoutedSelectionPurposeV2) (out RoutedSelectedPlanV1, resultErr error) {
+	return r.resolveColdContinuationV1(ctx, anchor, expected, purpose, false)
+}
+
+func (r *RoutedSelectionReaderV2) resolveColdContinuationV1(ctx context.Context, anchor RoutedColdAnchorV1, expected RoutedWorkReferenceV1, purpose RoutedSelectionPurposeV2, fenced bool) (out RoutedSelectedPlanV1, resultErr error) {
 	if r == nil || ctx == nil || anchor.reader != r || !validHash(anchor.configurationHash) || !validHash(expected.Work) || expected.Lineage != anchor.reference.Lineage || expected.Generation == 0 {
 		return out, ErrInvalid
 	}
@@ -109,6 +113,9 @@ func (r *RoutedSelectionReaderV2) ResolveColdContinuationV1(ctx context.Context,
 		return out, ErrConflict
 	}
 	if !selectedPurposeV2(v.store, plan, purpose) || (!coldContinuationLinkedV1(anchor, plan, purpose) && !coldCompletedPredecessorV1(v, anchor, plan, purpose)) {
+		return out, ErrDenied
+	}
+	if fenced && !fencedContinuationAllowedV1(anchor, v.store.state.Configuration, purpose) {
 		return out, ErrDenied
 	}
 	if err = action.revalidate(ctx, v); err != nil {

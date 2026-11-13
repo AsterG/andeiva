@@ -15,3 +15,8 @@ GOPROXY=off GOSUMDB=off go test -race ./internal/configpoc -run '^TestColdContin
 ```
 
 Usar Go 1.27.4 y dependencias offline ya disponibles. No se afirma calificación desplegada, de red ni de rendimiento entre usuarios.
+
+
+## Bloqueo persistente
+
+ResolveFencedContinuationV1 reutiliza el mismo grafo acotado y su validación final. Permite compensación original y lectura efectiva; rechaza Arm, Apply, Bootstrap y Resume. Confirm exige un Intent de confirmación o arranque previamente seleccionado, cuyo contenido tipado completo sigue coincidiendo con el ancla. Un ancla con sólo Pending no autoriza una confirmación nueva mientras existe bloqueo. Esto no elimina el bloqueo ni acredita integridad completa. La corrupción confirmada también bloquea todo el escritor, incluidas publicaciones internas de identidad y mantenimiento.

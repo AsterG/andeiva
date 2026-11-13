@@ -130,6 +130,7 @@ func (s *ServiceV2) InspectRuntimeV1(ctx context.Context) error {
 	}
 	if result.State == IntegrityFencedV1 {
 		c.integrity.fenced = true
+		c.store.blocked = true
 	}
 	current, currentErr := selectedReferenceV2(c.store)
 	if err != nil || bounded.Err() != nil || currentErr != nil || current != expected || result.Selection != expected || result.State != IntegrityCompleteV1 || c.integrity.fenced {
