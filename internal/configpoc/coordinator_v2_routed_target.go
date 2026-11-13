@@ -24,7 +24,7 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 		if op.Request.Kind == OpDiscardCandidate {
 			target.Firewall.Candidate, target.LocalServices.Candidate, target.CandidateGroup = nil, nil, nil
 		} else {
-			if state.LocalServices.Candidate.Revision.Hash != state.LocalServices.Running.Hash {
+			if state.LocalServices.Candidate.Revision.Hash != state.LocalServices.Running.Hash && !RoutedNoServicesTransitionV3(state.Firewall.Running, state.LocalServices.Running, state.Firewall.Candidate.Revision, state.LocalServices.Candidate.Revision) {
 				return target, false, ErrDenied
 			}
 			if op.Request.Config.SchemaVersion == 4 && (!hasFeatureV2(s.state, v2RoutedNoNetworkFeature) || state.Firewall.Running.Config.SchemaVersion != 4) {
@@ -34,10 +34,14 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 			if err != nil {
 				return target, false, err
 			}
+			local, err := noServicesCandidateV3(state.Firewall.Running, state.LocalServices.Running, firewall)
+			if err != nil {
+				return target, false, err
+			}
 			target.Firewall.Candidate = &v2DomainCandidate{Owner: op.Subject, Base: state.Firewall.Running.Hash, Revision: firewall}
-			// Preserve the selected local candidate revision, never substitute the
-			// caller's local configuration or consume independent local work.
-			target.LocalServices.Candidate.Base = state.LocalServices.Running.Hash
+			// Recompute only the empty-service inventory from the new network;
+			// no caller-supplied local policy or independent candidate is consumed.
+			target.LocalServices.Candidate = &v2DomainCandidate{Owner: op.Subject, Base: state.LocalServices.Running.Hash, Revision: local}
 			target.CandidateGroup = &v2CandidateGroup{Operation: op.ID, Owner: op.Subject, Base: state.Running.Hash, Domains: []string{"firewall", "local_services"}}
 		}
 		incFirewall, incLocal = true, true
@@ -64,6 +68,10 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 				return target, false, ErrDenied
 			}
 		}
+		local, err = noServicesCandidateV3(state.Firewall.Running, local, firewall)
+		if err != nil {
+			return target, false, err
+		}
 		target.Firewall.Candidate = &v2DomainCandidate{Owner: op.Subject, Base: state.Firewall.Running.Hash, Revision: firewall}
 		target.LocalServices.Candidate = &v2DomainCandidate{Owner: op.Subject, Base: state.LocalServices.Running.Hash, Revision: local}
 		target.CandidateGroup = &v2CandidateGroup{Operation: op.ID, Owner: op.Subject, Base: state.Running.Hash, Domains: []string{"firewall", "local_services"}}
@@ -76,6 +84,9 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 	case OpCommit:
 		if !matchingGroup() || state.Pending != nil {
 			return target, false, ErrConflict
+		}
+		if state.LocalServices.Candidate.Revision.Hash != state.LocalServices.Running.Hash && !RoutedNoServicesTransitionV3(state.Firewall.Running, state.LocalServices.Running, state.Firewall.Candidate.Revision, state.LocalServices.Candidate.Revision) {
+			return target, false, ErrDenied
 		}
 		target.Firewall.Running = clone(state.Firewall.Candidate.Revision)
 		target.LocalServices.Running = clone(state.LocalServices.Candidate.Revision)
@@ -109,7 +120,7 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 		if err != nil {
 			return target, false, err
 		}
-		if bundle.LocalServices.Hash != state.LocalServices.Running.Hash {
+		if bundle.LocalServices.Hash != state.LocalServices.Running.Hash && !RoutedNoServicesTransitionV3(state.Firewall.Running, state.LocalServices.Running, bundle.Firewall, bundle.LocalServices) {
 			return target, false, ErrDenied
 		}
 		incFirewall = true
