@@ -10,10 +10,16 @@ import (
 )
 
 type testIntegrityV1 struct {
+	attach  func(context.Context, SelectionReferenceV2) error
 	inspect func(context.Context, SelectionReferenceV2) (IntegrityResultV1, error)
 }
 
-func (*testIntegrityV1) Attach(context.Context, SelectionReferenceV2) error { return nil }
+func (g *testIntegrityV1) Attach(ctx context.Context, ref SelectionReferenceV2) error {
+	if g.attach != nil {
+		return g.attach(ctx, ref)
+	}
+	return nil
+}
 func (g *testIntegrityV1) Inspect(ctx context.Context, ref SelectionReferenceV2) (IntegrityResultV1, error) {
 	return g.inspect(ctx, ref)
 }
@@ -126,5 +132,92 @@ func TestRuntimeIntegrityV1RejectsUnexpectedTuple(t *testing.T) {
 	}}
 	if err := s.InspectRuntimeV1(context.Background()); !errors.Is(err, ErrRecovery) || s.coordinator.integrity.ready {
 		t.Fatal("unexpected tuple accepted", err)
+	}
+}
+
+func TestRuntimeIntegrityV1DueInspectionPreservesReservedConfirmation(t *testing.T) {
+	c, _, _, p, now := coordinatorV2Fixture(t, false)
+	attachReserveManagerV2(t, c)
+	auth, binding, _ := serviceV2Auth(t, p.Subject, "alice", "admin", c.store.state.Subjects[0].CredentialRevision)
+	s := &ServiceV2{coordinator: c, auth: auth}
+	c.options.Integrity = &testIntegrityV1{inspect: completeIntegrityV1}
+	if err := s.InspectRuntimeV1(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	coordinatorV2Stage(t, c, p, "integrity-confirm")
+	coordinatorV2Run(t, c, p, v2Request{Kind: OpValidate})
+	seconds := uint64(120)
+	committed := coordinatorV2Run(t, c, p, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+	deadline := committed.Current.Pending.Deadline
+	*now = now.Add(70 * time.Second)
+	if _, err := s.Admit(binding, committed.Operation.Namespace, c.store.state.Generation, v2Request{Kind: OpSave}); !errors.Is(err, ErrRecovery) {
+		t.Fatal("overdue ordinary admission", err)
+	}
+	if err := s.InspectRuntimeV1(context.Background()); !errors.Is(err, ErrRecovery) {
+		t.Fatal("inspection accepted live lease", err)
+	}
+	namespace, err := s.Namespace(binding, "firewall", time.Minute)
+	if err != nil {
+		t.Fatal("reserved closing namespace denied", err)
+	}
+	op, err := s.Admit(binding, namespace.ID, c.store.state.Generation, v2Request{Kind: OpConfirm, Origin: committed.Operation.ID, Target: committed.Current.Pending.Target})
+	if err != nil || op.ID == "" {
+		t.Fatal("reserved confirmation denied", err)
+	}
+	if !c.store.state.Configuration.Pending.Deadline.Equal(deadline) {
+		t.Fatal("confirmation deadline changed")
+	}
+	if _, err = s.Execute(context.Background(), binding, op.ID); err != nil {
+		t.Fatal("reserved confirmation execute denied", err)
+	}
+	if c.store.state.Configuration.Pending != nil {
+		t.Fatal("confirmation not closed")
+	}
+	if err := s.InspectRuntimeV1(context.Background()); err != nil {
+		t.Fatal("post-confirm inspection", err)
+	}
+}
+
+func TestRuntimeIntegrityV1AttachPrecedesCoordinatorEffects(t *testing.T) {
+	c, area, engines, p, _ := coordinatorV2Fixture(t, false)
+	auth, _, _ := serviceV2Auth(t, p.Subject, "alice", "admin", c.store.state.Subjects[0].CredentialRevision)
+	for _, engine := range engines {
+		engine.reset()
+	}
+	wanted, err := selectedReferenceV2(c.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.close()
+	if err := c.store.close(); err != nil {
+		t.Fatal(err)
+	}
+	attached := false
+	gate := &testIntegrityV1{attach: func(_ context.Context, ref SelectionReferenceV2) error {
+		attached = true
+		if ref != wanted {
+			t.Fatal("attach changed expected selection")
+		}
+		for _, engine := range engines {
+			if engine.applies.Load() != 0 || engine.reads.Load() != 0 {
+				t.Fatal("coordinator effect or readback before attach")
+			}
+		}
+		return ErrRecovery
+	}, inspect: completeIntegrityV1}
+	service, err := openServiceCoordinatorV2(context.Background(), area, BudgetV2{Bytes: 8 << 30, Inodes: 2 << 20}, auth, []Engine{engines[0], engines[1]}, []Engine{engines[2]}, v2CoordinatorOptions{Integrity: gate})
+	if !attached || service != nil || !errors.Is(err, ErrRecovery) {
+		t.Fatal("failed attachment returned a service", err)
+	}
+	// The failed constructor must release the sole-writer lock, permitting a
+	// normal qualified restart rather than abandoning the store permanently.
+	gate.attach = nil
+	service, err = openServiceCoordinatorV2(context.Background(), area, BudgetV2{Bytes: 8 << 30, Inodes: 2 << 20}, auth, []Engine{engines[0], engines[1]}, []Engine{engines[2]}, v2CoordinatorOptions{Integrity: gate})
+	if err != nil {
+		t.Fatal("writer lock leaked", err)
+	}
+	defer service.Close()
+	if !service.coordinator.integrity.ready {
+		t.Fatal("constructor returned before qualification")
 	}
 }

@@ -22,7 +22,7 @@ func (s *ServiceV2) localAccessV2(binding adminauth.SessionBinding, receiver Loc
 
 func (s *ServiceV2) AdmitLocalV2(binding adminauth.SessionBinding, namespace string, expected uint64, request OperationRequestV2) (OperationV2, error) {
 	var result v2Operation
-	err := s.catalogueMutationV1(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
+	err := s.catalogueAdmissionV1(binding, namespace, request, func(store *v2Store, p v2TrustedPrincipal) (err error) {
 		if s.coordinator.options.LocalPolicy == nil {
 			return ErrDenied
 		}

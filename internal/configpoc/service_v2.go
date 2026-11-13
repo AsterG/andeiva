@@ -239,7 +239,7 @@ func (s *ServiceV2) catalogueAccessV1(binding adminauth.SessionBinding, mutation
 		return err
 	}
 	c := s.coordinator
-	if mutation && c.options.Integrity != nil && c.integrity.inspecting.Load() {
+	if c.options.Integrity != nil && c.integrity.inspecting.Load() {
 		return ErrRecovery
 	}
 	c.store.mu.Lock()
@@ -258,9 +258,18 @@ func (s *ServiceV2) catalogueAccessV1(binding adminauth.SessionBinding, mutation
 
 func (s *ServiceV2) Namespace(binding adminauth.SessionBinding, domain string, lifetime time.Duration) (NamespaceV2, error) {
 	var result v2Namespace
-	err := s.catalogueMutationV1(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
+	err := s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
 		if s.coordinator.options.Routed != nil && hasFeatureV2(store.state, v2RoutedFeature) && domain != "routed" {
 			return ErrDenied
+		}
+		if !s.coordinator.integrityAllowsV1(false) {
+			if !s.coordinator.integrityAllowsV1(true) || lifetime <= 0 || lifetime > 24*time.Hour || s.coordinator.now().Before(store.state.Clock) {
+				return ErrRecovery
+			}
+			// Only a reserved closing namespace may be published while a live
+			// confirmation prevents the next quiescent integrity inspection.
+			result, err = store.closingNamespaceLocked(p.Subject, domain, s.coordinator.now(), lifetime)
+			return err
 		}
 		result, err = store.namespaceLocked(p.Subject, domain, s.coordinator.now(), lifetime)
 		return err
@@ -269,7 +278,7 @@ func (s *ServiceV2) Namespace(binding adminauth.SessionBinding, domain string, l
 }
 func (s *ServiceV2) Admit(binding adminauth.SessionBinding, namespace string, expected uint64, request OperationRequestV2) (OperationV2, error) {
 	var result v2Operation
-	err := s.catalogueMutationV1(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
+	err := s.catalogueAdmissionV1(binding, namespace, request, func(store *v2Store, p v2TrustedPrincipal) (err error) {
 		if i := store.namespaceIndex(p.Subject, namespace); s.coordinator.options.Routed != nil && hasFeatureV2(store.state, v2RoutedFeature) && i >= 0 && store.state.Namespaces[i].Domain != "routed" {
 			return ErrDenied
 		}

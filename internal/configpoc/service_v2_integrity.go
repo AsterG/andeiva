@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync/atomic"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/adminauth"
 )
 
 // RuntimeIntegrityV1 is a trusted controller dependency, never a user request.
@@ -99,6 +101,24 @@ func (c *v2Coordinator) integrityAllowsV1(closing bool) bool {
 	now := c.now()
 	sequence := c.store.selection.Sequence
 	return !now.Before(i.checked) && now.Sub(i.checked) < IntegrityInspectionIntervalV1 && sequence >= i.sequence && sequence-i.sequence < IntegrityPublicationLimitV1
+}
+
+func (s *ServiceV2) catalogueAdmissionV1(binding adminauth.SessionBinding, namespace string, request OperationRequestV2, call func(*v2Store, v2TrustedPrincipal) error) error {
+	return s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) error {
+		c := s.coordinator
+		if !c.integrityAllowsV1(false) {
+			i := store.namespaceIndex(p.Subject, namespace)
+			if !c.integrityAllowsV1(true) || request.Kind != OpConfirm || i < 0 {
+				return ErrRecovery
+			}
+			// Validate the exact origin, owner, target and original deadline before
+			// admission maintenance can publish. This grants no ordinary work.
+			if _, _, err := store.closingOriginLocked(p.Subject, store.state.Namespaces[i].Domain, request.Origin, request.Target, c.now()); err != nil {
+				return err
+			}
+		}
+		return call(store, p)
+	})
 }
 
 // Accepted catalogue work and reserved closing potential are not physical
