@@ -10,8 +10,26 @@ import (
 	"time"
 
 	"github.com/AsterG/andeiva/internal/localpolicy"
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
+
+// This boundary refuses preparation. It proves the offline declaration reaches
+// physical preparation, without claiming an applied kernel state or readiness.
+type seedPreparationBoundaryV3 struct {
+	RoutedAuthorityV1
+	identity networkexecutor.OwnedNamespaceIdentity
+	called   bool
+	err      error
+}
+
+func (a *seedPreparationBoundaryV3) Identity() networkexecutor.OwnedNamespaceIdentity {
+	return a.identity
+}
+func (a *seedPreparationBoundaryV3) PrepareBoot(context.Context, RoutedActivationBundleV1, RoutedActivationBundleV1) (RoutedPreparationV1, error) {
+	a.called = true
+	return RoutedPreparationV1{}, a.err
+}
 
 func offlineSeedFixtureV3(t *testing.T) (*os.Root, RuntimePoolsV2, Revision, Revision, []SubjectV2, BudgetV2) {
 	t.Helper()
@@ -89,6 +107,19 @@ func TestOfflineRoutedSeedV3DeclaredNotVerified(t *testing.T) {
 	}
 	if err = PrepareOfflineRoutedStoreV3(context.Background(), area, budget, pools, fw, ls, subjects, time.Now()); err == nil {
 		t.Fatal("reseed overwrote existing installation")
+	}
+	manager, err := newReserveManagerV2(pools.Admission, pools.Plan, pools.Emergency)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boot := v2BootID("12345678-1234-1234-1234-123456789abc")
+	boundary := &seedPreparationBoundaryV3{identity: networkexecutor.OwnedNamespaceIdentity{UID: 123, GID: 124, Namespace: 125, Host: 126, BootID: string(boot), RunID: "12345678123412341234123456789abc"}, err: errors.New("physical preparation intentionally refused")}
+	c, err := openCoordinatorV2(context.Background(), store, engines, []Engine{NewSimEngine("never-called-local")}, v2CoordinatorOptions{Routed: boundary, RoutedIdentity: boundary.identity, BootID: &boot, Reserves: manager, GuardDeadlines: true})
+	if c != nil {
+		c.close()
+	}
+	if !boundary.called || !errors.Is(err, boundary.err) || store.state.Configuration.LastCompletedBoot != "" || store.state.Configuration.VerifiedIndex != "" {
+		t.Fatal("seed did not reach refused physical preparation safely", err)
 	}
 }
 
