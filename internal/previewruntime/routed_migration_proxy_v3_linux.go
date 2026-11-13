@@ -63,11 +63,10 @@ func (p *migrationPrepareProxyV3) VerifyMigratedSources(ctx context.Context, exp
 		return ErrUnavailable
 	}
 	p.sequence++
-	data := marshal(migrationPrepareFrameV3{Version: 1, Sequence: p.sequence, Kind: "verify", Request: p.session, Expected: expected, Firewall: fw, Local: local})
+	data := migrationPrepareLineV3(migrationPrepareFrameV3{Version: 1, Sequence: p.sequence, Kind: "verify", Request: p.session, Expected: expected, Firewall: fw, Local: local})
 	if len(data) == 0 || len(data) >= migrationPrepareFrameLimitV3 {
 		return ErrConfiguration
 	}
-	data = append(data, '\n')
 	if _, err := os.Stdout.Write(data); err != nil {
 		return err
 	}
@@ -268,11 +267,10 @@ func PrepareRoutedMigrationV3(ctx context.Context, c Config) (out routedMigratio
 	if err = read.Close(); err != nil {
 		return out, err
 	}
-	request := marshal(migrationPrepareRequestV3{Version: 1, ParentPID: os.Getpid(), Metadata: metadata, Identities: ids, Draft: draft, Authorization: authorization})
+	request := migrationPrepareLineV3(migrationPrepareRequestV3{Version: 1, ParentPID: os.Getpid(), Metadata: metadata, Identities: ids, Draft: draft, Authorization: authorization})
 	if len(request) == 0 || len(request) >= migrationPrepareFrameLimitV3 {
 		return out, ErrConfiguration
 	}
-	request = append(request, '\n')
 	sessionHash := sha256.Sum256(request)
 	session := hex.EncodeToString(sessionHash[:])
 	if _, err = write.Write(request); err != nil {
@@ -412,3 +410,7 @@ func decodeMigrationPrepareFrameV3(line []byte, sequence int, session string) (m
 	}
 	return frame, nil
 }
+
+// marshal already includes the single NDJSON terminator. Both peers hash these
+// exact bytes; adding a second terminator creates a different request binding.
+func migrationPrepareLineV3(value any) []byte { return marshal(value) }
