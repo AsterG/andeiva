@@ -66,6 +66,14 @@ jobs:
           refusal=0
           CI=1 ANDEIVA_DHCP_LAB_AUTHORIZED=1 bash scripts/dhcp-native-isolated.sh isolated || refusal=$?
           test "$refusal" -eq 64
+          bash -n scripts/dhcp-lease-native-isolated.sh
+          refusal=0
+          CI=1 ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 bash scripts/dhcp-lease-native-isolated.sh lifecycle || refusal=$?
+          test "$refusal" -eq 1
+          bash -n scripts/routed-links-native-isolated.sh
+          refusal=0
+          CI=1 ANDEIVA_ROUTED_LINKS_LAB_AUTHORIZED=1 bash scripts/routed-links-native-isolated.sh || refusal=$?
+          test "$refusal" -eq 1
       - name: Local service policy contracts without runtime activation
         run: |
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./internal/localpolicy
