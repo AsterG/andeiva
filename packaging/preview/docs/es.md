@@ -157,3 +157,11 @@ andeiva system info --url https://DIRECCION_LAN:9443 --ca-file /trusted/ca.crt -
 del appliance conectado. La validación del paquete comprueba que esa identidad
 coincida con su versión Debian. Solo se devuelve identidad propia de ANDEIVA,
 sin versiones del sistema operativo, kernel ni motores.
+
+### Política conservada al detener la administración
+
+En Debian de laboratorio recuperable, ejecuta el arnés nativo del paquete con
+`--ack-isolated-debian13-vm --api-stop`. Detiene API y socket; comprueba procesos,
+metadatos y política efectiva del kernel sin cambios; compara seis pruebas reales
+TCP/UDP y reinicia la administración. Si falla una comprobación, intenta restaurar
+la administración. No valida la intención de la política, migración, reinicio ni routing.

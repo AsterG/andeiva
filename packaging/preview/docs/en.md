@@ -164,3 +164,12 @@ andeiva system info --url https://LAN_ADDRESS:9443 --ca-file /trusted/ca.crt --c
 connected appliance. Package validation checks that local identity matches the
 Debian package version. Only ANDEIVA product identity is returned; operating
 system, kernel and engine versions are outside this public contract.
+
+### Retained policy during an explicit administration stop
+
+On a recoverable Debian laboratory installation, run the packaged native harness
+with `--ack-isolated-debian13-vm --api-stop`. It stops the API and socket, verifies
+unchanged helper/namespace processes, metadata and effective kernel policy,
+compares six actual TCP/UDP probe outcomes, and restarts administration. A cleanup
+trap attempts management recovery if an assertion fails. It does not prove that
+those outcomes match an intended policy, or qualify migration, reboot or routing.
