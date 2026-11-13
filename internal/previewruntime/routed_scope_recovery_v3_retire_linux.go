@@ -14,7 +14,24 @@ import (
 // Only managed Root calls this path with authenticated inherited anchors and
 // the already verified deployment cutover. It never accepts public proof DTOs.
 func retireInheritedRoutedScopeV3(ctx context.Context, c Config, area *os.Root, slot *routedRetirementSlot, record *routedScopeRecordSlotV3, r *RoutedScopeRecoveryV3, ids Identities) (result error) {
+	if ctx == nil || ctx.Err() != nil || r == nil || os.Getuid() != 0 || os.Geteuid() != 0 {
+		return ErrIdentity
+	}
+	deployment, err := openRoutedRecoveryDeploymentV3(ctx, c, r.record.Metadata, ids)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, deployment.Close()) }()
+	return retireInheritedRoutedScopeResourcesV3(ctx, area, slot, record, r, ids, deployment.launch)
+}
+
+// The deployment wrapper above is the only production caller. Native component
+// tests supply real pinned reader resources without claiming deployment provenance.
+func retireInheritedRoutedScopeResourcesV3(ctx context.Context, area *os.Root, slot *routedRetirementSlot, record *routedScopeRecordSlotV3, r *RoutedScopeRecoveryV3, ids Identities, resources RoutedLaunchResourcesV3) (result error) {
 	if ctx == nil || ctx.Err() != nil || area == nil || slot == nil || record == nil || r == nil || os.Getuid() != 0 || os.Geteuid() != 0 || r.record.Identities != ids {
+		return ErrIdentity
+	}
+	if resources.Metadata != r.record.Metadata || resources.Identities != ids {
 		return ErrIdentity
 	}
 	raw, err := record.read()
@@ -36,18 +53,12 @@ func retireInheritedRoutedScopeV3(ctx context.Context, c Config, area *os.Root, 
 	if err = r.VerifyStored(ctx); err != nil {
 		return err
 	}
-	deployment, err := openRoutedRecoveryDeploymentV3(ctx, c, r.record.Metadata, ids)
-	if err != nil {
-		return err
-	}
-	defer func() { result = errors.Join(result, deployment.Close()) }()
-	barrier, err := openScopeRecoveryBarrierV3(ctx, deployment.launch.Store, ids)
+	barrier, err := openScopeRecoveryBarrierV3(ctx, resources.Store, ids)
 	if err != nil {
 		return err
 	}
 	defer func() { result = errors.Join(result, barrier.Close()) }()
 	old := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: r.record.Metadata.GatewayNamespace, Host: r.record.Metadata.HostNamespace, BootID: r.record.Metadata.BootID, RunID: r.record.Metadata.RunID}
-	resources := deployment.launch
 	options := RoutedSelectedPreflightOptionsV4{Metadata: r.record.Metadata, Identities: ids, Store: resources.Store, Admission: resources.Admission, Plan: resources.Plan, Emergency: resources.Emergency, Budget: resources.Budget, Identity: old, Purpose: RoutedPreflightRetirementV4}
 	source, err := ReadRoutedSelectedPreflightV4(ctx, options)
 	if err != nil {
