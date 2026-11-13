@@ -339,6 +339,50 @@ func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work config
 	if err != nil || ctx.Err() != nil || out.Job != q || out.Unavailable || len(files) != want || (out.Binding != nil) != (op == "prepare") {
 		return fail(files)
 	}
+	if op == "prepare" && (!routedDHCPDeferredBindingValidV4(*out.Binding) || adoptRoutedDHCPJobPipesV4(files, c.peer) != nil) {
+		return fail(files)
+	}
 	return out, files, nil
 }
 func (c *routedDHCPJobClientV4) Close() error { return c.conn.Close() }
+
+// SCM_RIGHTS preserves blocking mode. NewFile must see O_NONBLOCK to register
+// pipe deadlines; a duplicate avoids two Go finalizers owning the same FD.
+// The trusted bootstrap fixes peer UID/GID to root, never reply-supplied IDs.
+func adoptRoutedDHCPJobPipesV4(files []*os.File, peer routedDHCPJobPeerV4) error {
+	if len(files) != 3 {
+		return ErrIdentity
+	}
+	for i, access := range []int{unix.O_WRONLY, unix.O_RDONLY} {
+		if files[i] == nil || files[i].Fd() > math.MaxInt32 {
+			return ErrIdentity
+		}
+		fd := files[i].Fd()
+		var st unix.Stat_t
+		flags, err := unix.FcntlInt(fd, unix.F_GETFL, 0)
+		if err != nil || unix.Fstat(int(fd), &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFIFO || st.Mode&07777 != 0600 || st.Uid != peer.uid || st.Gid != peer.gid || flags&unix.O_ACCMODE != access {
+			return ErrIdentity
+		}
+	}
+	for i := 0; i < 2; i++ {
+		fd, err := unix.FcntlInt(files[i].Fd(), unix.F_DUPFD_CLOEXEC, 0)
+		if err != nil {
+			return err
+		}
+		if err = unix.SetNonblock(fd, true); err != nil {
+			_ = unix.Close(fd)
+			return err
+		}
+		replacement := os.NewFile(uintptr(fd), "routed-owner-pipe")
+		if replacement == nil {
+			_ = unix.Close(fd)
+			return ErrIdentity
+		}
+		if err = files[i].Close(); err != nil {
+			_ = replacement.Close()
+			return err
+		}
+		files[i] = replacement
+	}
+	return nil
+}
