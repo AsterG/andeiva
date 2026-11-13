@@ -204,6 +204,15 @@ func TestNativeDHCPLeaseRole(t *testing.T) {
 	for fd := 3; fd <= 7; fd++ {
 		unix.CloseOnExec(fd)
 	}
+	// ExtraFiles are inherited in blocking mode; register only authenticated
+	// anonymous pipe endpoints with Go's poller so deadlines remain effective.
+	for fd, access := range map[int]int{5: unix.O_RDONLY, 6: unix.O_WRONLY} {
+		var st unix.Stat_t
+		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
+		if unix.Fstat(fd, &st) != nil || st.Uid != 0 || st.Mode&unix.S_IFMT != unix.S_IFIFO || st.Mode&0777 != 0600 || err != nil || flags&unix.O_ACCMODE != access || unix.SetNonblock(fd, true) != nil {
+			t.Fatal("inherited pipe identity")
+		}
+	}
 	pipe := dhcpLeasePipe{os.NewFile(5, "supervisor-read"), os.NewFile(6, "supervisor-write")}
 	if dhcpLeasePipeIdentity(pipe.read, unix.O_RDONLY) != nil || dhcpLeasePipeIdentity(pipe.write, unix.O_WRONLY) != nil {
 		t.Fatal("pipe identity")
@@ -212,7 +221,7 @@ func TestNativeDHCPLeaseRole(t *testing.T) {
 	defer pipe.write.Close()
 	init, err := pipe.receive()
 	if err != nil || init.Kind != "init" || init.Boot == nil || init.Boot.PID != os.Getpid() || !dhcpLeaseRootParent(init.Boot.Parent, init.Boot.ParentStart) {
-		t.Fatal("bootstrap identity")
+		t.Fatalf("bootstrap identity: receive=%v kind=%q boot_present=%t", err, init.Kind, init.Boot != nil)
 	}
 	// setpriv clears the exec-time setting. Retain this thread after rearming.
 	runtime.LockOSThread()
