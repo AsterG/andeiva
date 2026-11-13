@@ -1,7 +1,11 @@
 # Qualificação do core de retirada de scope
 
-Estado: fixture implementada; execução nativa e medições pendentes. Um skip sem
+Estado: fixture implementada; qualificação nativa e medições pendentes. Um skip sem
 privilégios não comprova qualificação nativa.
+O primeiro teste nativo falhou antes de Store ou efeitos de rede: os API
+filesystems ocultaram `/run/andeiva-preview/grouped`. O driver agora monta
+explicitamente o diretório runtime da fixture dentro do serviço. FDstore estava
+vazio; a retirada não passou.
 
 Somente Root, em laboratório Debian 13 autorizado sem
 `andeiva-preview-grouped.service` nem seu socket. Não executar em CI, WSL
@@ -13,6 +17,9 @@ com leitor capless, G1/R2, drain, desmontagem, Drop e recibo. ENODEV preserva
 evidências e falha; não significa retirada concluída.
 
 RootDirectory e passwd/group privados; pais veth e MACVLAN somente em namespaces
+isolados. O bind writable de `/run/andeiva-preview` vem somente da raiz temporária,
+com caminho canônico e owner/modo verificados; `/var/lib` também fica nessa raiz.
+Nenhum RuntimeDirectory é criado no host. Pais e links permanecem
 isolados, sem endereços, rotas ou regras do host. Os pais modelam links externos
 e não fazem parte do recibo do gateway. Seus pins ficam no MNT privado antigo.
 A projeção operacional schema2 preserva exatamente Boot/Run/Host/GW do bootstrap
