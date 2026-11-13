@@ -78,7 +78,14 @@ func (r *RoutedSelectionReaderV2) ResolveFreshScopeSourceV3(ctx context.Context,
 // kernel observation, then revalidates selector, objects and pool bindings. The
 // callback must not reenter this reader or apply effects. It is never wire data.
 func (r *RoutedSelectionReaderV2) ObserveFreshScopeV3(ctx context.Context, work string, observe func(RoutedFreshScopeSourceV3, RoutedPrepareViewV2) error) (out RoutedFreshScopeSourceV3, result error) {
-	if r == nil || r.options.Policy != SelectionFullHistoryV2 || !validHash(work) || observe == nil {
+	if !validHash(work) {
+		return out, ErrRecovery
+	}
+	return r.observeScopeV4(ctx, work, false, observe)
+}
+
+func (r *RoutedSelectionReaderV2) observeScopeV4(ctx context.Context, work string, reboot bool, observe func(RoutedFreshScopeSourceV3, RoutedPrepareViewV2) error) (out RoutedFreshScopeSourceV3, result error) {
+	if r == nil || r.options.Policy != SelectionFullHistoryV2 || work != "" && !validHash(work) || observe == nil {
 		return out, ErrRecovery
 	}
 	r.mu.Lock()
@@ -93,6 +100,28 @@ func (r *RoutedSelectionReaderV2) ObserveFreshScopeV3(ctx context.Context, work 
 		}
 	}()
 	s := v.store
+	if work == "" {
+		cfg := s.state.Configuration
+		if cfg == nil {
+			return out, ErrRecovery
+		}
+		if d := s.state.RoutedDHCP; d != nil {
+			work = d.Work
+		} else if in := cfg.Intent; in != nil && in.Kind == v2BootKind && in.Domain == "routed" {
+			work = in.RoutedWork
+		} else if p := cfg.Pending; p != nil && p.Domain == "routed" {
+			op, e := s.lookupRetained(p.Owner, p.OriginCommit)
+			if e != nil || op.Reserve == nil || op.Reserve.PlanIntent == nil {
+				return out, ErrRecovery
+			}
+			work = op.Reserve.PlanIntent.RoutedWork
+		} else if s.state.RoutedActive != nil {
+			work = s.state.RoutedActive.Work
+		}
+		if !validHash(work) {
+			return out, ErrRecovery
+		}
+	}
 	var old networkexecutor.OwnedNamespaceIdentity
 	if d := s.state.RoutedDHCP; d != nil && d.Work == work {
 		w, e := loadRoutedDHCPWorkV3(work, s.state.Lineage, s.readObject)
@@ -123,7 +152,10 @@ func (r *RoutedSelectionReaderV2) ObserveFreshScopeV3(ctx context.Context, work 
 		}
 		old = p.Scope().Identity
 	}
-	if old == r.options.Identity || old.BootID != r.options.Identity.BootID || old.RunID == r.options.Identity.RunID || old.Namespace == r.options.Identity.Namespace || old.UID != r.options.Identity.UID || old.GID != r.options.Identity.GID || old.Host != r.options.Identity.Host {
+	if !validRoutedIdentityV1(old) || old == r.options.Identity || old.RunID == r.options.Identity.RunID || old.UID != r.options.Identity.UID || old.GID != r.options.Identity.GID {
+		return out, ErrRecovery
+	}
+	if reboot && old.BootID == r.options.Identity.BootID || !reboot && (old.BootID != r.options.Identity.BootID || old.Namespace == r.options.Identity.Namespace || old.Host != r.options.Identity.Host) {
 		return out, ErrRecovery
 	}
 	ref := v.ref
@@ -133,10 +165,14 @@ func (r *RoutedSelectionReaderV2) ObserveFreshScopeV3(ctx context.Context, work 
 	if err != nil {
 		return RoutedFreshScopeSourceV3{}, err
 	}
-	if addServiceRestartViewV3(s, r.options.Identity, &view) != nil || view.ServiceRestart == nil {
-		return RoutedFreshScopeSourceV3{}, ErrRecovery
+	if reboot {
+		out.target, out.saved = view.Startup, view.Saved
+	} else {
+		if addServiceRestartViewV3(s, r.options.Identity, &view) != nil || view.ServiceRestart == nil {
+			return RoutedFreshScopeSourceV3{}, ErrRecovery
+		}
+		out.target, out.saved = view.ServiceRestart.Target, view.ServiceRestart.Saved
 	}
-	out.target, out.saved = view.ServiceRestart.Target, view.ServiceRestart.Saved
 	if err = observe(out, view); err != nil {
 		return RoutedFreshScopeSourceV3{}, err
 	}

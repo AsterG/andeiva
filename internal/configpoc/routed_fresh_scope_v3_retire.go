@@ -8,7 +8,7 @@ func (c *v2Coordinator) retireDHCPScopeV3(ctx context.Context, work v3RoutedDHCP
 	if d == nil || routedDHCPTerminalV3(d) || validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil || s.reserves == nil || s.reserves.verifySelected(s) != nil {
 		return ErrRecovery
 	}
-	proof, err := c.proveFreshScopeV3(ctx, work.Snapshot.Identity, d.Work)
+	proof, reboot, err := c.proveScopeRetirementV4(ctx, work.Snapshot.Identity, d.Work)
 	if err != nil {
 		return err
 	}
@@ -21,17 +21,27 @@ func (c *v2Coordinator) retireDHCPScopeV3(ctx context.Context, work v3RoutedDHCP
 		return err
 	}
 	st.RoutedDHCP.Phase, st.RoutedDHCP.Audit, st.RoutedDHCP.Retirement = "scope_retired", audit, proof
-	addFeatureV2(&st, v3RoutedFreshScopeFeature)
+	st.RoutedDHCP.RebootRetirement = reboot
+	if reboot != nil {
+		addFeatureV2(&st, v4RoutedRebootScopeFeature)
+	} else {
+		addFeatureV2(&st, v3RoutedFreshScopeFeature)
+	}
 	if validateRoutedDHCPSelectedV3(st, s.readObject) != nil {
 		return ErrRecovery
 	}
 	// Check the inherited receipt and empty fresh namespace again immediately
 	// before selecting retirement. No old WAN readback or restoration is claimed.
-	again, err := c.proveFreshScopeV3(ctx, work.Snapshot.Identity, d.Work)
-	if err != nil || again.ReceiptSHA256 != proof.ReceiptSHA256 || again.MetadataSHA256 != proof.MetadataSHA256 || again.Before != proof.Before || again.Dependencies != proof.Dependencies || again.DrainedAtBootNS != proof.DrainedAtBootNS || again.ObservedAtBootNS < proof.ObservedAtBootNS {
+	again, newBoot, err := c.proveScopeRetirementV4(ctx, work.Snapshot.Identity, d.Work)
+	a, validA := compareScopeV4(proof, reboot)
+	b, validB := compareScopeV4(again, newBoot)
+	observed := b.observed
+	b.observed = a.observed
+	if err != nil || !validA || !validB || a != b || observed < a.observed {
 		return ErrRecovery
 	}
 	st.RoutedDHCP.Retirement = again
+	st.RoutedDHCP.RebootRetirement = newBoot
 	if err = s.publish(st); err != nil {
 		return err
 	}

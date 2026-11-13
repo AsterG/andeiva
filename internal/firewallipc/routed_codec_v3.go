@@ -139,7 +139,7 @@ func DecodeRoutedRequestV3(data []byte, run string, namespace, last uint64) (Rou
 		return r, c, ErrChannel
 	}
 	c.Verb = r.Verb
-	if r.Verb == "fresh_scope" {
+	if r.Verb == "fresh_scope" || r.Verb == "reboot_scope" {
 		if exactRoutedV3(r.Payload, &c.FreshScope, []string{"work"}) != nil || !hashV2(c.FreshScope.Work) {
 			return r, c, ErrChannel
 		}
@@ -221,6 +221,7 @@ type RoutedPreparedV3 struct {
 }
 type RoutedResultV3 struct {
 	FreshScope  configpoc.RoutedFreshScopeEvidenceV3
+	RebootScope configpoc.RoutedRebootScopeEvidenceV4
 	DHCP        RoutedDHCPGrantV3
 	Inventory   networkinventory.Snapshot
 	Integrity   configpoc.IntegrityResultV1
@@ -247,6 +248,13 @@ func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, R
 		return reply, result, err
 	}
 	switch reply.Verb {
+	case "reboot_scope":
+		var value RoutedRebootScopeResultV4
+		var expected RoutedFreshScopeRequestV3
+		if exactRoutedV3(request.Payload, &expected, []string{"work"}) != nil || exactRoutedV3(reply.Payload, &value, []string{"evidence"}) != nil || !configpoc.ValidRoutedRebootScopeEvidenceV4(value.Evidence) || value.Evidence.Work != expected.Work || value.Evidence.New.Namespace != request.Namespace {
+			return reply, result, ErrChannel
+		}
+		result.RebootScope = value.Evidence
 	case "fresh_scope":
 		var value RoutedFreshScopeResultV3
 		var expected RoutedFreshScopeRequestV3

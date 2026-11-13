@@ -29,6 +29,7 @@ type RoutedClientV3 struct {
 	inventory           bool
 	dhcp                bool
 	freshScope          bool
+	rebootScope         bool
 	publicationAllowed  atomic.Bool
 	closingAllowed      atomic.Bool
 }
@@ -46,9 +47,9 @@ func connectRoutedV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun
 	return connectRoutedFeaturesV3(parent, conn, runtimeRun, namespace, integrity, false)
 }
 func connectRoutedFeaturesV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory bool) (*RoutedClientV3, error) {
-	return connectRoutedCapabilitiesV3(parent, conn, runtimeRun, namespace, integrity, inventory, false, false)
+	return connectRoutedCapabilitiesV3(parent, conn, runtimeRun, namespace, integrity, inventory, false, false, false)
 }
-func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp, freshScope bool) (*RoutedClientV3, error) {
+func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp, freshScope, rebootScope bool) (*RoutedClientV3, error) {
 	if parent == nil || conn == nil {
 		if conn != nil {
 			_ = conn.Close()
@@ -67,6 +68,9 @@ func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser
 	}
 	if freshScope {
 		h.RequiredFeatures = append(h.RequiredFeatures, RoutedFreshScopeCapabilityV3)
+	}
+	if rebootScope {
+		h.RequiredFeatures = append(h.RequiredFeatures, RoutedRebootScopeCapabilityV4)
 	}
 	data, _ := json.Marshal(h)
 	if _, e := DecodeRoutedHelloV3(data, false); e != nil || parent.Err() != nil {
@@ -96,7 +100,7 @@ func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser
 			_ = conn.Close()
 			return nil, ErrChannel
 		}
-		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory, dhcp: dhcp, freshScope: freshScope}, nil
+		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory, dhcp: dhcp, freshScope: freshScope, rebootScope: rebootScope}, nil
 	case <-ctx.Done():
 		_ = conn.Close()
 		return nil, ErrChannel
@@ -129,7 +133,7 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 			c.closingAllowed.Store(false)
 		}
 	}()
-	if (verb == "fresh_scope" && !c.freshScope) || (RoutedDHCPVerbV3(verb) && !c.dhcp) || (verb == "inventory" && !c.inventory) || (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
+	if (verb == "reboot_scope" && !c.rebootScope) || (verb == "fresh_scope" && !c.freshScope) || (RoutedDHCPVerbV3(verb) && !c.dhcp) || (verb == "inventory" && !c.inventory) || (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
 		return RoutedResultV3{}, ErrChannel
 	}
 	p, e := json.Marshal(payload)

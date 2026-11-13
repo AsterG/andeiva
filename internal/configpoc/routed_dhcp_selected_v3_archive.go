@@ -8,10 +8,11 @@ func validateRoutedDHCPTerminalV3(d v3RoutedDHCPState, lineage string, load func
 		return ErrRecovery
 	}
 	if d.Phase == "scope_retired" {
-		if d.Retirement == nil || !freshScopeMatchesV3(d.Retirement, w.Snapshot.Identity, d.Retirement.New, d.Work) {
+		proof, valid := compareScopeV4(d.Retirement, d.RebootRetirement)
+		if !valid || proof.old != w.Snapshot.Identity || proof.work != d.Work {
 			return ErrRecovery
 		}
-	} else if d.Retirement != nil {
+	} else if d.Retirement != nil || d.RebootRetirement != nil {
 		return ErrRecovery
 	}
 	in := d.Bundle.PlanIntent
@@ -33,7 +34,7 @@ func validateRoutedDHCPArchiveV3(archive v2ReserveArchive, facts v2ReserveFinali
 	if load(facts.Origin.Object, &d) != nil || validateRoutedDHCPTerminalV3(d, state.Lineage, load) != nil || reserveWorkV2(d.Bundle) != facts.Origin.ID || d.Audit != archive.Audit || !archiveMatchesBundleV2(archive, d.Bundle, false) {
 		return ErrRecovery
 	}
-	if d.Phase == "scope_retired" && !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
+	if d.Phase == "scope_retired" && (d.Retirement != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) || d.RebootRetirement != nil && !hasFeatureV2(state, v4RoutedRebootScopeFeature)) {
 		return ErrRecovery
 	}
 	return nil

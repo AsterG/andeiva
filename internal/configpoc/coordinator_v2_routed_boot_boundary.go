@@ -14,6 +14,7 @@ const v2RoutedBootBoundaryFeature = "configuration.routed-boot-boundary.v1"
 // A boundary preserves the original work and its deadline. It is evidence of
 // an OS incarnation change, never proof that the old target was restored.
 type v2RoutedBootBoundary struct {
+	RebootScope   *RoutedRebootScopeEvidenceV4           `json:"reboot_scope,omitempty"`
 	FreshScope    *RoutedFreshScopeEvidenceV3            `json:"fresh_scope,omitempty"`
 	Source        string                                 `json:"source_configuration"`
 	OldWork       string                                 `json:"old_work"`
@@ -28,6 +29,9 @@ type v2RoutedBootBoundary struct {
 func validRoutedBootBoundaryShapeV2(b *v2RoutedBootBoundary) bool {
 	if b == nil {
 		return true
+	}
+	if b.RebootScope != nil && (b.FreshScope != nil || !ValidRoutedRebootScopeEvidenceV4(*b.RebootScope) || b.RebootScope.New != b.NewIdentity || b.RebootScope.Work != b.OldWork) {
+		return false
 	}
 	if b.FreshScope != nil && (!ValidRoutedFreshScopeEvidenceV3(*b.FreshScope) || b.FreshScope.New != b.NewIdentity || b.FreshScope.Work != b.OldWork) {
 		return false
@@ -60,6 +64,9 @@ func routedBootBoundarySourceV2(b v2RoutedBootBoundary, lineage string, load fun
 		return source, old, ErrRecovery
 	}
 	if b.FreshScope != nil && !freshScopeMatchesV3(b.FreshScope, old.Scope().Identity, b.NewIdentity, b.OldWork) {
+		return source, old, ErrRecovery
+	}
+	if b.RebootScope != nil && !rebootScopeMatchesV4(b.RebootScope, old.Scope().Identity, b.NewIdentity, b.OldWork) {
 		return source, old, ErrRecovery
 	}
 	if b.Origin != nil {
@@ -188,6 +195,11 @@ func (c *v2Coordinator) openRoutedBootBoundaryV2(ctx context.Context) (bool, err
 			return false, nil
 		}
 		b.FreshScope, err = c.proveFreshScopeV3(ctx, old.Scope().Identity, oldWork)
+		if err != nil {
+			return true, err
+		}
+	} else if c.options.RebootScope != nil {
+		b.RebootScope, err = c.proveRebootScopeV4(ctx, old.Scope().Identity, oldWork)
 		if err != nil {
 			return true, err
 		}
@@ -401,6 +413,9 @@ func validateRoutedBootBoundaryV2(state v2State, load func(string, any) error) e
 		return ErrRecovery
 	}
 	if b.FreshScope != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
+		return ErrRecovery
+	}
+	if b.RebootScope != nil && !hasFeatureV2(state, v4RoutedRebootScopeFeature) {
 		return ErrRecovery
 	}
 	source, _, err := routedBootBoundarySourceV2(*b, state.Lineage, load)

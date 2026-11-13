@@ -30,6 +30,7 @@ type routedFreshScopeV3 struct {
 	authority configpoc.RoutedAuthorityV1
 	kernel    *routedKernelV3
 	work      string // Correlation only; every preparation independently rereads selected work.
+	reboot    bool   // Set only by the separate kernel-bound v4 constructor.
 }
 
 func validateRetirementFileV3(file *os.File) error {
@@ -185,7 +186,7 @@ func (p *routedFreshScopeV3) prepare(ctx context.Context, target, saved configpo
 
 func (p *routedFreshScopeV3) ProveFreshScope(ctx context.Context, work string) (configpoc.RoutedFreshScopeEvidenceV3, error) {
 	var out configpoc.RoutedFreshScopeEvidenceV3
-	if p == nil || ctx == nil {
+	if p == nil || p.reboot || ctx == nil {
 		return out, ErrIdentity
 	}
 	p.mu.Lock()
@@ -231,11 +232,11 @@ func (p *routedFreshScopeV3) prepareSelected(ctx context.Context, target configp
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	r, err := readRetirementFileV3(p.file, p.binding)
+	r, err := p.readReceipt()
 	if err != nil || p.work == "" {
 		return result, ErrIdentity
 	}
-	_, err = p.reader.ObserveFreshScopeV3(ctx, p.work, func(source configpoc.RoutedFreshScopeSourceV3, _ configpoc.RoutedPrepareViewV2) error {
+	_, err = p.observeScope(ctx, p.work, func(source configpoc.RoutedFreshScopeSourceV3, _ configpoc.RoutedPrepareViewV2) error {
 		selected, baseline := source.PreparationBundles()
 		if source.Identity() != r.Old || selected.Composite.Hash != target.Composite.Hash || baseline.Composite.Hash != saved {
 			return configpoc.ErrConflict
@@ -247,13 +248,16 @@ func (p *routedFreshScopeV3) prepareSelected(ctx context.Context, target configp
 	if err != nil {
 		return configpoc.RoutedPreparationV1{}, err
 	}
-	if _, err = readRetirementFileV3(p.file, p.binding); err != nil || ctx.Err() != nil {
+	if _, err = p.readReceipt(); err != nil || ctx.Err() != nil {
 		return configpoc.RoutedPreparationV1{}, ErrIdentity
 	}
 	return result, nil
 }
 
 func (p *routedFreshScopeV3) verifyPlan(ctx context.Context, plan configpoc.RoutedSelectedPlanV1) error {
+	if p != nil && p.reboot {
+		return p.verifyRebootPlan(ctx, plan)
+	}
 	e := plan.FreshScopeEvidenceV3()
 	if e == nil {
 		return nil

@@ -23,11 +23,12 @@ type v3RoutedDHCPWork struct {
 }
 
 type v3RoutedDHCPState struct {
-	Work       string                      `json:"work"`
-	Phase      string                      `json:"phase"`
-	Bundle     *v2ReserveBundle            `json:"bundle"`
-	Audit      string                      `json:"audit,omitempty"`
-	Retirement *RoutedFreshScopeEvidenceV3 `json:"scope_retirement,omitempty"`
+	RebootRetirement *RoutedRebootScopeEvidenceV4 `json:"reboot_retirement,omitempty"`
+	Work             string                       `json:"work"`
+	Phase            string                       `json:"phase"`
+	Bundle           *v2ReserveBundle             `json:"bundle"`
+	Audit            string                       `json:"audit,omitempty"`
+	Retirement       *RoutedFreshScopeEvidenceV3  `json:"scope_retirement,omitempty"`
 }
 
 func routedDHCPTerminalV3(d *v3RoutedDHCPState) bool {
@@ -65,10 +66,11 @@ func validRoutedDHCPShapeV3(st v2State) bool {
 		return false
 	}
 	if d.Phase == "scope_retired" {
-		if !hasFeatureV2(st, v3RoutedFreshScopeFeature) || d.Retirement == nil || !ValidRoutedFreshScopeEvidenceV3(*d.Retirement) {
+		_, valid := compareScopeV4(d.Retirement, d.RebootRetirement)
+		if !valid || d.Retirement != nil && !hasFeatureV2(st, v3RoutedFreshScopeFeature) || d.RebootRetirement != nil && !hasFeatureV2(st, v4RoutedRebootScopeFeature) {
 			return false
 		}
-	} else if d.Retirement != nil {
+	} else if d.Retirement != nil || d.RebootRetirement != nil {
 		return false
 	}
 	return (routedDHCPTerminalV3(d) && validHash(d.Audit)) || (!routedDHCPTerminalV3(d) && d.Audit == "")
@@ -87,7 +89,7 @@ func preservesRoutedDHCPV3(before, next v2State) bool {
 		return false
 	}
 	if a.Phase == b.Phase {
-		return a.Audit == b.Audit && reflect.DeepEqual(a.Retirement, b.Retirement)
+		return a.Audit == b.Audit && reflect.DeepEqual(a.Retirement, b.Retirement) && reflect.DeepEqual(a.RebootRetirement, b.RebootRetirement)
 	}
 	return (a.Phase == "prepared" && (b.Phase == "applied" || routedDHCPTerminalV3(b))) || (a.Phase == "applied" && routedDHCPTerminalV3(b))
 }
@@ -121,7 +123,7 @@ func validateRoutedDHCPSelectedV3(st v2State, load func(string, any) error) erro
 		if load(st.RoutedDHCPLast, &last) != nil || validateRoutedDHCPTerminalV3(last, st.Lineage, load) != nil {
 			return ErrRecovery
 		}
-		if last.Phase == "scope_retired" && !hasFeatureV2(st, v3RoutedFreshScopeFeature) {
+		if last.Phase == "scope_retired" && (last.Retirement != nil && !hasFeatureV2(st, v3RoutedFreshScopeFeature) || last.RebootRetirement != nil && !hasFeatureV2(st, v4RoutedRebootScopeFeature)) {
 			return ErrRecovery
 		}
 	}
@@ -137,8 +139,11 @@ func validateRoutedDHCPSelectedV3(st v2State, load func(string, any) error) erro
 	if in.Operation != reserveWorkV2(d.Bundle) || in.Previous != w.Configuration || in.Target != w.Configuration || in.TargetGeneration != w.Generation || in.Subject != "" || in.Lease != "" || in.OriginCommit != "" || !d.Bundle.Scope.Deadline.IsZero() || d.Bundle.Scope.Lease != "" {
 		return ErrRecovery
 	}
-	if d.Phase == "scope_retired" && !freshScopeMatchesV3(d.Retirement, w.Snapshot.Identity, d.Retirement.New, d.Work) {
-		return ErrRecovery
+	if d.Phase == "scope_retired" {
+		proof, valid := compareScopeV4(d.Retirement, d.RebootRetirement)
+		if !valid || proof.old != w.Snapshot.Identity || proof.work != d.Work {
+			return ErrRecovery
+		}
 	}
 	if routedDHCPTerminalV3(d) {
 		var audit v2CoordinatorAudit

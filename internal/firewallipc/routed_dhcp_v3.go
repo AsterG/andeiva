@@ -80,6 +80,6 @@ func decodeRoutedDHCPReplyV3(verb string, raw []byte) (RoutedDHCPGrantV3, error)
 }
 
 func ConnectRoutedDHCPV3(ctx context.Context, conn io.ReadWriteCloser, run string, ns uint64) (*RoutedClientV3, error) {
-	return connectRoutedCapabilitiesV3(ctx, conn, run, ns, true, true, true, false)
+	return connectRoutedCapabilitiesV3(ctx, conn, run, ns, true, true, true, false, false)
 }
 func (c *RoutedClientV3) DHCPEnabled() bool { return c != nil && c.dhcp }

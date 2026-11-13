@@ -30,12 +30,12 @@ func validRoutedScopeCapabilitiesV3(features []string) bool {
 		return true
 	}
 	if len(features) == 6 {
-		return features[5] == RoutedDHCPCapabilityV3 || features[5] == RoutedFreshScopeCapabilityV3
+		return features[5] == RoutedDHCPCapabilityV3 || features[5] == RoutedFreshScopeCapabilityV3 || features[5] == RoutedRebootScopeCapabilityV4
 	}
-	return len(features) == 7 && features[5] == RoutedDHCPCapabilityV3 && features[6] == RoutedFreshScopeCapabilityV3
+	return len(features) == 7 && features[5] == RoutedDHCPCapabilityV3 && (features[6] == RoutedFreshScopeCapabilityV3 || features[6] == RoutedRebootScopeCapabilityV4)
 }
 
 func ConnectRoutedFreshScopeV3(ctx context.Context, conn io.ReadWriteCloser, run string, namespace uint64, dhcp bool) (*RoutedClientV3, error) {
-	return connectRoutedCapabilitiesV3(ctx, conn, run, namespace, true, true, dhcp, true)
+	return connectRoutedCapabilitiesV3(ctx, conn, run, namespace, true, true, dhcp, true, false)
 }
 func (c *RoutedClientV3) FreshScopeEnabled() bool { return c != nil && c.freshScope }

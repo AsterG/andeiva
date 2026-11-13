@@ -35,7 +35,7 @@ func validFeaturesV2(state v2State) bool {
 	}
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v3RoutedFreshScopeFeature && feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
+		if (feature != v4RoutedRebootScopeFeature && feature != v3RoutedFreshScopeFeature && feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
 			return false
 		}
 		last = feature
@@ -52,7 +52,7 @@ func validFeaturesV2(state v2State) bool {
 	if hasFeatureV2(state, v2RoutedBootFeature) && !hasFeatureV2(state, v2RoutedFeature) {
 		return false
 	}
-	if hasFeatureV2(state, v3RoutedFreshScopeFeature) && (!hasFeatureV2(state, v2RoutedFeature) || !hasFeatureV2(state, v2SharedReaderFeature) || state.RecoveryReserveVersion != 1) {
+	if (hasFeatureV2(state, v3RoutedFreshScopeFeature) || hasFeatureV2(state, v4RoutedRebootScopeFeature)) && (!hasFeatureV2(state, v2RoutedFeature) || !hasFeatureV2(state, v2SharedReaderFeature) || state.RecoveryReserveVersion != 1) {
 		return false
 	}
 	if hasFeatureV2(state, v2RoutedNoNetworkFeature) && !hasFeatureV2(state, v2RoutedBootFeature) {
@@ -151,9 +151,12 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	}
 	current := clone(*s.state.Configuration)
 	previousFresh := c.bootFreshScope
-	defer func() { c.bootFreshScope = previousFresh }()
+	previousReboot := c.bootRebootScope
+	defer func() { c.bootFreshScope, c.bootRebootScope = previousFresh, previousReboot }()
 	if c.bootBoundary != nil && c.bootBoundary.FreshScope != nil {
 		c.bootFreshScope = clone(c.bootBoundary.FreshScope)
+	} else if c.bootBoundary != nil && c.bootBoundary.RebootScope != nil {
+		c.bootRebootScope = clone(c.bootBoundary.RebootScope)
 	} else if routed && s.state.RoutedActive != nil {
 		old, err := loadRoutedWorkV2(s.state.RoutedActive.Work, s.state.Lineage, s.readObject)
 		if err != nil {
@@ -165,6 +168,12 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 				return err
 			}
 			c.bootFreshScope = proof
+		} else if old.Scope().Identity.BootID != string(id) && c.options.RebootScope != nil {
+			proof, err := c.proveRebootScopeV4(ctx, old.Scope().Identity, s.state.RoutedActive.Work)
+			if err != nil {
+				return err
+			}
+			c.bootRebootScope = proof
 		}
 	}
 	if current.LastCompletedBoot != "" {
@@ -233,6 +242,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 		record.ServiceRestart = &v3RoutedServiceRestart{Source: source, Scope: *clone(c.bootFreshScope)}
 	}
 	st := clone(s.state)
+	if c.bootRebootScope != nil {
+		addFeatureV2(&st, v4RoutedRebootScopeFeature)
+	}
 	if c.bootFreshScope != nil {
 		addFeatureV2(&st, v3RoutedFreshScopeFeature)
 	}

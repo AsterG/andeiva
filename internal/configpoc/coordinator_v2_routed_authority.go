@@ -68,26 +68,31 @@ func (p RoutedSelectedPlanV1) Valid() bool {
 }
 
 type v2RoutedWork struct {
-	FreshScope   *RoutedFreshScopeEvidenceV3 `json:"fresh_scope,omitempty"`
-	Boundary     *v2RoutedBootBoundary       `json:"boot_boundary,omitempty"`
-	Scope        RoutedWorkScopeV1           `json:"scope"`
-	Baseline     string                      `json:"baseline,omitempty"`
-	Kind         string                      `json:"kind,omitempty"`
-	BootRecord   string                      `json:"boot_record,omitempty"`
-	BootBaseline *RoutedBaselineV1           `json:"boot_baseline,omitempty"`
-	Version      int                         `json:"version"`
-	Lineage      string                      `json:"lineage"`
-	Operation    string                      `json:"operation_id"`
-	Subject      string                      `json:"subject"`
-	Generation   uint64                      `json:"generation,string"`
-	Lease        string                      `json:"lease"`
-	Deadline     time.Time                   `json:"deadline"`
-	Cold         bool                        `json:"cold"`
-	Transition   RoutedTransitionV1          `json:"transition"`
+	RebootScope  *RoutedRebootScopeEvidenceV4 `json:"reboot_scope,omitempty"`
+	FreshScope   *RoutedFreshScopeEvidenceV3  `json:"fresh_scope,omitempty"`
+	Boundary     *v2RoutedBootBoundary        `json:"boot_boundary,omitempty"`
+	Scope        RoutedWorkScopeV1            `json:"scope"`
+	Baseline     string                       `json:"baseline,omitempty"`
+	Kind         string                       `json:"kind,omitempty"`
+	BootRecord   string                       `json:"boot_record,omitempty"`
+	BootBaseline *RoutedBaselineV1            `json:"boot_baseline,omitempty"`
+	Version      int                          `json:"version"`
+	Lineage      string                       `json:"lineage"`
+	Operation    string                       `json:"operation_id"`
+	Subject      string                       `json:"subject"`
+	Generation   uint64                       `json:"generation,string"`
+	Lease        string                       `json:"lease"`
+	Deadline     time.Time                    `json:"deadline"`
+	Cold         bool                         `json:"cold"`
+	Transition   RoutedTransitionV1           `json:"transition"`
 }
 
 func (p RoutedSelectedPlanV1) FreshScopeEvidenceV3() *RoutedFreshScopeEvidenceV3 {
 	return clone(p.work.FreshScope)
+}
+
+func (p RoutedSelectedPlanV1) RebootScopeEvidenceV4() *RoutedRebootScopeEvidenceV4 {
+	return clone(p.work.RebootScope)
 }
 
 type RoutedWorkScopeV1 struct {

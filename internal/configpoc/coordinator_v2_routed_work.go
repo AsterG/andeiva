@@ -217,7 +217,7 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	boot := work.Kind == v2BootKind
-	if (work.Boundary != nil || work.FreshScope != nil) && !boot {
+	if (work.Boundary != nil || work.FreshScope != nil || work.RebootScope != nil) && !boot {
 		return plan, errV2Unavailable
 	}
 	if work.Kind != "" && work.Kind != OpCommit && work.Kind != OpRollback && !boot || boot && (work.Subject != "" || !work.Cold || !validHash(work.BootRecord) || work.Lease != work.Operation || work.BootBaseline == nil) || !boot && (work.Subject == "" || work.BootRecord != "" || work.BootBaseline != nil) {
@@ -276,7 +276,7 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 		return plan, errV2Unavailable
 	}
 	if work.Baseline != "" {
-		if work.FreshScope != nil {
+		if work.FreshScope != nil || work.RebootScope != nil {
 			return plan, errV2Unavailable
 		}
 		baseline, err := loadRoutedWorkDepthV2(work.Baseline, lineage, load, true, validConfiguration)
@@ -290,17 +290,18 @@ func loadRoutedWorkDepthV2(hash, lineage string, load func(string, any) error, o
 			plan.baseline = clone(work.BootBaseline)
 		}
 	}
-	if proof := work.FreshScope; proof != nil {
+	if work.FreshScope != nil || work.RebootScope != nil {
+		proof, valid := compareScopeV4(work.FreshScope, work.RebootScope)
 		var old v2RoutedWork
 		_, beforeHash, e1 := v2Canonical(plan.preparation.Before)
 		_, depsHash, e2 := v2Canonical(plan.preparation.Dependencies)
-		if !ValidRoutedFreshScopeEvidenceV3(*proof) || proof.New != work.Scope.Identity || load(proof.Work, &old) != nil || old.Scope.Identity != proof.Old || e1 != nil || e2 != nil || beforeHash != proof.Before || depsHash != proof.Dependencies {
+		if !valid || proof.next != work.Scope.Identity || load(proof.work, &old) != nil || old.Scope.Identity != proof.old || e1 != nil || e2 != nil || beforeHash != proof.before || depsHash != proof.dependencies {
 			return plan, errV2Unavailable
 		}
-		if work.Boundary != nil && !reflect.DeepEqual(work.Boundary.FreshScope, proof) {
+		if work.Boundary != nil && (!reflect.DeepEqual(work.Boundary.FreshScope, work.FreshScope) || !reflect.DeepEqual(work.Boundary.RebootScope, work.RebootScope)) {
 			return plan, errV2Unavailable
 		}
-	} else if work.Boundary != nil && work.Boundary.FreshScope != nil {
+	} else if work.Boundary != nil && (work.Boundary.FreshScope != nil || work.Boundary.RebootScope != nil) {
 		return plan, errV2Unavailable
 	}
 	if !routedBaselineDependenciesMatchV2(plan.preparation.Dependencies, plan.baseline.Dependencies) {

@@ -31,14 +31,15 @@ type RoutedPreparationViewV3 struct {
 }
 
 type RoutedSessionV3 struct {
-	controller sync.Mutex
-	authority  configpoc.RoutedAuthorityV1
-	source     RoutedSelectionSourceV3
-	epoch      uint64
-	integrity  *routedIntegrityGateV3
-	freshScope routedFreshScopeProofV3
-	inventory  func(context.Context) (networkinventory.Snapshot, error)
-	dhcp       *RoutedDHCPRuntimeV3
+	controller  sync.Mutex
+	authority   configpoc.RoutedAuthorityV1
+	source      RoutedSelectionSourceV3
+	epoch       uint64
+	integrity   *routedIntegrityGateV3
+	freshScope  routedFreshScopeProofV3
+	rebootScope routedRebootScopeProofV4
+	inventory   func(context.Context) (networkinventory.Snapshot, error)
+	dhcp        *RoutedDHCPRuntimeV3
 }
 
 func NewRoutedSessionV3(authority configpoc.RoutedAuthorityV1, source RoutedSelectionSourceV3) (*RoutedSessionV3, error) {
@@ -122,7 +123,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		return ErrUnavailable
 	}
 	hello, e := firewallipc.DecodeRoutedHelloV3(data, false)
-	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) {
+	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
 		return ErrIdentity
 	}
 	hello.Run = runtimeRun
@@ -163,6 +164,16 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 }
 
 func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedCommandV3) (any, error) {
+	if c.Verb == "reboot_scope" {
+		if s.rebootScope == nil || !freshScopeAllowedV3(s.integrity) {
+			return nil, ErrIdentity
+		}
+		proof, err := s.rebootScope.ProveRebootScope(ctx, c.FreshScope.Work)
+		if !freshScopeAllowedV3(s.integrity) {
+			return nil, configpoc.ErrRecovery
+		}
+		return firewallipc.RoutedRebootScopeResultV4{Evidence: proof}, err
+	}
 	if c.Verb == "fresh_scope" {
 		if s.freshScope == nil || !freshScopeAllowedV3(s.integrity) {
 			return nil, ErrIdentity
@@ -206,6 +217,16 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 		receipt, revision, e := s.authority.Observe(ctx)
 		return firewallipc.RoutedObservedV3{Receipt: firewallipc.RoutedReceiptV3{Phase: receipt.Phase, ID: receipt.ID, Previous: receipt.Previous, Target: receipt.Target, Deadline: receipt.Deadline}, Revision: revision}, e
 	case "prepare", "prepare_boot":
+		if c.Verb == "prepare_boot" && s.rebootScope != nil {
+			if !freshScopeAllowedV3(s.integrity) {
+				return nil, configpoc.ErrRecovery
+			}
+			preparation, err := s.rebootScope.prepareSelected(ctx, c.Target, c.Baseline)
+			if !freshScopeAllowedV3(s.integrity) {
+				return nil, configpoc.ErrRecovery
+			}
+			return firewallipc.RoutedPreparedV3{Preparation: preparation}, err
+		}
 		if c.Verb == "prepare_boot" && s.freshScope != nil {
 			if !freshScopeAllowedV3(s.integrity) {
 				return nil, configpoc.ErrRecovery
@@ -262,6 +283,9 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 		return nil, configpoc.ErrRecovery
 	}
 	if plan.FreshScopeEvidenceV3() != nil && (s.freshScope == nil || s.freshScope.verifyPlan(ctx, plan) != nil) {
+		return nil, configpoc.ErrRecovery
+	}
+	if plan.RebootScopeEvidenceV4() != nil && (s.rebootScope == nil || s.rebootScope.verifyPlan(ctx, plan) != nil) {
 		return nil, configpoc.ErrRecovery
 	}
 	switch c.Verb {
