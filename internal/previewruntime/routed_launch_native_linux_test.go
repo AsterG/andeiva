@@ -241,6 +241,9 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 	local := &nativeForbiddenLocalV3{}
 	return RoutedLaunchFactoriesV3{
 		Helper: func(ctx context.Context, c RoutedLaunchContextV3) (out RoutedHelperComponentsV3, err error) {
+			if c.DHCPJobsEnabled {
+				return openRoutedApplianceHelperV3(ctx, c)
+			}
 			identity := networkexecutor.OwnedNamespaceIdentity{UID: c.Identities.HelperUID, GID: c.Identities.IPCGID, Namespace: c.Metadata.GatewayNamespace, Host: c.Metadata.HostNamespace, BootID: c.Metadata.BootID, RunID: c.Metadata.RunID}
 			var pools [3]*recoveryreserve.ReadOnlyPoolV2
 			defer func() {
@@ -424,11 +427,14 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 					return out, cleanup, err
 				}
 			}
-			out = OperationsRuntimeOptionsV2{RoutedInventory: c.FreshScopeEnabled, RoutedFreshScope: c.FreshScopeEnabled, Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
+			out = OperationsRuntimeOptionsV2{RoutedDHCP: c.DHCPJobsEnabled, RoutedInventory: c.FreshScopeEnabled || c.DHCPJobsEnabled, RoutedFreshScope: c.FreshScopeEnabled, Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
 			fmt.Fprintln(os.Stderr, "ANDEIVA_NATIVE_STEP api-options-prepared")
 			return out, cleanup, nil
 		},
 		ServeAPI: func(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error) (result error) {
+			if launch.DHCPJobsEnabled {
+				return nativeDHCPJobsServeV4(ctx, r, ready, binding, launch)
+			}
 			step := "api-current"
 			fmt.Fprintln(os.Stderr, "ANDEIVA_NATIVE_STEP api-runtime-opened")
 			defer func() {
