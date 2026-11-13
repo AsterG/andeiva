@@ -20,3 +20,5 @@ incompleto.
 Las pruebas cubren vínculos, hashes, sustitución de interfaces, cancelación,
 acuse perdido y limpieza idempotente. El ciclo instalado, cutover frío, arranque
 DHCP y acceso del cliente a Internet requieren validaciones independientes.
+
+El comando opcional de preparación root `andeiva-preview grouped-retirement-slot` preasigna un recibo de retiro de tamaño fijo de4096bytes. La unidad agrupada sólo puede escribir ese archivo. Antes de emitirlo, la parada normal debe observar únicamente el PID supervisor en el cgroup dedicado sin delegación y después liberar el namespace propio exacto. Descendientes, timeout, archivos desconocidos o limpieza incierta impiden el recibo y conservan evidencia de recuperación. No garantiza recuperación ante SIGKILL ni cortes de energía. Las pruebas del archivo y del drenaje real de procesos son gates distintos; el consumidor no debe activarse antes de aprobar ambos.

@@ -20,3 +20,5 @@ record or enable the incomplete grouped service.
 Automated tests cover bindings, manifest hashes, link replacement, cancellation,
 lost acknowledgements and idempotent cleanup. Installed lifecycle, cold cutover,
 DHCP bootstrap and client Internet acceptance are separate qualification gates.
+
+The optional root preparation command `andeiva-preview grouped-retirement-slot` preallocates a fixed 4096-byte retirement slot. The grouped unit can write that file only. Normal shutdown must first observe the dedicated, non-delegated service cgroup with only the supervisor PID, then release the exact owned namespace, before issuing the receipt. Descendants, timeout, unknown files or uncertain cleanup prevent the receipt and retain recovery evidence. This is not a SIGKILL or power-loss recovery guarantee. Fixed-slot filesystem tests and installed process-drain tests are separate gates; the receipt consumer must not be activated before both pass.

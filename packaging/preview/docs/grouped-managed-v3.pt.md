@@ -19,3 +19,5 @@ Instalar o pacote não cria a ativação nem habilita o serviço agrupado incomp
 Testes cobrem vínculos, hashes, substituição de interfaces, cancelamento, perda
 de confirmação e limpeza idempotente. Ciclo instalado, cutover frio, bootstrap
 DHCP e Internet pelo cliente exigem validações independentes.
+
+O comando opcional de preparação root `andeiva-preview grouped-retirement-slot` pré-aloca um recibo de retirada de tamanho fixo de4096bytes. A unidade agrupada pode escrever somente esse arquivo. Antes de emiti-lo, a parada normal deve observar apenas o PID supervisor no cgroup dedicado sem delegação e então liberar o namespace próprio exato. Descendentes, timeout, arquivos desconhecidos ou limpeza incerta impedem o recibo e preservam evidências de recuperação. Não garante recuperação após SIGKILL ou falta de energia. Os testes do arquivo e da drenagem real de processos são gates separados; o consumidor não deve ser ativado antes da aprovação de ambos.

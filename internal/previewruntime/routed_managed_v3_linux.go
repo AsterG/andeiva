@@ -217,6 +217,24 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 	if _, err = decodeRoutedDeploymentV3(deployment, ids); err != nil {
 		return err
 	}
+	if safeParents(routedRetirementDirectoryV3+"/"+routedRetirementSlotV3) != nil {
+		return ErrIdentity
+	}
+	operational, err := os.OpenRoot(routedRetirementDirectoryV3)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, operational.Close()) }()
+	// Startup never creates the slot: installation must reserve it before any
+	// network effects. The service has write access to this exact file only.
+	if _, err = operational.Lstat(routedRetirementSlotV3); err != nil {
+		return err
+	}
+	slot, err := openRoutedRetirementSlotV3(operational)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, slot.Close()) }()
 	if safeParents(routedDeploymentRunV3+"/runtime.json") != nil {
 		return ErrIdentity
 	}
@@ -229,7 +247,19 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, owned.Close()) }()
+	defer func() {
+		if drained := waitRoutedCgroupDrainedV3(); drained != nil {
+			// Retain pins and files when a descendant might still mutate them.
+			// Service cgroup termination handles the process; restart stays fenced.
+			result = errors.Join(result, drained)
+			return
+		}
+		if cleanup := owned.Close(); cleanup != nil {
+			result = errors.Join(result, cleanup)
+			return
+		}
+		result = errors.Join(result, slot.recordDrained(owned.metadata, ids))
+	}()
 	// RunRoutedSupervisorV3 drains both child processes before returning. Only
 	// then may the namespace owner remove links and release its mount pin.
 	return RunRoutedSupervisorV3(ctx, c)

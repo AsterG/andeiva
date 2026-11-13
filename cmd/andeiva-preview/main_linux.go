@@ -92,6 +92,8 @@ func run(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(result)
 	case "grouped-links":
 		return previewruntime.PrepareRoutedNodeLinksV3(ctx, c, os.Stdin)
+	case "grouped-retirement-slot":
+		return previewruntime.PrepareRoutedRetirementSlotV3(ctx, c)
 	case "grouped-accounts":
 		digest, err := previewruntime.PrepareRoutedAccountsV3(ctx, c)
 		if err != nil {

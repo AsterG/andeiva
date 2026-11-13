@@ -49,7 +49,7 @@ trap 'exit 143' TERM
 exec 3</proc/self/ns/net
 exec 4</run/andeiva-routed-namespace
 exec 6<&-
-if ANDEIVA_ROUTED_LINKS_NATIVE=1 ./routed-links-native.test -test.run '^TestRoutedGatewayLinksV3Native$' -test.v -test.timeout 45s > /run/andeiva-routed-result.log 2>&1; then
+if ANDEIVA_ROUTED_LINKS_NATIVE=1 ./routed-links-native.test -test.run '^TestRoutedGatewayLinksV3Native$|^TestRoutedRetirementSlotV3Native$' -test.v -test.timeout 45s > /run/andeiva-routed-result.log 2>&1; then
   cat /run/andeiva-routed-result.log
 else
   failed=$?
@@ -57,6 +57,7 @@ else
   exit "$failed"
 fi
 [[ $(grep -c '^--- PASS: TestRoutedGatewayLinksV3Native ' /run/andeiva-routed-result.log) == 1 ]]
+[[ $(grep -c '^--- PASS: TestRoutedRetirementSlotV3Native ' /run/andeiva-routed-result.log) == 1 ]]
 ! grep -Eq '^--- (FAIL|SKIP):|^FAIL' /run/andeiva-routed-result.log
 grep -Fxq PASS /run/andeiva-routed-result.log
 [[ -z $(find /run/andeiva-routed-namespace -mindepth 1 -maxdepth 1 -print -quit) ]]
