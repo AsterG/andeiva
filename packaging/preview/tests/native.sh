@@ -9,20 +9,22 @@ umask 077
 
 usage() {
   cat <<'EOF'
-Usage: native.sh --ack-isolated-debian13-vm [--lifecycle] [--api-failure]
+Usage: native.sh --ack-isolated-debian13-vm [--lifecycle] [--api-failure] [--api-stop]
 Requires root, Debian 13 AMD64, systemd, jq and an already healthy preview.
 --lifecycle   Stop the complete preview, check owned cleanup, then start it.
 --api-failure Kill only the API main process; check its automatic recovery.
+--api-stop    Stop API/socket; verify retained kernel policy, then restart them.
 No reboot, provisioning, rule mutation, helper kill or host network change.
 Use a recoverable laboratory snapshot. Review outstanding transactions first.
 EOF
 }
-ack=false lifecycle=false api_failure=false
+ack=false lifecycle=false api_failure=false api_stop=false api_stopped=false
 for arg in "$@"; do
   case "$arg" in
     --ack-isolated-debian13-vm) ack=true ;;
     --lifecycle) lifecycle=true ;;
     --api-failure) api_failure=true ;;
+    --api-stop) api_stop=true ;;
     --help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -32,7 +34,7 @@ done
 # This is the distribution-owned identity file, not caller-supplied input.
 . /etc/os-release
 [[ "$ID" == debian && "$VERSION_ID" == 13 && $(dpkg --print-architecture) == amd64 ]]
-for command in jq ip nft systemctl timeout stat cmp mktemp du date; do
+for command in jq ip nft nsenter systemctl timeout stat cmp mktemp du date; do
   command -v "$command" >/dev/null || { echo "Missing prerequisite: $command" >&2; exit 2; }
 done
 binary=/usr/lib/andeiva-preview/andeiva-preview
@@ -87,14 +89,17 @@ finish() {
   local rc=$? invariant=false
   trap - EXIT
   set +e
+  if [[ "$api_stopped" == true ]]; then
+    timeout 45 systemctl start andeiva-preview-api.socket andeiva-preview-api.service || rc=1
+  fi
   if [[ "$baseline_ready" == true ]]; then
     snapshot_host after
     if [[ $? == 0 ]] && compare_host after; then invariant=true; else rc=1; fi
   fi
   jq -s --argjson exit_code "$rc" --argjson host_unchanged "$invariant" \
-    --argjson lifecycle "$lifecycle" --argjson api_failure "$api_failure" \
+    --argjson lifecycle "$lifecycle" --argjson api_failure "$api_failure" --argjson api_stop "$api_stop" \
     '{schema_version:1,exit_code:$exit_code,host_unchanged:$host_unchanged,
-      requested:{lifecycle:$lifecycle,api_failure:$api_failure},events:.,
+      requested:{lifecycle:$lifecycle,api_failure:$api_failure,api_stop:$api_stop},events:.,
       limitations:["Probe outcomes are observations; no expected policy is inferred.",
         "This harness does not prove Web/CLI/API parity, RBAC or transaction correctness.",
         "Cleanup checks owned paths and units, not global absence of namespace references.",
@@ -158,6 +163,53 @@ jq -n --slurpfile start "$evidence/sample-start-resources.json" \
 du -sx --block-size=1 /var/lib/andeiva-preview /usr/lib/andeiva-preview /usr/share/andeiva-preview \
   > "$evidence/disk-allocated-bytes.txt"
 event observed
+
+if [[ "$api_stop" == true ]]; then
+  stage=api-stop
+  helper_pid=$(systemctl show --value --property=MainPID andeiva-preview-helper.service)
+  namespace_pid=$(systemctl show --value --property=MainPID andeiva-preview-namespaces.service)
+  [[ "$helper_pid" =~ ^[1-9][0-9]*$ && "$namespace_pid" =~ ^[1-9][0-9]*$ ]]
+  cp /run/andeiva-preview/runtime.json "$evidence/retained-runtime.json"
+  gateway=$(jq -er '.gateway_namespace | select(type=="number" and .>0)' "$evidence/retained-runtime.json")
+  [[ $(stat -Lc %i /run/andeiva-preview/netns/gateway) == "$gateway" ]]
+  kernel_policy() {
+    [[ $(stat -Lc %i /run/andeiva-preview/netns/gateway) == "$gateway" ]]
+    nsenter --net=/run/andeiva-preview/netns/gateway nft -j list ruleset |
+      jq -S '.nftables |= map(select(has("metainfo")|not)) | walk(
+        if type=="object" and has("counter") and (.counter|type)=="object"
+        then .counter |= del(.packets,.bytes) else . end)'
+  }
+  kernel_policy > "$evidence/retained-kernel.json"
+  api_stopped=true
+  timeout 45 systemctl stop andeiva-preview-api.service andeiva-preview-api.socket
+  for unit in andeiva-preview-api.service andeiva-preview-api.socket; do
+    [[ $(systemctl show --value --property=ActiveState "$unit") == inactive ]]
+  done
+  for unit in andeiva-preview.target andeiva-preview-helper.service andeiva-preview-namespaces.service; do
+    systemctl is-active --quiet "$unit"
+  done
+  [[ $(systemctl show --value --property=MainPID andeiva-preview-helper.service) == "$helper_pid" ]]
+  [[ $(systemctl show --value --property=MainPID andeiva-preview-namespaces.service) == "$namespace_pid" ]]
+  cmp "$evidence/retained-runtime.json" /run/andeiva-preview/runtime.json
+  kernel_policy > "$evidence/stopped-kernel.json"
+  cmp "$evidence/retained-kernel.json" "$evidence/stopped-kernel.json"
+  if health stopped > /dev/null 2>&1; then exit 1; fi
+  probes api-stopped
+  for protocol in tcp udp; do
+    for port in 18080 18081 18082; do
+      [[ $(jq -r .allowed "$evidence/initial-$protocol-$port.json") == \
+        $(jq -r .allowed "$evidence/api-stopped-$protocol-$port.json") ]]
+    done
+  done
+  timeout 45 systemctl start andeiva-preview-api.socket andeiva-preview-api.service
+  api_stopped=false
+  health api-restored
+  kernel_policy > "$evidence/restored-kernel.json"
+  cmp "$evidence/retained-kernel.json" "$evidence/restored-kernel.json"
+  [[ $(systemctl show --value --property=MainPID andeiva-preview-helper.service) == "$helper_pid" ]]
+  cmp "$evidence/retained-runtime.json" /run/andeiva-preview/runtime.json
+  event passed
+fi
 
 if [[ "$api_failure" == true ]]; then
   stage=api-failure

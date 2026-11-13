@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — administrative service isolation
+
+- Retain the last applied isolated firewall policy when the administrative API and socket are stopped or fail.
+- Preserve coordinated shutdown when the target, helper or namespace supervisor stops; add explicit administration-stop recovery checks.
+
 ## Unreleased — prepared routed composite references
 
 - Validate schema 7 references against canonical firewall and local-service payloads, deriving network identity from the routed firewall revision.

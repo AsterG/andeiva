@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+(( $# <= 1 )) || exit 2
+units=${1:-$(cd -- "$(dirname -- "$0")/.." && pwd)}
+value() { sed -n "s/^$2=//p" "$units/$1"; }
+[[ $(value andeiva-preview.target Requires) = 'andeiva-preview-namespaces.service andeiva-preview-helper.service' ]]
+[[ $(value andeiva-preview.target Wants) = 'andeiva-preview-api.socket andeiva-preview-api.service' ]]
+[[ $(value andeiva-preview.target After) = 'andeiva-preview-namespaces.service andeiva-preview-helper.service andeiva-preview-api.socket andeiva-preview-api.service' ]]
+for unit in andeiva-preview-api.service andeiva-preview-api.socket; do
+  [[ $(value "$unit" PartOf) = andeiva-preview.target ]]
+  ! grep -Eq '^(BindsTo|OnFailure|ExecStop|ExecStopPost|PropagatesStopTo)=' "$units/$unit"
+done
+# API depends on the helper/socket, never the reverse. Explicit target stop and
+# helper/namespace failure still tear down the isolated appliance coherently.
+[[ $(value andeiva-preview-api.service Requires) = 'andeiva-preview-helper.service andeiva-preview-api.socket' ]]
+[[ $(value andeiva-preview-api.socket Service) = andeiva-preview-api.service ]]
+for unit in andeiva-preview-helper.service andeiva-preview-namespaces.service; do
+  [[ $(value "$unit" PartOf) = andeiva-preview.target ]]
+  grep -Eq '^ExecStopPost=.*systemctl --no-block stop andeiva-preview.target$' "$units/$unit"
+  ! grep -Eq '^(Requires|BindsTo|After)=.*andeiva-preview-api' "$units/$unit"
+done
+printf 'PASS: administration stop/failure does not propagate to helper or namespaces; explicit target shutdown remains intact\n'
