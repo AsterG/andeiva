@@ -212,6 +212,11 @@ func (r *v2ReachabilityReader) lookup(state v2State, subject, id string) (v2Oper
 			if !(&v2Store{state: state}).validOperation(op) || op.ID != id || op.Sequence != seq || op.Subject != subject || op.Lineage != state.Lineage || op.ClosingCredit == "" {
 				return op, errV2Unavailable
 			}
+			if r.action != nil && op.Outcome != nil {
+				if err := r.operationAudit(op, state, 2); err != nil {
+					return op, err
+				}
+			}
 			return op, nil
 		}
 	}
@@ -233,6 +238,11 @@ func (r *v2ReachabilityReader) lookup(state v2State, subject, id string) (v2Oper
 	}
 	if !(&v2Store{state: state}).validOperation(op) || op.ID != id || op.Sequence != seq || op.Subject != subject || op.Lineage != state.Lineage {
 		return op, errV2Unavailable
+	}
+	if r.action != nil && op.Outcome != nil {
+		if err := r.operationAudit(op, state, 2); err != nil {
+			return op, err
+		}
 	}
 	return op, nil
 }
@@ -270,6 +280,11 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 		if audit.Operation != entry.Operation || audit.Running != cfg.Running.Hash || audit.Sequence > cfg.AuditSequence || (audit.Result != "applied" && audit.Result != "verified") {
 			return errV2Unavailable
 		}
+		if r.action != nil {
+			if err := r.actionAuditLeafV2(entry.Audit, audit.Sequence, state.Generation, depth); err != nil {
+				return err
+			}
+		}
 	}
 	for _, domain := range []v2DomainSnapshot{cfg.Firewall, cfg.LocalServices} {
 		for _, revision := range []Revision{domain.Running, domain.Startup, domain.LastGood} {
@@ -298,14 +313,20 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 			return err
 		}
 	}
+	if r.action != nil && !live {
+		if cfg.Intent != nil {
+			return errV2Unavailable
+		}
+		return nil
+	}
 	view := state
 	view.Configuration = &cfg
-	if cfg.VerifiedIndex != "" {
+	if r.action == nil && cfg.VerifiedIndex != "" {
 		if err := r.witness(cfg.VerifiedIndex, 0, "", false, key, view, depth); err != nil {
 			return err
 		}
 	}
-	if cfg.RecoveryIndex != "" {
+	if r.action == nil && cfg.RecoveryIndex != "" {
 		if err := r.witness(cfg.RecoveryIndex, 0, "", true, key, view, depth); err != nil {
 			return err
 		}
@@ -533,6 +554,9 @@ func (r *v2ReachabilityReader) composite(hash string, depth int) error {
 }
 
 func (r *v2ReachabilityReader) auditChain(hash string, sequence, generation uint64, depth int) error {
+	if r.action != nil {
+		return r.actionAuditLeafV2(hash, sequence, generation, depth)
+	}
 	var pending []string
 	for hash != "" {
 		if err := r.ctx.Err(); err != nil {

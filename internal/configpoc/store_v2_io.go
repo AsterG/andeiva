@@ -11,6 +11,7 @@ import (
 )
 
 type v2Store struct {
+	archiveObserver func(v2ReserveArchiveRef) error
 	access          *recoveryreserve.ReaderAccessV2
 	readOnly        bool
 	recordReader    func(string, int64) ([]byte, error)

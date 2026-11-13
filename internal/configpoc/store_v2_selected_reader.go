@@ -37,7 +37,16 @@ const (
 	SelectionMatchTargetV2 RoutedSelectionPurposeV2 = "match_target"
 )
 
+// SelectionReaderPolicyV2 is trusted assembly policy, never request input.
+type SelectionReaderPolicyV2 string
+
+const (
+	SelectionFullHistoryV2     SelectionReaderPolicyV2 = ""
+	SelectionActionAuthorityV2 SelectionReaderPolicyV2 = "action-authority"
+)
+
 type SelectionReaderOptionsV2 struct {
+	Policy                     SelectionReaderPolicyV2
 	Access                     recoveryreserve.ReaderAccessV2
 	Identity                   networkexecutor.OwnedNamespaceIdentity
 	Admission, Plan, Emergency *recoveryreserve.ReadOnlyPoolV2
@@ -61,7 +70,7 @@ type selectedViewV2 struct {
 }
 
 func NewRoutedSelectionReaderV2(area *os.Root, options SelectionReaderOptionsV2) (*RoutedSelectionReaderV2, error) {
-	if area == nil || !validRoutedIdentityV1(options.Identity) || options.Identity.UID == options.Access.OwnerUID || options.Admission == nil || options.Plan == nil || options.Emergency == nil || options.Admission == options.Plan || options.Plan == options.Emergency || options.Admission == options.Emergency || !validReachabilityBudgetV2(options.Budget) || options.Access.CheckDirectory(area) != nil {
+	if (options.Policy != SelectionFullHistoryV2 && options.Policy != SelectionActionAuthorityV2) || area == nil || !validRoutedIdentityV1(options.Identity) || options.Identity.UID == options.Access.OwnerUID || options.Admission == nil || options.Plan == nil || options.Emergency == nil || options.Admission == options.Plan || options.Plan == options.Emergency || options.Admission == options.Emergency || !validReachabilityBudgetV2(options.Budget) || options.Access.CheckDirectory(area) != nil {
 		return nil, ErrInvalid
 	}
 	return &RoutedSelectionReaderV2{area: area, options: options}, nil
@@ -80,9 +89,12 @@ func (r *RoutedSelectionReaderV2) read(ctx context.Context) (result *selectedVie
 	}
 	graph := &v2ReachabilityReader{ctx: ctx, area: r.area, budget: r.options.Budget, objects: map[string]bool{}, edges: map[string]uint8{}, shared: &r.options.Access}
 	graph.cache = newSelectedReadCacheV2()
+	if r.options.Policy == SelectionActionAuthorityV2 {
+		graph.action = &actionReadDependenciesV2{entries: map[string]actionReadDependencyV2{}}
+	}
 	defer func() {
 		if result == nil {
-			_ = graph.cache.close(graph)
+			_ = graph.closeSelectedV2()
 		}
 	}()
 	s := &v2Store{root: r.area, access: &r.options.Access, readOnly: true, recordReader: graph.storeRecordV2, objectReader: graph.object}
@@ -107,12 +119,21 @@ func (r *RoutedSelectionReaderV2) read(ctx context.Context) (result *selectedVie
 	if s.state.Configuration == nil || s.state.RecoveryReserveVersion != 1 || !hasFeatureV2(s.state, v2SharedReaderFeature) || !hasFeatureV2(s.state, v2RoutedFeature) {
 		return nil, ErrRecovery
 	}
-	if err := graph.selection(s.selector.Current, &s.selector.Previous); err != nil {
-		return nil, err
-	}
-	if s.selector.Previous != "" {
-		if err := graph.selection(s.selector.Previous, nil); err != nil {
+	if graph.action != nil {
+		s.archiveObserver = func(ref v2ReserveArchiveRef) error {
+			return graph.reserveArchiveObject(ref, s.selection.State, s.state, 2)
+		}
+		if err := graph.actionAuthorityV2(s); err != nil {
 			return nil, err
+		}
+	} else {
+		if err := graph.selection(s.selector.Current, &s.selector.Previous); err != nil {
+			return nil, err
+		}
+		if s.selector.Previous != "" {
+			if err := graph.selection(s.selector.Previous, nil); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if manager.verifySelected(s) != nil || validateRoutedActiveV2(s.state, s.readObject) != nil {
@@ -145,7 +166,7 @@ func (r *RoutedSelectionReaderV2) revalidate(ctx context.Context, v *selectedVie
 	if ctx.Err() != nil || r.options.Access.CheckDirectory(r.area) != nil {
 		return ErrRecovery
 	}
-	if v.graph.cache.revalidate(v.graph) != nil {
+	if v.graph.revalidateSelectedV2() != nil {
 		return ErrRecovery
 	}
 	for i, pool := range r.pools() {
@@ -175,7 +196,7 @@ func (r *RoutedSelectionReaderV2) Observe(ctx context.Context) (out SelectionRef
 		return SelectionReferenceV2{}, err
 	}
 	defer func() {
-		if v.graph.cache.close(v.graph) != nil {
+		if v.graph.closeSelectedV2() != nil {
 			out = SelectionReferenceV2{}
 			resultErr = ErrRecovery
 		}
@@ -206,7 +227,7 @@ func (r *RoutedSelectionReaderV2) resolve(ctx context.Context, expectedSelection
 		return RoutedSelectedPlanV1{}, err
 	}
 	defer func() {
-		if v.graph.cache.close(v.graph) != nil {
+		if v.graph.closeSelectedV2() != nil {
 			out = RoutedSelectedPlanV1{}
 			resultErr = ErrRecovery
 		}
@@ -347,7 +368,7 @@ func (r *RoutedSelectionReaderV2) prepareView(ctx context.Context, reference *Se
 		return out, err
 	}
 	defer func() {
-		if v.graph.cache.close(v.graph) != nil {
+		if v.graph.closeSelectedV2() != nil {
 			out = RoutedPrepareViewV2{}
 			resultErr = ErrRecovery
 		}

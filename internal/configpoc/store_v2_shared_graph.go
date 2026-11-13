@@ -37,6 +37,11 @@ func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]b
 	if r.shared == nil || limit < 1 || limit > v2ObjectLimit || r.ctx.Err() != nil {
 		return nil, noop, errV2Unavailable
 	}
+	if r.action != nil {
+		if data, found, err := r.action.get(r, name, limit); found || err != nil {
+			return data, noop, err
+		}
+	}
 	if r.cache != nil {
 		if data, found, err := r.cache.get(r, name, limit); found || err != nil {
 			return data, noop, err
@@ -83,8 +88,20 @@ func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]b
 			return nil, noop, err
 		}
 		if kept {
+			if r.action != nil {
+				if err := r.action.keep(r, name, info, data, true); err != nil {
+					return nil, noop, err
+				}
+			}
 			return data, noop, nil
 		}
+	}
+	if r.action != nil && name != "selected.json" {
+		if err := r.action.keep(r, name, info, data, false); err != nil {
+			r.active -= n
+			return nil, noop, err
+		}
+		return data, noop, nil
 	}
 	released := false
 	return data, func() {

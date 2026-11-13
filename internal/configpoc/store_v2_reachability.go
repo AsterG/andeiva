@@ -34,6 +34,7 @@ type v2ReachabilityReport struct {
 }
 
 type v2ReachabilityReader struct {
+	action    *actionReadDependenciesV2
 	ctx       context.Context
 	area      *os.Root
 	budget    v2ReachabilityBudget
@@ -102,6 +103,11 @@ func (r *v2ReachabilityReader) object(hash string, target any) error {
 		return err
 	}
 	defer release()
+	if r.action != nil {
+		if audit, ok := target.(*v2CoordinatorAudit); ok && !validActionAuditShapeV2(*audit) {
+			return errV2Unavailable
+		}
+	}
 	return nil
 }
 
@@ -404,6 +410,9 @@ func (r *v2ReachabilityReader) operationAudit(op v2Operation, state v2State, dep
 		Data      []byte `json:"data"`
 	}
 	if checkpointDecode(payload, &catalogue) == nil {
+		if r.action != nil {
+			return errV2Unavailable
+		}
 		if catalogue.Format != v2Format || catalogue.Operation != op.ID || len(catalogue.Data) == 0 || len(catalogue.Data) > 8192 {
 			return errV2Unavailable
 		}
