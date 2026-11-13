@@ -111,7 +111,7 @@ func migrationPrepareInputV3(ctx context.Context) (migrationPrepareRequestV3, *b
 	}
 	status, re := io.ReadAll(io.LimitReader(parent, 65537))
 	ce := parent.Close()
-	if re != nil || ce != nil || !rootRoutedParentStatusV3(status, request.ParentPID) || unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0) != nil || os.Getppid() != request.ParentPID {
+	if re != nil || ce != nil || !rootRoutedParentStatusV3(status, request.ParentPID) || armMigrationParentDeathV3(request.ParentPID) != nil {
 		return fail()
 	}
 	gateway := os.NewFile(3, "migration-prepare-source-namespace")
@@ -130,6 +130,8 @@ func migrationPrepareInputV3(ctx context.Context) (migrationPrepareRequestV3, *b
 // RunRoutedMigrationPrepareRoleV3 opens only the fixed old FW source and newly
 // provisioned private roots. Privileged readback is a bounded parent callback.
 func RunRoutedMigrationPrepareRoleV3(ctx context.Context) (result error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	request, reader, input, session, err := migrationPrepareInputV3(ctx)
 	if err != nil {
 		return err

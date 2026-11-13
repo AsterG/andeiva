@@ -190,6 +190,8 @@ func RunRoutedMigrationStateRoleV3(ctx context.Context) error {
 	return runRoutedMigrationRoleV3(ctx, false)
 }
 func runRoutedMigrationRoleV3(ctx context.Context, helper bool) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	if ctx == nil || ctx.Err() != nil {
 		return ErrUnavailable
 	}
@@ -222,7 +224,7 @@ func runRoutedMigrationRoleV3(ctx context.Context, helper bool) error {
 	}
 	status, readErr := io.ReadAll(io.LimitReader(parent, 65537))
 	closeErr := parent.Close()
-	if readErr != nil || closeErr != nil || !rootRoutedParentStatusV3(status, request.ParentPID) || unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0) != nil || os.Getppid() != request.ParentPID {
+	if readErr != nil || closeErr != nil || !rootRoutedParentStatusV3(status, request.ParentPID) || armMigrationParentDeathV3(request.ParentPID) != nil {
 		return ErrIdentity
 	}
 	gateway := os.NewFile(3, "migration-source-namespace")

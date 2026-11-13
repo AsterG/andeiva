@@ -92,6 +92,8 @@ func RunRoutedMigrationInspectRoleV3(ctx context.Context) error {
 	if ctx == nil || ctx.Err() != nil {
 		return ErrUnavailable
 	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	if checkMigrationInspectFDsV3() != nil {
 		return ErrIdentity
 	}
@@ -121,7 +123,7 @@ func RunRoutedMigrationInspectRoleV3(ctx context.Context) error {
 	}
 	status, re := io.ReadAll(io.LimitReader(parent, 65537))
 	ce := parent.Close()
-	if re != nil || ce != nil || !rootRoutedParentStatusV3(status, request.ParentPID) || unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0) != nil || os.Getppid() != request.ParentPID {
+	if re != nil || ce != nil || !rootRoutedParentStatusV3(status, request.ParentPID) || armMigrationParentDeathV3(request.ParentPID) != nil {
 		return ErrIdentity
 	}
 	gateway := os.NewFile(3, "migration-inspect-source-namespace")
