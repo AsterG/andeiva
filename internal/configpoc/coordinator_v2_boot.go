@@ -29,12 +29,15 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 func validFeaturesV2(state v2State) bool {
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature) || feature <= last {
+		if (feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
 			return false
 		}
 		last = feature
 	}
 	if !validGuardDeadlineFeatureV2(state) || !validRoutedFeatureV2(state) {
+		return false
+	}
+	if hasFeatureV2(state, v2RoutedOfflineSeedFeature) && (!hasFeatureV2(state, v2RoutedFeature) || !hasFeatureV2(state, v2SharedReaderFeature) || !hasFeatureV2(state, v2GuardDeadlineFeature) || state.RecoveryReserveVersion != 1 || state.Configuration == nil) {
 		return false
 	}
 	if hasFeatureV2(state, v2RoutedBootFeature) && !hasFeatureV2(state, v2RoutedFeature) {

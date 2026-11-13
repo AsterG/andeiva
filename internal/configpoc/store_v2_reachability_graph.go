@@ -258,7 +258,7 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 			return errV2Unavailable
 		}
 	}
-	if live && cfg.Pending == nil {
+	if live && cfg.Pending == nil && !declaredOfflineSeedV3(state, cfg, r.object) {
 		entry, err := r.findWitness(cfg.VerifiedIndex, cfg.Running.Hash)
 		if err != nil {
 			return err

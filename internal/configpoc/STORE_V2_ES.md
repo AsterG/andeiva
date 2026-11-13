@@ -106,3 +106,17 @@ Son medidas del filesystem de esta corrida sobre copias. El pico cgroup incluye
 caché; no es RSS del proceso, heap de la aplicación ni dimensionamiento productivo.
 
 Véanse las [reservas de recuperación transaccional](RECOVERY_RESERVES_V2_ES.md) para la integración interna de pools/coordinador y sus pruebas pendientes.
+# Preparación inicial sin conexión
+
+`PrepareOfflineRoutedStoreV3` acepta únicamente un directorio privado vacío,
+tres reservas existentes y configuraciones canónicas vacías: firewall schema4
+con denegación predeterminada y servicios locales schema3. Guarda referencias
+declaradas y auditoría `offline_seed / prepared`, sin acreditar aplicación física.
+La marca persistente `configuration.routed-offline-seed.v1` exige un lector
+compatible. El runtime requiere autoridad real, identidad de arranque, reservas
+y plazos; debe reconciliar y comprobar el kernel antes de estar disponible.
+La excepción inicial del recorrido de integridad no crea una revisión verificada
+y no es válida en generaciones posteriores. El instalador convierte permisos
+sin escritores activos. Un destino no vacío nunca se reinicializa, tampoco tras
+una interrupción. Los appliances existentes necesitan la migración con historial;
+esta preparación no demuestra una instalación ni un despliegue completos.

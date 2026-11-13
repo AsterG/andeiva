@@ -21,7 +21,7 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 			return errV2Unavailable
 		}
 	}
-	if state.Pending == nil {
+	if state.Pending == nil && !declaredOfflineSeedV3(s.state, *state, s.readObject) {
 		proof, known, err := c.verifiedLookup(state.VerifiedIndex, state.Running.Hash)
 		if err != nil || !known {
 			return errV2Unavailable

@@ -60,6 +60,9 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	c := &v2Coordinator{store: store, firewall: append([]Engine{}, firewall...), local: append([]Engine{}, local...), options: options}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if hasFeatureV2(store.state, v2RoutedOfflineSeedFeature) && (options.Routed == nil || options.BootID == nil || options.Reserves == nil || !options.GuardDeadlines) {
+		return nil, ErrRecovery
+	}
 	if store.blocked {
 		if store.state.RecoveryReserveVersion != 1 || options.Reserves == nil {
 			return nil, errV2Unavailable
