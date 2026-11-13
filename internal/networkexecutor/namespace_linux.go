@@ -149,6 +149,22 @@ func validNamespaceBinding(target, host, self uint64) bool {
 // It needs NET_ADMIN, never SYS_ADMIN or nsenter. NewWithHost remains the separate
 // host-supervisor constructor. Caller pins are duplicated and never passed to ip.
 func NewInOwnedNamespace(lifetime context.Context, target, host *os.File, expected OwnedNamespaceIdentity) (*Executor, error) {
+	return newInOwnedNamespace(lifetime, target, host, expected, 0)
+}
+
+// NewInOwnedNamespaceWithReader adds exactly the dedicated read-only storage
+// group pinned by trusted supervisor assembly. It grants no new capability and
+// does not relax NewInOwnedNamespace's legacy supplementary-group contract.
+// The caller must validate readerGID against the selected directory profiles;
+// neither HTTP nor helper requests may choose this identity.
+func NewInOwnedNamespaceWithReader(lifetime context.Context, target, host *os.File, expected OwnedNamespaceIdentity, readerGID uint32) (*Executor, error) {
+	if readerGID == 0 || readerGID == ^uint32(0) || readerGID == expected.GID {
+		return nil, ErrScope
+	}
+	return newInOwnedNamespace(lifetime, target, host, expected, readerGID)
+}
+
+func newInOwnedNamespace(lifetime context.Context, target, host *os.File, expected OwnedNamespaceIdentity, readerGID uint32) (*Executor, error) {
 	if lifetime == nil || target == nil || host == nil || !validOwnedIdentity(expected) {
 		return nil, ErrScope
 	}
@@ -165,7 +181,7 @@ func NewInOwnedNamespace(lifetime context.Context, target, host *os.File, expect
 		return nil, err
 	}
 	guard := func() error {
-		if id != expected.Namespace || hostID != expected.Host || verifyOwnedNamespace(pin, hostPin, expected) != nil || !trustedExecutable("/usr/bin/ip") {
+		if id != expected.Namespace || hostID != expected.Host || verifyOwnedNamespaceWithReader(pin, hostPin, expected, readerGID) != nil || !trustedExecutable("/usr/bin/ip") {
 			return ErrScope
 		}
 		return nil
@@ -242,6 +258,10 @@ func validOwnedIdentity(want OwnedNamespaceIdentity) bool {
 }
 
 func verifyOwnedNamespace(target, host *os.File, want OwnedNamespaceIdentity) error {
+	return verifyOwnedNamespaceWithReader(target, host, want, 0)
+}
+
+func verifyOwnedNamespaceWithReader(target, host *os.File, want OwnedNamespaceIdentity, readerGID uint32) error {
 	if !validOwnedIdentity(want) || target == nil || host == nil {
 		return ErrScope
 	}
@@ -282,10 +302,22 @@ func verifyOwnedNamespace(target, host *os.File, want OwnedNamespaceIdentity) er
 	if err != nil {
 		return ErrScope
 	}
+	return ownedSupplementaryGroups(groups, want.GID, readerGID)
+}
+
+func ownedSupplementaryGroups(groups []int, primary, reader uint32) error {
+	if primary == 0 || reader == ^uint32(0) || (reader != 0 && reader == primary) {
+		return ErrScope
+	}
+	found := reader == 0
 	for _, group := range groups {
-		if group < 0 || uint64(group) != uint64(want.GID) {
+		if group < 0 || (uint64(group) != uint64(primary) && (reader == 0 || uint64(group) != uint64(reader))) {
 			return ErrScope
 		}
+		found = found || uint64(group) == uint64(reader)
+	}
+	if !found {
+		return ErrScope
 	}
 	return nil
 }
