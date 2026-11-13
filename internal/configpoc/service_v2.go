@@ -151,6 +151,7 @@ func openServiceCoordinatorV2(ctx context.Context, area *os.Root, budget BudgetV
 			_ = store.close()
 			return nil, fmt.Errorf("configuration integrity attach: %w", attachErr)
 		}
+		options.integrityAttached = true
 	}
 	c, err := openCoordinatorV2(ctx, store, firewall, local, options)
 	if err != nil {
@@ -162,7 +163,7 @@ func openServiceCoordinatorV2(ctx context.Context, area *os.Root, budget BudgetV
 	}
 	service := &ServiceV2{coordinator: c, auth: auth}
 	if options.Integrity != nil {
-		if err := service.InspectRuntimeV1(ctx); err != nil {
+		if err := service.qualifyRuntimeIntegrityV1(ctx); err != nil {
 			_ = service.Close()
 			return nil, fmt.Errorf("configuration integrity qualification: %w", err)
 		}
@@ -265,6 +266,16 @@ func (s *ServiceV2) Namespace(binding adminauth.SessionBinding, domain string, l
 		if !s.coordinator.integrityAllowsV1(false) {
 			if !s.coordinator.integrityAllowsV1(true) || lifetime <= 0 || lifetime > 24*time.Hour || s.coordinator.now().Before(store.state.Clock) {
 				return ErrRecovery
+			}
+			pending := store.state.Configuration.Pending
+			if pending.Owner != p.Subject || pending.Domain != domain {
+				return ErrDenied
+			}
+			for _, namespace := range store.state.Namespaces {
+				if namespace.Subject == p.Subject && namespace.Domain == domain && namespace.ClosingOrigin == pending.OriginCommit && !namespace.Closed && s.coordinator.now().Before(namespace.AdmitUntil) {
+					result = clone(namespace)
+					return nil
+				}
 			}
 			// Only a reserved closing namespace may be published while a live
 			// confirmation prevents the next quiescent integrity inspection.

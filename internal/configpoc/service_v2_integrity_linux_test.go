@@ -14,6 +14,14 @@ type testIntegrityV1 struct {
 	inspect func(context.Context, SelectionReferenceV2) (IntegrityResultV1, error)
 }
 
+type testIntegrityAdmissionV1 struct {
+	*testIntegrityV1
+	publication, closing bool
+}
+
+func (g *testIntegrityAdmissionV1) IntegrityPublicationAllowedV1() bool { return g.publication }
+func (g *testIntegrityAdmissionV1) IntegrityClosingAllowedV1() bool     { return g.closing }
+
 func (g *testIntegrityV1) Attach(ctx context.Context, ref SelectionReferenceV2) error {
 	if g.attach != nil {
 		return g.attach(ctx, ref)
@@ -79,11 +87,23 @@ func TestRuntimeIntegrityV1IncompleteNeverEnablesWrites(t *testing.T) {
 				t.Fatal("incomplete success", err)
 			}
 			if _, err := s.Namespace(binding, "firewall", time.Minute); !errors.Is(err, ErrRecovery) {
-				t.Fatal("incomplete allowed writes", err)
+				if !s.coordinator.store.blocked || !errors.Is(err, errV2Unavailable) {
+					t.Fatal("incomplete allowed writes", err)
+				}
+			}
+			if s.coordinator.store.blocked {
+				c := s.coordinator
+				before := c.store.selector
+				c.store.mu.Lock()
+				err := c.store.publish(clone(c.store.state))
+				c.store.mu.Unlock()
+				if !errors.Is(err, errV2Unavailable) || c.store.selector != before {
+					t.Fatal("uncertain dispatch allowed non-administrative publication", err)
+				}
 			}
 			gate.inspect = completeIntegrityV1
 			err := s.InspectRuntimeV1(context.Background())
-			if state == IntegrityFencedV1 {
+			if state == IntegrityFencedV1 || state == "" || state == "unknown" {
 				if !errors.Is(err, ErrRecovery) {
 					t.Fatal("fence cleared", err)
 				}
@@ -141,6 +161,7 @@ func TestRuntimeIntegrityV1DueInspectionPreservesReservedConfirmation(t *testing
 	auth, binding, _ := serviceV2Auth(t, p.Subject, "alice", "admin", c.store.state.Subjects[0].CredentialRevision)
 	s := &ServiceV2{coordinator: c, auth: auth}
 	c.options.Integrity = &testIntegrityV1{inspect: completeIntegrityV1}
+	c.integrity.attached = true // Models the authenticated pre-coordinator attachment.
 	if err := s.InspectRuntimeV1(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -254,5 +275,62 @@ func TestRuntimeIntegrityV1PublicationWakeupCoalesces(t *testing.T) {
 	}
 	if err := s.InspectRuntimeV1(context.Background()); err != nil || !c.integrityAllowsV1(false) {
 		t.Fatal("wakeup inspection did not refresh", err)
+	}
+}
+
+func TestRuntimeIntegrityV1LivePendingDefersQualificationWithoutClosingTimer(t *testing.T) {
+	c, _, _, p, _ := coordinatorV2Fixture(t, true)
+	attachReserveManagerV2(t, c)
+	auth, binding, _ := serviceV2Auth(t, p.Subject, "alice", "admin", c.store.state.Subjects[0].CredentialRevision)
+	s := &ServiceV2{coordinator: c, auth: auth}
+	coordinatorV2Stage(t, c, p, "pending-reconnect")
+	coordinatorV2Run(t, c, p, v2Request{Kind: OpValidate})
+	seconds := uint64(120)
+	committed := coordinatorV2Run(t, c, p, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+	deadline := committed.Current.Pending.Deadline
+	originalTimer := c.timer
+	if originalTimer == nil {
+		t.Fatal("test did not arm the real coordinator timer")
+	}
+	gate := &testIntegrityAdmissionV1{testIntegrityV1: &testIntegrityV1{inspect: func(context.Context, SelectionReferenceV2) (IntegrityResultV1, error) {
+		t.Fatal("full inspection attempted during live lease")
+		return IntegrityResultV1{}, ErrRecovery
+	}}, closing: true}
+	c.options.Integrity = gate
+	c.integrity.attached = true // A correlated cold attachment is not full readiness.
+	if err := s.qualifyRuntimeIntegrityV1(context.Background()); err != nil {
+		t.Fatal("reconciling service rejected", err)
+	}
+	if c.closed || c.timer != originalTimer || c.integrity.ready || s.RuntimeIntegrityReadyV1() || !c.store.state.Configuration.Pending.Deadline.Equal(deadline) {
+		t.Fatal("qualification closed recovery, reset deadline or claimed ready")
+	}
+	ns, err := s.Namespace(binding, "firewall", time.Minute)
+	if err != nil {
+		t.Fatal("cold attached closing namespace denied", err)
+	}
+	if _, err := s.Admit(binding, ns.ID, c.store.state.Generation, v2Request{Kind: OpSave}); !errors.Is(err, ErrRecovery) {
+		t.Fatal("reconciling service admitted ordinary work", err)
+	}
+	if _, err := s.Status(binding); err != nil {
+		t.Fatal("reconciling service lost observation", err)
+	}
+	gate.closing = false
+	if _, err := s.Namespace(binding, "firewall", time.Minute); !errors.Is(err, ErrRecovery) {
+		t.Fatal("uncertain controller permitted closing namespace", err)
+	}
+	gate.closing = true
+	again, err := s.Namespace(binding, "firewall", time.Minute)
+	if err != nil || again.ID != ns.ID {
+		t.Fatal("closing namespace retry changed identity", err)
+	}
+	op, err := s.Admit(binding, ns.ID, c.store.state.Generation, v2Request{Kind: OpConfirm, Origin: committed.Operation.ID, Target: committed.Current.Pending.Target})
+	if err != nil {
+		t.Fatal("cold attached confirmation admission denied", err)
+	}
+	if _, err := s.Execute(context.Background(), binding, op.ID); err != nil {
+		t.Fatal("cold attached confirmation execution denied", err)
+	}
+	if c.store.state.Configuration.Pending != nil || s.RuntimeIntegrityReadyV1() {
+		t.Fatal("confirmation failed or fabricated full integrity readiness")
 	}
 }

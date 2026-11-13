@@ -39,9 +39,37 @@ type runtimeIntegrityStateV1 struct {
 	inspecting atomic.Bool
 	kick       chan struct{}
 	ready      bool // All remaining fields are protected by store.mu.
+	attached   bool
 	fenced     bool
 	checked    time.Time
 	sequence   uint64
+}
+
+func (s *ServiceV2) qualifyRuntimeIntegrityV1(ctx context.Context) error {
+	c := s.coordinator
+	c.store.mu.Lock()
+	configuration := c.store.state.Configuration
+	// A surviving helper may retain an original live lease after API restart.
+	// Keep its independent guardian and the existing coordinator timer alive;
+	// this is reconciliation, not successful integrity qualification.
+	deferred := !c.closed && !c.store.blocked && configuration != nil && configuration.Pending != nil && configuration.Intent == nil && !configuration.RecoveryRequired
+	c.store.mu.Unlock()
+	if deferred {
+		return nil
+	}
+	return s.InspectRuntimeV1(ctx)
+}
+
+// RuntimeIntegrityReadyV1 is for trusted runtime readiness checks, not an
+// administrative success flag or permission to bypass normal authorization.
+func (s *ServiceV2) RuntimeIntegrityReadyV1() bool {
+	if s == nil || s.coordinator == nil || s.coordinator.store == nil {
+		return false
+	}
+	c := s.coordinator
+	c.store.mu.Lock()
+	defer c.store.mu.Unlock()
+	return !c.closed && !c.store.blocked && c.integrityAllowsV1(false)
 }
 
 // IntegrityPublicationsV1 is an internal, coalesced scheduler wakeup. It carries
@@ -92,6 +120,14 @@ func (s *ServiceV2) InspectRuntimeV1(ctx context.Context) error {
 	bounded, cancel := context.WithTimeout(ctx, IntegrityInspectionDeadlineV1)
 	defer cancel()
 	result, err := c.options.Integrity.Inspect(bounded, expected)
+	switch result.State {
+	case IntegrityCompleteV1, IntegrityCancelledV1, IntegrityStaleV1, IntegrityUnavailableV1, IntegrityFencedV1:
+	default:
+		// No authenticated completion: another component could still be
+		// reading. Fence this entire writer, including trusted maintenance and
+		// identity publication paths that do not use administrative admission.
+		c.store.blocked = true
+	}
 	if result.State == IntegrityFencedV1 {
 		c.integrity.fenced = true
 	}
@@ -113,15 +149,29 @@ func (c *v2Coordinator) integrityAllowsV1(closing bool) bool {
 		return true
 	}
 	i := &c.integrity
-	if i.inspecting.Load() || !i.ready || i.fenced {
+	if i.inspecting.Load() || i.fenced {
 		return false
 	}
-	if closing && c.store.state.Configuration.Pending != nil {
+	if gate, ok := c.options.Integrity.(interface{ IntegrityPublicationAllowedV1() bool }); ok && !gate.IntegrityPublicationAllowedV1() {
+		closingGate, closingOK := c.options.Integrity.(interface{ IntegrityClosingAllowedV1() bool })
+		if !closing || !closingOK || !closingGate.IntegrityClosingAllowedV1() {
+			return false
+		}
+	}
+	if closing && i.attached && c.store.state.Configuration.Pending != nil {
 		return true
+	}
+	if !i.ready {
+		return false
 	}
 	now := c.now()
 	sequence := c.store.selection.Sequence
 	return !now.Before(i.checked) && now.Sub(i.checked) < IntegrityInspectionIntervalV1 && sequence >= i.sequence && sequence-i.sequence < IntegrityPublicationLimitV1
+}
+
+func (c *v2Coordinator) integrityClosingV1(op v2Operation) bool {
+	pending := c.store.state.Configuration.Pending
+	return pending != nil && op.Request.Kind == OpConfirm && op.ClosingCredit != "" && op.Subject == pending.Owner && op.Domain == pending.Domain && op.Request.Origin == pending.OriginCommit && op.Request.Target == pending.Target
 }
 
 func (s *ServiceV2) catalogueAdmissionV1(binding adminauth.SessionBinding, namespace string, request OperationRequestV2, call func(*v2Store, v2TrustedPrincipal) error) error {

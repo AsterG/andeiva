@@ -12,16 +12,17 @@ import (
 )
 
 type v2CoordinatorOptions struct {
-	Integrity      RuntimeIntegrityV1
-	SharedReader   *recoveryreserve.ReaderAccessV2
-	Routed         RoutedAuthorityV1
-	RoutedIdentity networkexecutor.OwnedNamespaceIdentity
-	GuardDeadlines bool
-	Reserves       *v2ReserveManager
-	LocalPolicy    LocalPolicyV2
-	BootID         *v2BootID
-	Now            func() time.Time
-	Hook           func(string) error
+	integrityAttached bool // Set only after the trusted pre-coordinator Attach.
+	Integrity         RuntimeIntegrityV1
+	SharedReader      *recoveryreserve.ReaderAccessV2
+	Routed            RoutedAuthorityV1
+	RoutedIdentity    networkexecutor.OwnedNamespaceIdentity
+	GuardDeadlines    bool
+	Reserves          *v2ReserveManager
+	LocalPolicy       LocalPolicyV2
+	BootID            *v2BootID
+	Now               func() time.Time
+	Hook              func(string) error
 	// Tests may drive deadlines explicitly; appliance integration must not opt
 	// out of the independent timeout worker. There is no runtime caller yet.
 	ManualTimeout bool
@@ -64,6 +65,7 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if options.Integrity != nil {
+		c.integrity.attached = options.integrityAttached
 		c.integrity.kick = make(chan struct{}, 1)
 		store.afterPublication = c.integrityPublicationV1
 	}
@@ -377,7 +379,7 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 		if op.State != "accepted" {
 			return result(op), nil
 		}
-		if !c.integrityAllowsV1(op.ClosingCredit != "") {
+		if !c.integrityAllowsV1(c.integrityClosingV1(op)) {
 			return result(op), ErrRecovery
 		}
 	}
