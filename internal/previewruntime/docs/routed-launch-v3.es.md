@@ -25,3 +25,14 @@ go build ./...
 ```
 
 Las pruebas focales cubren argumentos de privilegios fijos, eventos acotados, rechazo de PID incorrecto, drenaje/barrera y grupos lectores. Las pruebas Unix dentro del mismo proceso no demuestran el bootstrap privilegiado entre procesos. Permanecen como gates separados las factories nativas de tres procesos, negativas de descriptores, recuperación por pérdida de procesos, limpieza de descendientes y mediciones CPU/RAM. Este incremento no incluye despliegue Docker/EKS.
+
+La factory del helper debe usar `NewRoutedReadbackSessionV3` con la misma
+autoridad agrupada concreta. Compatibilidad no posee otro guardian. Su estado
+bootstrap indica únicamente ausencia verificada de la tabla heredada; idle
+indica coincidencia física con una revisión completa confiable. Ninguno acredita
+salud del grupo, confirmación ni permiso de escritura. El runtime y la lectura
+completa del Group siguen siendo obligatorios antes de readiness. Las lecturas
+se serializan con la aplicación; se rechazan políticas desconocidas, fallos de
+captura y políticas deny transitorias no seleccionadas. El epoch de contadores
+cambia antes de cada aplicación intentada, incluidos errores y restauraciones.
+Su agotamiento impide esa lectura sin envolver el contador ni impedir rollback.

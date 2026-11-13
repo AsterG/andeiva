@@ -25,3 +25,14 @@ go build ./...
 ```
 
 Os testes focados cobrem argumentos fixos de privilégios, eventos limitados, rejeição de PID incorreto, drenagem/barreira e grupos leitores. Testes Unix no mesmo processo não comprovam o bootstrap privilegiado entre processos. Permanecem gates separados: factories nativas de três processos, negativas de descritores, recuperação após perda de processos, limpeza de descendentes e medições CPU/RAM. Este incremento não fornece implantação Docker/EKS.
+
+A factory do helper deve usar `NewRoutedReadbackSessionV3` com a mesma autoridade
+agrupada concreta. Compatibilidade não possui outro guardian. Seu bootstrap
+indica somente ausência verificada da tabela legada; idle indica correspondência
+física com revisão completa confiável. Nenhum comprova saúde do grupo,
+confirmação ou permissão de gravação. O runtime e a leitura completa do Group
+continuam obrigatórios antes de readiness. Leituras são serializadas com a
+aplicação; políticas desconhecidas, falhas de captura e políticas deny
+transitórias não selecionadas são rejeitadas. O epoch dos contadores muda antes
+de cada aplicação tentada, incluindo erros e restaurações. Seu esgotamento
+impede essa leitura sem reutilizar o contador nem impedir rollback.

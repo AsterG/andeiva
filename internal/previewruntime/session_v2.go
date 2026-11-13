@@ -24,6 +24,8 @@ type SessionV2 struct {
 	epoch, last            uint64
 	active, attached, cold bool
 	readOnly               bool
+	routedReadback         routedLegacyReadbackV3
+	routedOwner            *RoutedAuthority
 }
 
 func NewSessionV2(run string, namespace uint64, engine Engine, guardian *nftguardian.Guardian, observe Observer) (*SessionV2, error) {
@@ -58,7 +60,7 @@ func stateV2(s nftguardian.State) firewalladmin.LeaseState {
 // ServeV2 requires assembly-authenticated channel provenance. The Unix wrappers
 // perform kernel peer checks; no public runtime selects this prepared session.
 func (s *SessionV2) ServeV2(ctx context.Context, conn io.ReadWriteCloser, runtimeRun string) error {
-	if s == nil || s.base == nil || s.base.guardian == nil || s.base.engine == nil || !firewallipc.DomainV2(s.domain) || ctx == nil || conn == nil || !ValidRun(runtimeRun) {
+	if s == nil || s.base == nil || (s.routedReadback == nil && (s.base.guardian == nil || s.base.engine == nil)) || (s.routedReadback != nil && (!s.readOnly || s.domain != "firewall")) || !firewallipc.DomainV2(s.domain) || ctx == nil || conn == nil || !ValidRun(runtimeRun) {
 		if conn != nil {
 			_ = conn.Close()
 		}
@@ -174,6 +176,9 @@ func (s *SessionV2) handleV2(ctx context.Context, epoch uint64, m firewallipc.Re
 		return firewallipc.ReplyV2{}, errHelper
 	}
 	s.last = m.Sequence
+	if s.routedReadback != nil {
+		return s.handleRoutedReadbackV3(ctx, m, p)
+	}
 	reply := firewallipc.ReplyV2{ProtocolVersion: 2, Run: m.Run, Sequence: m.Sequence, Namespace: m.Namespace, Domain: m.Domain, Verb: m.Verb}
 	result := firewallipc.ResultV2{}
 	var err error

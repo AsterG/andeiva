@@ -98,6 +98,8 @@ type Engine struct {
 	recovered         bool
 	recoveredScope    networkexecutor.OwnedNamespaceIdentity
 	recoveredDeadline time.Time
+	legacyEpoch       uint64
+	legacyExhausted   bool
 }
 
 var _ nftguardian.GroupEngine = (*Engine)(nil)
@@ -765,7 +767,18 @@ func (e *Engine) applyTables(ctx context.Context, desired [3]TableStateV1) error
 	if err != nil {
 		return err
 	}
-	if e.kernel.Check(ctx, batch) != nil || e.kernel.Apply(ctx, batch) != nil {
+	if e.kernel.Check(ctx, batch) != nil {
+		return ErrState
+	}
+	// Every attempted replacement invalidates counter continuity, including an
+	// uncertain apply and a restore of the same semantic policy. Exhaustion
+	// disables this readback channel, never the independent safety rollback.
+	if e.legacyEpoch == ^uint64(0) {
+		e.legacyExhausted = true
+	} else {
+		e.legacyEpoch++
+	}
+	if e.kernel.Apply(ctx, batch) != nil {
 		return ErrState
 	}
 	for table, target := range desired {

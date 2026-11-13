@@ -11,6 +11,7 @@
 - Keep runtime migration, privileged helper activation and native appliance qualification independently gated.
 - Restrict the grouped helper's legacy compatibility session to observation; policy changes remain subject to selected-state authorization.
 - Prepare a namespace-bound nft transport with fixed commands and shared strict table-presence decoding; native service activation remains gated.
+- Prepare separate grouped API/helper supervision and verified legacy-table readback without a second policy guardian; preserve counter discontinuities across attempted replacement and rollback.
 
 ## Unreleased — prepared routed composite references
 

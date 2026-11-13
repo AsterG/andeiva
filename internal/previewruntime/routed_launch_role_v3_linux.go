@@ -365,6 +365,10 @@ func runRoutedHelperLaunchV3(ctx context.Context, cancel context.CancelFunc, f *
 	if c.Authority == nil || c.Compatibility == nil || !c.Compatibility.readOnly || c.Compatibility.base == nil || c.Compatibility.base.namespace != b.Metadata.GatewayNamespace {
 		return ErrIdentity
 	}
+	owner, ok := c.Authority.(*RoutedAuthority)
+	if !ok || owner == nil || c.Compatibility.routedOwner != owner || c.Compatibility.routedReadback == nil {
+		return ErrIdentity
+	}
 	o := RoutedHelperOptionsV3{Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Authority: c.Authority}
 	runtime, e := OpenRoutedHelperV3(ctx, b.Metadata, b.Identities, o)
 	if e != nil {
