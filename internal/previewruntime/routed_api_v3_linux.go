@@ -71,7 +71,7 @@ func openRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identities,
 		}
 		return nil, ErrIdentity
 	}
-	if ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.ValidateRouted() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
+	if (o.RoutedInventory && (!integrity || o.NetworkInventory != nil)) || ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.ValidateRouted() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
 		return fail()
 	}
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}
@@ -92,6 +92,18 @@ func connectRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identiti
 	connect := ConnectInheritedRoutedV3
 	if integrity {
 		connect = ConnectInheritedRoutedIntegrityV3
+	}
+	if o.RoutedInventory {
+		if !integrity || o.NetworkInventory != nil {
+			if routed != nil {
+				_ = routed.Close()
+			}
+			if legacy != nil {
+				_ = legacy.Close()
+			}
+			return nil, ErrIdentity
+		}
+		connect = ConnectInheritedRoutedInventoryV3
 	}
 	client, e := connect(ctx, routed, ids.HelperUID, ids.IPCGID, routedPID, m.RunID, m.GatewayNamespace)
 	if e != nil {
@@ -121,7 +133,7 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 			}
 		}
 	}()
-	if ctx == nil || client == nil || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
+	if ctx == nil || client == nil || (client.InventoryEnabled() != o.RoutedInventory) || (o.RoutedInventory && o.NetworkInventory != nil) || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
 		return nil, ErrIdentity
 	}
 	authority, e := NewRoutedRemoteAuthority(client, identity)
@@ -150,6 +162,9 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 	service, e := configpoc.OpenRuntimeServiceV2(ctx, o.Store, o.Budget, o.Auth, []configpoc.Engine{guard}, o.Local, runtimeOptions)
 	if e != nil {
 		return nil, e
+	}
+	if client.InventoryEnabled() {
+		o.NetworkInventory = client.Inventory
 	}
 	handler, e := adminapi.NewOperationsV2(adminapi.Options{Origin: o.Origin, Auth: o.Auth, Static: o.Static, FirewallRuleState: true, NetworkInventory: o.NetworkInventory}, service)
 	if e != nil {

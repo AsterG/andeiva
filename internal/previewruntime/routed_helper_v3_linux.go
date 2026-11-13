@@ -11,6 +11,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/networkinventory"
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
 
@@ -22,7 +23,8 @@ type RoutedReaderRootV3 struct {
 	Profile recoveryreserve.ProfileV2
 }
 type RoutedHelperOptionsV3 struct {
-	IntegrityRoot              *os.Root // Explicit trusted resource; nil preserves full-reader profile.
+	NetworkInventory           func(context.Context) (networkinventory.Snapshot, error) // Trusted helper provider; nil keeps the prior profile.
+	IntegrityRoot              *os.Root                                                 // Explicit trusted resource; nil preserves full-reader profile.
 	Store                      *os.Root
 	Access                     recoveryreserve.ReaderAccessV2
 	Admission, Plan, Emergency RoutedReaderRootV3
@@ -43,7 +45,7 @@ type RoutedHelperRuntimeV3 struct {
 }
 
 func routedHelperReadinessV3(m Metadata, ids Identities, o RoutedHelperOptionsV3) error {
-	if m.ValidateRouted() != nil || ids.Validate() != nil || o.Authority == nil || o.Store == nil || o.Access.Version != 1 || o.Access.OwnerUID != ids.APIUID || o.Access.ReaderGID == 0 || o.Access.ReaderGID == ids.APIGID || o.Access.CheckDirectory(o.Store) != nil {
+	if (o.NetworkInventory != nil && o.IntegrityRoot == nil) || m.ValidateRouted() != nil || ids.Validate() != nil || o.Authority == nil || o.Store == nil || o.Access.Version != 1 || o.Access.OwnerUID != ids.APIUID || o.Access.ReaderGID == 0 || o.Access.ReaderGID == ids.APIGID || o.Access.CheckDirectory(o.Store) != nil {
 		return ErrIdentity
 	}
 	expected := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}
@@ -175,6 +177,7 @@ func assembleRoutedHelperV3(ctx context.Context, m Metadata, ids Identities, o R
 	if e != nil {
 		return nil, e
 	}
+	result.session.inventory = o.NetworkInventory
 	return result, nil
 }
 

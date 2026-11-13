@@ -20,6 +20,7 @@ import (
 // OperationsRuntimeOptionsV2 contains only trusted assembly resources. Store,
 // pool roots, identities and BootID are never populated from HTTP requests.
 type OperationsRuntimeOptionsV2 struct {
+	RoutedInventory  bool // Trusted grouped assembly requires the helper-only inventory capability.
 	Store            *os.Root
 	Budget           configpoc.BudgetV2
 	Auth             *adminauth.Manager

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/networkinventory"
 )
 
 const RoutedProtocolV3 = 3
@@ -51,7 +52,7 @@ func DecodeRoutedHelloV3(data []byte, reply bool) (RoutedHelloV3, error) {
 	if reply {
 		required = append(required, "run", "epoch")
 	}
-	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || (len(h.RequiredFeatures) != 3 && len(h.RequiredFeatures) != 4) || (len(h.RequiredFeatures) == 4 && h.RequiredFeatures[3] != RoutedIntegrityCapabilityV3) || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
+	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || (len(h.RequiredFeatures) != 3 && len(h.RequiredFeatures) != 4 && len(h.RequiredFeatures) != 5) || (len(h.RequiredFeatures) >= 4 && h.RequiredFeatures[3] != RoutedIntegrityCapabilityV3) || (len(h.RequiredFeatures) == 5 && h.RequiredFeatures[4] != RoutedInventoryCapabilityV3) || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
 		return RoutedHelloV3{}, ErrChannel
 	}
 	return h, nil
@@ -143,7 +144,7 @@ func DecodeRoutedRequestV3(data []byte, run string, namespace, last uint64) (Rou
 			return r, RoutedCommandV3{}, ErrChannel
 		}
 		c.Integrity = p
-	case "observe":
+	case "observe", "inventory":
 		var empty struct{}
 		if exactRoutedV3(r.Payload, &empty, nil) != nil {
 			return r, RoutedCommandV3{}, ErrChannel
@@ -206,6 +207,7 @@ type RoutedPreparedV3 struct {
 	Preparation configpoc.RoutedPreparationV1 `json:"preparation"`
 }
 type RoutedResultV3 struct {
+	Inventory   networkinventory.Snapshot
 	Integrity   configpoc.IntegrityResultV1
 	Observed    RoutedObservedV3
 	Preparation configpoc.RoutedPreparationV1
@@ -225,6 +227,12 @@ func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, R
 		return reply, result, nil
 	}
 	switch reply.Verb {
+	case "inventory":
+		value, e := decodeRoutedInventoryV3(reply.Payload)
+		if e != nil {
+			return reply, result, e
+		}
+		result.Inventory = value
 	case "inspect":
 		var value RoutedIntegrityResultV3
 		var expected RoutedIntegrityV3

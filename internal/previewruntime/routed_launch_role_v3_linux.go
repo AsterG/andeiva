@@ -18,6 +18,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewallipc"
+	"github.com/AsterG/andeiva/internal/networkinventory"
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"golang.org/x/sys/unix"
 )
@@ -42,9 +43,10 @@ type RoutedLaunchContextV3 struct {
 	PeerPID                    int32
 }
 type RoutedHelperComponentsV3 struct {
-	Authority     configpoc.RoutedAuthorityV1
-	Compatibility *SessionV2
-	Cleanup       io.Closer
+	NetworkInventory func(context.Context) (networkinventory.Snapshot, error)
+	Authority        configpoc.RoutedAuthorityV1
+	Compatibility    *SessionV2
+	Cleanup          io.Closer
 }
 type RoutedLaunchFactoriesV3 struct {
 	Helper func(context.Context, RoutedLaunchContextV3) (RoutedHelperComponentsV3, error)
@@ -431,7 +433,7 @@ func runRoutedHelperLaunchV3(ctx context.Context, cancel context.CancelFunc, f *
 	if !ok || owner == nil || c.Compatibility.routedOwner != owner || c.Compatibility.routedReadback == nil {
 		return ErrIdentity
 	}
-	o := RoutedHelperOptionsV3{IntegrityRoot: f.integrityRoot, Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Authority: c.Authority}
+	o := RoutedHelperOptionsV3{NetworkInventory: c.NetworkInventory, IntegrityRoot: f.integrityRoot, Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Authority: c.Authority}
 	runtime, e := OpenRoutedHelperV3(ctx, b.Metadata, b.Identities, o)
 	if e != nil {
 		return e

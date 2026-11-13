@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/networkinventory"
 )
 
 // RoutedClientV3 runs only over an assembly-authenticated private channel.
@@ -24,6 +25,7 @@ type RoutedClientV3 struct {
 	namespace, sequence uint64
 	dead                bool
 	integrity           bool
+	inventory           bool
 	publicationAllowed  atomic.Bool
 	closingAllowed      atomic.Bool
 }
@@ -34,7 +36,13 @@ func ConnectRoutedV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun
 func ConnectRoutedIntegrityV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64) (*RoutedClientV3, error) {
 	return connectRoutedV3(parent, conn, runtimeRun, namespace, true)
 }
+func ConnectRoutedInventoryV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64) (*RoutedClientV3, error) {
+	return connectRoutedFeaturesV3(parent, conn, runtimeRun, namespace, true, true)
+}
 func connectRoutedV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity bool) (*RoutedClientV3, error) {
+	return connectRoutedFeaturesV3(parent, conn, runtimeRun, namespace, integrity, false)
+}
+func connectRoutedFeaturesV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory bool) (*RoutedClientV3, error) {
 	if parent == nil || conn == nil {
 		if conn != nil {
 			_ = conn.Close()
@@ -44,6 +52,9 @@ func connectRoutedV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun
 	h := NewRoutedHelloV3(runtimeRun, namespace)
 	if integrity {
 		h.RequiredFeatures = append(h.RequiredFeatures, RoutedIntegrityCapabilityV3)
+	}
+	if inventory {
+		h.RequiredFeatures = append(h.RequiredFeatures, RoutedInventoryCapabilityV3)
 	}
 	data, _ := json.Marshal(h)
 	if _, e := DecodeRoutedHelloV3(data, false); e != nil || parent.Err() != nil {
@@ -73,7 +84,7 @@ func connectRoutedV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun
 			_ = conn.Close()
 			return nil, ErrChannel
 		}
-		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity}, nil
+		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory}, nil
 	case <-ctx.Done():
 		_ = conn.Close()
 		return nil, ErrChannel
@@ -106,7 +117,7 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 			c.closingAllowed.Store(false)
 		}
 	}()
-	if (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
+	if (verb == "inventory" && !c.inventory) || (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
 		return RoutedResultV3{}, ErrChannel
 	}
 	p, e := json.Marshal(payload)
@@ -209,4 +220,17 @@ func (c *RoutedClientV3) IntegrityPublicationAllowedV1() bool {
 
 func (c *RoutedClientV3) IntegrityClosingAllowedV1() bool {
 	return c != nil && c.integrity && c.closingAllowed.Load()
+}
+
+// InventoryEnabled reports negotiated read-only capability, never readiness.
+func (c *RoutedClientV3) InventoryEnabled() bool { return c != nil && c.inventory }
+func (c *RoutedClientV3) Inventory(ctx context.Context) (networkinventory.Snapshot, error) {
+	if !c.InventoryEnabled() {
+		return networkinventory.Snapshot{}, ErrChannel
+	}
+	result, err := c.Call(ctx, "inventory", struct{}{})
+	if err != nil {
+		return networkinventory.Snapshot{}, err
+	}
+	return result.Inventory, nil
 }

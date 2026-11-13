@@ -130,7 +130,7 @@ func NewRoutedApplianceFactoriesV3(c Config) (RoutedLaunchFactoriesV3, error) {
 			if _, err = fs.Stat(assets.FS(), "index.html"); err != nil {
 				return out, cleanup, ErrStorage
 			}
-			out = OperationsRuntimeOptionsV2{Store: launch.Store, Budget: launch.StoreBudget, Auth: auth, Origin: c.Origin(), Static: routedApplianceStaticV3(assets.FS()), Local: []configpoc.Engine{routedApplianceLocalV3{}}, Runtime: configpoc.RuntimeOptionsV2{SharedReader: &launch.Access, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}, BootID: launch.Metadata.BootID, GuardDeadlines: true}}
+			out = OperationsRuntimeOptionsV2{RoutedInventory: true, Store: launch.Store, Budget: launch.StoreBudget, Auth: auth, Origin: c.Origin(), Static: routedApplianceStaticV3(assets.FS()), Local: []configpoc.Engine{routedApplianceLocalV3{}}, Runtime: configpoc.RuntimeOptionsV2{SharedReader: &launch.Access, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}, BootID: launch.Metadata.BootID, GuardDeadlines: true}}
 			return out, cleanup, nil
 		},
 		ServeAPI: func(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error) error {
@@ -212,6 +212,7 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 		return out, err
 	}
 	out.Cleanup = routedApplianceCloserV3(func() error { return errors.Join(authority.group.Close(), network.Close()) })
+	out.NetworkInventory = routedInventoryProviderV3(c.Metadata)
 	out.Authority = authority
 	out.Compatibility, err = NewRoutedReadbackSessionV3(c.Metadata.RunID, c.Metadata.GatewayNamespace, authority)
 	if err != nil {

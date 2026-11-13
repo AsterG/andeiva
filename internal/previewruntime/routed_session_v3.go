@@ -12,6 +12,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewallipc"
+	"github.com/AsterG/andeiva/internal/networkinventory"
 )
 
 // RoutedSelectionSourceV3 belongs to trusted helper assembly. Its implementation
@@ -35,6 +36,7 @@ type RoutedSessionV3 struct {
 	source     RoutedSelectionSourceV3
 	epoch      uint64
 	integrity  *routedIntegrityGateV3
+	inventory  func(context.Context) (networkinventory.Snapshot, error)
 }
 
 func NewRoutedSessionV3(authority configpoc.RoutedAuthorityV1, source RoutedSelectionSourceV3) (*RoutedSessionV3, error) {
@@ -118,7 +120,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		return ErrUnavailable
 	}
 	hello, e := firewallipc.DecodeRoutedHelloV3(data, false)
-	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) == 4) {
+	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) == 5) {
 		return ErrIdentity
 	}
 	hello.Run = runtimeRun
@@ -160,6 +162,15 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 
 func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedCommandV3) (any, error) {
 	switch c.Verb {
+	case "inventory":
+		if s.inventory == nil {
+			return nil, ErrIdentity
+		}
+		snapshot, e := s.inventory(ctx)
+		if e != nil || ctx.Err() != nil {
+			return nil, ErrUnavailable
+		}
+		return firewallipc.EncodeRoutedInventoryV3(snapshot)
 	case "inspect":
 		if s.integrity == nil {
 			return nil, ErrIdentity
