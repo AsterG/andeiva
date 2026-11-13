@@ -219,3 +219,16 @@ func TestRoutedLaunchV3RejectsWrongControllerPID(t *testing.T) {
 		t.Fatal("rejected process advanced epoch")
 	}
 }
+func TestRoutedLaunchV3PIDBounds(t *testing.T) {
+	for _, pid := range []int{-1, 0, 1, 1 << 32} {
+		if _, err := routedLaunchPIDV3(pid); err == nil {
+			t.Fatalf("invalid PID accepted: %d", pid)
+		}
+	}
+	for _, pid := range []int{2, 2147483647} {
+		actual, err := routedLaunchPIDV3(pid)
+		if err != nil || int64(actual) != int64(pid) {
+			t.Fatalf("valid PID changed: %d: %v", pid, err)
+		}
+	}
+}

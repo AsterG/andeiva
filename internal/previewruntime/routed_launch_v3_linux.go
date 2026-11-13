@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,10 +133,20 @@ func validateRoutedLaunchV3(r RoutedLaunchResourcesV3) error {
 		}
 		seen = append(seen, info)
 		if i > 0 {
-			roles := []recoveryreserve.RoleV2{recoveryreserve.AdmissionV2, recoveryreserve.PlanV2, recoveryreserve.EmergencyV2}
-			sizes := []int{4096, 16384, 8192}
+			var role recoveryreserve.RoleV2
+			var capacity int
+			switch i {
+			case 1:
+				role, capacity = recoveryreserve.AdmissionV2, 4096
+			case 2:
+				role, capacity = recoveryreserve.PlanV2, 16384
+			case 3:
+				role, capacity = recoveryreserve.EmergencyV2, 8192
+			default:
+				return ErrIdentity
+			}
 			p := item.Profile
-			if p.ID == "" || profiles[p.ID] || p.Role != roles[i-1] || p.Slots != 18 || p.Capacity != sizes[i-1] {
+			if p.ID == "" || profiles[p.ID] || p.Role != role || p.Slots != 18 || p.Capacity != capacity {
 				return ErrIdentity
 			}
 			profiles[p.ID] = true
@@ -292,7 +303,20 @@ func (s *RoutedLaunchSupervisorV3) startChild(role string) (*routedLaunchChildV3
 		return nil, e
 	}
 	defer eventW.Close()
-	cmd := exec.CommandContext(s.ctx, exe, args...)
+	var cmd *exec.Cmd
+	switch exe {
+	case "/usr/bin/nsenter":
+		// #nosec G204 -- Fixed executable; arguments contain only validated numeric identities, pinned namespace FD and the root-owned current binary with a fixed role, without a shell or administrative input.
+		cmd = exec.CommandContext(s.ctx, "/usr/bin/nsenter", args...)
+	case "/usr/bin/setpriv":
+		// #nosec G204 -- Fixed executable; arguments contain only validated numeric identities and the root-owned current binary with a fixed role, without a shell or administrative input.
+		cmd = exec.CommandContext(s.ctx, "/usr/bin/setpriv", args...)
+	default:
+		_ = bootW.Close()
+		_ = controlW.Close()
+		_ = eventR.Close()
+		return nil, ErrIdentity
+	}
 	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
 	cmd.ExtraFiles = append(files, bootR, controlR, eventW, s.resources.Host)
 	cmd.Stdin = nil
@@ -328,7 +352,7 @@ func (s *RoutedLaunchSupervisorV3) startChild(role string) (*routedLaunchChildV3
 		scan.Buffer(make([]byte, 1024), routedLaunchFrameV3)
 		for scan.Scan() {
 			var event routedLaunchEventV3
-			if firewallipc.Decode(scan.Bytes(), &event) != nil || event.PID != int32(cmd.Process.Pid) {
+			if firewallipc.Decode(scan.Bytes(), &event) != nil || int64(event.PID) != int64(cmd.Process.Pid) {
 				return
 			}
 			select {
@@ -360,6 +384,21 @@ func writeRoutedLaunchV3(w *os.File, value any) error {
 		return io.ErrShortWrite
 	}
 	return e
+}
+
+func routedLaunchPIDV3(pid int) (int32, error) {
+	if pid <= 1 || pid > math.MaxInt32 {
+		return 0, ErrIdentity
+	}
+	return int32(pid), nil
+}
+
+func writeLocalRoutedEventV3(w *os.File, event string, epoch uint64) error {
+	pid, err := routedLaunchPIDV3(os.Getpid())
+	if err != nil {
+		return err
+	}
+	return writeRoutedLaunchV3(w, routedLaunchEventV3{Event: event, Epoch: epoch, PID: pid})
 }
 func (c *routedLaunchChildV3) waitEvent(ctx context.Context, event string, epoch uint64) error {
 	timer := time.NewTimer(15 * time.Second)
@@ -421,11 +460,18 @@ func (s *RoutedLaunchSupervisorV3) RestartAPI(ctx context.Context) error {
 	}
 	s.api = c
 	s.epoch++
-	if e = writeRoutedLaunchV3(s.helper.control, routedLaunchControlV3{Epoch: s.epoch, PID: int32(c.cmd.Process.Pid)}); e == nil {
+	apiPID, apiErr := routedLaunchPIDV3(c.cmd.Process.Pid)
+	helperPID, helperErr := routedLaunchPIDV3(s.helper.cmd.Process.Pid)
+	if apiErr != nil || helperErr != nil {
+		s.blocked = true
+		c.stop()
+		return ErrIdentity
+	}
+	if e = writeRoutedLaunchV3(s.helper.control, routedLaunchControlV3{Epoch: s.epoch, PID: apiPID}); e == nil {
 		e = s.helper.waitEvent(ctx, "controller_ready", s.epoch)
 	}
 	if e == nil {
-		e = s.sendBootstrap(c, int32(s.helper.cmd.Process.Pid), s.epoch)
+		e = s.sendBootstrap(c, helperPID, s.epoch)
 	}
 	if e == nil {
 		e = c.waitEvent(ctx, "api_ready", s.epoch)

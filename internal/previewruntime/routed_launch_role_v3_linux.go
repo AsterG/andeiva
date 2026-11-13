@@ -94,7 +94,7 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 		case i == 0 || i == 9:
 			var fs unix.Statfs_t
 			kind, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), unix.NS_GET_NSTYPE, 0)
-			if unix.Fstatfs(fd, &fs) != nil || uint64(fs.Type) != unix.NSFS_MAGIC || errno != 0 || kind != unix.CLONE_NEWNET || flags&unix.O_ACCMODE != unix.O_RDONLY {
+			if unix.Fstatfs(fd, &fs) != nil || fs.Type != unix.NSFS_MAGIC || errno != 0 || kind != unix.CLONE_NEWNET || flags&unix.O_ACCMODE != unix.O_RDONLY {
 				return fail()
 			}
 		case i >= 1 && i <= 5:
@@ -296,7 +296,7 @@ func runRoutedAPILaunchV3(ctx context.Context, f *routedLaunchFilesV3, b routedL
 			return ErrUnavailable
 		}
 		signaled = true
-		return writeRoutedLaunchV3(f.files[8], routedLaunchEventV3{Event: "api_ready", Epoch: b.Epoch, PID: int32(os.Getpid())})
+		return writeLocalRoutedEventV3(f.files[8], "api_ready", b.Epoch)
 	}
 	return factories.ServeAPI(ctx, runtime, ready)
 }
@@ -384,11 +384,12 @@ func runRoutedHelperLaunchV3(ctx context.Context, cancel context.CancelFunc, f *
 		}
 		listeners[i] = l
 		defer l.Close()
+		// #nosec G302 -- Unix socket only, in the pinned private helper-owned IPC directory; the dedicated API group needs connect permission.
 		if e = os.Chmod(path, 0660); e != nil {
 			return e
 		}
 	}
-	if e = writeRoutedLaunchV3(f.files[8], routedLaunchEventV3{Event: "helper_ready", PID: int32(os.Getpid())}); e != nil {
+	if e = writeLocalRoutedEventV3(f.files[8], "helper_ready", 0); e != nil {
 		return e
 	}
 	stop := context.AfterFunc(ctx, func() {
@@ -413,7 +414,7 @@ func runRoutedHelperLaunchV3(ctx context.Context, cancel context.CancelFunc, f *
 		epoch = request.Epoch
 		// Drain closes sockets but never cancels an in-flight effect's context;
 		// Serve retains the helper lifetime until its dispatch and reply finish.
-		if e = writeRoutedLaunchV3(f.files[8], routedLaunchEventV3{Event: "controller_ready", Epoch: epoch, PID: int32(os.Getpid())}); e != nil {
+		if e = writeLocalRoutedEventV3(f.files[8], "controller_ready", epoch); e != nil {
 			return e
 		}
 		active = startRoutedLaunchServersV3(ctx, listeners, runtime, c.Compatibility, b, request.PID)
