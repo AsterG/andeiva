@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -106,7 +107,8 @@ func (v *routedMigrationVerifierV3) runChild(ctx context.Context, self, role str
 	var output, diagnostic routedMigrationOutputV3
 	cmd.Stdout = &output
 	cmd.Stderr = &diagnostic
-	if cmd.Run() != nil || call.Err() != nil {
+	// Pdeathsig belongs to the creating Linux thread, not merely the process.
+	if runPinnedMigrationCommandV3(cmd.Start, cmd.Wait) != nil || call.Err() != nil {
 		return routedMigrationReplyV3{}, ErrUnavailable
 	}
 	digest := sha256.Sum256(data)
@@ -258,4 +260,18 @@ func runRoutedMigrationRoleV3(ctx context.Context, helper bool) error {
 	result.Request = hex.EncodeToString(digest[:])
 	result.Namespace = request.Metadata.GatewayNamespace
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+// Start and Wait must stay on the same live Linux thread: Pdeathsig is tied to
+// that thread. A future worker may retire its thread only after Wait returns.
+func runPinnedMigrationCommandV3(start, wait func() error) error {
+	if start == nil || wait == nil {
+		return ErrUnavailable
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := start(); err != nil {
+		return err
+	}
+	return wait()
 }

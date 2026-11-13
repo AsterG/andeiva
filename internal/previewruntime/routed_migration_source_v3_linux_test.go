@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
@@ -44,7 +46,7 @@ func migrationSourceFixtureV3(t *testing.T) (*routedTestKernel, configpoc.Revisi
 
 func TestRoutedMigrationSourceV3SemanticReadOnly(t *testing.T) {
 	kernel, fw, local, expected := migrationSourceFixtureV3(t)
-	if err := verifyRoutedMigrationSourceV3(context.Background(), kernel, expected, fw, local); err != nil {
+	if err := verifyMigrationSourceFixtureV3(context.Background(), kernel, expected, fw, local); err != nil {
 		t.Fatal(err)
 	}
 	if len(kernel.batches) != 1 || len(fw.Config.Rules) != 2 {
@@ -52,13 +54,13 @@ func TestRoutedMigrationSourceV3SemanticReadOnly(t *testing.T) {
 	}
 	for _, which := range []routedactivation.Table{routedactivation.LocalTable, routedactivation.RoutedTable} {
 		kernel.objects[which] = []map[string]any{}
-		if err := verifyRoutedMigrationSourceV3(context.Background(), kernel, expected, fw, local); err == nil {
+		if err := verifyMigrationSourceFixtureV3(context.Background(), kernel, expected, fw, local); err == nil {
 			t.Fatal("existing managed table treated as absent", which)
 		}
 		delete(kernel.objects, which)
 	}
 	kernel.readFail = true
-	if err := verifyRoutedMigrationSourceV3(context.Background(), kernel, expected, fw, local); err == nil {
+	if err := verifyMigrationSourceFixtureV3(context.Background(), kernel, expected, fw, local); err == nil {
 		t.Fatal("read failure treated as absence")
 	}
 }
@@ -80,7 +82,7 @@ func (m *migrationObserveMutationV3) Observe(ctx context.Context, table routedac
 func TestRoutedMigrationSourceV3DetectsChangedReadback(t *testing.T) {
 	kernel, fw, local, expected := migrationSourceFixtureV3(t)
 	observer := &migrationObserveMutationV3{kernel: kernel}
-	if err := verifyRoutedMigrationSourceV3(context.Background(), observer, expected, fw, local); err == nil || observer.calls != 4 {
+	if err := verifyMigrationSourceFixtureV3(context.Background(), observer, expected, fw, local); err == nil || observer.calls != 4 {
 		t.Fatal("changed physical policy accepted", err, observer.calls)
 	}
 }
@@ -88,16 +90,16 @@ func TestRoutedMigrationSourceV3RejectsInvalidInputsAndForeignClaims(t *testing.
 	kernel, fw, local, expected := migrationSourceFixtureV3(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if verifyRoutedMigrationSourceV3(ctx, kernel, expected, fw, local) == nil || verifyRoutedMigrationSourceV3(nil, kernel, expected, fw, local) == nil {
+	if verifyMigrationSourceFixtureV3(ctx, kernel, expected, fw, local) == nil || verifyMigrationSourceFixtureV3(nil, kernel, expected, fw, local) == nil {
 		t.Fatal("cancel/nil accepted")
 	}
 	bad := fw
 	bad.Hash = "foreign"
-	if verifyRoutedMigrationSourceV3(context.Background(), kernel, expected, bad, local) == nil {
+	if verifyMigrationSourceFixtureV3(context.Background(), kernel, expected, bad, local) == nil {
 		t.Fatal("forged revision accepted")
 	}
 	expected[0].Domain = "local_services"
-	if verifyRoutedMigrationSourceV3(context.Background(), kernel, expected, fw, local) == nil {
+	if verifyMigrationSourceFixtureV3(context.Background(), kernel, expected, fw, local) == nil {
 		t.Fatal("wrong domain accepted")
 	}
 	if err := (*routedMigrationVerifierV3)(nil).VerifyMigratedSources(context.Background(), expected, fw, local); err == nil {
@@ -152,5 +154,44 @@ func TestRoutedMigrationSourceV3FixedRolePrivilegeArguments(t *testing.T) {
 	}
 	if RunRoutedMigrationStateRoleV3(nil) == nil {
 		t.Fatal("nil state role accepted")
+	}
+}
+
+func verifyMigrationSourceFixtureV3(ctx context.Context, kernel routedMigrationKernelV3, expected [2]configpoc.LegacyFingerprintV2, fw, ls configpoc.Revision) error {
+	return verifyRoutedMigrationSourceWithInetV3(ctx, kernel, expected, fw, ls, func(name string) ([]byte, error) { return migrationInetEmptyFixtureV3(name), nil })
+}
+
+func TestRoutedMigrationPinnedWorkerWaitsBeforeThreadExit(t *testing.T) {
+	finished := make(chan error, 1)
+	go func() {
+		var result error
+		defer func() { finished <- result }()
+		tid := 0
+		waited := false
+		result = runPinnedMigrationCommandV3(func() error { tid = syscall.Gettid(); return nil }, func() error {
+			for i := 0; i < 1000; i++ {
+				runtime.Gosched()
+				if syscall.Gettid() != tid {
+					return errors.New("launching thread changed before Wait completed")
+				}
+			}
+			waited = true
+			return nil
+		})
+		if result == nil && !waited {
+			result = errors.New("Wait was bypassed")
+		}
+		// Model a future job worker that retires its OS thread after finishing. It
+		// cannot reach this point while the pinned command's Wait remains active.
+		runtime.LockOSThread()
+		runtime.Goexit()
+	}()
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	failed := errors.New("start refused")
+	waited := false
+	if err := runPinnedMigrationCommandV3(func() error { return failed }, func() error { waited = true; return nil }); !errors.Is(err, failed) || waited {
+		t.Fatal("failed Start called Wait", err, waited)
 	}
 }

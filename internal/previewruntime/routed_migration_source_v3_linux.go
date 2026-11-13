@@ -17,6 +17,9 @@ type routedMigrationKernelV3 interface {
 }
 
 func verifyRoutedMigrationSourceV3(ctx context.Context, kernel routedMigrationKernelV3, expected [2]configpoc.LegacyFingerprintV2, firewall, local configpoc.Revision) error {
+	return verifyRoutedMigrationSourceWithInetV3(ctx, kernel, expected, firewall, local, readRoutedMigrationProcV3)
+}
+func verifyRoutedMigrationSourceWithInetV3(ctx context.Context, kernel routedMigrationKernelV3, expected [2]configpoc.LegacyFingerprintV2, firewall, local configpoc.Revision, read func(string) ([]byte, error)) error {
 	if ctx == nil || ctx.Err() != nil || kernel == nil || expected[0].Domain != "firewall" || expected[1].Domain != "local_services" {
 		return ErrUnavailable
 	}
@@ -31,6 +34,9 @@ func verifyRoutedMigrationSourceV3(ctx context.Context, kernel routedMigrationKe
 	// This first migration profile has no local-service module declarations.
 	// Foreign listeners are neither attributed to ANDEIVA nor silently removed.
 	// The managed local table must actually be absent, not merely unreadable.
+	if err := inspectRoutedMigrationInetV3(ctx, read); err != nil {
+		return err
+	}
 	data, exists, err := kernel.Observe(ctx, routedactivation.LegacyTable)
 	if err != nil || !exists {
 		return ErrUnavailable
@@ -56,5 +62,5 @@ func verifyRoutedMigrationSourceV3(ctx context.Context, kernel routedMigrationKe
 	if _, err = firewallnft.VerifyObservation(data, fw); err != nil {
 		return ErrUnavailable
 	}
-	return nil
+	return inspectRoutedMigrationInetV3(ctx, read)
 }
