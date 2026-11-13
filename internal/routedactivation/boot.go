@@ -46,15 +46,16 @@ func (e *Engine) PrepareColdBoot(ctx context.Context, target, saved configpoc.Ro
 	if err != nil {
 		return PreparationV1{}, err
 	}
-	deps, err := CanonicalDependencies(DependenciesV1{Version: 1, Network: network, Prepared: snapshot, LocalInterfaces: target.LocalServices.Config.LocalServices.Interfaces, Neighbors: e.options.Neighbors})
+	version, mode := networkArtifactProfileV3(network)
+	deps, err := CanonicalDependencies(DependenciesV1{Version: version, NetworkMode: mode, Network: network, Prepared: snapshot, LocalInterfaces: target.LocalServices.Config.LocalServices.Interfaces, Neighbors: e.options.Neighbors})
 	if err != nil {
 		return PreparationV1{}, err
 	}
-	before, err := CanonicalOwned(OwnedV1{Version: 1, Network: snapshot, NetworkState: Baseline, LegacyFirewall: TableStateV1{Presence: Absent}, RoutedFirewall: TableStateV1{Presence: Absent}, LocalServices: TableStateV1{Presence: Absent}})
+	before, err := CanonicalOwned(OwnedV1{Version: version, Network: snapshot, NetworkState: Baseline, LegacyFirewall: TableStateV1{Presence: Absent}, RoutedFirewall: TableStateV1{Presence: Absent}, LocalServices: TableStateV1{Presence: Absent}})
 	if err != nil || !e.matches(ctx, before, deps) {
 		return PreparationV1{}, ErrState
 	}
-	after, err := CanonicalOwned(OwnedV1{Version: 1, Network: snapshot, NetworkState: Configured, LegacyFirewall: TableStateV1{Presence: Absent}, RoutedFirewall: TableStateV1{Presence: Present, Revision: &target.Firewall}, LocalServices: TableStateV1{Presence: Present, Revision: &target.LocalServices}})
+	after, err := CanonicalOwned(OwnedV1{Version: version, Network: snapshot, NetworkState: Configured, LegacyFirewall: TableStateV1{Presence: Absent}, RoutedFirewall: TableStateV1{Presence: Present, Revision: &target.Firewall}, LocalServices: TableStateV1{Presence: Present, Revision: &target.LocalServices}})
 	if err != nil {
 		return PreparationV1{}, err
 	}

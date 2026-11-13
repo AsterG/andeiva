@@ -19,6 +19,9 @@ func routedBootPreparationV2(input RoutedPreparationV1, baseline RoutedBaselineV
 	saved, e4 := CanonicalRoutedActivationBundleV1(baseline.Saved)
 	planned, e5 := CanonicalOwned(baseline.Owned)
 	baselineDeps, e6 := CanonicalDependencies(baseline.Dependencies)
+	if !RoutedOwnershipMatchesDependencies(before, deps) || !RoutedOwnershipMatchesDependencies(after, deps) {
+		return RoutedPreparationV1{}, ErrRecovery
+	}
 	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil || e6 != nil || saved.Firewall.Config.SchemaVersion != 4 || saved.LocalServices.Hash != target.LocalServices.Hash || target.Firewall.Config.Routed == nil || deps.Network.Hash != target.Firewall.Config.Routed.Network.Hash || before.NetworkState != Baseline || before.RoutedFirewall.Presence != Absent || before.Network.Hash != deps.Prepared.Hash || after.Network.Hash != deps.Prepared.Hash || after.NetworkState != Configured || after.LegacyFirewall.Presence != Absent || after.RoutedFirewall.Revision == nil || after.RoutedFirewall.Revision.Hash != target.Firewall.Hash || after.LocalServices.Revision == nil || after.LocalServices.Revision.Hash != target.LocalServices.Hash {
 		return RoutedPreparationV1{}, ErrRecovery
 	}

@@ -23,6 +23,9 @@ func (r *v2ReachabilityReader) routedWork(hash, key string, state v2State, depth
 		if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(state, v2RoutedNoNetworkFeature) {
 			return errV2Unavailable
 		}
+		if routedWorkUsesDHCPV3(plan) && !hasFeatureV2(state, v3RoutedDHCPFeature) {
+			return ErrRecovery
+		}
 		if err = routedBootHistoryV2(plan, state, r.object); err != nil {
 			return err
 		}

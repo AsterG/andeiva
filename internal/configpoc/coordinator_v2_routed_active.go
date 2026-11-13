@@ -20,6 +20,9 @@ func validateRoutedActiveV2(state v2State, load func(string, any) error) error {
 	if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(state, v2RoutedNoNetworkFeature) {
 		return errV2Unavailable
 	}
+	if routedWorkUsesDHCPV3(plan) && !hasFeatureV2(state, v3RoutedDHCPFeature) {
+		return ErrRecovery
+	}
 	if err = routedBootHistoryV2(plan, state, load); err != nil {
 		return err
 	}

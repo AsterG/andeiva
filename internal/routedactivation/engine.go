@@ -401,11 +401,12 @@ func (e *Engine) Prepare(ctx context.Context, target configpoc.RoutedActivationB
 			return PreparationV1{}, err
 		}
 	}
-	deps, err := CanonicalDependencies(DependenciesV1{Version: 1, Network: plan, Prepared: snapshot, LocalInterfaces: bundle.LocalServices.Config.LocalServices.Interfaces, Neighbors: e.options.Neighbors})
+	version, mode := networkArtifactProfileV3(plan)
+	deps, err := CanonicalDependencies(DependenciesV1{Version: version, NetworkMode: mode, Network: plan, Prepared: snapshot, LocalInterfaces: bundle.LocalServices.Config.LocalServices.Interfaces, Neighbors: e.options.Neighbors})
 	if err != nil || localnft.ValidateManaged(*bundle.LocalServices.Config.LocalServices) != nil {
 		return PreparationV1{}, ErrState
 	}
-	before := OwnedV1{Version: 1, Network: snapshot, NetworkState: Baseline, LegacyFirewall: e.initial[0], RoutedFirewall: e.initial[1], LocalServices: e.initial[2]}
+	before := OwnedV1{Version: version, Network: snapshot, NetworkState: Baseline, LegacyFirewall: e.initial[0], RoutedFirewall: e.initial[1], LocalServices: e.initial[2]}
 	if e.selected {
 		before = current
 	}
@@ -413,7 +414,7 @@ func (e *Engine) Prepare(ctx context.Context, target configpoc.RoutedActivationB
 	if err != nil || !e.matches(ctx, before, deps) {
 		return PreparationV1{}, ErrState
 	}
-	after, err := CanonicalOwned(OwnedV1{Version: 1, Network: snapshot, NetworkState: Configured, LegacyFirewall: TableStateV1{Presence: Absent}, RoutedFirewall: TableStateV1{Presence: Present, Revision: &bundle.Firewall}, LocalServices: TableStateV1{Presence: Present, Revision: &bundle.LocalServices}})
+	after, err := CanonicalOwned(OwnedV1{Version: version, Network: snapshot, NetworkState: Configured, LegacyFirewall: TableStateV1{Presence: Absent}, RoutedFirewall: TableStateV1{Presence: Present, Revision: &bundle.Firewall}, LocalServices: TableStateV1{Presence: Present, Revision: &bundle.LocalServices}})
 	if err != nil {
 		return PreparationV1{}, err
 	}

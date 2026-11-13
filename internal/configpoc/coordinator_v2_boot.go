@@ -234,6 +234,9 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	addFeatureV2(&st, v2BootFeature)
 	if routed {
 		addFeatureV2(&st, v2RoutedBootFeature)
+		if routedConfigurationUsesDHCPV3(target) {
+			addFeatureV2(&st, v3RoutedDHCPFeature)
+		}
 		if target.Firewall.Running.Config.SchemaVersion == 4 {
 			addFeatureV2(&st, v2RoutedNoNetworkFeature)
 		}

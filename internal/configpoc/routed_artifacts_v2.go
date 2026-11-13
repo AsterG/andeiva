@@ -96,6 +96,9 @@ func CanonicalRoutedTable(input TableStateV1, schema int) (TableStateV1, error) 
 }
 
 func CanonicalOwned(input OwnedV1) (OwnedV1, error) {
+	if input.Version == 3 {
+		return canonicalDHCPOwnedV3(input)
+	}
 	if input.Version == 2 {
 		return canonicalNoNetworkOwnedV2(input)
 	}
@@ -130,6 +133,9 @@ func CanonicalOwned(input OwnedV1) (OwnedV1, error) {
 }
 
 func CanonicalDependencies(input DependenciesV1) (DependenciesV1, error) {
+	if input.Version == 3 {
+		return canonicalDHCPDependenciesV3(input)
+	}
 	if input.Version == 2 {
 		return canonicalNoNetworkDependenciesV2(input)
 	}
@@ -257,10 +263,16 @@ func RoutedOwnershipMatchesDependencies(input OwnedV1, dependencies Dependencies
 	if owned.Version == 2 {
 		return networkexecutor.ObservedMatchesPrepared(*owned.Observed, deps.Prepared)
 	}
+	if (owned.Version == 3) != (deps.Version == 3) {
+		return false
+	}
 	return owned.Network.Hash == deps.Prepared.Hash
 }
 
 func routedBaselineDependenciesMatchV2(actual, baseline DependenciesV1) bool {
+	if baseline.Version == 3 {
+		return actual.Version == 3 && actual.Prepared.Hash == baseline.Prepared.Hash && actual.Network.Hash == baseline.Network.Hash
+	}
 	if baseline.Version == 2 {
 		if actual.Version == 2 {
 			return baseline.Observed.Hash == actual.Observed.Hash

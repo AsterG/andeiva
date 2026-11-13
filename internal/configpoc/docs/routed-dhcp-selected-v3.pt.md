@@ -28,3 +28,11 @@ autoridade, fase errada e boot diferente. Runtime DHCP selecionado nativo,
 bootstrap LAN e transporte autenticado ainda aguardam qualificação. A expiração
 kernel pressupõe execução contínua; suspensão, pausa VM e restauração de snapshots
 não são suportadas. A adoção da rede do host não é habilitada.
+
+O perfil separado de bootstrap LAN Version 3 reutiliza Boot/R2 selecionado.
+A preparação somente leitura exige ambas as interfaces IPv4 vazias. Depois de
+ler a política de bloqueio aplica apenas o endereço LAN estático; WAN permanece
+vazia até selecionar a concessão. O inventário local declara somente LAN.
+Retirar WAN não concede propriedade LAN: restaurá-la exige o snapshot Boot
+original selecionado. Testes cobrem ordem, compensação parcial e expiração Boot
+sem confirmação com doubles explícitos de kernel. Qualificação nativa pendente.

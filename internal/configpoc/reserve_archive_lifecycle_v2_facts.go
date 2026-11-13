@@ -68,6 +68,9 @@ func validateArchiveFinalityWithWorkV2(archive v2ReserveArchive, state v2State, 
 			if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(state, v2RoutedNoNetworkFeature) {
 				return errV2Unavailable
 			}
+			if routedWorkUsesDHCPV3(plan) && !hasFeatureV2(state, v3RoutedDHCPFeature) {
+				return ErrRecovery
+			}
 		}
 	}
 	if validateArchiveGuardDeadlinesV2(archive, state, load) != nil {

@@ -566,6 +566,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	if err = c.publishRoutedWorkV2(ctx, op, state, target, st.Configuration.Intent); err != nil {
 		return result(op), err
 	}
+	if routedConfigurationUsesDHCPV3(target) {
+		addFeatureV2(&st, v3RoutedDHCPFeature)
+	}
 	if c.options.GuardDeadlines && immediateGuardIntentV2(st.Configuration.Intent, state, target) {
 		deadline := c.now().Add(10 * time.Second).UTC()
 		st.Configuration.Intent.GuardDeadline = &deadline

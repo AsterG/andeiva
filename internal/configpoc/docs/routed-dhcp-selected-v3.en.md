@@ -28,3 +28,11 @@ replay, authority loss, wrong phase, and wrong boot. Native selected-DHCP runtim
 LAN bootstrap and authenticated transport qualification remain pending. Kernel
 timeout qualification assumes continuous execution; suspend, VM pause and
 snapshot restore are unsupported. No host network adoption is enabled.
+
+The separate Version 3 LAN bootstrap profile reuses the selected Boot/R2 path.
+Read-only preparation requires both IPv4 interfaces empty. Only the static LAN
+address is applied after deny-policy readback; WAN remains empty until selected
+lease work. Local inventory declares LAN only. Lease withdrawal does not grant
+LAN ownership: restoration additionally requires the original selected Boot
+snapshot. Tests cover this ordering, partial-effect compensation and unconfirmed
+Boot expiry with explicit kernel doubles. Native qualification remains pending.

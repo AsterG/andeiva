@@ -29,6 +29,9 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 	}
 	if target.Running.Config.SchemaVersion == 7 {
 		addFeatureV2(&projected, v2RoutedBootFeature)
+		if routedConfigurationUsesDHCPV3(target) {
+			addFeatureV2(&projected, v3RoutedDHCPFeature)
+		}
 		if target.Firewall.Running.Config.SchemaVersion == 4 {
 			addFeatureV2(&projected, v2RoutedNoNetworkFeature)
 		}
