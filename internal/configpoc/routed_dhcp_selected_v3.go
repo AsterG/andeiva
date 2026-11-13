@@ -41,8 +41,9 @@ func (p RoutedDHCPSelectedV3) Reference() SelectionReferenceV2 { return p.ref }
 func (p RoutedDHCPSelectedV3) Snapshot() networkexecutor.LeaseSelectedSnapshotV3 {
 	return clone(p.work.Snapshot)
 }
-func (p RoutedDHCPSelectedV3) Epoch() uint64 { return p.work.Epoch }
-func (p RoutedDHCPSelectedV3) Phase() string { return p.phase }
+func (p RoutedDHCPSelectedV3) Epoch() uint64   { return p.work.Epoch }
+func (p RoutedDHCPSelectedV3) Phase() string   { return p.phase }
+func (p RoutedDHCPSelectedV3) Running() string { return p.work.Running }
 
 func validRoutedDHCPShapeV3(st v2State) bool {
 	if st.RoutedDHCPLast != "" && (!validHash(st.RoutedDHCPLast) || !hasFeatureV2(st, v3RoutedDHCPFeature) || st.RecoveryReserveVersion != 1) {

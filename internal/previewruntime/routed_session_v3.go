@@ -37,6 +37,7 @@ type RoutedSessionV3 struct {
 	epoch      uint64
 	integrity  *routedIntegrityGateV3
 	inventory  func(context.Context) (networkinventory.Snapshot, error)
+	dhcp       *RoutedDHCPRuntimeV3
 }
 
 func NewRoutedSessionV3(authority configpoc.RoutedAuthorityV1, source RoutedSelectionSourceV3) (*RoutedSessionV3, error) {
@@ -120,7 +121,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		return ErrUnavailable
 	}
 	hello, e := firewallipc.DecodeRoutedHelloV3(data, false)
-	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) == 5) {
+	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil) != (len(hello.RequiredFeatures) == 6) {
 		return ErrIdentity
 	}
 	hello.Run = runtimeRun
@@ -161,6 +162,12 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 }
 
 func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedCommandV3) (any, error) {
+	if firewallipc.RoutedDHCPVerbV3(c.Verb) {
+		if s.dhcp == nil {
+			return nil, ErrIdentity
+		}
+		return s.dhcp.dispatch(ctx, c)
+	}
 	switch c.Verb {
 	case "inventory":
 		if s.inventory == nil {

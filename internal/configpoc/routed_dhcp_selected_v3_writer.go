@@ -73,7 +73,7 @@ func (w *RoutedDHCPSelectedStoreV3) Prepare(ctx context.Context) (string, error)
 	s := w.c.store
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if w.ready(ctx) != nil || s.state.RoutedDHCP != nil {
+	if w.ready(ctx) != nil || !w.c.integrityAllowsV1(false) || s.state.RoutedDHCP != nil {
 		return "", ErrRecovery
 	}
 	if err := s.reserves.maintain(s); err != nil {

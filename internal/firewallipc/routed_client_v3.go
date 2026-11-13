@@ -26,6 +26,7 @@ type RoutedClientV3 struct {
 	dead                bool
 	integrity           bool
 	inventory           bool
+	dhcp                bool
 	publicationAllowed  atomic.Bool
 	closingAllowed      atomic.Bool
 }
@@ -43,6 +44,9 @@ func connectRoutedV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun
 	return connectRoutedFeaturesV3(parent, conn, runtimeRun, namespace, integrity, false)
 }
 func connectRoutedFeaturesV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory bool) (*RoutedClientV3, error) {
+	return connectRoutedCapabilitiesV3(parent, conn, runtimeRun, namespace, integrity, inventory, false)
+}
+func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp bool) (*RoutedClientV3, error) {
 	if parent == nil || conn == nil {
 		if conn != nil {
 			_ = conn.Close()
@@ -55,6 +59,9 @@ func connectRoutedFeaturesV3(parent context.Context, conn io.ReadWriteCloser, ru
 	}
 	if inventory {
 		h.RequiredFeatures = append(h.RequiredFeatures, RoutedInventoryCapabilityV3)
+	}
+	if dhcp {
+		h.RequiredFeatures = append(h.RequiredFeatures, RoutedDHCPCapabilityV3)
 	}
 	data, _ := json.Marshal(h)
 	if _, e := DecodeRoutedHelloV3(data, false); e != nil || parent.Err() != nil {
@@ -84,7 +91,7 @@ func connectRoutedFeaturesV3(parent context.Context, conn io.ReadWriteCloser, ru
 			_ = conn.Close()
 			return nil, ErrChannel
 		}
-		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory}, nil
+		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory, dhcp: dhcp}, nil
 	case <-ctx.Done():
 		_ = conn.Close()
 		return nil, ErrChannel
@@ -117,7 +124,7 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 			c.closingAllowed.Store(false)
 		}
 	}()
-	if (verb == "inventory" && !c.inventory) || (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
+	if (RoutedDHCPVerbV3(verb) && !c.dhcp) || (verb == "inventory" && !c.inventory) || (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
 		return RoutedResultV3{}, ErrChannel
 	}
 	p, e := json.Marshal(payload)
@@ -206,7 +213,7 @@ func (c *RoutedClientV3) IntegrityEnabled() bool { return c != nil && c.integrit
 
 func routedEffectVerbV3(verb string) bool {
 	switch verb {
-	case "arm", "apply", "confirm", "recover", "bootstrap", "resume":
+	case "arm", "apply", "confirm", "recover", "bootstrap", "resume", "dhcp_begin", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire":
 		return true
 	default:
 		return false

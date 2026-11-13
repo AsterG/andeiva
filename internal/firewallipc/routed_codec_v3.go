@@ -52,7 +52,7 @@ func DecodeRoutedHelloV3(data []byte, reply bool) (RoutedHelloV3, error) {
 	if reply {
 		required = append(required, "run", "epoch")
 	}
-	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || (len(h.RequiredFeatures) != 3 && len(h.RequiredFeatures) != 4 && len(h.RequiredFeatures) != 5) || (len(h.RequiredFeatures) >= 4 && h.RequiredFeatures[3] != RoutedIntegrityCapabilityV3) || (len(h.RequiredFeatures) == 5 && h.RequiredFeatures[4] != RoutedInventoryCapabilityV3) || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
+	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || (len(h.RequiredFeatures) < 3 || len(h.RequiredFeatures) > 6) || (len(h.RequiredFeatures) >= 4 && h.RequiredFeatures[3] != RoutedIntegrityCapabilityV3) || (len(h.RequiredFeatures) >= 5 && h.RequiredFeatures[4] != RoutedInventoryCapabilityV3) || (len(h.RequiredFeatures) == 6 && h.RequiredFeatures[5] != RoutedDHCPCapabilityV3) || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
 		return RoutedHelloV3{}, ErrChannel
 	}
 	return h, nil
@@ -106,6 +106,7 @@ func ValidRoutedIntegrityResultV3(r configpoc.IntegrityResultV1) bool {
 }
 
 type RoutedCommandV3 struct {
+	DHCP      RoutedDHCPRequestV3
 	Integrity RoutedIntegrityV3
 	Verb      string
 	Target    configpoc.RoutedActivationBundleV1
@@ -137,6 +138,11 @@ func DecodeRoutedRequestV3(data []byte, run string, namespace, last uint64) (Rou
 		return r, c, ErrChannel
 	}
 	c.Verb = r.Verb
+	if RoutedDHCPVerbV3(r.Verb) {
+		p, err := decodeRoutedDHCPRequestV3(r.Verb, r.Payload)
+		c.DHCP = p
+		return r, c, err
+	}
 	switch r.Verb {
 	case "inspect":
 		var p RoutedIntegrityV3
@@ -207,6 +213,7 @@ type RoutedPreparedV3 struct {
 	Preparation configpoc.RoutedPreparationV1 `json:"preparation"`
 }
 type RoutedResultV3 struct {
+	DHCP        RoutedDHCPGrantV3
 	Inventory   networkinventory.Snapshot
 	Integrity   configpoc.IntegrityResultV1
 	Observed    RoutedObservedV3
@@ -225,6 +232,11 @@ func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, R
 			return reply, result, ErrChannel
 		}
 		return reply, result, nil
+	}
+	if RoutedDHCPVerbV3(reply.Verb) {
+		value, err := decodeRoutedDHCPReplyV3(reply.Verb, reply.Payload)
+		result.DHCP = value
+		return reply, result, err
 	}
 	switch reply.Verb {
 	case "inventory":

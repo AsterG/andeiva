@@ -58,7 +58,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		previousSelection = selection
 		// Only the preceding feature set is needed by the selection edge. Do not
 		// retain every decoded state while traversing historical selections.
-		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary)}
+		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary), Generation: state.Generation, RoutedDHCP: clone(state.RoutedDHCP), RoutedDHCPLast: state.RoutedDHCPLast}
 		hash = selection.Previous
 	}
 	return errV2InspectionBudget

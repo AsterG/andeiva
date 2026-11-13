@@ -47,6 +47,7 @@ type LeaseGateOptions struct {
 // persistence, Confirm or rollback operation that can restore a token.
 type LeaseGate struct {
 	mu                                    sync.Mutex
+	identity                              OwnedNamespaceIdentity
 	lifetime                              context.Context
 	opts                                  LeaseGateOptions
 	wan                                   networkplan.Interface
@@ -78,7 +79,7 @@ func newLeaseGate(lifetime context.Context, id OwnedNamespaceIdentity, options L
 	if o.Namespace != id.Namespace || o.BootID != id.BootID || o.RunID != id.RunID || o.PID <= 1 || o.StartTicks == 0 || !leaseGateHex(o.Incarnation, 32) {
 		return nil, ErrScope
 	}
-	g := &LeaseGate{lifetime: lifetime, opts: options, kernel: kernel, now: now, closedForwarding: closed}
+	g := &LeaseGate{lifetime: lifetime, identity: id, opts: options, kernel: kernel, now: now, closedForwarding: closed}
 	g.opts.Desired = r
 	for _, i := range r.Config.Interfaces {
 		switch {

@@ -133,10 +133,17 @@ func (a *boundaryAuthorityFixtureV2) Bootstrap(_ context.Context, p RoutedSelect
 }
 
 func boundaryCoordinatorFixtureV2(t *testing.T) (*v2Coordinator, *boundaryAuthorityFixtureV2, v2TrustedPrincipal, Config) {
+	return boundaryCoordinatorLocalFixtureV2(t, false)
+}
+
+func boundaryCoordinatorLocalFixtureV2(t *testing.T, lanOnly bool) (*v2Coordinator, *boundaryAuthorityFixtureV2, v2TrustedPrincipal, Config) {
 	t.Helper()
 	doc, objects := compositeRoutedFixture(t, true)
 	target := objects[doc.Domains.Firewall.Revision].Config
 	localConfig := Config{SchemaVersion: 3, DefaultAction: "deny", LocalServices: &localpolicy.Config{SchemaVersion: 1, Interfaces: []localpolicy.Interface{{Name: "lan0", Zone: localpolicy.LAN, Addresses: []string{"198.18.0.1"}}, {Name: "wan0", Zone: localpolicy.WAN, Addresses: []string{"198.19.0.1"}}}, Services: []localpolicy.Service{}}}
+	if lanOnly {
+		localConfig.LocalServices.Interfaces = localConfig.LocalServices.Interfaces[:1]
+	}
 	legacy := func(config Config) (*os.Root, Revision) {
 		area, path := checkpointFixtureArea(t)
 		store, err := openStore(path, 2048)

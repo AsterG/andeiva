@@ -76,3 +76,44 @@ func TestLeaseSelectedV3StateReadbackDoesNotConfuseBaselineAndTarget(t *testing.
 		t.Fatal("expired baseline withdrawal")
 	}
 }
+
+func TestLeaseSelectedV3ArchivedGateRecoveryRequiresAlreadyClosedTable(t *testing.T) {
+	for _, mode := range []string{"closed", "live", "foreign", "new-namespace"} {
+		t.Run(mode, func(t *testing.T) {
+			l, _, _, _ := leaseFixture(t)
+			s, err := l.PrepareSelectedSnapshotV3(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			g, k, _, now := gateFixture(t)
+			if mode == "live" {
+				if g.Stage(context.Background()) != nil || g.Open(context.Background()) != nil {
+					t.Fatal("initial live")
+				}
+			}
+			if mode == "foreign" {
+				k.observe = func(b []byte) []byte { return []byte(strings.Replace(string(b), "drop", "accept", 1)) }
+			}
+			id := s.Identity
+			if mode == "new-namespace" {
+				id.Namespace++
+			}
+			opts := g.opts
+			if mode == "new-namespace" {
+				opts.Owner.Namespace = id.Namespace
+			}
+			r, err := newLeaseGate(context.Background(), id, opts, k, func() (int64, error) { return *now, nil }, func() error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := k.applies
+			err = r.RecoverWithdrawnSelectedV3(context.Background(), s)
+			if (err == nil) != (mode == "closed") || k.applies != before {
+				t.Fatal("terminal recovery mutated or adopted gate", mode, err)
+			}
+			if mode == "closed" && r.Stage(context.Background()) == nil {
+				t.Fatal("archived same sequence revived")
+			}
+		})
+	}
+}

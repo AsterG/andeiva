@@ -31,5 +31,11 @@ func (c *v2Coordinator) recoverRoutedDHCPAtOpenV3(ctx context.Context) error {
 		return ErrRecovery
 	}
 	writer := &RoutedDHCPSelectedStoreV3{c: c, authority: c.options.DHCPRecovery, identity: w.Snapshot.Identity}
-	return writer.transitionLocked(ctx, d.Work, true)
+	if err := writer.transitionLocked(ctx, d.Work, true); err != nil {
+		return err
+	}
+	if release, ok := c.options.DHCPRecovery.(interface{ ReleaseWithdrawn(context.Context) error }); ok {
+		return release.ReleaseWithdrawn(ctx)
+	}
+	return nil
 }

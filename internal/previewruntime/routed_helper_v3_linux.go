@@ -23,6 +23,7 @@ type RoutedReaderRootV3 struct {
 	Profile recoveryreserve.ProfileV2
 }
 type RoutedHelperOptionsV3 struct {
+	DHCP                       *RoutedDHCPRuntimeOptionsV3
 	NetworkInventory           func(context.Context) (networkinventory.Snapshot, error) // Trusted helper provider; nil keeps the prior profile.
 	IntegrityRoot              *os.Root                                                 // Explicit trusted resource; nil preserves full-reader profile.
 	Store                      *os.Root
@@ -42,9 +43,14 @@ type RoutedHelperRuntimeV3 struct {
 	identities Identities
 	closed     bool
 	fence      *routedIntegrityFenceV3
+	dhcpDone   chan struct{}
+	dhcpClose  func() error
 }
 
 func routedHelperReadinessV3(m Metadata, ids Identities, o RoutedHelperOptionsV3) error {
+	if o.DHCP != nil && (o.IntegrityRoot == nil || o.NetworkInventory == nil) {
+		return ErrIdentity
+	}
 	if (o.NetworkInventory != nil && o.IntegrityRoot == nil) || m.ValidateRouted() != nil || ids.Validate() != nil || o.Authority == nil || o.Store == nil || o.Access.Version != 1 || o.Access.OwnerUID != ids.APIUID || o.Access.ReaderGID == 0 || o.Access.ReaderGID == ids.APIGID || o.Access.CheckDirectory(o.Store) != nil {
 		return ErrIdentity
 	}
@@ -178,6 +184,14 @@ func assembleRoutedHelperV3(ctx context.Context, m Metadata, ids Identities, o R
 		return nil, e
 	}
 	result.session.inventory = o.NetworkInventory
+	if o.DHCP != nil {
+		result.session.dhcp, result.dhcpClose, e = assembleRoutedDHCPRuntimeV3(lifetime, *o.DHCP, o.Authority.Identity(), o.Access.ReaderGID, full, o.Authority, result.session.integrity)
+		if e != nil {
+			return nil, e
+		}
+		result.dhcpDone = make(chan struct{})
+		go func() { defer close(result.dhcpDone); result.session.dhcp.Run(lifetime) }()
+	}
 	return result, nil
 }
 
@@ -212,6 +226,9 @@ func (r *RoutedHelperRuntimeV3) Close() error {
 	if r.cancel != nil {
 		r.cancel()
 	}
+	if r.dhcpDone != nil {
+		<-r.dhcpDone
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -219,6 +236,9 @@ func (r *RoutedHelperRuntimeV3) Close() error {
 	}
 	r.closed = true
 	var failures []error
+	if r.dhcpClose != nil {
+		failures = append(failures, r.dhcpClose())
+	}
 	if r.fence != nil {
 		failures = append(failures, r.fence.Close())
 	}

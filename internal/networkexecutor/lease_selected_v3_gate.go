@@ -94,6 +94,29 @@ func (g *LeaseGate) VerifyClosedSelectedV3(ctx context.Context) error {
 	return err
 }
 
+// RecoverWithdrawnSelectedV3 requires an independently authenticated archived
+// terminal witness. Unlike active recovery it cannot flush or adopt a live
+// token: the entire fixed table must already be closed. It performs no writes.
+func (g *LeaseGate) RecoverWithdrawnSelectedV3(ctx context.Context, snapshot LeaseSelectedSnapshotV3) error {
+	if g == nil {
+		return ErrScope
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	s, err := CanonicalLeaseSelectedSnapshotV3(snapshot)
+	if err != nil || g.ready(ctx) != nil || g.initialized || s.Identity != g.identity || s.Desired.Hash != g.opts.Desired.Hash || s.WAN != g.wan.Binding || g.closedForwarding() != nil {
+		return ErrScope
+	}
+	if _, err = g.read(ctx, false, false); err != nil {
+		return err
+	}
+	g.initialized = true
+	if s.Fact().Owner == g.opts.Owner {
+		g.seen = s.Sequence
+	}
+	return nil
+}
+
 // VerifySelectedStateV3 compares actual kernel state with the retained original
 // LAN baseline. Expired authority permits baseline proof, never target proof.
 func (l *LeaseExecutor) VerifySelectedStateV3(ctx context.Context, snapshot LeaseSelectedSnapshotV3, state LeaseSelectedStateV3) error {

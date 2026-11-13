@@ -17,6 +17,7 @@ import (
 )
 
 type RoutedOperationsRuntimeV3 struct {
+	DHCP               *RoutedDHCPControllerV3
 	Handler            http.Handler
 	Service            *configpoc.ServiceV2
 	routed             *firewallipc.RoutedClientV3
@@ -71,7 +72,7 @@ func openRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identities,
 		}
 		return nil, ErrIdentity
 	}
-	if (o.RoutedInventory && (!integrity || o.NetworkInventory != nil)) || ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.ValidateRouted() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
+	if (o.RoutedDHCP && (!integrity || !o.RoutedInventory)) || (o.RoutedInventory && (!integrity || o.NetworkInventory != nil)) || ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.ValidateRouted() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
 		return fail()
 	}
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}
@@ -105,6 +106,18 @@ func connectRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identiti
 		}
 		connect = ConnectInheritedRoutedInventoryV3
 	}
+	if o.RoutedDHCP {
+		if !integrity || !o.RoutedInventory {
+			if routed != nil {
+				_ = routed.Close()
+			}
+			if legacy != nil {
+				_ = legacy.Close()
+			}
+			return nil, ErrIdentity
+		}
+		connect = ConnectInheritedRoutedDHCPV3
+	}
 	client, e := connect(ctx, routed, ids.HelperUID, ids.IPCGID, routedPID, m.RunID, m.GatewayNamespace)
 	if e != nil {
 		if legacy != nil {
@@ -133,7 +146,7 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 			}
 		}
 	}()
-	if ctx == nil || client == nil || (client.InventoryEnabled() != o.RoutedInventory) || (o.RoutedInventory && o.NetworkInventory != nil) || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
+	if ctx == nil || client == nil || client.DHCPEnabled() != o.RoutedDHCP || o.Runtime.DHCPRecovery != nil || (client.InventoryEnabled() != o.RoutedInventory) || (o.RoutedInventory && o.NetworkInventory != nil) || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
 		return nil, ErrIdentity
 	}
 	authority, e := NewRoutedRemoteAuthority(client, identity)
@@ -159,6 +172,9 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 		}
 	}
 	runtimeOptions.Routed, runtimeOptions.RoutedIdentity = authority, identity
+	if client.DHCPEnabled() {
+		runtimeOptions.DHCPRecovery = &routedDHCPRemoteV3{client}
+	}
 	service, e := configpoc.OpenRuntimeServiceV2(ctx, o.Store, o.Budget, o.Auth, []configpoc.Engine{guard}, o.Local, runtimeOptions)
 	if e != nil {
 		return nil, e
@@ -171,6 +187,12 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 		return nil, errors.Join(e, service.Close())
 	}
 	result = &RoutedOperationsRuntimeV3{Handler: handler, Service: service, routed: client, legacy: legacy}
+	if client.DHCPEnabled() {
+		result.DHCP, e = newRoutedDHCPControllerV3(service, client, identity)
+		if e != nil {
+			return nil, errors.Join(e, service.Close())
+		}
+	}
 	if client.IntegrityEnabled() {
 		result.integrityScheduler = startRoutedIntegritySchedulerV3(service)
 	}
