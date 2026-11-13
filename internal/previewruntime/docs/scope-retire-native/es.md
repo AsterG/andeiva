@@ -3,9 +3,11 @@
 Estado: fixture implementada; calificación nativa y mediciones pendientes. Un skip
 sin privilegios no acredita calificación nativa.
 El primer intento nativo falló antes de Store o efectos de red: los API
-filesystems ocultaron `/run/andeiva-preview/grouped`. El driver ahora monta
-explícitamente el directorio runtime de la fixture dentro del servicio. FDstore
-estaba vacío; la retirada no pasó.
+filesystems ocultaron `/run/andeiva-preview/grouped`. El segundo bind hijo usaba
+un origen dentro del árbol oculto y falló NAMESPACE/226 antes de ejecutar Go.
+Ambos conservaron FDstore vacío; la retirada no pasó. Ahora se monta todo el
+`/run` privado de la fixture con `norbind`, sustituyendo el fallback MountAPIVFS
+en el mismo destino. La repetición nativa sigue pendiente.
 
 Sólo Root, en un laboratorio Debian 13 autorizado donde no existan
 `andeiva-preview-grouped.service` ni su socket. Prohibido ejecutarla en CI, WSL
@@ -17,8 +19,9 @@ core real de retirada con lector capless, G1/R2, drain, desmontaje, Drop y recib
 ENODEV conserva evidencia y falla; no significa retirada completada.
 
 RootDirectory y passwd/group privados; padres veth y MACVLAN sólo en namespaces
-aislados. El bind writable de `/run/andeiva-preview` procede sólo de la raíz
-temporal, con ruta canónica y owner/modo comprobados; `/var/lib` también queda
+aislados. El bind writable de `/run` procede sólo de la raíz temporal, nunca del
+`/run` del host, con ruta canónica y owner/modo comprobados. Los sockets del
+manager siguen montados por separado sólo lectura; `/var/lib` también queda
 dentro de esa raíz. No se crea RuntimeDirectory en el host. Los enlaces permanecen
 aislados, sin direcciones, rutas ni reglas del host. Los padres modelan enlaces
 externos y no forman parte del recibo del gateway. Su pin vive en el MNT privado

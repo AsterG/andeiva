@@ -4,8 +4,13 @@ Status: fixture implemented; native retirement qualification and measurements pe
 An unprivileged test skip is not native qualification.
 The first native attempt failed before Store or network effects: the private
 `/run/andeiva-preview/grouped` directory was hidden by RootDirectory's API
-filesystem setup. The driver now explicitly binds the fixture-owned runtime
-directory into the service root. The FD store was empty; retirement did not pass.
+filesystem setup. A second attempt bound only that child using a source inside
+the hidden subtree; systemd failed with NAMESPACE/226 before executing Go. Both
+attempts retained an empty FD store and did not qualify retirement. The driver
+now binds the complete fixture-owned `/run` nonrecursively at `/run`. The explicit
+mount overrides MountAPIVFS's fallback at the same destination, as implemented
+by [systemd 257 namespace setup](https://github.com/systemd/systemd/blob/v257/src/core/namespace.c).
+Native verification of this correction remains pending.
 
 The opt-in fixture runs as the MainPID of two successive invocations of the
 fixed transient `andeiva-preview-grouped.service`. Use only an authorized Debian
@@ -60,8 +65,9 @@ bash packaging/preview/tests/scope-retire-native.sh --isolated-lab /root-owned-0
 
 The driver creates a private RootDirectory beneath `/var/backups`, with private
 passwd/group files and read-only host tool/API mounts. It never installs users
-or services. Its writable `/run/andeiva-preview` bind source is strictly beneath
-the temporary fixture root, with canonical-path and owner/mode checks. Persistent
+or services. Its writable `/run` bind source is strictly beneath the temporary
+fixture root, with canonical-path and owner/mode checks; it is never the host's
+`/run`. Manager sockets remain separate read-only binds. Persistent
 data remains beneath that same private root's `/var/lib`; no host RuntimeDirectory
 is created. The fixture capability budget includes SYS_ADMIN for namespace
 creation and is not the appliance helper budget. Limits: two invocations,

@@ -33,9 +33,10 @@ for directory in etc usr proc sys dev run run/systemd run/dbus var var/lib var/l
 done
 mkdir -m 0700 "$root/var/lib/andeiva-preview-package"
 mkdir -m 0755 "$root/etc/andeiva-preview"
-# RootDirectory's API filesystems can overlay /run. Bind only this private
-# fixture source back into the service root; never create a host RuntimeDirectory.
-for directory in run/andeiva-preview run/andeiva-preview/grouped var/lib/andeiva-preview var/lib/andeiva-preview/grouped; do
+# MountAPIVFS supplies /run only as a fallback. Explicitly bind the complete
+# private /run at that same destination, so the fallback cannot hide a child
+# bind's source beneath $root/run. Never bind or create the host's /run tree.
+for directory in run run/andeiva-preview run/andeiva-preview/grouped var/lib/andeiva-preview var/lib/andeiva-preview/grouped; do
   path=$root/$directory
   [[ -d $path && ! -L $path && $(realpath -e -- "$path") == "$path" ]]
   [[ $(stat -c '%u:%g:%a' -- "$path") == 0:0:755 ]]
@@ -57,7 +58,7 @@ printf '%s\n' "$fixture"
 # not a proposed appliance/helper capability budget. No host NIC is configured.
 timeout 8s systemd-run --unit="$unit" --service-type=exec \
   --property="RootDirectory=$root" --property=MountAPIVFS=yes \
-  --property="BindPaths=$root/run/andeiva-preview:/run/andeiva-preview" \
+  --property="BindPaths=$root/run:/run:norbind" \
   --property='BindReadOnlyPaths=/usr /sys /etc/os-release:/etc/os-release /run/systemd/system /run/systemd/private /run/systemd/notify /run/dbus/system_bus_socket' \
   --property=PrivateMounts=yes --property=PrivateDevices=yes \
   --property=Delegate=no --property=NotifyAccess=main \
