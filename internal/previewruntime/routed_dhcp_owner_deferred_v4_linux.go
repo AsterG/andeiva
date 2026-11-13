@@ -20,6 +20,7 @@ func PrepareRoutedDHCPDeferredOwnerV4(ctx context.Context, o RoutedDHCPOwnerOpti
 	if err != nil {
 		return nil, err
 	}
+	registerNativeDHCPDiagnosticV4(s)
 	return &RoutedDHCPDeferredOwnerV4{s}, nil
 }
 func RunRoutedDHCPDeferredOwnerRoleV4(ctx context.Context) error {
