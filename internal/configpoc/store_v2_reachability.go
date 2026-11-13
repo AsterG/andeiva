@@ -34,18 +34,21 @@ type v2ReachabilityReport struct {
 }
 
 type v2ReachabilityReader struct {
-	action    *actionReadDependenciesV2
-	ctx       context.Context
-	area      *os.Root
-	budget    v2ReachabilityBudget
-	report    v2ReachabilityReport
-	active    uint64
-	objects   map[string]bool
-	edges     map[string]uint8
-	root      os.FileInfo
-	shared    *recoveryreserve.ReaderAccessV2
-	ownerRead bool // Writer-owned maintenance only; helper readers remain group-scoped.
-	cache     *selectedReadCacheV2
+	// Per-inspection evidence only: set after a successful bounded read proves
+	// an immutable record's hash or encoding is invalid. I/O is not corruption.
+	integrityCorruption bool
+	action              *actionReadDependenciesV2
+	ctx                 context.Context
+	area                *os.Root
+	budget              v2ReachabilityBudget
+	report              v2ReachabilityReport
+	active              uint64
+	objects             map[string]bool
+	edges               map[string]uint8
+	root                os.FileInfo
+	shared              *recoveryreserve.ReaderAccessV2
+	ownerRead           bool // Writer-owned maintenance only; helper readers remain group-scoped.
+	cache               *selectedReadCacheV2
 }
 
 func (r *v2ReachabilityReader) step() error {
@@ -139,6 +142,7 @@ func (r *v2ReachabilityReader) loadBound(hash string, target any, limit int64) (
 		return nil, err
 	}
 	if checkpointDigest(data) != hash || checkpointDecode(data, target) != nil {
+		r.integrityCorruption = true
 		release()
 		return nil, errV2Unavailable
 	}
