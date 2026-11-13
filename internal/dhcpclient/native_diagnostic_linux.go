@@ -66,6 +66,17 @@ func openClientDiagnosticAt(parent int, uid uint32) (*clientDiagnostic, error) {
 }
 
 func (d *clientDiagnostic) event(stage, detail string, code int) {
+	d.writeEvent(stage, detail, code, 0)
+}
+
+func (d *clientDiagnostic) leaseEvent(e Event) {
+	if e.validate() != nil {
+		return
+	}
+	d.writeEvent("event", e.Reason, 0, e.Seconds)
+}
+
+func (d *clientDiagnostic) writeEvent(stage, detail string, code int, seconds uint32) {
 	if d == nil {
 		return
 	}
@@ -74,11 +85,12 @@ func (d *clientDiagnostic) event(stage, detail string, code int) {
 		return
 	}
 	data, err := json.Marshal(struct {
-		BootNS int64  `json:"boot_ns"`
-		Stage  string `json:"stage"`
-		Detail string `json:"detail,omitempty"`
-		Code   int    `json:"code,omitempty"`
-	}{now, stage, detail, code})
+		BootNS       int64  `json:"boot_ns"`
+		Stage        string `json:"stage"`
+		Detail       string `json:"detail,omitempty"`
+		Code         int    `json:"code,omitempty"`
+		LeaseSeconds uint32 `json:"lease_seconds,omitempty"`
+	}{now, stage, detail, code, seconds})
 	if err != nil {
 		return
 	}

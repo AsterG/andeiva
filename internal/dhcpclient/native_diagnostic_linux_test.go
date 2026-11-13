@@ -104,3 +104,42 @@ func TestNativeDiagnosticBoundAndRedaction(t *testing.T) {
 		t.Fatal("closed diagnostic blocked engine", err)
 	}
 }
+
+func TestNativeDiagnosticValidatedLeaseSeconds(t *testing.T) {
+	path, fd, uid := diagnosticDirectory(t)
+	d, err := openClientDiagnosticAt(fd, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.close()
+	event, err := HookEvent(goodEnv(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.leaseEvent(event)
+	file := filepath.Join(path, "native-diagnostics", "events.jsonl")
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"lease_seconds":120`)) || !bytes.Contains(data, []byte(`"detail":"BOUND"`)) || bytes.Contains(data, []byte(event.Address)) || bytes.Contains(data, []byte(event.Gateway)) {
+		t.Fatal("missing validated duration or raw option escaped", string(data))
+	}
+	for _, seconds := range []uint32{0, 9, 604801, ^uint32(0)} {
+		event.Seconds = seconds
+		d.leaseEvent(event)
+	}
+	after, err := os.ReadFile(file)
+	if err != nil || !bytes.Equal(data, after) {
+		t.Fatal("invalid duration emitted", err)
+	}
+	event, err = HookEvent(replace(goodEnv(), "reason", "EXPIRE"), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.leaseEvent(event)
+	after, err = os.ReadFile(file)
+	if err != nil || !bytes.Contains(after, []byte(`"detail":"EXPIRE"`)) || bytes.Count(after, []byte(`"lease_seconds"`)) != 1 {
+		t.Fatal("expiry invented lease duration", err)
+	}
+}

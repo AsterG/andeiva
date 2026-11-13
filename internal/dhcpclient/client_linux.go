@@ -237,7 +237,7 @@ func (c *Client) readEvents() {
 			_ = c.cmd.Process.Kill()
 			return
 		}
-		c.diagnostic.event("event", e.Reason, 0)
+		c.diagnostic.leaseEvent(e)
 	}
 	c.failAt("event_channel_closed")
 	_ = c.cmd.Process.Kill()

@@ -13,5 +13,6 @@ func TestNativeDiagnosticDefaultDisabled(t *testing.T) {
 		t.Fatal("ordinary build enabled native diagnostics")
 	}
 	d.event("event", "CARRIER", 0)
+	d.leaseEvent(Event{})
 	d.close()
 }

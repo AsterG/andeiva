@@ -29,6 +29,7 @@ import (
 	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"github.com/AsterG/andeiva/internal/routednft"
 	"golang.org/x/sys/unix"
 )
@@ -565,6 +566,13 @@ func nativeDHCPJobsLeaseV4(parent context.Context, r *RoutedOperationsRuntimeV3,
 		started := time.Now()
 		last = r.DHCP.Reconcile(ctx)
 		sample.ReconcileMS = time.Since(started).Milliseconds()
+		// Post-call progress only: another scheduler iteration may have run.
+		// Never block reconciliation or read the selected store for diagnostics.
+		if r.DHCP.mu.TryLock() {
+			epoch, work := r.DHCP.grant.Epoch, r.DHCP.work != ""
+			sample.ControllerEpoch, sample.ControllerWork = &epoch, &work
+			r.DHCP.mu.Unlock()
+		}
 		sample.IntegrityReady = r.Service.RuntimeIntegrityReadyV1()
 		sample.SelectedHint = r.routed.DHCPSelectedV4()
 		if last == nil {
@@ -609,19 +617,21 @@ func nativeDHCPJobsLeaseV4(parent context.Context, r *RoutedOperationsRuntimeV3,
 }
 
 type nativeDHCPJobsWaitSampleV4 struct {
-	Stage          string `json:"stage"`
-	Error          string `json:"error"`
-	Attempt        uint64 `json:"attempt"`
-	ElapsedMS      int64  `json:"elapsed_ms"`
-	ReconcileMS    int64  `json:"reconcile_ms"`
-	CurrentMS      int64  `json:"current_ms"`
-	LiveMS         int64  `json:"live_ms"`
-	AfterEpoch     uint64 `json:"after_epoch"`
-	Epoch          uint64 `json:"epoch"`
-	Work           *bool  `json:"work,omitempty"`
-	IntegrityReady bool   `json:"integrity_ready"`
-	SelectedHint   bool   `json:"selected_hint"`
-	Final          bool   `json:"final"`
+	Stage           string  `json:"stage"`
+	Error           string  `json:"error"`
+	Attempt         uint64  `json:"attempt"`
+	ElapsedMS       int64   `json:"elapsed_ms"`
+	ReconcileMS     int64   `json:"reconcile_ms"`
+	CurrentMS       int64   `json:"current_ms"`
+	LiveMS          int64   `json:"live_ms"`
+	AfterEpoch      uint64  `json:"after_epoch"`
+	Epoch           uint64  `json:"epoch"`
+	Work            *bool   `json:"work,omitempty"`
+	IntegrityReady  bool    `json:"integrity_ready"`
+	SelectedHint    bool    `json:"selected_hint"`
+	Final           bool    `json:"final"`
+	ControllerEpoch *uint64 `json:"controller_epoch,omitempty"`
+	ControllerWork  *bool   `json:"controller_work,omitempty"`
 }
 
 // Test-only, bounded measurements of existing calls. No additional RPC, packet,
@@ -631,13 +641,11 @@ type nativeDHCPJobsWaitTraceV4 struct {
 	output      io.Writer
 	reports     int
 	final       bool
+	lastClass   string
 }
 
 func (d *nativeDHCPJobsWaitTraceV4) emit(now time.Time, sample nativeDHCPJobsWaitSampleV4, err error, final bool) error {
 	if d.final {
-		return nil
-	}
-	if !final && (d.reports >= 23 || !d.last.IsZero() && now.Sub(d.last) < 5*time.Second) {
 		return nil
 	}
 	sample.Error = "ok"
@@ -646,6 +654,16 @@ func (d *nativeDHCPJobsWaitTraceV4) emit(now time.Time, sample nativeDHCPJobsWai
 		sample.Error = "deadline"
 	case errors.Is(err, context.Canceled):
 		sample.Error = "cancelled"
+	case errors.Is(err, firewallipc.ErrChannel):
+		sample.Error = "channel"
+	case errors.Is(err, firewallipc.ErrRoutedDHCPWaitingV1):
+		sample.Error = "initial_waiting_v1"
+	case errors.Is(err, configpoc.ErrConflict), errors.Is(err, recoveryreserve.ErrConflict):
+		sample.Error = "conflict"
+	case errors.Is(err, configpoc.ErrStorage), errors.Is(err, recoveryreserve.ErrUnavailable):
+		sample.Error = "storage"
+	case errors.Is(err, recoveryreserve.ErrFull), err != nil && err.Error() == "ANDEIVA_OPERATION_LIMITED":
+		sample.Error = "limited"
 	case errors.Is(err, ErrIdentity):
 		sample.Error = "identity"
 	case errors.Is(err, configpoc.ErrRecovery):
@@ -655,6 +673,11 @@ func (d *nativeDHCPJobsWaitTraceV4) emit(now time.Time, sample nativeDHCPJobsWai
 	case err != nil:
 		sample.Error = "other"
 	}
+	// Capture the first new failure class even inside the periodic interval;
+	// retain the same absolute 23 samples plus one final record bound.
+	if !final && (d.reports >= 23 || sample.Error == d.lastClass && !d.last.IsZero() && now.Sub(d.last) < 5*time.Second) {
+		return nil
+	}
 	sample.ElapsedMS, sample.Final = now.Sub(d.start).Milliseconds(), final
 	data, e := json.Marshal(sample)
 	if e != nil {
@@ -662,6 +685,7 @@ func (d *nativeDHCPJobsWaitTraceV4) emit(now time.Time, sample nativeDHCPJobsWai
 	}
 	_, e = fmt.Fprintf(d.output, "ANDEIVA_NATIVE_DHCP_WAIT %s\n", data)
 	d.last, d.final = now, final
+	d.lastClass = sample.Error
 	d.reports++
 	return e
 }
@@ -862,5 +886,62 @@ func TestRoutedDHCPJobsV4NativeWaitTraceBounded(t *testing.T) {
 	raw, ok := strings.CutPrefix(lines[len(lines)-1], "ANDEIVA_NATIVE_DHCP_WAIT ")
 	if !ok || json.Unmarshal([]byte(raw), &final) != nil || !final.Final || final.Error != "deadline" || final.ElapsedMS != 501000 || final.ReconcileMS != 2300 || final.Attempt != 101 || final.Work != nil {
 		t.Fatal("incorrect final measurement", final)
+	}
+}
+
+func TestRoutedDHCPJobsV4NativeWaitTraceFailureClasses(t *testing.T) {
+	cases := []struct {
+		err  error
+		code string
+	}{
+		{firewallipc.ErrRoutedDHCPWaitingV1, "initial_waiting_v1"},
+		{firewallipc.ErrChannel, "channel"},
+		{configpoc.ErrConflict, "conflict"},
+		{configpoc.ErrStorage, "storage"},
+		{errors.New("ANDEIVA_OPERATION_LIMITED"), "limited"},
+		{recoveryreserve.ErrFull, "limited"},
+		{configpoc.ErrRecovery, "recovery"},
+		{errors.New("private underlying detail"), "other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			var output bytes.Buffer
+			start := time.Unix(100, 0)
+			d := nativeDHCPJobsWaitTraceV4{start: start, output: &output}
+			if err := d.emit(start, nativeDHCPJobsWaitSampleV4{}, nil, false); err != nil {
+				t.Fatal(err)
+			}
+			epoch := uint64(7)
+			work := true
+			sample := nativeDHCPJobsWaitSampleV4{Stage: "reconcile", ControllerEpoch: &epoch, ControllerWork: &work}
+			if err := d.emit(start.Add(time.Millisecond), sample, errors.Join(tc.err), false); err != nil {
+				t.Fatal(err)
+			}
+			if d.reports != 2 {
+				t.Fatal("first new failure suppressed by interval")
+			}
+			lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+			raw, ok := strings.CutPrefix(lines[1], "ANDEIVA_NATIVE_DHCP_WAIT ")
+			var got nativeDHCPJobsWaitSampleV4
+			if !ok || json.Unmarshal([]byte(raw), &got) != nil || got.Error != tc.code || got.ControllerEpoch == nil || *got.ControllerEpoch != 7 || got.ControllerWork == nil || !*got.ControllerWork || strings.Contains(output.String(), "private underlying") {
+				t.Fatal("invalid failure classification", got)
+			}
+		})
+	}
+	// Class churn cannot exceed the existing absolute record cap.
+	var output bytes.Buffer
+	start := time.Unix(100, 0)
+	d := nativeDHCPJobsWaitTraceV4{start: start, output: &output}
+	for i := 0; i < 100; i++ {
+		err := firewallipc.ErrChannel
+		if i%2 == 0 {
+			err = firewallipc.ErrRoutedDHCPWaitingV1
+		}
+		if e := d.emit(start.Add(time.Duration(i)*time.Millisecond), nativeDHCPJobsWaitSampleV4{}, err, false); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if d.reports != 23 {
+		t.Fatal("failure churn bypassed report bound", d.reports)
 	}
 }

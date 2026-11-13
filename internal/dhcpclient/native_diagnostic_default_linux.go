@@ -10,4 +10,5 @@ type clientDiagnostic struct{}
 func openClientDiagnostic() (*clientDiagnostic, error) { return nil, nil }
 func (*clientDiagnostic) stderr() io.Writer            { return io.Discard }
 func (*clientDiagnostic) event(string, string, int)    {}
+func (*clientDiagnostic) leaseEvent(Event)             {}
 func (*clientDiagnostic) close()                       {}
