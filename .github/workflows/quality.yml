@@ -55,9 +55,9 @@ jobs:
         with:
           node-version: 24.20.0
       - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: frontend
       - name: Verify inherited-descriptor fixture before the full suite
         run: go test ./internal/previewruntime -count=1 -run '^TestRoutedMigrationInspectV3ExtraDescriptors$'
-        working-directory: frontend
       - run: bash scripts/check.sh
       # The complete package suite exceeds Go's default ten-minute aggregate
       # budget. This does not alter RPC or persisted transaction deadlines.
