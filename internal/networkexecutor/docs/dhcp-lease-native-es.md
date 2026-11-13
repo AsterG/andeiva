@@ -81,3 +81,19 @@ host dual-stack/links/direcciones/rutas/reglas/nftables/forwarding/mounts y ause
 de descendientes/namespaces tras detener. Salida de PID1 privado y cgroup externo
 limpian procesos; no se señala un PID servidor cacheado. Borrar el nombre del
 namespace no prueba que desaparecieron todos sus pins.
+
+## Cualificación nativa registrada
+
+En Debian 13 amd64, la fuente `97a26a2` ejecutó los cuatro modos con DHCP real y
+lectura real de direcciones/rutas del kernel. Lifecycle pasó en 147,07 s;
+owner-death en 9,69 s; manager-death en 7,58 s; broker-death en 10,13 s. Todos
+conservaron direcciones IPv4/IPv6, rutas, reglas, nftables, forwarding y montajes
+del host externo, y limpiaron el entorno aislado. CPU/pico en bytes por modo:
+1,725861 s/49467392; 0,594272 s/36499456; 0,677219 s/37240832;
+0,631642 s/45264896. Son ejecuciones individuales, no dimensionamiento productivo.
+
+Los primeros intentos nativos fallaron en el arnés: faltaba el contexto de vida
+del observador y los pipes heredados bloqueantes no estaban registrados para
+plazos de Go. Se corrigieron sin relajar autenticación, plazos, privilegios ni
+invariantes del host. El forwarding permanece cerrado; esta prueba no acredita
+expiración autónoma ni recuperación durable de WAN.

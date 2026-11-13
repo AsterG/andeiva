@@ -87,3 +87,19 @@ host dual-stack links/addresses/routes/rules/nftables/forwarding/mount invariant
 and post-stop absence of descendants/namespaces. Private PID1 exit and the outer
 cgroup own final process cleanup; the script does not signal a cached server PID.
 Do not equate deleted namespace names with disappearance of all namespace pins.
+
+## Recorded native qualification
+
+On Debian 13 amd64, source `97a26a2` executed all four modes with real DHCP and
+real kernel address/route readback. Lifecycle passed in 147.07 s; owner-death in
+9.69 s; manager-death in 7.58 s; broker-death in 10.13 s. Every mode preserved the
+external host's IPv4/IPv6 addresses, routes, rules, nftables, forwarding and mount
+namespace, with successful isolated cleanup. Cgroup CPU/peak bytes respectively:
+1.725861 s/49467392, 0.594272 s/36499456, 0.677219 s/37240832 and
+0.631642 s/45264896. These are single test runs, not production sizing.
+
+The first native attempts failed in test assembly: the read-only observer omitted
+its supervisor lifetime, and inherited blocking pipes were not registered with
+Go's poller for deadlines. Both were corrected without relaxing authentication,
+deadlines, privilege boundaries or host invariants. This qualification keeps
+forwarding closed and does not prove autonomous expiry or durable WAN recovery.
