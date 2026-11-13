@@ -53,3 +53,16 @@ The outer supervisor must compare host links, addresses, routes, rules, nftables
 and forwarding before/after, including failure and forced-stop cases. A passing
 test alone does not prove host invariants or complete teardown. Do not weaken
 comparison or identity checks to make a run pass.
+
+## Bounded native result
+
+Debian 13 qualification of source `9c55cc8` passed the capless constructor refusal
+and real-kernel lifecycle; the latter took 5.56 seconds and required an explicitly
+passing occupied-WAN child process. Grant, same-tuple renewal, address change,
+revocation, expiry-driven Refresh, explicit withdrawal and final-readback
+compensation preserved the exact LAN baseline. Host dual-stack routes, rules,
+addresses, nftables, forwarding and mount state were unchanged; cleanup passed.
+The whole test unit used 0.981592 seconds CPU and peaked at 25,997,312 bytes.
+These are fixture observations, not appliance sizing. Lease facts were controlled
+by the test; this does not qualify DHCP integration, autonomous expiry, durable
+ownership recovery, forwarding or Internet access.

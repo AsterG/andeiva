@@ -49,3 +49,14 @@ descendientes/namespaces tras detenerlo. El supervisor externo debe comparar
 links, direcciones, rutas, reglas, nftables y forwarding del host antes/después,
 también ante fallo o parada forzada. Un PASS no prueba por sí solo esos
 invariantes ni limpieza completa. No relajar controles para hacer pasar el test.
+
+## Resultado nativo acotado
+
+La calificación Debian 13 de `9c55cc8` pasó el rechazo sin capacidades y el ciclo
+con kernel real (5,56 s), exigiendo éxito explícito del proceso hijo con WAN
+ocupada. Alta, renovación, cambio, revocación, expiración atendida por Refresh y
+compensación conservaron la LAN. Invariantes dual-stack, nftables, forwarding,
+montajes y limpieza pasaron. La unidad usó 0,981592 s de CPU y un pico de
+25.997.312 bytes; no es dimensionamiento del appliance. La autoridad del lease
+fue controlada por el test: DHCP integrado, expiración autónoma, recuperación
+durable y acceso a Internet siguen fuera de esta prueba.

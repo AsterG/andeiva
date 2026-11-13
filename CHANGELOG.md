@@ -13,6 +13,11 @@
 - Prepare a namespace-bound nft transport with fixed commands and shared strict table-presence decoding; native service activation remains gated.
 - Prepare separate grouped API/helper supervision and verified legacy-table readback without a second policy guardian; preserve counter discontinuities across attempted replacement and rollback.
 - Add optional quiescent integrity inspection under the configuration writer barrier, with exact selection correlation, bounded scheduler wakeups and reserved confirmation handling.
+- Define an explicit host/gateway namespace profile while retaining strict legacy laboratory metadata validation.
+- Add bounded isolated DHCP ownership and a closed-forwarding lease executor that preserves the static LAN and compensates only its WAN changes.
+- Prepare history-preserving routed migration with both source journals locked through fingerprint verification and publication; require physical boot before readiness.
+- Add opt-in native lease qualification, including capless refusal, occupied-WAN rejection and compensation after authority changes during final readback.
+
 ## Unreleased — administrative service isolation
 
 - Retain the last applied isolated firewall policy when the administrative API and socket are stopped or fail.
