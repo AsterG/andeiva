@@ -13,6 +13,18 @@ if [[ $# == 0 ]]; then
   exec /usr/bin/unshare --mount --net -- /bin/bash "$0" isolated
 fi
 [[ $# == 1 && $1 == isolated ]]
+# Reject direct entry before any mount operation. The retained descriptors must
+# identify this laboratory host, while both current namespaces must be private.
+[[ $(readlink /proc/self/fd/3) =~ ^net:\[[0-9]+\]$ ]]
+[[ $(readlink /proc/self/fd/4) =~ ^mnt:\[[0-9]+\]$ ]]
+for pair in '3 net' '4 mnt'; do
+  read -r descriptor kind <<< "$pair"
+  original=$(stat -Lc '%d:%i' "/proc/self/fd/$descriptor")
+  current=$(stat -Lc '%d:%i' "/proc/self/ns/$kind")
+  [[ $original == "$(stat -Lc '%d:%i' "/proc/1/ns/$kind")" ]]
+  [[ $current != "$original" ]]
+  [[ $current == "$(stat -Lc '%d:%i' "/proc/thread-self/ns/$kind")" ]]
+done
 /usr/bin/mount --make-rprivate /
 # All engine state paths are replaced only in this private mount namespace.
 /usr/bin/mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
