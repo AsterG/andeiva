@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -69,10 +70,10 @@ func (v *routedMigrationVerifierV3) VerifyMigratedSources(ctx context.Context, e
 	}
 	before, err := v.runChild(ctx, self, RoutedMigrationStateRoleV3, data)
 	if err != nil {
-		return err
+		return fmt.Errorf("migration guardian before: %w", err)
 	}
 	if _, err = v.runChild(ctx, self, RoutedMigrationSourceRoleV3, data); err != nil {
-		return err
+		return fmt.Errorf("migration kernel source: %w", err)
 	}
 	after, err := v.runChild(ctx, self, RoutedMigrationStateRoleV3, data)
 	if err != nil || before.HelperPID != after.HelperPID || before.State == nil || after.State == nil || *before.State != *after.State || verifyRoutedMigrationScopeV3(v.gateway, v.metadata, false) != nil {
@@ -109,6 +110,13 @@ func (v *routedMigrationVerifierV3) runChild(ctx context.Context, self, role str
 	cmd.Stderr = &diagnostic
 	// Pdeathsig belongs to the creating Linux thread, not merely the process.
 	if runPinnedMigrationCommandV3(cmd.Start, cmd.Wait) != nil || call.Err() != nil {
+		// Only known machine codes cross the installer boundary. Child stderr
+		// may contain paths or a panic and is never returned verbatim.
+		for _, known := range []error{ErrIdentity, ErrConfiguration, ErrUnavailable, ErrStorage} {
+			if strings.Contains(diagnostic.String(), known.Error()) {
+				return routedMigrationReplyV3{}, fmt.Errorf("%w: child %s", ErrUnavailable, known.Error())
+			}
+		}
 		return routedMigrationReplyV3{}, ErrUnavailable
 	}
 	digest := sha256.Sum256(data)
