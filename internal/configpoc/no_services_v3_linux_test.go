@@ -207,3 +207,43 @@ func TestNoServicesV3CommitRequiresIndependentPreparation(t *testing.T) {
 		t.Fatal("failed preparation changed effective configuration")
 	}
 }
+
+func TestNoServicesV3DHCPCommitUsesOnlyLANInventory(t *testing.T) {
+	c, authority, principal, _ := noServicesCoordinatorFixtureV3(t)
+	// DHCP selected work requires the independent shared-reader profile.
+	reader := sharedBoundaryReaderV2(t, c, authority)
+	before := clone(*c.store.state.Configuration)
+	dhcp := noServicesFirewallFixtureV3(t, true)
+	authority.prepared.PlanHash, authority.prepared.Hash = dhcp.Config.Routed.Network.Hash, ""
+	var err error
+	_, authority.prepared.Hash, err = v2Canonical(authority.prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.options.Routed = dhcpBootAuthorityTestV3{authority}
+	boot := v2BootID(authority.identity.BootID)
+	c.options.BootID = &boot
+	if _, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpStage, Config: &dhcp.Config}); err != nil {
+		t.Fatal(err)
+	}
+	seconds := uint64(30)
+	commit, pending, err := routedRequestV2(t, c, principal, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+	if err != nil || authority.applies != 1 || pending.Current.Pending == nil {
+		t.Fatal("modeled DHCP commit", err)
+	}
+	local := pending.Current.LocalServices.Running.Config.LocalServices
+	if local == nil || len(local.Interfaces) != 1 || local.Interfaces[0].Name != "lan0" || len(local.Services) != 0 || pending.Current.LocalServices.Startup.Hash != before.LocalServices.Startup.Hash {
+		t.Fatal("DHCP commit invented WAN metadata or changed Startup")
+	}
+	var retained v2Configuration
+	if err = c.store.readObject(pending.Current.Pending.Previous, &retained); err != nil || !reflect.DeepEqual(retained.LocalServices.Running, before.LocalServices.Running) {
+		t.Fatal("DHCP commit lost empty local rollback", err)
+	}
+	if _, _, err = routedRequestV2(t, c, principal, v2Request{Kind: OpConfirm, Origin: commit.ID, Target: pending.Current.Running.Hash}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := reader.PrepareCurrentView(context.Background())
+	if err != nil || view.Current.LocalServices.Hash != pending.Current.LocalServices.Running.Hash || view.Saved.LocalServices.Hash != before.LocalServices.Running.Hash {
+		t.Fatal("independent selected DHCP inventory read", err)
+	}
+}
