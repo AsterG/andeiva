@@ -45,3 +45,5 @@ aislamiento por cuotas, RO/EIO/EDQUOT, retiro autorizado y continuidad de tráfi
 La preasignación y las pruebas ext4 no garantizan metadatos/journal/COW en todos
 los dispositivos. Las interrupciones de proceso no prueban cortes eléctricos.
 Las pruebas Debian13 pasaron agotamiento real de bloques e inodos en ext4 aislado64MiB, UID1000 sin capacidades. Lectura Binding/reapertura0,62s; CPU de preparación/prueba0,414153s/pico cgroup74.477.568B incluyen formateador y caché. Regresión nativa separada: CPU0,049284s/pico16.248.832B. Son mediciones del fixture; no RSS del servicio, garantía universal ni continuidad integral del appliance.
+
+Las lecturas compartidas conservan identidades separadas: `ReaderAccessV2.ReadFile` exige el grupo exclusivo del helper; `ReadOwnedFile` exige el propietario exacto no root. Ambas comprueban límites, directorio fijado, UID/GID, permisos, ACL y ausencia de enlaces. El API no se añade al grupo lector. Estas funciones no conceden un bloqueo de escritura ni autoridad para aplicar políticas.

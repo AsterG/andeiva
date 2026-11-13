@@ -83,6 +83,25 @@ func (r *v2ReachabilityReader) reserveBundle(bundle *v2ReserveBundle, key string
 	}
 	return r.walk("reserve-bundle:"+key+":"+bundleHash, depth, func() error {
 		if plan := bundle.PlanIntent; plan != nil {
+			if plan.DHCPWork != "" {
+				if !hasFeatureV2(state, v3RoutedDHCPFeature) {
+					return ErrRecovery
+				}
+				if _, err := loadRoutedDHCPWorkV3(plan.DHCPWork, state.Lineage, r.object); err != nil {
+					return err
+				}
+			}
+			if plan.RoutedWork != "" {
+				if err := r.routedIntent(plan, key, state, depth+1); err != nil {
+					return err
+				}
+			}
+			if plan.GuardDeadline != nil {
+				var p, t v2Configuration
+				if r.object(plan.Previous, &p) != nil || r.object(plan.Target, &t) != nil || validateGuardDeadlineContextV2(plan, p, t, hasFeatureV2(state, v2GuardDeadlineFeature), false) != nil {
+					return errV2Unavailable
+				}
+			}
 			if plan.Operation != reserveWorkV2(bundle) || plan.Domain != bundle.Scope.Domain || !validHash(plan.Previous) || !validHash(plan.Target) {
 				return errV2Unavailable
 			}
@@ -98,6 +117,14 @@ func (r *v2ReachabilityReader) reserveBundle(bundle *v2ReserveBundle, key string
 }
 
 func (r *v2ReachabilityReader) activeReserves(key string, state v2State, depth int) error {
+	if validateRoutedDHCPSelectedV3(state, r.object) != nil {
+		return ErrRecovery
+	}
+	if d := state.RoutedDHCP; d != nil {
+		if err := r.reserveBundle(d.Bundle, key, state, depth); err != nil {
+			return err
+		}
+	}
 	owners := map[string]bool{}
 	for _, active := range state.ActiveReserves {
 		if active.Bundle == nil || active.Bundle.Scope.Kind != "operation" || reserveWorkV2(active.Bundle) != active.Work {

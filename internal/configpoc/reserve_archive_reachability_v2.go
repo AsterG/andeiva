@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
 
 func (r *v2ReachabilityReader) reserveArchiveTree(hash string, level int, prefix, key string, state v2State, depth int) error {
@@ -67,11 +69,24 @@ func (r *v2ReachabilityReader) reserveArchiveObject(ref v2ReserveArchiveRef, key
 			return errV2Unavailable
 		}
 		return r.walk("reserve-archive-body:"+key+":"+ref.Archive, depth+1, func() error {
-			if err := validateArchiveFinalityV2(archive, state, r.object); err != nil {
+			if err := r.selectedArchiveFinalityV2(archive, state); err != nil {
 				return err
 			}
 			if err := r.reserveArchiveFinality(archive, key, state, depth+2); err != nil {
 				return err
+			}
+			for _, entry := range archive.Entries {
+				// A never-applied operation retains an unbound plan claim, not a
+				// serialized plan. Only bound capsules can own routed work edges.
+				if entry.Binding != nil && entry.Claim.Role == recoveryreserve.PlanV2 {
+					var plan v2ReservePlan
+					if checkpointDecode(entry.Raw, &plan) != nil {
+						return errV2Unavailable
+					}
+					if err := r.routedIntent(&plan.Intent, key, state, depth+2); err != nil {
+						return err
+					}
+				}
 			}
 			for _, dependency := range archive.Dependencies {
 				if err := r.snapshot(dependency, key, state, depth+2); err != nil {

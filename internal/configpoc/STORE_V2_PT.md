@@ -106,3 +106,17 @@ bytes. São medidas do filesystem desta execução em cópias. O pico cgroup inc
 cache; não é RSS do processo, heap da aplicação ou dimensionamento de produção.
 
 Consulte as [reservas de recuperação transacional](RECOVERY_RESERVES_V2_PT.md) para a integração interna de pools/coordenador e sua qualificação pendente.
+# Preparação inicial offline
+
+`PrepareOfflineRoutedStoreV3` aceita somente um diretório privado vazio,
+três reservas existentes e configurações canônicas vazias: firewall schema4
+com negação padrão e serviços locais schema3. Persiste referências declaradas
+e auditoria `offline_seed / prepared`, sem comprovar aplicação física.
+A marca persistente `configuration.routed-offline-seed.v1` exige leitor compatível.
+O runtime requer autoridade real, identidade de inicialização, reservas e prazos;
+deve reconciliar e verificar o kernel antes de ficar disponível. A exceção inicial
+do percurso de integridade não cria revisão verificada e não vale para gerações
+posteriores. O instalador converte permissões sem escritores ativos. Um destino
+não vazio nunca é reinicializado, inclusive após interrupção. Appliances existentes
+exigem migração que preserve o histórico; esta preparação não comprova instalação
+ou implantação completas.

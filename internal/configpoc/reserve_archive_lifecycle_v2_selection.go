@@ -13,7 +13,7 @@ var errReserveAnchorV2 = errors.New("ANDEIVA_RESERVE_ARCHIVE_ANCHOR_PENDING")
 // Store.mu and the existing directory writer flock remain held throughout.
 func (s *v2Store) closedReserveSelectionsV2(archive v2ReserveArchive) (recoveryreserve.SelectionProofV2, recoveryreserve.SelectionProofV2, error) {
 	var current, previous recoveryreserve.SelectionProofV2
-	data, err := checkpointRead(s.root, "selected.json", 4096)
+	data, err := s.readRecordV2("selected.json", 4096)
 	var selector v2Selector
 	if err != nil || checkpointDecode(data, &selector) != nil || selector != s.selector || selector.Previous == "" {
 		return current, previous, ErrRecovery
@@ -67,7 +67,7 @@ func (s *v2Store) closedReserveSelectionsV2(archive v2ReserveArchive) (recoveryr
 	}
 	// Never qualify a pair read across a selector replacement, including a
 	// caller violating the writer-lease contract outside this process.
-	again, e := checkpointRead(s.root, "selected.json", 4096)
+	again, e := s.readRecordV2("selected.json", 4096)
 	var final v2Selector
 	if e != nil || checkpointDecode(again, &final) != nil || final != selector {
 		return current, previous, ErrRecovery
@@ -93,12 +93,32 @@ func (s *v2Store) releaseArchivedReserveV2(archive v2ReserveArchive) error {
 		kept = append(kept, active)
 	}
 	st.ActiveReserves = kept
+	if d := st.RoutedDHCP; d != nil && reserveWorkV2(d.Bundle) == archive.Origin {
+		if !routedDHCPTerminalV3(d) {
+			return ErrRecovery
+		}
+		var facts v2ReserveFinality
+		if s.readObject(archive.FinalWork, &facts) != nil || facts.Kind != v3RoutedDHCPKind {
+			return ErrRecovery
+		}
+		st.RoutedDHCPLast = facts.Origin.Object
+		st.RoutedDHCP = nil
+		held++
+	}
 	if st.SystemBundle != nil && st.SystemBundle.Work == archive.Origin {
 		if !st.SystemBundle.CanonicalHeld {
 			return ErrRecovery
 		}
 		held++
 		st.SystemBundle = nil
+	}
+	if b := st.RoutedBootBoundary; b != nil && b.CompletedBoot != "" && b.Resolution != "" {
+		if b.OldBoot != nil && b.OldBoot.ID == archive.Origin {
+			held++
+			st.RoutedBootBoundary = nil
+		} else if b.Origin != nil && b.Origin.ID == archive.Origin {
+			st.RoutedBootBoundary = nil
+		}
 	}
 	if held == 0 || st.ReservedBytes < held*v2OperationReserveBytes || st.ReservedInodes < held*v2OperationReserveInodes {
 		return ErrRecovery

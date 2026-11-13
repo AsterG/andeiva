@@ -10,7 +10,13 @@ import (
 
 // Trusted assembly owns the already opened pools and their lifetimes. No
 // request chooses paths, classes, pool IDs or a privileged operation here.
+type reserveReadPoolV2 interface {
+	Profile() (recoveryreserve.ProfileV2, error)
+	ReadBound(recoveryreserve.BindingV2) ([]byte, error)
+}
+
 type v2ReserveManager struct {
+	readers   map[recoveryreserve.RoleV2]reserveReadPoolV2
 	admission *recoveryreserve.PoolV2
 	plan      *recoveryreserve.PoolV2
 	emergency *recoveryreserve.PoolV2
@@ -40,8 +46,18 @@ func (m *v2ReserveManager) pool(role recoveryreserve.RoleV2) *recoveryreserve.Po
 	}
 }
 
+func (m *v2ReserveManager) readPool(role recoveryreserve.RoleV2) reserveReadPoolV2 {
+	if m == nil {
+		return nil
+	}
+	if m.readers != nil {
+		return m.readers[role]
+	}
+	return m.pool(role)
+}
+
 func (m *v2ReserveManager) validateProfiles() error {
-	if m == nil || m.admission == nil || m.plan == nil || m.emergency == nil || m.admission == m.plan || m.admission == m.emergency || m.plan == m.emergency {
+	if m == nil || (m.readers == nil && (m.admission == nil || m.plan == nil || m.emergency == nil || m.admission == m.plan || m.admission == m.emergency || m.plan == m.emergency)) || (m.readers != nil && len(m.readers) != 3) {
 		return ErrInvalid
 	}
 	ids := map[string]bool{}
@@ -49,7 +65,11 @@ func (m *v2ReserveManager) validateProfiles() error {
 		role     recoveryreserve.RoleV2
 		capacity int
 	}{{recoveryreserve.AdmissionV2, 4096}, {recoveryreserve.PlanV2, 16384}, {recoveryreserve.EmergencyV2, 8192}} {
-		profile, err := m.pool(item.role).Profile()
+		pool := m.readPool(item.role)
+		if pool == nil {
+			return ErrInvalid
+		}
+		profile, err := pool.Profile()
 		if err != nil || profile.Role != item.role || profile.Slots != 18 || profile.Capacity != item.capacity || ids[profile.ID] {
 			return ErrInvalid
 		}
@@ -61,7 +81,11 @@ func (m *v2ReserveManager) validateProfiles() error {
 func (m *v2ReserveManager) validateClaims(claims v2ReserveClaims, class recoveryreserve.ClassV2) error {
 	owner := ""
 	for _, claim := range claims.all() {
-		profile, err := m.pool(claim.Role).Profile()
+		pool := m.readPool(claim.Role)
+		if pool == nil {
+			return ErrRecovery
+		}
+		profile, err := pool.Profile()
 		if err != nil || claim.Validate() != nil || claim.Pool != profile.ID || claim.Capacity != profile.Capacity || (owner != "" && owner != claim.Owner) {
 			return ErrRecovery
 		}
@@ -194,6 +218,12 @@ func reserveAdmissionScopeV2(s *v2Store, st v2State, op v2Operation, owner strin
 }
 
 func (s *v2Store) reserveMaintenanceReadyV2(exceptOrigin string) error {
+	if s.state.RoutedDHCP != nil {
+		return ErrRecovery
+	}
+	if s.state.RoutedBootBoundary != nil {
+		return ErrRecovery
+	}
 	closing := exceptOrigin != "" && s.state.Configuration != nil && s.state.Configuration.Pending != nil && s.state.Configuration.Pending.OriginCommit == exceptOrigin
 	for _, active := range s.state.ActiveReserves {
 		if active.Work == exceptOrigin {
@@ -221,7 +251,11 @@ func (m *v2ReserveManager) readBinding(s *v2Store, binding recoveryreserve.Bindi
 	if binding.Validate() != nil {
 		return nil, ErrRecovery
 	}
-	if data, err := m.pool(binding.Claim.Role).ReadBound(binding); err == nil {
+	pool := m.readPool(binding.Claim.Role)
+	if pool == nil {
+		return nil, ErrRecovery
+	}
+	if data, err := pool.ReadBound(binding); err == nil {
 		return data, nil
 	}
 	entry := v2ReserveArchiveEntry{Claim: binding.Claim, Binding: &binding, Scope: &scope}
@@ -269,11 +303,31 @@ func (m *v2ReserveManager) verifyBundle(s *v2Store, bundle *v2ReserveBundle) err
 }
 
 func (m *v2ReserveManager) verifySelected(s *v2Store) error {
+	if validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+		return ErrRecovery
+	}
+	if s.verifyRoutedDHCPLastV3() != nil {
+		return ErrRecovery
+	}
+	if d := s.state.RoutedDHCP; d != nil && m.verifyBundle(s, d.Bundle) != nil {
+		return ErrRecovery
+	}
 	if m.validateProfiles() != nil || len(s.state.ActiveReserves) > 16 {
 		return ErrRecovery
 	}
 	if err := reserveMetadataFutureFitsV2(s.state, s.readObject); err != nil {
 		return err
+	}
+	if b := s.state.RoutedBootBoundary; b != nil {
+		if validateRoutedBootBoundaryV2(s.state, s.readObject) != nil {
+			return ErrRecovery
+		}
+		if b.OldBoot != nil {
+			var old v2RecoveryRecord
+			if s.readObject(b.OldBoot.Object, &old) != nil || m.verifyBundle(s, old.Reserve) != nil {
+				return ErrRecovery
+			}
+		}
 	}
 	seen := map[string]bool{}
 	for _, active := range s.state.ActiveReserves {

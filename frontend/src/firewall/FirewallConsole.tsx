@@ -22,11 +22,12 @@ import { productInfoResponse } from './productInfo.js';
 import type { ProductInfoState } from './productInfo.js';
 import { HeaderAccount } from '../design-system/HeaderAccount.js';
 import { SystemInfoView } from './SystemInfoView.js';
+import { RoutingWorkspace } from '../routing/RoutingWorkspace.js';
 
 type Review = { operation: Operation; target: string; confirm_for?: number } | { operation: 'remove'; index: number; target: string } | { operation: 'discard'; target: string };
 type RuleView = 'draft' | 'candidate' | 'running' | 'startup';
 
-export function FirewallConsole({ locale, page = 'rules', onLocalServices, renderFrame }: { locale: Locale; page?: ConsoleView; onLocalServices?: (available: boolean) => void; renderFrame: (content: ReactNode, authenticated: boolean, product: ProductInfoState, account: ReactNode) => ReactNode }) {
+export function FirewallConsole({ locale, page = 'rules', onLocalServices, onRouting, renderFrame }: { locale: Locale; page?: ConsoleView; onLocalServices?: (available: boolean) => void; onRouting?: (available: boolean) => void; renderFrame: (content: ReactNode, authenticated: boolean, product: ProductInfoState, account: ReactNode) => ReactNode }) {
   const copy = firewallMessages[locale];
   const tableCopy = ruleTableMessages[locale];
   const [session, setSession] = useState<Session | null>(null);
@@ -53,11 +54,14 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
   const authVersion = useRef(0);
   const [product, setProduct] = useState<ProductInfoState>({ state: 'loading' });
   const [productRefresh, setProductRefresh] = useState(0);
+  const [operationsV2, setOperationsV2] = useState(false);
+  const operationsMode = useRef(false);
 
   function forgetSession() {
     authVersion.current++;
     setProduct({ state: 'loading' });
     onLocalServices?.(false);
+    onRouting?.(false); setOperationsV2(false); operationsMode.current = false;
     setSession(null); setSupportsEnabled(false); setState(null); setDraft(null); setHistory(null); setFresh(false); setDirty(false); setEditor(null); setReview(null); setSuccess(false);
   }
   function fail(reason: unknown) {
@@ -69,8 +73,18 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
     const version = authVersion.current;
     let supported = false;
     let local = false;
-    try { const capabilities = await request<Record<string, unknown>>('capabilities'); supported = ruleEnabledCapability(capabilities); local = capabilities?.local_services === true; } catch { /* Older runtimes remain read-compatible; optional operations stay disabled. */ }
-    if (mounted.current && version === authVersion.current) { setSupportsEnabled(supported); onLocalServices?.(local); }
+    let v2 = false;
+    try { const capabilities = await request<Record<string, unknown>>('capabilities'); supported = ruleEnabledCapability(capabilities); local = capabilities?.local_services === true; v2 = capabilities?.configuration_operations_v2 === true; } catch (reason) { if (!(reason instanceof ApiError && reason.status === 404 && !operationsMode.current)) throw reason; /* Legacy runtimes may lack capability discovery. */ }
+    if (operationsMode.current && !v2) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+    if (mounted.current && version === authVersion.current) { setSupportsEnabled(supported); onLocalServices?.(local && !v2); operationsMode.current = v2; setOperationsV2(v2); onRouting?.(v2); }
+  }
+  async function readFirewall(resetDraft: boolean, active = () => true) {
+    const version = authVersion.current;
+    await readCapabilities();
+    // A selected v2 authority never falls back to legacy configuration reads/writes.
+    if (operationsMode.current) return;
+    const next = await request<FirewallState>('firewall');
+    if (active() && version === authVersion.current) accept(next, resetDraft);
   }
   function accept(next: FirewallState, resetDraft: boolean) {
     next = firewallResponse(next);
@@ -84,7 +98,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
     if (lock.current || editor) return;
     lock.current = true; setBusy(true); setError(null); setSuccess(false); setFresh(false);
     const version = authVersion.current;
-    try { await readCapabilities(); const next = await request<FirewallState>('firewall'); if (version === authVersion.current) accept(next, resetDraft); }
+    try { await readFirewall(resetDraft, () => version === authVersion.current); }
     catch (reason) { fail(reason); }
     finally { lock.current = false; setBusy(false); }
   }
@@ -98,8 +112,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
         if (Date.parse(identity.expires_at) <= Date.now()) throw new ApiError('ANDEIVA_SESSION_EXPIRED', 401);
         if (!active) return;
         setSession(identity); setView(identity.role === 'admin' ? 'draft' : 'running');
-        await readCapabilities(); const next = await request<FirewallState>('firewall');
-        if (active && version === authVersion.current) accept(next, true);
+        await readFirewall(true, () => active && version === authVersion.current);
       } catch (reason) { if (active && !(reason instanceof ApiError && reason.status === 401)) fail(reason); }
       finally { if (active) setLoading(false); }
     })();
@@ -136,8 +149,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
       if (Date.parse(identity.expires_at) <= Date.now()) throw new ApiError('ANDEIVA_SESSION_EXPIRED', 401);
       loginForm.current?.reset();
       setSession(identity); setView(identity.role === 'admin' ? 'draft' : 'running'); setHistoryDenied(false);
-      await readCapabilities(); const next = await request<FirewallState>('firewall');
-      if (version === authVersion.current) accept(next, true);
+      await readFirewall(true, () => version === authVersion.current);
     } catch (reason) { loginForm.current?.reset(); fail(reason); }
     finally { lock.current = false; if (mounted.current) setBusy(false); }
   }
@@ -212,7 +224,7 @@ export function FirewallConsole({ locale, page = 'rules', onLocalServices, rende
       <Field id="login-username" label={copy.username}><TextInput id="login-username" name="username" autoComplete="username" maxLength={64} required disabled={busy} /></Field>
       <Field id="login-credential" label={copy.credential} hint={copy.credentialHint}><TextInput id="login-credential" name="credential" type="password" autoComplete="off" maxLength={256} required disabled={busy} aria-describedby="login-credential-hint" /></Field>
       <Button type="submit" disabled={busy}>{busy ? copy.loading : copy.login}</Button>
-    </form></Surface> : <>
+    </form></Surface> : operationsV2 && session ? <RoutingWorkspace locale={locale} session={session} page={page} product={product} onProductRefresh={() => setProductRefresh((value) => value + 1)} onFailure={fail} /> : <>
       {page !== 'system' && <div className="fw-status-tools"><Button variant="secondary" disabled={busy || !!editor} onClick={() => void refresh()}>{copy.retry}</Button></div>}
       {(!healthy || !state) && <Notice title={copy.disconnected}>{copy.disconnectedBody}</Notice>}
       {success && <Notice title={copy.success} live>{copy.successBody}</Notice>}

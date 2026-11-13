@@ -19,6 +19,15 @@ const operationsV2Path = "/api/v2/config/operations"
 const namespacesV2Path = "/api/v2/config/operation-namespaces"
 const operationV2Limit = 1024 * 1024
 
+// NewOperationsV2 is the explicit runtime assembly. A single v2 coordinator
+// owns writes; no legacy backend is opened or consulted by this router.
+func NewOperationsV2(options Options, service *configpoc.ServiceV2) (http.Handler, error) {
+	if service == nil {
+		return nil, configpoc.ErrInvalid
+	}
+	return newHandler(options, service)
+}
+
 // Only qualification tests/internal assembly can construct this prepared
 // router. New and Options do not activate it or advertise v2 capabilities.
 func newPreparedOperationsHandler(options Options, service *configpoc.ServiceV2) (http.Handler, error) {
@@ -138,6 +147,33 @@ func (h *handler) operationsV2(w http.ResponseWriter, r *http.Request, ctx conte
 	service := h.preparedOperations
 	path := r.URL.Path
 	switch {
+	case path == "/api/v2/config/audit":
+		h.auditV2(w, r, ctx, binding)
+	case path == "/api/v2/config/effective":
+		if r.Method != http.MethodGet {
+			h.fail(w, 405, "ANDEIVA_METHOD_NOT_ALLOWED")
+			return
+		}
+		effective, e := service.RoutedEffective(ctx, binding)
+		if e != nil {
+			h.operationErrorV2(w, e)
+			return
+		}
+		h.writeV2(w, 200, effective)
+	case path == "/api/v2/config/current":
+		if r.Method != http.MethodGet {
+			h.fail(w, 405, "ANDEIVA_METHOD_NOT_ALLOWED")
+			return
+		}
+		current, e := service.Current(binding, "")
+		if e != nil {
+			h.operationErrorV2(w, e)
+			return
+		}
+		h.writeV2(w, 200, struct {
+			SchemaVersion int       `json:"schema_version"`
+			Current       CurrentV2 `json:"current"`
+		}{2, currentDTOv2(current)})
 	case path == namespacesV2Path:
 		if r.Method != http.MethodPost {
 			h.fail(w, 405, "ANDEIVA_METHOD_NOT_ALLOWED")
@@ -146,7 +182,7 @@ func (h *handler) operationsV2(w http.ResponseWriter, r *http.Request, ctx conte
 		var body struct {
 			Domain string `json:"domain"`
 		}
-		if decodeV2(w, r, &body) != nil || body.Domain != "firewall" {
+		if decodeV2(w, r, &body) != nil || (body.Domain != "firewall" && body.Domain != "routed") {
 			h.fail(w, 400, "ANDEIVA_OPERATION_INVALID")
 			return
 		}

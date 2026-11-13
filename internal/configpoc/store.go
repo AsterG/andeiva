@@ -32,6 +32,7 @@ type journalRecord struct {
 	Hash     string       `json:"hash"`
 }
 type fileStore struct {
+	scopedRoot *os.Root // Borrowed installer scope; nil preserves the legacy path opener.
 	dir        string
 	lock       *os.File
 	records    []recordMetadata

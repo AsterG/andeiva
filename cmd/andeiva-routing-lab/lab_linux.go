@@ -252,6 +252,8 @@ func run(args []string) error {
 			return e
 		}
 		return json.NewEncoder(os.Stdout).Encode(report)
+	case "--group-listeners-empty":
+		return verifyEmptyGatewaySockets()
 	case "--serve-lan":
 		return serve("198.18.0.2")
 	case "--serve-wan":
@@ -277,16 +279,23 @@ func run(args []string) error {
 		return nil
 	case "--hold":
 		return hold()
-	case "--run-isolated-lab", "--run-isolated-lab-with-flows":
+	case "--run-isolated-lab", "--run-isolated-lab-with-flows", "--run-isolated-group-lab", "--run-isolated-group-lab-with-flows":
 		release, e := os.ReadFile("/etc/os-release")
 		if e != nil || runtime.GOARCH != "amd64" || os.Geteuid() != 0 || !bytes.Contains(release, []byte("ID=debian\n")) || !bytes.Contains(release, []byte("VERSION_ID=\"13\"")) {
 			return errLab
 		}
 		signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		ctx, cancel := context.WithTimeout(signalCtx, 55*time.Second)
+		withGroup := strings.HasPrefix(args[0], "--run-isolated-group-")
+		limit := 55 * time.Second
+		if withGroup {
+			// The group scenario includes real saved4/forward6 handovers and one
+			// full thirty-second expiry. Product lease deadlines are unchanged.
+			limit = 80 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(signalCtx, limit)
 		defer cancel()
-		return lab(ctx, args[0] == "--run-isolated-lab-with-flows")
+		return labScenario(ctx, strings.HasSuffix(args[0], "-with-flows"), withGroup)
 	default:
 		return errLab
 	}
@@ -433,6 +442,10 @@ func (c *child) line(want string) error {
 }
 
 func lab(ctx context.Context, withFlows bool) (result error) {
+	return labScenario(ctx, withFlows, false)
+}
+
+func labScenario(ctx context.Context, withFlows, withGroup bool) (result error) {
 	hostNft, e := command(ctx, nil, nftPath, "-j", "-s", "list", "ruleset")
 	if e != nil {
 		return e
@@ -530,16 +543,17 @@ func lab(ctx context.Context, withFlows bool) (result error) {
 	if closeErr != nil {
 		return closeErr
 	}
-	if e = applyTypedNetworkPlan(ctx, network); e != nil {
-		return e
+	if !withGroup {
+		if e = applyTypedNetworkPlan(ctx, network); e != nil {
+			return e
+		}
+		applied = true
+		fmt.Println("PASS typed network plan applied/readback")
 	}
-	applied = true
-	fmt.Println("PASS typed network plan applied/readback")
-	if _, e := gw.exec(ctx, nil, "/usr/sbin/sysctl", "-q", "-w", "net.ipv4.ip_forward=1"); e != nil {
-		return e
-	}
-	if _, e := gw.exec(ctx, nil, "/usr/sbin/sysctl", "-q", "-w", "net.ipv6.conf.all.forwarding=1"); e != nil {
-		return e
+	if !withGroup {
+		if e := enableFixtureForwarding(ctx, gw); e != nil {
+			return e
+		}
 	}
 	policy := routednft.LabPolicy()
 	artifact, e := routednft.Compile(policy)
@@ -559,15 +573,35 @@ func lab(ctx context.Context, withFlows bool) (result error) {
 		return errLab
 	}
 	t := transport{gateway: gw, self: self, bindings: bound.Interfaces}
-	if e = t.Check(ctx, artifact.Create); e != nil {
-		return e
-	}
-	if e = t.Apply(ctx, artifact.Create); e != nil {
-		return e
-	}
-	adapter, e := routednft.NewAdapter(t, artifact.Revision)
-	if e != nil {
-		return e
+	var adapter policyAdapter
+	var group *groupLab
+	if withGroup {
+		group, e = newGroupLab(ctx, network, t)
+		if e != nil {
+			return fmt.Errorf("group fixture create: %w", e)
+		}
+		defer func() { result = errors.Join(result, group.Close()) }()
+		adapter, applied = group, true
+		if e = enableFixtureForwarding(ctx, gw); e != nil {
+			return e
+		}
+		// Local-In correctly denies unknown IPv6 control traffic. Static peer
+		// neighbor entries let the existing IPv6 test reach the forward drop
+		// counter, without adding an INPUT/forward allow for qualification.
+		if e = lan.ip(ctx, "-6", "neigh", "add", "fd00:18::1", "lladdr", "02:00:00:00:01:01", "nud", "permanent", "dev", "client0"); e != nil {
+			return e
+		}
+	} else {
+		if e = t.Check(ctx, artifact.Create); e != nil {
+			return e
+		}
+		if e = t.Apply(ctx, artifact.Create); e != nil {
+			return e
+		}
+		adapter, e = routednft.NewAdapter(t, artifact.Revision)
+		if e != nil {
+			return e
+		}
 	}
 	if _, e = adapter.Inspect(ctx); e != nil {
 		return fmt.Errorf("initial readback: %w", e)
@@ -587,6 +621,11 @@ func lab(ctx context.Context, withFlows bool) (result error) {
 	defer func() { _ = lanServer.cmd.Process.Kill(); _ = lanServer.cmd.Wait() }()
 	if e = lanServer.line("READY"); e != nil {
 		return e
+	}
+	if group != nil {
+		if e = group.qualifyColdRecoveryAndConfirm(ctx, lan); e != nil {
+			return e
+		}
 	}
 	for _, mode := range []string{"--probe-tcp", "--probe-udp"} {
 		out, e := lan.exec(ctx, nil, self, mode)
@@ -716,6 +755,11 @@ func lab(ctx context.Context, withFlows bool) (result error) {
 		return e
 	}
 	fmt.Println(string(encoded))
+	if group != nil {
+		if e = group.qualifyExpiry(ctx, lan); e != nil {
+			return e
+		}
+	}
 	return nil
 }
 

@@ -2,8 +2,17 @@ package configpoc
 
 func (c *v2Coordinator) validateReferencesLocked() error {
 	s := c.store
+	if validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+		return ErrRecovery
+	}
 	state := s.state.Configuration
 	if state == nil || !validV2Configuration(state) {
+		return errV2Unavailable
+	}
+	if validateCandidateGroupEvidenceV2(*state, s.readObject) != nil {
+		return errV2Unavailable
+	}
+	if validateRoutedActiveV2(s.state, s.readObject) != nil {
 		return errV2Unavailable
 	}
 	if err := c.pendingReferencesLocked(state); err != nil {
@@ -15,7 +24,7 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 			return errV2Unavailable
 		}
 	}
-	if state.Pending == nil {
+	if state.Pending == nil && !declaredOfflineSeedV3(s.state, *state, s.readObject) {
 		proof, known, err := c.verifiedLookup(state.VerifiedIndex, state.Running.Hash)
 		if err != nil || !known {
 			return errV2Unavailable
@@ -26,6 +35,15 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 	}
 	if state.Intent != nil {
 		intent := state.Intent
+		if intent.RoutedWork != "" {
+			plan, err := loadRoutedWorkV2(intent.RoutedWork, s.state.Lineage, s.readObject)
+			if err != nil || validateRoutedWorkIntentV2(intent, plan, s.readObject) != nil {
+				return errV2Unavailable
+			}
+			if routedBootHistoryV2(plan, s.state, s.readObject) != nil {
+				return errV2Unavailable
+			}
+		}
 		var previous, target v2Configuration
 		if s.readObject(intent.Previous, &previous) != nil || s.readObject(intent.Target, &target) != nil || !validV2Configuration(&previous) || !validV2Configuration(&target) || previous.Intent != nil || target.Intent != nil || intent.TargetGeneration < s.state.Generation || (intent.TargetGeneration != s.state.Generation && (s.state.Generation == ^uint64(0) || intent.TargetGeneration != s.state.Generation+1)) {
 			return errV2Unavailable
@@ -39,6 +57,9 @@ func (c *v2Coordinator) validateReferencesLocked() error {
 			if err != nil || (op.State != "pending" && op.State != "uncertain") || op.Domain != intent.Domain || op.Request.Kind != intent.Kind {
 				return errV2Unavailable
 			}
+		}
+		if validateGuardDeadlineContextV2(intent, previous, target, hasFeatureV2(s.state, v2GuardDeadlineFeature), true) != nil {
+			return errV2Unavailable
 		}
 	}
 	if state.Pending != nil {
@@ -95,7 +116,7 @@ func (c *v2Coordinator) pendingReferencesLocked(state *v2Configuration) error {
 					return ErrRecovery
 				}
 			case "final":
-				if !op.Pinned || state.Pending == nil || state.Pending.OriginCommit != op.ID || state.Pending.Owner != op.Subject {
+				if (!op.Pinned || state.Pending == nil || state.Pending.OriginCommit != op.ID || state.Pending.Owner != op.Subject) && !boundaryRetainsOriginV2(c.store.state, op) {
 					return ErrRecovery
 				}
 			default:

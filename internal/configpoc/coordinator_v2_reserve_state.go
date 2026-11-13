@@ -2,13 +2,27 @@ package configpoc
 
 func reserveHeldReservationsV2(st v2State) (uint64, bool) {
 	if st.RecoveryReserveVersion == 0 {
-		return 0, len(st.ActiveReserves) == 0 && st.SystemBundle == nil
+		return 0, len(st.ActiveReserves) == 0 && st.SystemBundle == nil && st.RoutedDHCP == nil
 	}
 	if st.RecoveryReserveVersion != 1 || len(st.ActiveReserves) > 16 {
 		return 0, false
 	}
 	seen := map[string]bool{}
 	var held uint64
+	if st.RoutedDHCP != nil {
+		if !validRoutedDHCPShapeV3(st) {
+			return 0, false
+		}
+		held++
+		seen[reserveWorkV2(st.RoutedDHCP.Bundle)] = true
+	}
+	if b := st.RoutedBootBoundary; b != nil && b.OldBoot != nil {
+		if !validRoutedBootBoundaryShapeV2(b) {
+			return 0, false
+		}
+		seen[b.OldBoot.ID] = true
+		held++
+	}
 	for _, active := range st.ActiveReserves {
 		if active.Work == "" || seen[active.Work] || !validReserveBundleV2(active.Bundle) || active.Bundle.Scope.Kind != "operation" || reserveWorkV2(active.Bundle) != active.Work {
 			return 0, false

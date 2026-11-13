@@ -28,10 +28,20 @@ test "$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}'
 bin/andeiva --lang en status
 bin/andeiva --lang es status
 bin/andeiva --lang pt status
-if bin/andeiva config >/dev/null 2>&1; then
-  printf 'Unimplemented command unexpectedly succeeded\n' >&2
-  exit 1
-fi
+for locale in en es pt; do
+  # Configuration help is implemented; administrative operations still need
+  # explicit verified transport and credentials, even for readback.
+  bin/andeiva --lang "$locale" configuration help >/dev/null
+  bin/andeiva --lang "$locale" config >/dev/null
+  for operation in status commit; do
+    status=0
+    bin/andeiva --lang "$locale" configuration "$operation" >/dev/null 2>&1 || status=$?
+    if [[ $status != 2 ]]; then
+      printf 'Configuration %s without credentials returned %s, expected 2\n' "$operation" "$status" >&2
+      exit 1
+    fi
+  done
+done
 printf 'Process sample (not an appliance benchmark):\n'
 ps -p "$api_pid" -o rss=,pcpu=,etime=
 kill -TERM "$api_pid"

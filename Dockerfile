@@ -11,7 +11,11 @@ COPY internal/ internal/
 COPY scripts/check-go-format.sh scripts/check-go-format.sh
 
 FROM go-source AS check-go
-RUN bash scripts/check-go-format.sh && go vet ./cmd/... ./internal/... && go test -race ./cmd/... ./internal/...
+# Permission and reader-identity tests must not inherit root's access bypasses.
+RUN install -d -m 0700 -o 65532 -g 65532 /tmp/andeiva-go-home /tmp/andeiva-go-cache
+ENV HOME=/tmp/andeiva-go-home GOCACHE=/tmp/andeiva-go-cache GOENV=off
+USER 65532:65532
+RUN bash scripts/check-go-format.sh && go vet ./cmd/... ./internal/... && go test -race -timeout=20m ./cmd/... ./internal/...
 
 FROM go-source AS build-go
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -o /out/andeiva ./cmd/andeiva \

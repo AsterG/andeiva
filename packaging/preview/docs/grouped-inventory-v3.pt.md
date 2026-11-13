@@ -1,0 +1,11 @@
+# Inventário de rede pelo helper
+
+As factories do appliance composto negociam explicitamente `routed_inventory.v1` como quinta capacidade IPC3, após as três originais e `routed_integrity_gate.v1`. Perfis anteriores de três ou quatro capacidades permanecem disponíveis nas factories confiáveis existentes. A API de produção exige cinco e rejeita helper antigo antes de abrir o escritor; nunca usa descoberta no namespace host da API como alternativa.
+
+A solicitação `inventory` contém um objeto vazio. Não seleciona namespace, interface, caminho ou comando. O provedor helper verifica os namespaces do processo e da thread atual contra metadata confiável do gateway antes e depois de `networkinventory.Discover`. São feitas duas observações completas e mudanças detectáveis são recusadas. Chamadas de SO da biblioteca padrão não são individualmente canceláveis por contexto. O inventário não cria política, links, endereços, rotas, timers ou listeners.
+
+Campos tipados explícitos e chaves aninhadas obrigatórias são validados nos dois lados. Endereços host IPv4/IPv6, máscaras anuláveis e zonas separadas são preservados internamente. Observações inválidas, incompletas, com escalares nulos, duplicadas ou grandes demais falham integralmente; não são substituídas por cache, sucesso vazio ou dados do host. O orçamento conservador de JSON escapado é 256 KiB, além dos limites existentes de interfaces e endereços. Appliances maiores podem receber indisponível em vez de resultado parcial.
+
+A API sem capacidades recebe dados somente pelo canal herdado autenticado do helper, com run, namespace, sequência monotônica e prazo existente de três segundos. O provedor alimenta o endpoint autenticado `/api/v2/network/interfaces`. RBAC e filtragem do DTO público permanecem: ifindex, flags ponto-a-ponto/multicast e zonas internas não se tornam campos adicionais de diagnóstico público. TLS de administração e SO_NETNS_COOKIE continuam validados no namespace host.
+
+Inventário não qualifica integridade, renova lease ou declara Ready. Falhas não removem o último ruleset válido. Testes cobrem tipos, limites, solicitação sem argumentos, negociação, recusa de downgrade, leituras novas, falhas e rejeição de descoberta do host API. Fixtures de transporte usam observações modeladas no processo; descoberta real no gateway e instalação completa exigem evidência nativa separada.

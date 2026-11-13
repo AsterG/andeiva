@@ -3,6 +3,7 @@ package configpoc
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"io"
 	"os"
 	"strings"
@@ -10,21 +11,29 @@ import (
 )
 
 type v2Store struct {
-	reserves   *v2ReserveManager
-	mu         sync.Mutex
-	root       *os.Root
-	lock       *os.File
-	state      v2State
-	selection  v2Selection
-	selector   v2Selector
-	budget     v2Budget
-	used       v2Budget
-	blocked    bool
-	hook       func(string) error
-	allowance  v2Budget
-	physical   v2PhysicalUsage
-	spaceProbe func(*os.File) (storageSpace, error)
-	reclaim    *v2ReclaimSession
+	afterPublication func()
+	archiveObserver  func(v2ReserveArchiveRef) error
+	access           *recoveryreserve.ReaderAccessV2
+	readOnly         bool
+	recordReader     func(string, int64) ([]byte, error)
+	objectReader     func(string, any) error
+	preparingShared  bool
+	guardDeadlines   bool // Trusted opt-in assembly only; never persisted authority.
+	reserves         *v2ReserveManager
+	mu               sync.Mutex
+	root             *os.Root
+	lock             *os.File
+	state            v2State
+	selection        v2Selection
+	selector         v2Selector
+	budget           v2Budget
+	used             v2Budget
+	blocked          bool
+	hook             func(string) error
+	allowance        v2Budget
+	physical         v2PhysicalUsage
+	spaceProbe       func(*os.File) (storageSpace, error)
+	reclaim          *v2ReclaimSession
 }
 
 // The caller owns the directory lifetime. No directory, legacy layout or engine
@@ -34,7 +43,7 @@ func openV2(area *os.Root, budget v2Budget) (*v2Store, error) {
 }
 
 func openV2BeforeLock(area *os.Root, budget v2Budget, beforeLock func() error) (*v2Store, error) {
-	s, err := v2AreaBeforeLock(area, budget, beforeLock)
+	s, err := v2AreaWithAccess(area, budget, beforeLock, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -114,10 +123,17 @@ func v2Area(area *os.Root, budget v2Budget) (*v2Store, error) {
 }
 
 func v2AreaBeforeLock(area *os.Root, budget v2Budget, beforeLock func() error) (*v2Store, error) {
+	return v2AreaWithAccess(area, budget, beforeLock, nil)
+}
+func v2AreaWithAccess(area *os.Root, budget v2Budget, beforeLock func() error, access *recoveryreserve.ReaderAccessV2) (*v2Store, error) {
 	if area == nil || budget.Bytes < 4*v2OperationReserveBytes || budget.Bytes > 1<<40 || budget.Inodes < 256 || budget.Inodes > 1<<26 {
 		return nil, errV2Invalid
 	}
-	s := &v2Store{root: area, budget: budget}
+	if access != nil {
+		pinned := *access
+		access = &pinned
+	}
+	s := &v2Store{root: area, budget: budget, access: access}
 	// This preflight prevents creating a lock in a foreign layout. Its counts
 	// are not authoritative: an active writer can change the store afterwards.
 	if err := s.scanV2Area(); err != nil {
@@ -129,7 +145,7 @@ func v2AreaBeforeLock(area *os.Root, budget v2Budget, beforeLock func() error) (
 		}
 	}
 	var err error
-	s.lock, err = lockCheckpoint(area)
+	s.lock, err = s.lockSharedProfileV2()
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +157,7 @@ func v2AreaBeforeLock(area *os.Root, budget v2Budget, beforeLock func() error) (
 }
 
 func (s *v2Store) scanV2Area() error {
-	dir, err := v2Directory(s.root)
+	dir, err := s.recordDirectoryV2()
 	if err != nil {
 		return errV2Unavailable
 	}
@@ -167,7 +183,7 @@ func (s *v2Store) scanV2Area() error {
 				return errV2Unavailable
 			}
 			info, statErr := s.root.Lstat(name)
-			if statErr != nil || !regularOwned(info, v2ObjectLimit) {
+			if statErr != nil || !s.recordMetadataV2(name, info, v2ObjectLimit) {
 				_ = dir.Close()
 				return errV2Unavailable
 			}
@@ -240,6 +256,9 @@ func v2ValidState(st v2State) bool {
 	if st.Configuration != nil && !validV2Configuration(st.Configuration) {
 		return false
 	}
+	if st.RoutedBootBoundary != nil && (st.RecoveryReserveVersion != 1 || !hasFeatureV2(st, v2RoutedBootBoundaryFeature) || !validRoutedBootBoundaryShapeV2(st.RoutedBootBoundary)) {
+		return false
+	}
 	ids, logins := map[string]bool{}, map[string]bool{}
 	for _, sub := range st.Subjects {
 		if sub.ID == "" || len(sub.ID) > 128 || sub.Login == "" || len(sub.Login) > 128 || !v2HashPattern.MatchString(sub.CredentialRevision) || ids[sub.ID] || (!sub.Retired && logins[sub.Login]) {
@@ -253,7 +272,7 @@ func v2ValidState(st v2State) bool {
 	names := map[string]bool{}
 	var reserved uint64
 	for _, ns := range st.Namespaces {
-		if ns.ID == "" || len(ns.ID) > 128 || names[ns.ID] || !ids[ns.Subject] || (ns.Domain != "firewall" && ns.Domain != "local_services") || ns.AdmitUntil.IsZero() || len(ns.Open) > v2MaximumOpen {
+		if ns.ID == "" || len(ns.ID) > 128 || names[ns.ID] || !ids[ns.Subject] || !configurationDomainV2(ns.Domain, hasFeatureV2(st, v2RoutedFeature)) || ns.AdmitUntil.IsZero() || len(ns.Open) > v2MaximumOpen {
 			return false
 		}
 		names[ns.ID] = true
@@ -278,12 +297,19 @@ func v2ValidState(st v2State) bool {
 }
 
 func (s *v2Store) readObject(hash string, value any) error {
+	if s.objectReader != nil {
+		err := s.objectReader(hash, value)
+		if err != nil {
+			s.blocked = true
+		}
+		return err
+	}
 	name, err := v2ObjectName(hash)
 	if err != nil {
 		s.blocked = true
 		return err
 	}
-	data, err := checkpointRead(s.root, name, v2ObjectLimit)
+	data, err := s.readRecordV2(name, v2ObjectLimit)
 	if err != nil || checkpointDigest(data) != hash || checkpointDecode(data, value) != nil {
 		s.blocked = true
 		return errV2Unavailable
@@ -307,6 +333,9 @@ func (s *v2Store) object(value any) (string, error) {
 }
 
 func (s *v2Store) objectClass(value any, indexPage bool) (string, error) {
+	if s.readOnly {
+		return "", errV2Unavailable
+	}
 	if !indexPage {
 		s.revokeReclaimGeneric(value)
 	}
@@ -328,7 +357,7 @@ func (s *v2Store) objectClass(value any, indexPage bool) (string, error) {
 			// its newly created children are still tracked.
 			s.revokeReclaimAuthority()
 		}
-		prior, e := checkpointRead(s.root, name, v2ObjectLimit)
+		prior, e := s.readRecordV2(name, v2ObjectLimit)
 		if e != nil || !bytes.Equal(prior, data) {
 			return "", errV2Unavailable
 		}
@@ -344,7 +373,7 @@ func (s *v2Store) objectClass(value any, indexPage bool) (string, error) {
 		if statErr != nil || syncErr != nil || closeErr != nil {
 			return "", errV2Unavailable
 		}
-		verified, e := checkpointReadPinned(s.root, name, v2ObjectLimit, expected)
+		verified, e := s.readPinnedRecordV2(name, v2ObjectLimit, expected)
 		if e != nil || !bytes.Equal(verified, data) {
 			return "", errV2Unavailable
 		}
@@ -365,7 +394,7 @@ func (s *v2Store) objectClass(value any, indexPage bool) (string, error) {
 	if err = s.physicalCapacity(uint64(len(data)), 1); err != nil {
 		return "", err
 	}
-	f, err := s.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := s.createRecordV2(name)
 	if err != nil {
 		return "", errV2Unavailable
 	}
@@ -394,7 +423,7 @@ func (s *v2Store) objectClass(value any, indexPage bool) (string, error) {
 		s.blocked = true
 		return "", err
 	}
-	verified, err := checkpointReadPinned(s.root, name, v2ObjectLimit, info)
+	verified, err := s.readPinnedRecordV2(name, v2ObjectLimit, info)
 	if err != nil || !bytes.Equal(verified, data) {
 		s.blocked = true
 		return "", errV2Unavailable
@@ -415,7 +444,7 @@ func (s *v2Store) readSelection() error {
 	var selector v2Selector
 	var selection v2Selection
 	var selectedState v2State
-	data, err := checkpointRead(s.root, "selected.json", 4096)
+	data, err := s.readRecordV2("selected.json", 4096)
 	if err != nil || checkpointDecode(data, &selector) != nil || selector.Format != v2Format {
 		return errV2Unavailable
 	}
@@ -458,8 +487,14 @@ func (s *v2Store) readSelection() error {
 			return errV2Unavailable
 		}
 	}
-	reader := &v2Store{root: s.root, state: selectedState}
+	reader := &v2Store{root: s.root, state: selectedState, access: s.access, readOnly: s.readOnly, recordReader: s.recordReader, objectReader: s.objectReader}
+	if validateRoutedBootBoundaryV2(selectedState, reader.readObject) != nil {
+		return errV2Unavailable
+	}
 	if selectedState.Migration != "" && reader.validateMigration() != nil {
+		return errV2Unavailable
+	}
+	if hasFeatureV2(selectedState, v2SharedReaderFeature) != (s.access != nil) {
 		return errV2Unavailable
 	}
 	s.selector = selector
@@ -479,7 +514,11 @@ func v2ValidSelection(selection v2Selection) bool {
 }
 
 func (s *v2Store) publish(state v2State) (result error) {
-	if s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) {
+	if s.readOnly || (!s.preparingShared && hasFeatureV2(state, v2SharedReaderFeature) != (s.access != nil)) || s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) || !s.preservesRoutedBootBoundaryStateV2(state) {
+		return errV2Unavailable
+	}
+	if validateRoutedBootBoundaryV2(state, s.readObject) != nil {
+		s.blocked = true
 		return errV2Unavailable
 	}
 	// Registry growth must leave room for both outcomes of an outstanding
@@ -514,7 +553,7 @@ func (s *v2Store) publish(state v2State) (result error) {
 	if err != nil {
 		return err
 	}
-	if checkpointSync(s.root, nil, "") != nil || s.point("objects_durable") != nil {
+	if s.syncRecordDirectoryV2() != nil || s.point("objects_durable") != nil {
 		return errV2Unavailable
 	}
 	selector := v2Selector{Format: v2Format, Current: selectionHash, Previous: s.selector.Current}
@@ -522,7 +561,7 @@ func (s *v2Store) publish(state v2State) (result error) {
 	if err != nil {
 		return errV2Unavailable
 	}
-	info, err := checkpointWrite(s.root, "selection.pending", data, nil, "")
+	info, err := s.writeSelectorRecordV2(data)
 	if err != nil {
 		return errV2Unavailable
 	}
@@ -532,14 +571,14 @@ func (s *v2Store) publish(state v2State) (result error) {
 	if s.point("before_select") != nil {
 		return errV2Unavailable
 	}
-	verified, err := checkpointReadPinned(s.root, "selection.pending", 4096, info)
+	verified, err := s.readPinnedRecordV2("selection.pending", 4096, info)
 	if err != nil || !bytes.Equal(data, verified) {
 		return errV2Unavailable
 	}
 	if s.root.Rename("selection.pending", "selected.json") != nil {
 		return errV2Unavailable
 	}
-	if s.point("after_select") != nil || checkpointSync(s.root, nil, "") != nil {
+	if s.point("after_select") != nil || s.syncRecordDirectoryV2() != nil {
 		return errV2Uncertain
 	}
 	if err = s.physicalSelected(info); err != nil {
@@ -548,5 +587,8 @@ func (s *v2Store) publish(state v2State) (result error) {
 	s.state = state
 	s.selection = next
 	s.selector = selector
+	if s.afterPublication != nil {
+		s.afterPublication()
+	}
 	return nil
 }

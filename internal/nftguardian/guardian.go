@@ -4,7 +4,6 @@ package nftguardian
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
@@ -26,25 +25,19 @@ type State struct {
 }
 
 type Guardian struct {
-	mu               sync.Mutex
+	leaseCore
 	engine           Engine
-	state            State
 	previous, target configpoc.Revision
-	deadline         time.Time
-	timer            *time.Timer
-	closed           bool
-	restricted       bool
-	maxTTL           time.Duration
 }
 
 func New(engine Engine) *Guardian {
-	return &Guardian{engine: engine, state: State{Phase: "idle"}, maxTTL: 30 * time.Second}
+	return &Guardian{engine: engine, leaseCore: leaseCore{state: State{Phase: "idle"}, maxTTL: 30 * time.Second}}
 }
 
 // NewRestricted is for the authenticated administration boundary. It requires
 // one trusted bootstrap and an independent lease for subsequent activations.
 func NewRestricted(engine Engine) *Guardian {
-	return &Guardian{engine: engine, state: State{Phase: "bootstrap"}, restricted: true, maxTTL: 120 * time.Second}
+	return &Guardian{engine: engine, leaseCore: leaseCore{state: State{Phase: "bootstrap"}, restricted: true, maxTTL: 120 * time.Second}}
 }
 func (g *Guardian) Bootstrap(ctx context.Context, r configpoc.Revision) error {
 	g.mu.Lock()
@@ -72,9 +65,8 @@ func (g *Guardian) Arm(id string, previous, target configpoc.Revision, ttl time.
 	}
 	g.previous, _ = configpoc.Canonical(previous.Config)
 	g.target, _ = configpoc.Canonical(target.Config)
-	g.deadline = time.Now().Add(ttl)
-	g.state = State{Phase: "armed", ID: id, Previous: previous.Hash, Target: target.Hash, Deadline: g.deadline.UTC()}
-	g.timer = time.AfterFunc(ttl, func() { g.mu.Lock(); defer g.mu.Unlock(); g.expire() })
+	deadline := time.Now().Add(ttl)
+	g.armLocked(id, previous.Hash, target.Hash, deadline.UTC(), deadline, ttl, g.expire)
 	return nil
 }
 
@@ -91,87 +83,30 @@ func (g *Guardian) restore() error {
 }
 
 func (g *Guardian) expire() {
-	if (g.state.Phase == "armed" || g.state.Phase == "pending") && !time.Now().Before(g.deadline) {
-		_ = g.restore()
-	}
+	g.expireLocked(g.restore)
 }
 
 func (g *Guardian) Apply(ctx context.Context, r configpoc.Revision) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.applyLocked(ctx, r)
+}
+
+func (g *Guardian) applyLocked(ctx context.Context, r configpoc.Revision) error {
 	if g.closed || !valid(r) {
 		return ErrLease
 	}
-	g.expire()
-	if g.state.Phase == "blocked" || g.state.Phase == "bootstrap" {
-		return ErrLease
-	}
-	if g.state.Phase == "expired" {
-		if r.Hash == g.previous.Hash && g.engine.Current() == r.Hash {
-			return nil
-		}
-		return ErrLease
-	}
-	if g.state.Phase == "armed" || g.state.Phase == "pending" {
-		// An unchanged candidate still needs an exact lease receipt. It cannot
-		// be mistaken for compensation merely because both hashes are equal.
-		if g.previous.Hash == g.target.Hash && r.Hash == g.target.Hash && g.engine.Current() == r.Hash {
-			g.state.Phase = "pending"
-			return nil
-		}
-		if r.Hash == g.previous.Hash {
-			if g.timer != nil {
-				g.timer.Stop()
-			}
-			return g.restore()
-		}
-		if r.Hash != g.target.Hash {
-			return ErrLease
-		}
-		// A second activation could be a restarted coordinator replaying a
-		// durable confirm that never reached this authority. Keep its lease
-		// barrier intact; only a pending journal may restore the previous policy.
-		if g.state.Phase == "pending" {
-			return ErrLease
-		}
-		bounded, cancel := context.WithDeadline(ctx, g.deadline)
-		err := g.engine.Apply(bounded, r)
-		cancel()
-		if err != nil || !time.Now().Before(g.deadline) {
-			_ = g.restore()
-			return ErrLease
-		}
-		g.state.Phase = "pending"
-		return nil
-	}
-	if g.restricted && r.Hash != g.engine.Current() && r.Hash != g.previous.Hash {
-		return ErrLease
-	}
-	if r.Hash != g.state.Target {
-		g.state = State{Phase: "idle"}
-	}
-	return g.engine.Apply(ctx, r)
+	return g.leaseCore.applyLocked(ctx, r.Hash, g.previous.Hash, g.target.Hash, g.engine.Current, func(ctx context.Context) error { return g.engine.Apply(ctx, r) }, g.expire, g.restore)
 }
 
 func (g *Guardian) Confirm(id, hash string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.expire()
-	// Retain the exact confirmed lease for lost-ack reconciliation. An idle
-	// phase alone is not proof that this transaction was confirmed.
-	if !g.closed && g.state.Phase == "idle" && g.state.ID == id && id != "" && g.state.Target == hash && g.engine.Current() == hash {
-		return nil
-	}
-	if g.closed || g.state.Phase != "pending" || g.state.ID != id || g.target.Hash != hash || g.engine.Current() != hash {
-		return ErrLease
-	}
-	if !time.Now().Before(g.deadline) {
-		g.expire()
-		return ErrLease
-	}
-	g.timer.Stop()
-	g.state.Phase = "idle"
-	return nil
+	return g.confirmLocked(id, hash)
+}
+
+func (g *Guardian) confirmLocked(id, hash string) error {
+	return g.leaseCore.confirmLocked(id, hash, g.target.Hash, g.engine.Current, g.expire)
 }
 
 // RecoverPrevious never accepts a caller-selected replacement policy.
@@ -187,41 +122,17 @@ func (g *Guardian) RecoverPrevious() error {
 func (g *Guardian) RecoverLease(id, previous, target string, deadline time.Time) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closed || id == "" || len(id) > 64 || deadline.IsZero() {
-		return ErrLease
-	}
-	if g.state.ID != id || g.state.Previous != previous || g.state.Target != target {
-		return ErrLease
-	}
-	if !g.state.Deadline.Equal(deadline) || !g.deadline.Equal(deadline) {
-		return ErrLease
-	}
 	if g.previous.Hash != previous || g.target.Hash != target {
 		return ErrLease
 	}
-	switch g.state.Phase {
-	case "armed", "pending", "expired":
-		return g.recoverPreviousLocked()
-	default:
+	if !g.recoveryLeaseLocked(State{ID: id, Previous: previous, Target: target, Deadline: deadline}) {
 		return ErrLease
 	}
+	return g.recoverPreviousLocked()
 }
 
 func (g *Guardian) recoverPreviousLocked() error {
-	if g.closed {
-		return ErrLease
-	}
-	if g.state.Phase == "idle" {
-		return nil
-	}
-	if g.timer != nil {
-		g.timer.Stop()
-	}
-	if err := g.restore(); err != nil {
-		return err
-	}
-	g.state = State{Phase: "idle"}
-	return nil
+	return g.leaseCore.recoverPreviousLocked(g.restore)
 }
 
 func (g *Guardian) Status() State { g.mu.Lock(); defer g.mu.Unlock(); g.expire(); return g.state }
@@ -229,16 +140,5 @@ func (g *Guardian) Status() State { g.mu.Lock(); defer g.mu.Unlock(); g.expire()
 func (g *Guardian) Close() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closed {
-		return nil
-	}
-	if g.timer != nil {
-		g.timer.Stop()
-	}
-	var err error
-	if g.state.Phase != "idle" {
-		err = g.restore()
-	}
-	g.closed = true
-	return err
+	return g.closeLocked(g.restore)
 }

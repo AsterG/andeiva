@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -121,22 +122,53 @@ func OpenServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *ad
 	return openServiceV2(ctx, area, budget, auth, firewall, local, nil)
 }
 func openServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *adminauth.Manager, firewall, local []Engine, policy LocalPolicyV2) (*ServiceV2, error) {
+	return openServiceCoordinatorV2(ctx, area, budget, auth, firewall, local, v2CoordinatorOptions{LocalPolicy: policy})
+}
+func openServiceCoordinatorV2(ctx context.Context, area *os.Root, budget BudgetV2, auth *adminauth.Manager, firewall, local []Engine, options v2CoordinatorOptions) (*ServiceV2, error) {
 	if auth == nil {
 		return nil, ErrDenied
 	}
-	store, err := openV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes})
-	if err != nil {
-		return nil, err
+	var store *v2Store
+	var err error
+	if options.SharedReader != nil {
+		store, err = openSharedStoreV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes}, *options.SharedReader)
+	} else {
+		store, err = openV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes})
 	}
-	c, err := openCoordinatorV2(ctx, store, firewall, local, v2CoordinatorOptions{LocalPolicy: policy})
+	if err != nil {
+		return nil, fmt.Errorf("selected configuration open: %w", err)
+	}
+	if options.Integrity != nil {
+		store.mu.Lock()
+		reference, attachErr := selectedReferenceV2(store)
+		if attachErr == nil {
+			attachCtx, cancel := context.WithTimeout(ctx, IntegrityInspectionDeadlineV1)
+			attachErr = options.Integrity.Attach(attachCtx, reference)
+			cancel()
+		}
+		store.mu.Unlock()
+		if attachErr != nil {
+			_ = store.close()
+			return nil, fmt.Errorf("configuration integrity attach: %w", attachErr)
+		}
+		options.integrityAttached = true
+	}
+	c, err := openCoordinatorV2(ctx, store, firewall, local, options)
 	if err != nil {
 		if c != nil {
 			c.close()
 		}
 		_ = store.close()
-		return nil, err
+		return nil, fmt.Errorf("configuration coordinator open: %w", err)
 	}
-	return &ServiceV2{coordinator: c, auth: auth}, nil
+	service := &ServiceV2{coordinator: c, auth: auth}
+	if options.Integrity != nil {
+		if err := service.qualifyRuntimeIntegrityV1(ctx); err != nil {
+			_ = service.Close()
+			return nil, fmt.Errorf("configuration integrity qualification: %w", err)
+		}
+	}
+	return service, nil
 }
 
 func (s *ServiceV2) Close() error {
@@ -195,11 +227,22 @@ func (s *v2Store) principalV2Locked(p v2TrustedPrincipal) bool {
 // under the same lock as each catalogue action, preventing rotation TOCTOU.
 // No path acquires the authentication lock while holding the store lock.
 func (s *ServiceV2) catalogue(binding adminauth.SessionBinding, call func(*v2Store, v2TrustedPrincipal) error) error {
+	return s.catalogueAccessV1(binding, false, call)
+}
+
+func (s *ServiceV2) catalogueMutationV1(binding adminauth.SessionBinding, call func(*v2Store, v2TrustedPrincipal) error) error {
+	return s.catalogueAccessV1(binding, true, call)
+}
+
+func (s *ServiceV2) catalogueAccessV1(binding adminauth.SessionBinding, mutation bool, call func(*v2Store, v2TrustedPrincipal) error) error {
 	p, err := s.principal(binding)
 	if err != nil {
 		return err
 	}
 	c := s.coordinator
+	if c.options.Integrity != nil && c.integrity.inspecting.Load() {
+		return ErrRecovery
+	}
 	c.store.mu.Lock()
 	defer c.store.mu.Unlock()
 	if c.closed || c.store.blocked {
@@ -208,12 +251,37 @@ func (s *ServiceV2) catalogue(binding adminauth.SessionBinding, call func(*v2Sto
 	if p.Role != RoleAdmin || !c.store.principalV2Locked(p) {
 		return ErrDenied
 	}
+	if mutation && !c.integrityAllowsV1(false) {
+		return ErrRecovery
+	}
 	return call(c.store, p)
 }
 
 func (s *ServiceV2) Namespace(binding adminauth.SessionBinding, domain string, lifetime time.Duration) (NamespaceV2, error) {
 	var result v2Namespace
 	err := s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
+		if s.coordinator.options.Routed != nil && hasFeatureV2(store.state, v2RoutedFeature) && domain != "routed" {
+			return ErrDenied
+		}
+		if !s.coordinator.integrityAllowsV1(false) {
+			if !s.coordinator.integrityAllowsV1(true) || lifetime <= 0 || lifetime > 24*time.Hour || s.coordinator.now().Before(store.state.Clock) {
+				return ErrRecovery
+			}
+			pending := store.state.Configuration.Pending
+			if pending.Owner != p.Subject || pending.Domain != domain {
+				return ErrDenied
+			}
+			for _, namespace := range store.state.Namespaces {
+				if namespace.Subject == p.Subject && namespace.Domain == domain && namespace.ClosingOrigin == pending.OriginCommit && !namespace.Closed && s.coordinator.now().Before(namespace.AdmitUntil) {
+					result = clone(namespace)
+					return nil
+				}
+			}
+			// Only a reserved closing namespace may be published while a live
+			// confirmation prevents the next quiescent integrity inspection.
+			result, err = store.closingNamespaceLocked(p.Subject, domain, s.coordinator.now(), lifetime)
+			return err
+		}
 		result, err = store.namespaceLocked(p.Subject, domain, s.coordinator.now(), lifetime)
 		return err
 	})
@@ -221,7 +289,10 @@ func (s *ServiceV2) Namespace(binding adminauth.SessionBinding, domain string, l
 }
 func (s *ServiceV2) Admit(binding adminauth.SessionBinding, namespace string, expected uint64, request OperationRequestV2) (OperationV2, error) {
 	var result v2Operation
-	err := s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
+	err := s.catalogueAdmissionV1(binding, namespace, request, func(store *v2Store, p v2TrustedPrincipal) (err error) {
+		if i := store.namespaceIndex(p.Subject, namespace); s.coordinator.options.Routed != nil && hasFeatureV2(store.state, v2RoutedFeature) && i >= 0 && store.state.Namespaces[i].Domain != "routed" {
+			return ErrDenied
+		}
 		result, err = store.admitLocked(p.Subject, namespace, expected, request, s.coordinator.now())
 		return err
 	})
@@ -245,7 +316,7 @@ func (s *ServiceV2) List(binding adminauth.SessionBinding, namespace string, aft
 	return operationsDTOv2(result), cursor, err
 }
 func (s *ServiceV2) CloseNamespace(binding adminauth.SessionBinding, namespace string) error {
-	return s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) error {
+	return s.catalogueMutationV1(binding, func(store *v2Store, p v2TrustedPrincipal) error {
 		return store.closeNamespaceLocked(p.Subject, namespace, s.coordinator.now())
 	})
 }

@@ -329,7 +329,9 @@ func sameObject(actual, expected object) bool {
 	}
 	expressions := rule["expr"].([]object)
 	for mask := 0; mask < 4; mask++ {
-		for _, numeric := range []bool{false, true} {
+		for variantBits := 0; variantBits < 4; variantBits++ {
+			numeric := variantBits&1 != 0
+			numericConntrack := variantBits&2 != 0
 			variant := make([]object, 0, len(expressions))
 			for i, expression := range expressions {
 				if (i == 0 && mask&1 != 0) || (i == 5 && mask&2 != 0) {
@@ -341,6 +343,9 @@ func sameObject(actual, expected object) bool {
 						protocol = 17
 					}
 					expression = match(object{"meta": object{"key": "l4proto"}}, protocol)
+				}
+				if numericConntrack && (i == 8 || i == 9) {
+					expression = numericConntrackMatch(expression)
 				}
 				variant = append(variant, expression)
 			}
@@ -355,4 +360,27 @@ func sameObject(actual, expected object) bool {
 		}
 	}
 	return false
+}
+
+// nft -y renders these conntrack enums numerically. Build a complete expected
+// variant; do not normalize or discard any condition from the observation.
+func numericConntrackMatch(expression object) object {
+	m, ok := expression["match"].(object)
+	if !ok {
+		return expression
+	}
+	var right any
+	switch {
+	case equalJSON(m["left"], ct("direction")) && m["right"] == "original":
+		right = 0
+	case equalJSON(m["left"], ct("direction")) && m["right"] == "reply":
+		right = 1
+	case equalJSON(m["left"], ct("state")) && equalJSON(m["right"], []string{"established", "new"}):
+		right = []int{2, 8}
+	case equalJSON(m["left"], ct("state")) && m["right"] == "established":
+		right = 2
+	default:
+		return expression
+	}
+	return object{"match": object{"op": m["op"], "left": m["left"], "right": right}}
 }

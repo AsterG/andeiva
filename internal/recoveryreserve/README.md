@@ -54,3 +54,5 @@ and this ext4 test do not guarantee metadata/journal/COW capacity on every devic
 or filesystem. Runtime integration, quota isolation, RO/EIO/EDQUOT qualification,
 authorized retirement and live enforcement continuity remain separate gates.
 Native Debian 13 tests passed actual byte and inode exhaustion on an isolated64MiB ext4 image using UID1000 with no capabilities. Exact final binding/reopen test elapsed0.62s; combined preparation/test CPU0.414153s/cgrouppeak74,477,568B includes formatter and filesystem cache. Full native pool regression passed separately with CPU0.049284s/cgrouppeak16,248,832B. These are fixture observations, not daemon RSS, universal allocation guarantees or appliance continuity qualification.
+
+Shared-profile reads retain separate process identities: `ReaderAccessV2.ReadFile` requires the dedicated helper reader group; `ReadOwnedFile` requires the exact non-root owner. Both use identical bounded, pinned-directory, UID/GID/mode/ACL and no-follow checks. The API does not join the helper reader group. These primitives grant neither a writer lock nor authority to apply policy.

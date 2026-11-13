@@ -27,6 +27,17 @@ func regularOwned(info os.FileInfo, limit int64) bool {
 }
 
 func (s *fileStore) openScopedRoot() (*os.Root, error) {
+	if s.scopedRoot != nil {
+		opened, err := s.scopedRoot.Stat(".")
+		named, nameErr := os.Lstat(s.scopedRoot.Name())
+		if err != nil || nameErr != nil || !opened.IsDir() || opened.Mode().Perm() != 0700 || !owned(opened) || named.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, named) {
+			return nil, ErrStorage
+		}
+		// Opening relative to the retained root prevents a later pathname swap from
+		// redirecting record staging, lock validation or publication.
+		return s.scopedRoot.OpenRoot(".")
+	}
+
 	info, err := os.Lstat(s.dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !owned(info) {
 		return nil, ErrStorage

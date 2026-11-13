@@ -3,6 +3,9 @@ package configpoc
 import "time"
 
 func validRecoveryRecordV2(record v2RecoveryRecord, lineage string) bool {
+	if r := record.ServiceRestart; r != nil && (record.Kind != v2BootKind || record.BootID == nil || !validHash(r.Source) || !ValidRoutedFreshScopeEvidenceV3(r.Scope) || string(*record.BootID) != r.Scope.New.BootID) {
+		return false
+	}
 	if record.Format != v2Format || record.ID == "" || len(record.ID) > 128 || record.Lineage != lineage || record.Started.IsZero() || !validHash(record.Previous) || !validHash(record.Target) {
 		return false
 	}
@@ -10,8 +13,17 @@ func validRecoveryRecordV2(record v2RecoveryRecord, lineage string) bool {
 		if record.BootID == nil || !validBootIDV2(*record.BootID) || record.Subject != "" || record.Origin != "" || record.Lease != "" {
 			return false
 		}
+	} else if record.Kind == "boot_boundary" {
+		if record.BootID == nil || !validBootIDV2(*record.BootID) || record.Subject == "" || len(record.Subject) > 128 || record.Origin == "" || record.Lease == "" || record.State != "final" || record.BootBoundary == nil {
+			return false
+		}
 	} else if record.BootID != nil || record.Subject == "" || len(record.Subject) > 128 || record.Origin == "" || record.Lease == "" || (record.Kind != "timeout" && record.Kind != "restart") {
 		return false
+	}
+	if record.BootBoundary != nil || record.SupersededBy != "" {
+		if (record.Kind != v2BootKind && record.Kind != "boot_boundary") || record.State != "final" || !validHash(record.SupersededBy) || !validRoutedBootBoundaryShapeV2(record.BootBoundary) || record.BootBoundary == nil || record.BootBoundary.CompletedBoot != record.SupersededBy || record.BootBoundary.Resolution != "" {
+			return false
+		}
 	}
 	for _, character := range record.ID {
 		if character < 0x21 || character > 0x7e {
