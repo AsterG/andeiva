@@ -38,3 +38,13 @@ consulta completa de un fallo; presencia no acredita propiedad. Laboratorio y
 helper comparten el decodificador puro. Rechaza ejecución en el host y enums
 arbitrarios. No está conectado a una unidad desplegada; quedan pendientes las
 pruebas nativas de procesos, tráfico y consumo.
+
+Para la prueba aislada del transporte, compile el binario Linux con
+`go test -c -o /tmp/andeiva-preview.test ./internal/previewruntime`. En el Debian 13
+autorizado, colóquelo en un directorio de root con modo 0700 y archivo 0500; ejecute como root
+`bash packaging/preview/tests/routed-kernel-native.sh --isolated-lab /RUTA/PRIVADA/ABSOLUTA/andeiva-preview.test`.
+El arnés crea tres namespaces nuevos, conserva sus identidades para la limpieza
+y rechaza CI. Comprueba check/apply real, lectura schema4 con revisión confiable,
+rechazo de validación incorrecta y del hilo que abandona el namespace. Los anclajes
+se cierran al ejecutar subprocesos. No acredita tráfico ni identidades de los
+procesos de administración/helper.

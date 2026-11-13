@@ -36,3 +36,13 @@ dentro do prazo do chamador. Distingue ausência após consulta completa de falh
 presença não comprova propriedade. Laboratório e helper compartilham o decoder
 puro. Rejeita execução no host e enums arbitrários. Não está conectado a uma
 unidade implantada; testes nativos de processos, tráfego e consumo estão pendentes.
+
+Para o teste isolado do transporte, compile o binário Linux com
+`go test -c -o /tmp/andeiva-preview.test ./internal/previewruntime`. No Debian 13
+autorizado, coloque-o em diretório de root com modo 0700 e arquivo 0500; execute como root
+`bash packaging/preview/tests/routed-kernel-native.sh --isolated-lab /CAMINHO/PRIVADO/ABSOLUTO/andeiva-preview.test`.
+O harness cria três namespaces novos, preserva suas identidades para limpeza e
+rejeita CI. Verifica check/apply real, leitura schema4 com revisão confiável,
+rejeição de validação inválida e da thread que abandona o namespace. Os descritores
+âncora fecham ao executar subprocessos. Não qualifica tráfego ou identidades dos
+processos de administração/helper.

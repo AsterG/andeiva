@@ -85,6 +85,18 @@ jobs:
             '
       - name: Nftables POC unprivileged contracts and platform compilation
         run: bash scripts/check-nft-poc.sh
+      - name: Grouped runtime contracts and native fixture guard without privileges
+        run: |
+          go test -race -count=1 -run 'TestRouted(KernelV3|HelperV3|CompatibilityV2|APIV3)' ./internal/previewruntime
+          go test -race -count=1 -run '^TestTablePresence' ./internal/routedactivation
+          bash -n packaging/preview/tests/routed-kernel-native.sh
+          if CI=1 bash packaging/preview/tests/routed-kernel-native.sh --isolated-lab /bin/true; then
+            echo 'Privileged fixture was incorrectly accepted in CI' >&2
+            exit 1
+          else
+            status=$?
+            test "$status" -eq 2
+          fi
       - name: Administrative firewall platform compilation without privileges
         run: bash scripts/check-firewall-admin.sh
       - run: bash scripts/smoke-api.sh

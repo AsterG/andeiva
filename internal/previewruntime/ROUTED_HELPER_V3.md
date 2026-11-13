@@ -44,3 +44,14 @@ presence alone never establishes ownership. The laboratory and helper reuse
 the same pure presence decoder. Host execution and arbitrary enum dispatch are
 rejected. This transport is not wired to a deployed unit; native process,
 packet and resource qualification remain pending.
+
+For the standalone kernel fixture, build the Linux test binary with
+`go test -c -o /tmp/andeiva-preview.test ./internal/previewruntime`. In the
+authorized Debian 13 lab, place that binary in a root-owned directory with mode
+0700 and file mode 0500, then run
+`bash packaging/preview/tests/routed-kernel-native.sh --isolated-lab /ABSOLUTE/PRIVATE/DIRECTORY/andeiva-preview.test` as root.
+The harness creates three fresh namespaces, retains only their verified IDs for
+cleanup and rejects CI. The opt-in test verifies native schema4 check/apply,
+complete trusted readback, malformed-check preservation and rejection after the
+launching thread leaves the gateway. Namespace anchors are close-on-exec.
+It does not test packet traffic or the management/helper process identities.
