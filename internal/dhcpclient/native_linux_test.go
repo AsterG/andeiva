@@ -37,6 +37,27 @@ func TestNativeDHCPCDOwner(t *testing.T) {
 	before := nativeBaseline(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if os.Getenv("ANDEIVA_DHCP_EARLY_SERVER_DEATH") == "1" {
+		stopNativeServer(t)
+		c, err := StartIsolated(ctx, scope)
+		if err != nil {
+			t.Fatal("start without server", err)
+		}
+		defer c.Stop()
+		until := time.Now().Add(35 * time.Second)
+		for time.Now().Before(until) {
+			if _, err := c.Current(); err == nil {
+				t.Fatal("early server death produced lease evidence")
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		c.Stop()
+		if !bytes.Equal(before, nativeBaseline(t)) {
+			t.Fatal("early server death changed baseline")
+		}
+		t.Log("server killed before acquisition; no lease evidence; baseline preserved")
+		return
+	}
 	c, err := StartIsolated(ctx, scope)
 	if err != nil {
 		t.Fatal("start", err)
@@ -47,11 +68,19 @@ func TestNativeDHCPCDOwner(t *testing.T) {
 	if _, err := StartIsolated(ctx, scope); !errors.Is(err, ErrScope) {
 		t.Fatal("second owner accepted", err)
 	}
-	if err := c.Rebind(); err != nil {
-		t.Fatal("rebind", err)
+	if err := c.Renew(); err != nil {
+		t.Fatal("renew", err)
 	}
 	renewed := awaitLease(t, c, first.Epoch, 35*time.Second)
 	t.Logf("renewed: epoch=%d reason=%s", renewed.Epoch, renewed.Event.Reason)
+	if renewed.Event.Reason != "RENEW" {
+		t.Fatal("renew did not receive renewal ACK", renewed.Event.Reason)
+	}
+	if err := c.Rebind(); err != nil {
+		t.Fatal("rebind", err)
+	}
+	rebound := awaitLease(t, c, renewed.Epoch, 35*time.Second)
+	t.Logf("rebound: epoch=%d reason=%s", rebound.Epoch, rebound.Event.Reason)
 	if !bytes.Equal(before, nativeBaseline(t)) {
 		t.Fatal("acquisition configured baseline")
 	}
@@ -70,19 +99,7 @@ func TestNativeDHCPCDOwner(t *testing.T) {
 	}
 	restarted := awaitLease(t, c, 0, 35*time.Second)
 	t.Logf("restarted: owner=%s reason=%s", c.PID(), restarted.Event.Reason)
-	// The server PID is a harness-owned retained child, not an installed service.
-	pid, err := strconv.Atoi(os.Getenv("ANDEIVA_DHCP_SERVER_PID"))
-	if err != nil || pid <= 1 {
-		t.Fatal("server identity")
-	}
-	fd, err := unix.PidfdOpen(pid, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer unix.Close(fd)
-	if err := unix.PidfdSendSignal(fd, unix.SIGTERM, nil, 0); err != nil {
-		t.Fatal(err)
-	}
+	stopNativeServer(t)
 	deadline := time.Now().Add(130 * time.Second)
 	for {
 		_, err = c.Current()
@@ -118,6 +135,32 @@ func TestNativeDHCPCDOwner(t *testing.T) {
 	}
 }
 
+func stopNativeServer(t *testing.T) {
+	t.Helper()
+	// Only the private-PID-namespace harness supplies this child identity.
+	pid, err := strconv.Atoi(os.Getenv("ANDEIVA_DHCP_SERVER_PID"))
+	if err != nil || pid <= 1 {
+		t.Fatal("server identity")
+	}
+	fd, err := unix.PidfdOpen(pid, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(fd)
+	if fd < 0 || fd > 1<<31-1 {
+		t.Fatal("pidfd range")
+	}
+	if err := unix.PidfdSendSignal(fd, unix.SIGTERM, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	// Sending a signal alone is not proof that the server can no longer reply.
+	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+	n, err := unix.Poll(poll, 3000)
+	if err != nil || n != 1 || poll[0].Revents&unix.POLLIN == 0 {
+		t.Fatal("server death not observed", err)
+	}
+}
+
 func awaitLease(t *testing.T, c *Client, after uint64, limit time.Duration) Lease {
 	t.Helper()
 	deadline := time.Now().Add(limit)
@@ -127,12 +170,18 @@ func awaitLease(t *testing.T, c *Client, after uint64, limit time.Duration) Leas
 		}
 		select {
 		case <-c.done:
-			t.Fatal("dhcpcd exited before acquisition")
+			c.mu.Lock()
+			stage, reason, code := c.failure, c.lastReason, c.exitCode
+			c.mu.Unlock()
+			t.Fatalf("dhcpcd exited before acquisition: stage=%s last_reason=%s exit=%d", stage, reason, code)
 		default:
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatal("lease acquisition deadline")
+	c.mu.Lock()
+	stage, reason := c.failure, c.lastReason
+	c.mu.Unlock()
+	t.Fatalf("lease acquisition deadline: stage=%s last_reason=%s", stage, reason)
 	return Lease{}
 }
 

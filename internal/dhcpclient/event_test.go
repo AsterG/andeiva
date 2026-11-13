@@ -53,7 +53,7 @@ func TestHookBoundedAllowlist(t *testing.T) {
 	}
 }
 func TestHookRevocationNeverCarriesCachedLease(t *testing.T) {
-	for _, reason := range []string{"NAK", "EXPIRE", "TIMEOUT", "NOCARRIER", "STOP", "STOPPED", "FAIL"} {
+	for _, reason := range []string{"NAK", "EXPIRE", "TIMEOUT", "NOCARRIER", "STOP", "STOPPED", "FAIL", "RECONFIGURE"} {
 		e, err := HookEvent(replace(goodEnv(), "reason", reason), 100)
 		if err != nil || e.Address != "" || e.Seconds != 0 || len(e.DNS) != 0 {
 			t.Fatal(e, err)

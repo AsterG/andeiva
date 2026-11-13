@@ -15,7 +15,11 @@ separation; a production identity/capability profile is not qualified.
 The fixed hook translates bounded environment fields into one JSON record on the
 inherited stdout pipe. It cannot launch scripts, modify resolver files or install
 server-supplied routes. Only BOUND/RENEW/REBIND/REBOOT grant evidence; cached TIMEOUT,
-STATIC, TEST, unsupported route options and invalid IPv4 tuples do not. Invalid
+STATIC, TEST, unsupported route options and invalid IPv4 tuples do not. RECONFIGURE
+revokes the previous evidence without killing the owner; it cannot grant or extend
+a lease. `Renew` uses SIGUSR1. `Rebind` uses SIGHUP and requires a new confirmed
+grant after RECONFIGURE. SIGALRM releases and exits and is never a renewal control.
+Invalid
 records and process/channel loss invalidate evidence. The client remains in the
 foreground; the launcher thread remains pinned until its child is reaped. Stop
 invalidates before termination and the outer service must use KillMode=control-group
@@ -28,7 +32,7 @@ transport delay. Expired evidence is unavailable even if the EXPIRE hook is lost
 Restart never imports a lease file as live authority. A new confirmed ACK is required.
 
 The native fixture uses an isolated BusyBox DHCP server and an already configured
-LAN. It checks acquisition, exclusive ownership, rebind, restart, server loss,
+LAN. It checks acquisition, exclusive ownership, renewal, rebind, restart, server loss,
 expiry, offline restart and unchanged IPv4 baseline. Preserving that baseline is
 not adoption/rollback of an existing host DHCP manager: ifupdown/dhcpcd ownership
 migration, durable mementos, L3 effects, NAT renewal, service policy, management
@@ -52,6 +56,15 @@ KillMode=control-group are required. The harness creates only disposable namespa
 and private mounts; never run it privileged in WSL or on a customer appliance.
 Native qualification and resource measurement are pending until recorded by the
 orchestrator. Docker/EKS activation is outside this laboratory profile.
+Run a separate fresh fixture with `ANDEIVA_DHCP_EARLY_SERVER_DEATH=1` to kill and
+observe server termination through a pidfd before starting the client. That
+negative requires no lease evidence for 35 seconds and unchanged LAN state.
+
+The first native run reached BOUND but failed during the then-mislabelled renewal:
+Rebind emitted RECONFIGURE, which the hook rejected. A regression reproduced that
+rejection before the fix. The native test now separately checks actual RENEW and
+rebind, and reports fixed failure stages without exposing raw engine stderr or
+hook environment. Those additional native phases remain unqualified until rerun.
 
 ## Engine contract sources
 

@@ -3,14 +3,72 @@
 package dhcpclient
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestRenewAndRebindSignalRetainedChild(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestDHCPControlSignalProcess$")
+	cmd.Env = append(os.Environ(), "ANDEIVA_DHCP_SIGNAL_TEST=1")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	s := bufio.NewScanner(out)
+	if !s.Scan() || s.Text() != "ready" {
+		t.Fatal("signal receiver not ready")
+	}
+	c := &Client{cmd: cmd}
+	if err := c.Renew(); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Scan() || s.Text() != syscall.SIGUSR1.String() {
+		t.Fatal("renew did not signal SIGUSR1")
+	}
+	if err := c.Rebind(); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Scan() || s.Text() != syscall.SIGHUP.String() {
+		t.Fatal("rebind did not signal SIGHUP")
+	}
+	c.invalidate()
+	if !errors.Is(c.Renew(), ErrUnavailable) || !errors.Is(c.Rebind(), ErrUnavailable) {
+		t.Fatal("dead owner accepts controls")
+	}
+}
+
+func TestDHCPControlSignalProcess(t *testing.T) {
+	if os.Getenv("ANDEIVA_DHCP_SIGNAL_TEST") != "1" {
+		return
+	}
+	ch := make(chan os.Signal, 2)
+	signal.Notify(ch, syscall.SIGUSR1, syscall.SIGHUP, syscall.SIGALRM)
+	defer signal.Stop(ch)
+	fmt.Println("ready")
+	for range 2 {
+		fmt.Println(<-ch)
+	}
+}
 
 func TestEventPipeRejectsAmbiguousAndOversizeRecords(t *testing.T) {
 	e, _ := HookEvent(goodEnv(), 100)
@@ -22,6 +80,37 @@ func TestEventPipeRejectsAmbiguousAndOversizeRecords(t *testing.T) {
 		if _, err := decodeEvent([]byte(bad)); err == nil {
 			t.Fatal("ambiguous record accepted")
 		}
+	}
+}
+
+func TestReconfigureRevokesWithoutKillingOwner(t *testing.T) {
+	sec := int64(time.Second)
+	c := &Client{iface: "wan0", pid: 123, lastGrant: 10 * sec}
+	bound, err := HookEvent(goodEnv(), 15*sec)
+	if err != nil || c.accept(bound, 15*sec) != nil {
+		t.Fatal("initial grant", err)
+	}
+	// dhcpcd if_reboot emits this BEFORE attempting a new DHCP exchange.
+	e, err := HookEvent(replace(goodEnv(), "reason", "RECONFIGURE"), 16*sec)
+	if err != nil {
+		t.Fatal("documented rebind notification rejected", err)
+	}
+	b, _ := json.Marshal(e)
+	e, err = decodeEvent(b)
+	if err != nil || c.accept(e, 16*sec) != nil {
+		t.Fatal("reconfigure channel rejected", err)
+	}
+	if _, err := c.currentAt(16 * sec); err == nil || c.failed {
+		t.Fatal("reconfigure granted or killed owner")
+	}
+	bound.Reason = "REBOOT"
+	bound.BootNS = 17 * sec
+	if c.accept(bound, 17*sec) != nil {
+		t.Fatal("fresh confirmed rebind rejected")
+	}
+	lease, err := c.currentAt(17 * sec)
+	if err != nil || lease.Epoch != 2 || lease.DeadlineBootNS != 135*sec {
+		t.Fatal("reconfigure extended validity", lease, err)
 	}
 }
 

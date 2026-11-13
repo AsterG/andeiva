@@ -60,6 +60,9 @@ type Client struct {
 	iface                string
 	pid                  int
 	failed               bool
+	failure              string
+	lastReason           string
+	exitCode             int
 	stopOnce             sync.Once
 }
 
@@ -176,6 +179,12 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		c.mu.Lock()
 		c.failed = true
 		c.lease = Lease{}
+		if c.failure == "" {
+			c.failure = "owner_exit"
+		}
+		if cmd.ProcessState != nil {
+			c.exitCode = cmd.ProcessState.ExitCode()
+		}
 		c.mu.Unlock()
 		_ = r.Close()
 		close(c.done)
@@ -204,18 +213,18 @@ func (c *Client) readEvents() {
 	for s.Scan() {
 		e, err := decodeEvent(s.Bytes())
 		if err != nil {
-			c.invalidate()
+			c.failAt("event_decode")
 			_ = c.cmd.Process.Kill()
 			return
 		}
 		now, err := bootNow()
 		if err != nil || c.accept(e, now) != nil {
-			c.invalidate()
+			c.failAt("event_scope")
 			_ = c.cmd.Process.Kill()
 			return
 		}
 	}
-	c.invalidate()
+	c.failAt("event_channel_closed")
 	_ = c.cmd.Process.Kill()
 }
 
@@ -232,7 +241,16 @@ func decodeEvent(b []byte) (Event, error) {
 	return e, nil
 }
 
-func (c *Client) invalidate() { c.mu.Lock(); c.failed = true; c.lease = Lease{}; c.mu.Unlock() }
+func (c *Client) invalidate() { c.failAt("stopped") }
+func (c *Client) failAt(stage string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failed = true
+	c.lease = Lease{}
+	if c.failure == "" {
+		c.failure = stage
+	}
+}
 
 func (c *Client) accept(e Event, now int64) error {
 	c.mu.Lock()
@@ -241,6 +259,7 @@ func (c *Client) accept(e Event, now int64) error {
 		return ErrEvent
 	}
 	c.lastEvent = e.BootNS
+	c.lastReason = e.Reason
 	if granting(e.Reason) {
 		// The hook does not expose the ACK acquisition clock. The previous
 		// grant hook (or process start for the first) precedes this ACK. Use
@@ -283,8 +302,18 @@ func (c *Client) currentAt(now int64) (Lease, error) {
 	return l, nil
 }
 
-// Rebind signals only this retained child. It does not consult global pidfiles.
+// Renew requests a fresh renewal through dhcpcd 10.1.0's SIGUSR1 operation.
+// SIGALRM releases and exits; it must never be used for renewal.
+func (c *Client) Renew() error { return c.signal(syscall.SIGUSR1) }
+
+// Rebind reloads the fixed configuration and restarts acquisition. Its
+// RECONFIGURE notification revokes evidence until a new confirmed grant.
+// Both operations signal only the retained child, never a global pidfile.
 func (c *Client) Rebind() error {
+	return c.signal(syscall.SIGHUP)
+}
+
+func (c *Client) signal(signal syscall.Signal) error {
 	if c == nil {
 		return ErrUnavailable
 	}
@@ -293,7 +322,7 @@ func (c *Client) Rebind() error {
 	if c.failed {
 		return ErrUnavailable
 	}
-	return c.cmd.Process.Signal(syscall.SIGHUP)
+	return c.cmd.Process.Signal(signal)
 }
 
 // Stop invalidates evidence before stopping the owner. It cannot restore a

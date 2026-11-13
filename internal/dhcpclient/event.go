@@ -47,7 +47,7 @@ func (e Event) validate() error {
 	}
 	if !granting(e.Reason) {
 		switch e.Reason {
-		case "PREINIT", "CARRIER", "NOCARRIER", "NOCARRIER_ROAMING", "EXPIRE", "NAK", "STOP", "STOPPED", "DEPARTED", "FAIL", "TIMEOUT":
+		case "PREINIT", "CARRIER", "NOCARRIER", "NOCARRIER_ROAMING", "EXPIRE", "NAK", "STOP", "STOPPED", "DEPARTED", "FAIL", "TIMEOUT", "RECONFIGURE":
 		default:
 			return ErrEvent
 		}
