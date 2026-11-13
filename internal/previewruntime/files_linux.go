@@ -3,7 +3,6 @@
 package previewruntime
 
 import (
-	"encoding/json"
 	"io"
 	"os"
 	"os/user"
@@ -172,13 +171,6 @@ func writeNew(root *os.Root, name string, data []byte, mode os.FileMode, uid, gi
 		return ErrStorage
 	}
 	return nil
-}
-func marshal(v any) []byte {
-	b, e := json.Marshal(v)
-	if e != nil {
-		return nil
-	}
-	return append(b, '\n')
 }
 func syncDirectory(path string) error {
 	if safeParents(filepath.Join(path, ".sync")) != nil {
