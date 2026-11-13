@@ -139,21 +139,9 @@ func (r *RoutedSelectionReaderV2) read(ctx context.Context) (result *selectedVie
 	if manager.verifySelected(s) != nil || validateRoutedActiveV2(s.state, s.readObject) != nil {
 		return nil, ErrRecovery
 	}
-	ref := SelectionReferenceV2{Selection: s.selector.Current, Previous: s.selector.Previous, State: s.selection.State, Lineage: s.state.Lineage, Sequence: s.selection.Sequence, Generation: s.state.Generation, Mode: "prepare"}
-	if intent := s.state.Configuration.Intent; intent != nil {
-		if intent.Domain != "routed" || !validHash(intent.RoutedWork) {
-			return nil, ErrRecovery
-		}
-		ref.WorkHash, ref.Mode = intent.RoutedWork, "intent"
-	} else if s.state.Configuration.Pending != nil {
-		ref.Mode = "pending"
-		_, pendingWork, err := selectedPendingReadbackV2(s)
-		if err != nil {
-			return nil, err
-		}
-		ref.WorkHash = pendingWork
-	} else if active := s.state.RoutedActive; active != nil {
-		ref.WorkHash, ref.Mode = active.Work, "active"
+	ref, err := selectedReferenceV2(s)
+	if err != nil {
+		return nil, err
 	}
 	view.ref = ref
 	if err := r.revalidate(ctx, view); err != nil {
