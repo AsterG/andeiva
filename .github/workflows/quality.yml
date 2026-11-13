@@ -83,6 +83,7 @@ jobs:
       - name: Configuration experiment platform source selection
         run: |
           bash scripts/check-config-platforms.sh
+          bash packaging/preview/tests/config-reader-identity.sh
           bash -n packaging/preview/tests/storage-pressure.sh
           bash packaging/preview/tests/storage-pressure-log-test.sh
           bash -n packaging/preview/tests/recovery-reserve-pressure.sh
