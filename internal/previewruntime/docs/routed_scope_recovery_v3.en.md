@@ -53,3 +53,39 @@ bash packaging/preview/tests/api-lifetime-unit-graph.sh
 [named inheritance](https://www.freedesktop.org/software/systemd/man/257/sd_listen_fds.html),
 [notification barriers and FDPOLL](https://www.freedesktop.org/software/systemd/man/257/sd_notify.html),
 [manager readback](https://github.com/systemd/systemd/blob/v257/src/analyze/analyze-fdstore.c).
+
+## Native store qualification (opt-in, not yet executed)
+
+`TestRoutedScopeRecoveryV3NativeStore` must run directly as MainPID of a transient
+`andeiva-preview-grouped.service` on an isolated Debian 13 client where the
+service and its socket are both absent. Root must verify `LoadState=not-found`
+for both before launching; never replace an installed unit. The test checks
+root/non-CI, MainPID, transient unit properties, exact cgroup and a mount namespace
+different from PID1 before effects. It creates only an empty gateway namespace,
+a small private directory and a preallocated manifest: no L2, listeners, lease
+grant or retirement receipt. Seven real anchors traverse Store/barrier/readback,
+independent VerifyStored, Drop/barrier/empty readback and local Close.
+
+The test timeout is 30s; the unit limit is 45s and each manager call is bounded.
+Root retains the unique fixture path and unit InvocationID. A partial Store/Drop
+failure keeps its evidence and manager anchors; inspect them before any cleanup.
+A SKIP or expected nonroot refusal is not native success. After success Root
+must independently verify empty FD store, unit cleanup, unchanged host network
+and mount state, and collect CPU/memory. No orphan recovery is qualified here.
+
+```sh
+# Root preflight must show not-found for both units.
+systemctl show -p LoadState andeiva-preview-grouped.service
+systemctl show -p LoadState andeiva-preview-grouped.socket
+# Substitute the independently verified, root-owned test artifact path.
+systemd-run --unit=andeiva-preview-grouped.service --wait --pipe \
+  --property=Type=exec --property=NotifyAccess=main \
+  --property=FileDescriptorStoreMax=7 --property=FileDescriptorStorePreserve=yes \
+  --property=PrivateMounts=yes --property=PrivateTmp=yes \
+  --property=KillMode=control-group --property=NoNewPrivileges=yes \
+  --property=RuntimeMaxSec=45s --property=TimeoutStopSec=3s \
+  --property=TasksMax=64 --property=LimitNOFILE=256 --property=MemoryMax=256M \
+  --setenv=ANDEIVA_SCOPE_STORE_NATIVE=1 \
+  /ROOT_OWNED_FIXTURE/routed-scope-store-native.test \
+  -test.run=^TestRoutedScopeRecoveryV3NativeStore$ -test.v -test.timeout=30s
+```
