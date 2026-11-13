@@ -132,3 +132,9 @@ cancela e drena antes de Service; cancelar contexto inicial não elimina inspeç
 futuras. Testes com store/canais/gate reais e rede/kernel SIM; lifecycle realiza inspeções
 completas explícitas entre etapas quiescentes. Faltam launcher privilegiado,
 três processos nativos e consumo/desempenho de produção. Comandos acima.
+
+An authenticated reattachment cannot replace a retained cold anchor while fenced or reconciling. A newly started helper with a persisted blocked marker cannot capture a new anchor: it remains fenced. A clean qualified helper may update its anchor; attachment never clears the marker.
+
+Una reconexión autenticada no reemplaza el ancla conservada mientras exista bloqueo o reconciliación. Un helper nuevo con marcador bloqueado persistente no captura otra ancla y permanece bloqueado. Solo un helper limpio y validado puede actualizarla; la conexión nunca limpia el marcador.
+
+Uma reconexão autenticada não substitui a âncora retida durante bloqueio ou reconciliação. Um helper novo com marcador persistente bloqueado não captura outra âncora e permanece bloqueado. Apenas um helper íntegro e validado pode atualizá-la; a conexão nunca limpa o marcador.

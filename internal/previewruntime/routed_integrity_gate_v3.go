@@ -66,7 +66,10 @@ func (g *routedIntegrityGateV3) blockedLocked() bool {
 func (g *routedIntegrityGateV3) attach(ctx context.Context, expected configpoc.SelectionReferenceV2) (configpoc.IntegrityResultV1, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.blockedLocked()
+	blocked := g.blockedLocked()
+	if blocked && g.anchor == (configpoc.SelectionReferenceV2{}) {
+		return configpoc.IntegrityResultV1{State: configpoc.IntegrityFencedV1}, nil
+	}
 	if g.phase == routedIntegrityCheckingV3 {
 		return configpoc.IntegrityResultV1{State: configpoc.IntegrityUnavailableV1}, nil
 	}
@@ -77,14 +80,20 @@ func (g *routedIntegrityGateV3) attach(ctx context.Context, expected configpoc.S
 	if current != expected {
 		return configpoc.IntegrityResultV1{Selection: current, State: configpoc.IntegrityStaleV1}, nil
 	}
-	if capture, ok := g.source.(interface {
-		CaptureColdAnchorV1(context.Context, configpoc.SelectionReferenceV2) error
-	}); ok {
-		if err := capture.CaptureColdAnchorV1(ctx, current); err != nil {
-			return integrityIncompleteV3(ctx, current, err), nil
+	// A fence or unfinished reconciliation must not launder a later Intent into
+	// the previously captured recovery authority. A fresh fenced helper has no
+	// prior opaque anchor and was rejected above. Only qualified clean sessions
+	// may replace an existing anchor.
+	if !blocked && (g.phase == routedIntegrityReadyV3 || g.anchor == (configpoc.SelectionReferenceV2{})) {
+		if capture, ok := g.source.(interface {
+			CaptureColdAnchorV1(context.Context, configpoc.SelectionReferenceV2) error
+		}); ok {
+			if err := capture.CaptureColdAnchorV1(ctx, current); err != nil {
+				return integrityIncompleteV3(ctx, current, err), nil
+			}
 		}
+		g.anchor = current
 	}
-	g.anchor = current
 	if g.phase == routedIntegrityColdV3 {
 		g.phase = routedIntegrityReconcilingV3
 	}
