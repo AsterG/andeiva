@@ -192,6 +192,8 @@ if [[ $profile == gate || $profile == gate-traffic ]]; then
     # Preserve its exact gate structure throughout; only expiry may remove live.
     jq -S '.nftables |= map(select(has("metainfo")|not)) | .nftables |= map(if has("set") then .set |= del(.elem) else . end)' /run/andeiva-lease/gate-before-expiry.json > /run/andeiva-lease/gate-structure-before.json
     /usr/bin/ip -4 -j address show dev lan0 > /run/andeiva-lease/traffic-lan-before.json
+    /usr/bin/ip -4 -j address show > /run/andeiva-lease/traffic-addresses-before.json
+    /usr/bin/ip -4 -j route show table all > /run/andeiva-lease/traffic-routes-before.json
     for scope in all default lan0 wan0; do [[ $(cat "/proc/sys/net/ipv6/conf/$scope/forwarding") == 0 ]]; done
     printf '1\n' > /proc/sys/net/ipv4/ip_forward
     [[ $(cat /proc/sys/net/ipv4/ip_forward) == 1 ]]
@@ -228,6 +230,10 @@ if [[ $profile == gate || $profile == gate-traffic ]]; then
     ! grep -q '^--- SKIP:' /run/andeiva-lease/traffic-server.log
     /usr/bin/ip -4 -j address show dev lan0 > /run/andeiva-lease/traffic-lan-after.json
     cmp /run/andeiva-lease/traffic-lan-before.json /run/andeiva-lease/traffic-lan-after.json
+    /usr/bin/ip -4 -j address show > /run/andeiva-lease/traffic-addresses-after.json
+    /usr/bin/ip -4 -j route show table all > /run/andeiva-lease/traffic-routes-after.json
+    cmp /run/andeiva-lease/traffic-addresses-before.json /run/andeiva-lease/traffic-addresses-after.json
+    cmp /run/andeiva-lease/traffic-routes-before.json /run/andeiva-lease/traffic-routes-after.json
     /usr/sbin/nft -j -n -y list table inet andeiva_lease_qualification > /run/andeiva-lease/traffic-policy-after.json
     for when in '' '-after'; do
       jq -S '.nftables |= map(select(has("metainfo")|not)) | walk(if type=="object" and has("counter") then .counter |= del(.packets,.bytes) else . end)' "/run/andeiva-lease/traffic-policy$when.json" > "/run/andeiva-lease/traffic-policy$when-normalized.json"
