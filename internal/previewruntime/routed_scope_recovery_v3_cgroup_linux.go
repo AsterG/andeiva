@@ -60,7 +60,9 @@ func readScopeRecoveryUnitV3(ctx context.Context) (scopeRecoveryUnitV3, error) {
 	call, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(call, "/usr/bin/systemctl", "--no-pager", "show", "--property=MainPID", "--property=ControlGroup", "--property=Delegate", "--property=PrivateMounts", "--property=InvocationID", "andeiva-preview-grouped.service")
-	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C", "SYSTEMD_COLORS=0"}
+	// This fixed read-only query targets the live manager even in a private
+	// RootDirectory. Its reply must still match this process and invocation.
+	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C", "SYSTEMD_COLORS=0", "SYSTEMD_OFFLINE=0"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	cmd.WaitDelay = 200 * time.Millisecond
 	var output scopeRecoveryOutputV3
