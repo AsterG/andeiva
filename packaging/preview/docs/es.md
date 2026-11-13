@@ -97,8 +97,8 @@ Ambas opciones interrumpen la administración. Los informes privados de root que
 en `/var/tmp`; no prueban paridad transaccional ni deducen la política esperada
 de una sonda exitosa. Compruébalas por separado contra la revisión prevista.
 
-La recuperación automática de API conserva el plazo del helper. Una parada
-explícita del servicio puede propagarse al target. La caída del helper cierra todo el preview.
+La recuperación automática de API conserva el plazo del helper. Detener API/socket
+conserva el target, helper y namespaces. La caída del helper cierra todo el preview.
 Detenga el target, espere que API, socket, helper y namespaces estén inactivos y
 luego inícielo; no suponga que `restart target` es atómico. Un reinicio de servicio
 en el mismo boot restaura Running; reiniciar la VM selecciona Startup guardado.

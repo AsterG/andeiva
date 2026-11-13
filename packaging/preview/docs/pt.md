@@ -98,8 +98,8 @@ Ambas interrompem a administração. Relatórios privados de root ficam em
 `/var/tmp`; não comprovam paridade transacional nem deduzem a política esperada
 de uma sonda bem-sucedida. Verifique separadamente contra a revisão pretendida.
 
-A recuperação automática da API preserva o prazo do helper. Uma parada explícita
-do serviço pode propagar-se ao target. A falha do helper encerra todo o
+A recuperação automática da API preserva o prazo do helper. Parar API/socket
+preserva target, helper e namespaces. A falha do helper encerra todo o
 preview. Pare o target, espere API, socket, helper e namespaces ficarem inativos
 e depois inicie; não presuma que `restart target` seja atômico. Reinício de serviço
 no mesmo boot restaura Running; reiniciar a VM seleciona Startup salvo. Journal
