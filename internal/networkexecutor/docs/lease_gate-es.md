@@ -72,3 +72,21 @@ ambas direcciones/conexiones establecidas, pausa/muerte del helper, ACK tardío,
 LAN intacta, invariantes dual-stack del host y limpieza. No ejecutar pruebas
 privilegiadas en WSL/CI compartido. Sin cambios de servicios Docker/Helm,
 dependencias o DTO compartido del coordinador.
+
+## Observación nativa del token del kernel
+
+Tras corregir el protocolo numérico y el orden de declaraciones del readback,
+Debian 13 ejecutó `TestNativeLeaseGateKernel` satisfactoriamente (0,18 s). Un
+helper con sólo NET_ADMIN instaló L3 WAN real, preparó y abrió el gate y terminó
+sin cerrar ni renovar el token. El arnés root observó el token presente tras
+la salida y ausente 13 segundos después, mientras `enabled` seguía presente.
+Forwarding permaneció en cero; los invariantes del host se comprobaron fuera de
+los namespaces.
+
+La autoridad estaba controlada por la prueba. Se acredita expiración observable
+sin el proceso helper, no corte de paquetes, instante exacto, SIGKILL/crash,
+suspensión, DHCP real, trabajo durable seleccionado ni recuperación productiva.
+El namespace aislado limpia la WAN retenida. Exige jq además de las dependencias
+del arnés. Ejecutar `ANDEIVA_LEASE_LAB_AUTHORIZED=1 ./lease-native-isolated.sh gate`
+sólo en un grupo systemd root limitado del laboratorio autorizado, con PASS
+literal y ningún SKIP.

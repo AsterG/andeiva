@@ -14,15 +14,17 @@ for artifact in "$0" ./lease-native.test; do
   [[ $mode =~ ^[0-7]{3,4}$ ]]
   (( (8#$mode & 0022) == 0 ))
 done
-if [[ $# == 0 ]]; then
+if [[ $# == 0 || ( $# == 1 && $1 == gate ) ]]; then
+  profile=${1:-executor}
   [[ -x ./lease-native.test && -x /usr/bin/setpriv ]]
   # The original pins remain open across unshare and identity changes.
   exec 3</proc/self/ns/net
   exec 5</proc/self/ns/mnt
   exec 6</proc/self/ns/pid
-  exec /usr/bin/unshare --mount --net --pid --fork -- /bin/bash "$0" isolated
+  exec /usr/bin/unshare --mount --net --pid --fork -- /bin/bash "$0" isolated "$profile"
 fi
-[[ $# == 1 && $1 == isolated ]]
+[[ $# == 2 && $1 == isolated && ( $2 == executor || $2 == gate ) ]]
+profile=$2
 # Reject forged direct entry BEFORE mounting anything. /proc still names the
 # original host PID namespace until all three provenance checks have passed.
 for pair in '3 net' '5 mnt' '6 pid'; do
@@ -87,6 +89,32 @@ EOF
 /usr/bin/ip -4 -j address show > /run/andeiva-lease/addresses-before.json
 /usr/bin/ip -4 -j route show table all > /run/andeiva-lease/routes-before.json
 /usr/sbin/nft -j list ruleset > /run/andeiva-lease/firewall-before.json
+if [[ $profile == gate ]]; then
+  # The fixed helper exits without refreshing/removing its token. Observe the
+  # actual kernel after the process has died, with forwarding still disabled.
+  if ANDEIVA_LEASE_NATIVE=1 ANDEIVA_LEASE_ROLE=gate /usr/bin/setpriv \
+    --reuid=62006 --regid=62006 --clear-groups --no-new-privs \
+    --bounding-set=-all,+net_admin --inh-caps=-all,+net_admin --ambient-caps=-all,+net_admin \
+    /run/andeiva-lease/lease-native.test -test.run '^TestNativeLeaseGateKernel$' -test.v -test.timeout 30s; then
+    :
+  else
+    failed=$?
+    # Privileged test evidence stays in the authorized laboratory log. Preserve
+    # failure even if collecting diagnostics also fails.
+    /usr/sbin/nft -j -n -y list table inet andeiva_lease_gate || :
+    exit "$failed"
+  fi
+  /usr/sbin/nft -j -n -y list table inet andeiva_lease_gate > /run/andeiva-lease/gate-before-expiry.json
+  jq -e 'any(.nftables[]; .set?.name=="enabled" and .set.elem==["wan0"]) and any(.nftables[]; .set?.name=="live" and (.set.elem|length)==1)' /run/andeiva-lease/gate-before-expiry.json >/dev/null
+  sleep 13
+  /usr/sbin/nft -j -n -y list table inet andeiva_lease_gate > /run/andeiva-lease/gate-after-expiry.json
+  jq -e 'any(.nftables[]; .set?.name=="enabled" and .set.elem==["wan0"]) and any(.nftables[]; .set?.name=="live" and ((.set.elem // [])|length)==0)' /run/andeiva-lease/gate-after-expiry.json >/dev/null
+  for family in ipv4 ipv6; do
+    for name in all default lan0 wan0; do [[ $(cat "/proc/sys/net/$family/conf/$name/forwarding") == 0 ]]; done
+  done
+  printf 'PASS kernel lease token expired after helper exit; WAN retained until isolated namespace teardown; forwarding closed\n'
+  exit 0
+fi
 # The capless negative runs in a different process from the narrow helper.
 ANDEIVA_LEASE_NATIVE=1 ANDEIVA_LEASE_ROLE=capless /usr/bin/setpriv \
   --reuid=62006 --regid=62006 --clear-groups --no-new-privs \

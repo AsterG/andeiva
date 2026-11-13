@@ -77,3 +77,20 @@ and remaining time, both traffic directions including established connections,
 helper pause/death, delayed ACK, exact LAN preservation, host dual-stack invariants
 and teardown. No privileged WSL/shared-CI run is authorized by these commands.
 No Docker/Helm service, dependency or shared coordinator DTO changes in this cut.
+
+## Native kernel token observation
+
+After correcting numeric NFPROTO readback and declaration ordering, the native
+Debian 13 harness executed `TestNativeLeaseGateKernel` successfully (0.18 s).
+A NET_ADMIN-only helper installed real WAN L3, staged and opened the gate, then
+exited without closing or refreshing the token. The root harness observed the
+token present after exit and absent 13 seconds later while `enabled` remained.
+Forwarding stayed zero; host invariants were checked outside the namespaces.
+
+Authority was test-controlled. This proves observable kernel token expiration
+without the helper process; it does not prove packet cutoff, the exact expiry
+instant, a killed/crashed helper, suspend safety, actual DHCP, selected durable
+work or production recovery. The isolated namespace owns cleanup of retained
+WAN state. Requires jq in addition to the executor harness dependencies. Run
+`ANDEIVA_LEASE_LAB_AUTHORIZED=1 ./lease-native-isolated.sh gate` only in the
+bounded authorized root laboratory cgroup, and require literal PASS/no SKIP.
