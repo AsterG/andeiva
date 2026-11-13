@@ -83,6 +83,10 @@ func TestOfflineRoutedSeedV3DeclaredNotVerified(t *testing.T) {
 	if declaredOfflineSeedV3(changed, cfg, store.readObject) {
 		t.Fatal("later generation reused initial seed exception")
 	}
+	changedReader := &v2ReachabilityReader{ctx: context.Background(), area: area, root: root, shared: &access, budget: reachabilityBudgetV2(), objects: map[string]bool{}, edges: map[string]uint8{}}
+	if err = changedReader.configuration(cfg, "later-without-witness", changed, 1, true); err == nil {
+		t.Fatal("later integrity traversal accepted unverified Running")
+	}
 	if err = PrepareOfflineRoutedStoreV3(context.Background(), area, budget, pools, fw, ls, subjects, time.Now()); err == nil {
 		t.Fatal("reseed overwrote existing installation")
 	}
