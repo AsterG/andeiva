@@ -60,3 +60,12 @@ Each nft subprocess receives `SIGKILL` if its pinned launching helper thread
 dies. This limits descendants after an abrupt helper failure; it does not undo a
 batch already accepted by the kernel. Recovery must still inspect effective
 state and the selected transaction before admitting further writes.
+
+The restricted empty-listener adapter cannot start or stop services. It accepts
+only canonical configurations without enabled local services. Each observation
+checks the pinned namespace and parses two complete captures of its kernel TCP
+and UDP tables in IPv4 and IPv6. Missing tables, malformed data and any TCP
+listener or bound UDP socket are refused. Established TCP connections are not
+listeners. This adapter does not replace the separate listener worker/collector
+required to enable a local service. The native fixture binds and closes each of
+the four socket types and checks both refusal and subsequent observed absence.

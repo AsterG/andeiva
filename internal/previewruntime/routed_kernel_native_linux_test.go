@@ -74,6 +74,41 @@ func TestNativeRoutedKernelV3(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	empty, err := newRoutedEmptyListenersV3(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = empty.Observe(ctx); err != nil {
+		t.Fatal("fresh gateway socket absence unavailable", err)
+	}
+	for _, protocol := range []string{"tcp4", "tcp6", "udp4", "udp6"} {
+		address := "127.0.0.1:0"
+		if strings.HasSuffix(protocol, "6") {
+			address = "[::]:0"
+		}
+		var closeSocket func() error
+		if strings.HasPrefix(protocol, "tcp") {
+			listener, listenErr := net.Listen(protocol, address)
+			if listenErr != nil {
+				t.Fatal("native listener setup", protocol, listenErr)
+			}
+			closeSocket = listener.Close
+		} else {
+			listener, listenErr := net.ListenPacket(protocol, address)
+			if listenErr != nil {
+				t.Fatal("native socket setup", protocol, listenErr)
+			}
+			closeSocket = listener.Close
+		}
+		_, observeErr := empty.Observe(ctx)
+		closeErr := closeSocket()
+		if observeErr == nil || closeErr != nil {
+			t.Fatal("unexpected socket accepted as absent", protocol, observeErr, closeErr)
+		}
+		if _, err = empty.Observe(ctx); err != nil {
+			t.Fatal("closed socket still observed", protocol, err)
+		}
+	}
 	for _, table := range []routedactivation.Table{routedactivation.LegacyTable, routedactivation.RoutedTable, routedactivation.LocalTable} {
 		if _, present, err := kernel.Observe(ctx, table); err != nil || present {
 			t.Fatal("fresh gateway contains an existing managed table", table, err)

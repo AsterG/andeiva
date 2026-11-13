@@ -51,3 +51,11 @@ Cada subprocesso nft recebe `SIGKILL` se morrer a thread fixada do helper que o
 iniciou. Isso limita descendentes após falha abrupta; não desfaz um lote já aceito
 pelo kernel. A recuperação deve verificar o estado efetivo e a transação
 selecionada antes de admitir novas gravações.
+
+O adaptador restrito sem listeners não inicia nem encerra serviços. Aceita apenas
+configurações canônicas sem serviços locais habilitados. Verifica o namespace
+fixado e duas capturas completas das tabelas TCP/UDP IPv4/IPv6 do kernel. Rejeita
+tabelas ausentes, dados inválidos, listeners TCP e sockets UDP vinculados.
+Conexões TCP estabelecidas não são listeners. Habilitar serviços exige o worker
+e coletor separados. O teste nativo abre e fecha os quatro tipos de socket e
+verifica rejeição e ausência posterior.
