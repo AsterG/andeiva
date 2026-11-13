@@ -248,17 +248,8 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 		return err
 	}
 	defer func() {
-		if drained := waitRoutedCgroupDrainedV3(); drained != nil {
-			// Retain pins and files when a descendant might still mutate them.
-			// Service cgroup termination handles the process; restart stays fenced.
-			result = errors.Join(result, drained)
-			return
-		}
-		if cleanup := owned.Close(); cleanup != nil {
-			result = errors.Join(result, cleanup)
-			return
-		}
-		result = errors.Join(result, slot.recordDrained(owned.metadata, ids))
+		// Retain pins and files if a descendant may still mutate the old scope.
+		result = errors.Join(result, finishRoutedScopeRetirementV3(slot, owned.metadata, ids, owned.Close))
 	}()
 	// RunRoutedSupervisorV3 drains both child processes before returning. Only
 	// then may the namespace owner remove links and release its mount pin.

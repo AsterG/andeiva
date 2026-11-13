@@ -17,6 +17,19 @@ import (
 
 const routedSupervisorCgroupV3 = "/system.slice/andeiva-preview-grouped.service"
 
+func finishRoutedScopeRetirementV3(slot *routedRetirementSlot, metadata Metadata, ids Identities, closeNamespace func() error) error {
+	if closeNamespace == nil {
+		return ErrIdentity
+	}
+	if err := waitRoutedCgroupDrainedV3(); err != nil {
+		return err
+	}
+	if err := closeNamespace(); err != nil {
+		return err
+	}
+	return slot.recordDrained(metadata, ids)
+}
+
 func routedCgroupOnlySupervisorV3(raw []byte, pid int) bool {
 	fields := bytes.Fields(raw)
 	return pid > 0 && len(fields) == 1 && string(fields[0]) == strconv.Itoa(pid)
