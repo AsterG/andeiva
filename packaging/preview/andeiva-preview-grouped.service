@@ -13,6 +13,9 @@ StartLimitBurst=3
 # Root owns only the inherited-resource supervisor. It launches an API without
 # capabilities and a namespace-bound helper with NET_ADMIN through fixed roles.
 Type=simple
+NotifyAccess=main
+FileDescriptorStoreMax=7
+FileDescriptorStorePreserve=yes
 User=root
 Group=root
 ExecStart=/usr/lib/andeiva-preview/andeiva-preview grouped-managed-supervisor
@@ -43,7 +46,7 @@ RestrictRealtime=yes
 LockPersonality=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ReadWritePaths=/var/lib/andeiva-preview/grouped /var/lib/andeiva-preview/audit /run/andeiva-preview/grouped
-ReadWritePaths=/var/lib/andeiva-preview-package/grouped-retirement-v3
+ReadWritePaths=/var/lib/andeiva-preview-package/grouped-retirement-v3 /var/lib/andeiva-preview-package/grouped-scope-v3
 InaccessiblePaths=-/var/lib/andeiva-preview/operator
 TasksMax=128
 LimitNOFILE=256

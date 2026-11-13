@@ -7,20 +7,25 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"os"
 	"syscall"
+	"time"
 )
 
 type routedManagedNamespaceV3 struct {
-	metadata      Metadata
-	area          *os.Root
-	host          *os.File
-	namespace     *RoutedGatewayNamespaceV3
-	links         *RoutedGatewayLinksV3
-	namespaceRoot *os.Root
-	children      []string
-	metadataInfo  os.FileInfo
+	metadata          Metadata
+	area              *os.Root
+	host              *os.File
+	namespace         *RoutedGatewayNamespaceV3
+	links             *RoutedGatewayLinksV3
+	namespaceRoot     *os.Root
+	children          []string
+	metadataInfo      os.FileInfo
+	recovery          *RoutedScopeRecoveryV3
+	recoveryPublished bool
 }
 
 // The caller drains the inherited-resource supervisor before closing this
@@ -78,7 +83,11 @@ func (r *routedManagedNamespaceV3) Close() error {
 	return errors.Join(result, parent.Sync(), parent.Close())
 }
 
-func prepareRoutedManagedNamespaceV3(ctx context.Context, area *os.Root, node routedNodeLinksV3, ids Identities) (out *routedManagedNamespaceV3, result error) {
+// Standalone isolated namespace fixtures do not enable the service FD store.
+func prepareRoutedManagedNamespaceV3(ctx context.Context, area *os.Root, node routedNodeLinksV3, ids Identities) (*routedManagedNamespaceV3, error) {
+	return prepareRoutedManagedScopeV3(ctx, area, node, ids, nil)
+}
+func prepareRoutedManagedScopeV3(ctx context.Context, area *os.Root, node routedNodeLinksV3, ids Identities, record *routedScopeRecordSlotV3) (out *routedManagedNamespaceV3, result error) {
 	if ctx == nil || ctx.Err() != nil || area == nil || node.validate() != nil || ids.Validate() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return nil, ErrIdentity
 	}
@@ -101,9 +110,11 @@ func prepareRoutedManagedNamespaceV3(ctx context.Context, area *os.Root, node ro
 	}
 	r := &routedManagedNamespaceV3{area: area}
 	defer func() {
-		if result != nil {
+		if result != nil && !r.recoveryPublished {
 			result = errors.Join(result, r.Close())
 		}
+		// Once the manifest is published, preserve uncertain resources for recovery.
+		// The root service exits on failure; no receipt or pathname cleanup is inferred.
 	}()
 	for _, child := range []struct {
 		name     string
@@ -158,6 +169,21 @@ func prepareRoutedManagedNamespaceV3(ctx context.Context, area *os.Root, node ro
 		return nil, err
 	}
 	r.metadata = Metadata{SchemaVersion: RoutedMetadataSchemaVersion, RunID: hex.EncodeToString(nonce[:]), BootID: bootID, HostNamespace: host, GatewayNamespace: r.namespace.ID()}
+	if err = writeNew(area, "runtime.json", marshal(r.metadata), 0644, 0, 0); err != nil {
+		return nil, err
+	}
+	r.metadataInfo, err = area.Lstat("runtime.json")
+	if err != nil {
+		return nil, err
+	}
+	if err = directory.Sync(); err != nil {
+		return nil, err
+	}
+	if record != nil {
+		if err = r.publishScopeV3(ctx, record, ids); err != nil {
+			return nil, err
+		}
+	}
 	r.links, err = NewRoutedGatewayLinksV3(ctx, r.metadata, r.host, r.namespace.File(), [2]RoutedParentLinkV3{node.LAN.binding(), node.WAN.binding()}, node.Identity)
 	if err != nil {
 		return nil, err
@@ -168,13 +194,7 @@ func prepareRoutedManagedNamespaceV3(ctx context.Context, area *os.Root, node ro
 	if err = r.links.Enable(ctx); err != nil {
 		return nil, err
 	}
-	if err = writeNew(area, "runtime.json", marshal(r.metadata), 0644, 0, 0); err != nil {
-		return nil, err
-	}
-	r.metadataInfo, err = area.Lstat("runtime.json")
-	if err != nil {
-		return nil, err
-	}
+
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -190,6 +210,15 @@ func prepareRoutedManagedNamespaceV3(ctx context.Context, area *os.Root, node ro
 func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) {
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || c.Validate() != nil {
 		return ErrIdentity
+	}
+	inherited, err := TakeRoutedScopeRecoveryInheritedV3(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, inherited.Close()) }()
+	// Same-boot orphan teardown requires the separately qualified drainage path.
+	if inherited.Recovery != nil {
+		return ErrUnavailable
 	}
 	marker, err := readOwned(routedCutoverPathV3, 0, 0, 0600, 4096)
 	if err != nil {
@@ -243,15 +272,91 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 		return err
 	}
 	defer func() { result = errors.Join(result, area.Close()) }()
-	owned, err := prepareRoutedManagedNamespaceV3(ctx, area, node, ids)
+	record, err := openScopeRecordSlotV3(operational, false)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, record.Close()) }()
+	if err = record.clearCompleted(ctx, slot); err != nil {
+		return err
+	}
+	owned, err := prepareRoutedManagedScopeV3(ctx, area, node, ids, record)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		// Retain pins and files if a descendant may still mutate the old scope.
-		result = errors.Join(result, finishRoutedScopeRetirementV3(slot, owned.metadata, ids, owned.Close))
+		result = errors.Join(result, finishStoredRoutedScopeV3(slot, record, owned, ids))
 	}()
 	// RunRoutedSupervisorV3 drains both child processes before returning. Only
 	// then may the namespace owner remove links and release its mount pin.
-	return RunRoutedSupervisorV3(ctx, c)
+	return runRoutedSupervisorWithManagementV3(ctx, c, inherited.Management)
+}
+
+func (r *routedManagedNamespaceV3) publishScopeV3(ctx context.Context, record *routedScopeRecordSlotV3, ids Identities) error {
+	// Reopen only a previously verified retained underlay descriptor as readonly.
+	// Its pathname is never used as authority.
+	underlay, err := os.Open(fmt.Sprintf("/proc/self/fd/%d", r.namespace.underlay.Fd()))
+	if err != nil {
+		return err
+	}
+	defer underlay.Close()
+	oldInfo, err := r.namespace.underlay.Stat()
+	newInfo, e := underlay.Stat()
+	if err != nil || e != nil || !os.SameFile(oldInfo, newInfo) {
+		return ErrIdentity
+	}
+	mount, err := os.Open("/proc/self/ns/mnt")
+	if err != nil {
+		return err
+	}
+	defer mount.Close()
+	cgroup, err := os.Open("/sys/fs/cgroup" + routedSupervisorCgroupV3)
+	if err != nil {
+		return err
+	}
+	defer cgroup.Close()
+	eventsFD, err := unix.Openat(int(cgroup.Fd()), "cgroup.events", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	events := os.NewFile(uintptr(eventsFD), "root-cgroup-events")
+	defer events.Close()
+	anchors := RoutedScopeRecoveryAnchorsV3{record.reader, r.namespace.File(), mount, underlay, r.namespace.directory, cgroup, events}
+	raw, err := PrepareRoutedScopeRecoveryRecordV3(ctx, r.metadata, ids, anchors)
+	if err != nil {
+		return err
+	}
+	if err = record.publish(raw); err != nil {
+		return err
+	}
+	r.recoveryPublished = true
+	r.recovery, err = OpenRoutedScopeRecoveryV3(ctx, anchors)
+	if err != nil {
+		return err
+	}
+	return r.recovery.Store(ctx)
+}
+func finishStoredRoutedScopeV3(slot *routedRetirementSlot, record *routedScopeRecordSlotV3, owned *routedManagedNamespaceV3, ids Identities) error {
+	if slot == nil || record == nil || owned == nil || owned.recovery == nil {
+		return ErrIdentity
+	}
+	if err := waitRoutedCgroupDrainedV3(); err != nil {
+		return err
+	}
+	if err := owned.Close(); err != nil {
+		return err
+	}
+	cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := owned.recovery.DropStored(cleanup); err != nil {
+		return err
+	}
+	if err := owned.recovery.Close(); err != nil {
+		return err
+	}
+	if err := slot.recordDrained(owned.metadata, ids); err != nil {
+		return err
+	}
+	return record.clearCompleted(cleanup, slot)
 }

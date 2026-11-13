@@ -56,6 +56,7 @@ func TestRoutedScopeRecoveryV3StoreReadbackRequiresExactAllDescriptors(t *testin
 		"inode":       func(e [][]any) [][]any { e[0][4] = uint64(999); return e },
 		"writable":    func(e [][]any) [][]any { e[0][8] = 2; return e },
 		"device":      func(e [][]any) [][]any { e[0][2] = 99; return e },
+		"null_flags":  func(e [][]any) [][]any { e[0][8] = nil; return e },
 		"extra_field": func(e [][]any) [][]any { e[0] = append(e[0], "extra"); return e },
 	} {
 		t.Run(name, func(t *testing.T) {

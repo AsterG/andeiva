@@ -14,10 +14,9 @@ import (
 	"time"
 
 	"github.com/AsterG/andeiva/internal/jsoncheck"
-	"golang.org/x/sys/unix"
 )
 
-var scopeRecoveryNamesV3 = [6]string{"andeiva-scope-record-v3", "andeiva-scope-gateway-v3", "andeiva-scope-mount-v3", "andeiva-scope-underlay-v3", "andeiva-scope-directory-v3", "andeiva-scope-cgroup-v3"}
+var scopeRecoveryNamesV3 = [7]string{"andeiva-scope-record-v3", "andeiva-scope-gateway-v3", "andeiva-scope-mount-v3", "andeiva-scope-underlay-v3", "andeiva-scope-directory-v3", "andeiva-scope-cgroup-v3", "andeiva-scope-events-v3"}
 
 type scopeRecoveryStoredV3 struct {
 	Mode, Major, Minor    uint32
@@ -28,7 +27,7 @@ type scopeRecoveryStoredV3 struct {
 // systemd257 DumpUnitFileDescriptorStore exposes fstat/F_GETFL facts. Names are
 // not unique and order is unspecified, so neither alone identifies an anchor.
 func scopeRecoveryStoreMatchesV3(raw []byte, want map[string]scopeRecoveryStoredV3) bool {
-	if len(raw) == 0 || len(raw) > 32768 || len(want) != len(scopeRecoveryNamesV3) || !jsoncheck.UniqueControlFields(raw) {
+	if len(raw) == 0 || len(raw) > 32768 || (len(want) != 0 && len(want) != len(scopeRecoveryNamesV3)) || !jsoncheck.UniqueControlFields(raw) {
 		return false
 	}
 	var envelope struct {
@@ -38,6 +37,9 @@ func scopeRecoveryStoreMatchesV3(raw []byte, want map[string]scopeRecoveryStored
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if d.Decode(&envelope) != nil || envelope.Type != "a(suuutuusu)" || len(envelope.Data) != 1 {
+		return false
+	}
+	if data := bytes.TrimSpace(envelope.Data[0]); len(data) == 0 || data[0] != '[' {
 		return false
 	}
 	var entries [][]json.RawMessage
@@ -53,7 +55,7 @@ func scopeRecoveryStoreMatchesV3(raw []byte, want map[string]scopeRecoveryStored
 		var got scopeRecoveryStoredV3
 		fields := []any{&name, &got.Mode, &got.Major, &got.Minor, &got.Inode, &got.Rmajor, &got.Rminor, &path, &got.Flags}
 		for i, field := range fields {
-			if json.Unmarshal(entry[i], field) != nil {
+			if bytes.Equal(bytes.TrimSpace(entry[i]), []byte("null")) || json.Unmarshal(entry[i], field) != nil {
 				return false
 			}
 		}
@@ -77,21 +79,19 @@ func (r *RoutedScopeRecoveryV3) VerifyStored(ctx context.Context) error {
 	if r.revalidateLocked(ctx) != nil {
 		return ErrIdentity
 	}
-	want := make(map[string]scopeRecoveryStoredV3, len(r.files))
-	for i, f := range r.files {
-		_, st, err := scopeRecoveryIdentityV3(f)
-		if err != nil {
-			return ErrIdentity
-		}
-		flags, err := unix.FcntlInt(f.Fd(), unix.F_GETFL, 0)
-		if err != nil || flags < 0 || uint64(flags) > uint64(^uint32(0)) {
-			return ErrIdentity
-		}
-		// systemd masks raw O_LARGEFILE for architecture-independent dump output.
-		want[scopeRecoveryNamesV3[i]] = scopeRecoveryStoredV3{Mode: st.Mode, Major: unix.Major(uint64(st.Dev)), Minor: unix.Minor(uint64(st.Dev)), Inode: st.Ino, Rmajor: unix.Major(uint64(st.Rdev)), Rminor: unix.Minor(uint64(st.Rdev)), Flags: uint32(flags) &^ 0x8000}
+	want, err := r.storedFactsLocked()
+	if err != nil {
+		return err
 	}
-	if trustedRoutedExecutableV3("/usr/bin/busctl") != nil {
+	raw, err := readScopeRecoveryStoreV3(ctx)
+	if err != nil || !scopeRecoveryStoreMatchesV3(raw, want) || r.revalidateLocked(ctx) != nil {
 		return ErrIdentity
+	}
+	return nil
+}
+func readScopeRecoveryStoreV3(ctx context.Context) ([]byte, error) {
+	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || trustedRoutedExecutableV3("/usr/bin/busctl") != nil {
+		return nil, ErrIdentity
 	}
 	call, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -104,10 +104,10 @@ func (r *RoutedScopeRecoveryV3) VerifyStored(ctx context.Context) error {
 	runtime.LockOSThread()
 	err := cmd.Run()
 	runtime.UnlockOSThread()
-	if err != nil || call.Err() != nil || !scopeRecoveryStoreMatchesV3(output.Bytes(), want) || r.revalidateLocked(ctx) != nil {
-		return ErrIdentity
+	if err != nil || call.Err() != nil {
+		return nil, ErrIdentity
 	}
-	return nil
+	return output.Bytes(), nil
 }
 
 type scopeRecoveryOutputV3 struct{ bytes.Buffer }

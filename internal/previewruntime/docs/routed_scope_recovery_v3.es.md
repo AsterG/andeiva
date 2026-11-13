@@ -1,52 +1,54 @@
-# Requisitos para recuperar el scope Root
+# Retención del scope Root y retirada normal
 
-Este incremento experimental todavía no recupera un supervisor muerto. Añade
-captura de anchors reales, registro operacional Root de 4096 bytes exactos,
-constructor readonly y lectura real del FD store del manager. No desmonta,
-borra paths, cierra el gate DHCP ni emite recibos. G1/R2 seleccionado sigue
-siendo una autoridad independiente y obligatoria.
+El servicio agrupado experimental publica un manifest operacional root y siete
+descriptores antes de crear o habilitar enlaces L2. La instalación debe llamar a
+`PrepareRoutedScopeRecoverySlotV3` para reservar `grouped-scope-v3`: archivo fijo
+root 0600 de 4096 bytes. El runtime no lo crea, amplía ni sobrescribe si quedó
+pendiente. Es evidencia operacional, no otra base de configuración; G1/R2
+seleccionado sigue siendo obligatorio.
 
-`PrepareRoutedScopeRecoveryRecordV3` exige root real, BootID/host actuales,
-mount namespace actual y cgroup dedicado exacto sin otros procesos. Recibe seis
-FD readonly: registro preasignado, gateway, mount namespace, underlay original
-anterior al bind, directorio netns root0700 y directorio cgroup2. El registro liga
-dev/inode, digest de metadata e identidades. Root debe persistir/fsync antes de
-crear o habilitar L2. El checksum detecta escritura parcial; no autentica.
+Los FD retienen manifest, namespace de red gateway, namespace de montaje,
+archivo original previo al bind, directorio privado, cgroup original y su
+`cgroup.events`. Este último se captura con `openat` del cgroup antes de efectos;
+sus identidades quedan registradas. Root persiste y sincroniza el manifest,
+envía cada FD con `FDPOLL=0`, espera un barrier separado y consulta el almacén
+real del manager. Deben coincidir los siete nombres, dispositivo/inode, modos y
+acceso. El barrier solo no acredita aceptación. Una publicación parcial conserva
+la evidencia y bloquea efectos; no reintenta ni descarta entradas desconocidas.
 
-`OpenRoutedScopeRecoveryV3` verifica dueño/modo/asignación del archivo, encoding,
-acceso/tipo/identidad de los FD, ámbito distinto del host y BootID actual. Duplica
-con CLOEXEC. `VerifyStored` ejecuta una consulta busctl fija y acotada; exige los
-seis nombres exactos con modo/dev/inode/flags coincidentes. No confía en paths ni
-orden y revalida registro/anchors tras la lectura. Esto prueba retención, nunca
-drenaje ni permiso para emitir recibo.
+La unidad usa `NotifyAccess=main`, `FileDescriptorStoreMax=7` y
+`FileDescriptorStorePreserve=yes`. Root MAIN consume `LISTEN_FDNAMES` antes de
+abrir otros FD: listener de administración solo, o listener y los siete anchors,
+en cualquier orden. Rechaza duplicados, conjuntos parciales, nombres ajenos y
+alias. Duplica con CLOEXEC; el supervisor mantiene la validación de namespace,
+interfaz y dirección del listener.
 
-Falta integrar FDSTORE con aceptación observada antes de L2; recibir FDs nombrados
-en el siguiente MAIN separando el socket de administración; probar drenaje del
-cgroup anterior retenido; retirar el scope exacto dentro del mount namespace
-retenido; liberar copias del manager y verificar ausencia; recién entonces emitir
-el recibo existente. Pin ausente, unidad renombrada, cgroup nuevo vacío o manifest
-solo no prueban retiro. Cgroup antiguo offline/eliminado sigue bloqueado hasta
-implementar su prueba de drenaje. La parada normal también debe liberar copias
-del manager antes del recibo. Fallos parciales conservan evidencia y bloquean.
+La parada normal exige hijos drenados y teardown explícito exitoso de enlaces y
+namespace; después elimina las copias exactas del manager, espera el barrier y
+verifica ausencia. Cierra sus copias retenidas antes de escribir el recibo de
+retirada existente. Solo un recibo completado exacto y un almacén vacío permiten
+limpiar el manifest. Ausencia de rutas y cierre de FD no equivalen a destrucción
+RCU sincrónica. Un fallo conserva evidencia y evita un recibo falso.
 
-Propuesta no aplicada: `NotifyAccess=main`, `FileDescriptorStoreMax=6`,
-`FileDescriptorStorePreserve=yes`. Recuperar en siguiente MAIN; no asumir que
-ExecStopPost recibe FDs guardados. Nombres fijos sin política, credenciales ni
-hash de trabajo. Sin cambios de dependencias, unit, host o appliance. Pendientes
-SIGKILL/stop/start nativos, herencia FD, teardown, fallos parciales y recursos.
-No se afirma recuperación por reboot, suspensión o power-loss mediante estos FD.
+**La recuperación tras caída sigue bloqueada.** Los anchors heredados se validan
+pero se rechazan antes de crear otro scope. `ENODEV`, un path ausente, otro
+cgroup o el manifest por sí solos no autorizan limpieza. La observación nativa
+del antiguo `cgroup.events` aún no es autoridad de retirada. No se promete
+persistencia de FD tras reinicio de OS, suspensión o pérdida de energía.
 
-Tests: encoding, scope/fase alterados, aliases, escritura parcial, FD writable o
-tipo incorrecto, rechazo capless y readback incompleto/duplicado/modificado.
-Respuestas del manager en tests son dobles explícitos, no evidencia nativa.
+Las pruebas focales usan dobles explícitos del manager y transferencia Unix real
+para barriers. No acreditan almacenamiento systemd nativo ni teardown
+privilegiado. Siguen pendientes calificación nativa de almacenamiento, parada,
+fallos parciales, SIGKILL y recursos. No se activó el host ni la appliance.
 
 ```sh
-go test -race ./internal/previewruntime -run TestRoutedScopeRecoveryV3 -count=1
+go test -race ./internal/previewruntime -run TestRoutedScopeRecoveryV3 -count=3
 go vet ./internal/previewruntime
 go build ./internal/previewruntime
+bash packaging/preview/tests/api-lifetime-unit-graph.sh
 ```
 
-Fuentes: [ciclo FD store systemd257](https://www.freedesktop.org/software/systemd/man/257/systemd.service.html),
-[herencia nombrada](https://www.freedesktop.org/software/systemd/man/257/sd_listen_fds.html),
-[barrier de procesamiento, no aceptación](https://www.freedesktop.org/software/systemd/man/257/sd_notify.html)
-y [protocolo DumpUnitFileDescriptorStore](https://github.com/systemd/systemd/blob/v257/src/analyze/analyze-fdstore.c).
+[systemd257 service FD store](https://www.freedesktop.org/software/systemd/man/257/systemd.service.html),
+[named inheritance](https://www.freedesktop.org/software/systemd/man/257/sd_listen_fds.html),
+[notification barriers and FDPOLL](https://www.freedesktop.org/software/systemd/man/257/sd_notify.html),
+[manager readback](https://github.com/systemd/systemd/blob/v257/src/analyze/analyze-fdstore.c).

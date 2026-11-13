@@ -20,6 +20,7 @@ type RoutedScopeRecoveryRecordV3 struct {
 	Underlay        RoutedScopeRecoveryFileV3 `json:"underlay"`
 	Directory       RoutedScopeRecoveryFileV3 `json:"directory"`
 	Cgroup          RoutedScopeRecoveryFileV3 `json:"cgroup"`
+	CgroupEvents    RoutedScopeRecoveryFileV3 `json:"cgroup_events"`
 	IntegritySHA256 string                    `json:"integrity_sha256,omitempty"`
 }
 
@@ -33,7 +34,7 @@ func (r RoutedScopeRecoveryRecordV3) valid() bool {
 		return false
 	}
 	seen := map[RoutedScopeRecoveryFileV3]bool{}
-	for _, id := range []RoutedScopeRecoveryFileV3{r.Gateway, r.Mount, r.Underlay, r.Directory, r.Cgroup} {
+	for _, id := range []RoutedScopeRecoveryFileV3{r.Gateway, r.Mount, r.Underlay, r.Directory, r.Cgroup, r.CgroupEvents} {
 		if id.Device == 0 || id.Inode == 0 || seen[id] {
 			return false
 		}

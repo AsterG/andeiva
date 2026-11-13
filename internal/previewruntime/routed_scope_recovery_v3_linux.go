@@ -16,7 +16,7 @@ import (
 // They must never be supplied by API input. Record is an allocated root 0600
 // regular file; Underlay is the original pre-bind file, not a reopened pathname.
 type RoutedScopeRecoveryAnchorsV3 struct {
-	Record, Gateway, Mount, Underlay, Directory, Cgroup *os.File
+	Record, Gateway, Mount, Underlay, Directory, Cgroup, CgroupEvents *os.File
 }
 
 // RoutedScopeRecoveryV3 retains identity-checked descriptors only. It deliberately
@@ -24,12 +24,12 @@ type RoutedScopeRecoveryAnchorsV3 struct {
 type RoutedScopeRecoveryV3 struct {
 	mu     sync.Mutex
 	record RoutedScopeRecoveryRecordV3
-	files  [6]*os.File
+	files  [7]*os.File
 	closed bool
 }
 
-func scopeRecoveryFilesV3(a RoutedScopeRecoveryAnchorsV3) [6]*os.File {
-	return [6]*os.File{a.Record, a.Gateway, a.Mount, a.Underlay, a.Directory, a.Cgroup}
+func scopeRecoveryFilesV3(a RoutedScopeRecoveryAnchorsV3) [7]*os.File {
+	return [7]*os.File{a.Record, a.Gateway, a.Mount, a.Underlay, a.Directory, a.Cgroup, a.CgroupEvents}
 }
 func scopeRecoveryIdentityV3(f *os.File) (RoutedScopeRecoveryFileV3, unix.Stat_t, error) {
 	var st unix.Stat_t
@@ -52,7 +52,7 @@ func validateScopeRecoveryAnchorsV3(a RoutedScopeRecoveryAnchorsV3, r RoutedScop
 		return ErrIdentity
 	}
 	files := scopeRecoveryFilesV3(a)
-	wanted := [6]RoutedScopeRecoveryFileV3{{}, r.Gateway, r.Mount, r.Underlay, r.Directory, r.Cgroup}
+	wanted := [7]RoutedScopeRecoveryFileV3{{}, r.Gateway, r.Mount, r.Underlay, r.Directory, r.Cgroup, r.CgroupEvents}
 	seen := map[RoutedScopeRecoveryFileV3]bool{}
 	for i, f := range files {
 		id, st, err := scopeRecoveryIdentityV3(f)
@@ -86,6 +86,11 @@ func validateScopeRecoveryAnchorsV3(a RoutedScopeRecoveryAnchorsV3, r RoutedScop
 			if st.Mode&unix.S_IFMT != unix.S_IFDIR || st.Uid != 0 || st.Gid != 0 || unix.Fstatfs(int(f.Fd()), &fs) != nil || fs.Type != unix.CGROUP2_SUPER_MAGIC {
 				return ErrIdentity
 			}
+		case 6:
+			var fs unix.Statfs_t
+			if st.Mode != unix.S_IFREG|0444 || st.Uid != 0 || st.Gid != 0 || uint64(st.Dev) != r.Cgroup.Device || unix.Fstatfs(int(f.Fd()), &fs) != nil || fs.Type != unix.CGROUP2_SUPER_MAGIC {
+				return ErrIdentity
+			}
 		}
 	}
 	return nil
@@ -114,7 +119,7 @@ func OpenRoutedScopeRecoveryV3(ctx context.Context, a RoutedScopeRecoveryAnchors
 		}
 		r.files[i] = os.NewFile(uintptr(fd), "routed-scope-recovery")
 	}
-	held := RoutedScopeRecoveryAnchorsV3{r.files[0], r.files[1], r.files[2], r.files[3], r.files[4], r.files[5]}
+	held := RoutedScopeRecoveryAnchorsV3{r.files[0], r.files[1], r.files[2], r.files[3], r.files[4], r.files[5], r.files[6]}
 	if validateScopeRecoveryRecordFileV3(held.Record) != nil {
 		return nil, ErrIdentity
 	}
@@ -184,8 +189,8 @@ func PrepareRoutedScopeRecoveryRecordV3(ctx context.Context, m Metadata, ids Ide
 		return nil, ErrIdentity
 	}
 	r := RoutedScopeRecoveryRecordV3{Version: 3, Phase: "pinned", Metadata: m, Identities: ids, MetadataSHA256: retirementDigestV3(marshal(m))}
-	destinations := []*RoutedScopeRecoveryFileV3{&r.Gateway, &r.Mount, &r.Underlay, &r.Directory, &r.Cgroup}
-	for i, f := range []*os.File{a.Gateway, a.Mount, a.Underlay, a.Directory, a.Cgroup} {
+	destinations := []*RoutedScopeRecoveryFileV3{&r.Gateway, &r.Mount, &r.Underlay, &r.Directory, &r.Cgroup, &r.CgroupEvents}
+	for i, f := range []*os.File{a.Gateway, a.Mount, a.Underlay, a.Directory, a.Cgroup, a.CgroupEvents} {
 		id, _, err := scopeRecoveryIdentityV3(f)
 		if err != nil {
 			return nil, err
@@ -220,6 +225,16 @@ func PrepareRoutedScopeRecoveryRecordV3(ctx context.Context, m Metadata, ids Ide
 	if err != nil || actualGroup != r.Cgroup || waitRoutedCgroupDrainedV3() != nil || ctx.Err() != nil {
 		return nil, ErrIdentity
 	}
+	eventsFD, err := unix.Openat(int(a.Cgroup.Fd()), "cgroup.events", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrIdentity
+	}
+	events := os.NewFile(uintptr(eventsFD), "root-cgroup-events")
+	defer events.Close()
+	eventIdentity, _, err := scopeRecoveryIdentityV3(events)
+	if err != nil || eventIdentity != r.CgroupEvents {
+		return nil, ErrIdentity
+	}
 	return EncodeRoutedScopeRecoveryV3(r)
 }
 
@@ -227,7 +242,7 @@ func (r *RoutedScopeRecoveryV3) revalidateLocked(ctx context.Context) error {
 	if r.closed || ctx.Err() != nil {
 		return ErrIdentity
 	}
-	a := RoutedScopeRecoveryAnchorsV3{r.files[0], r.files[1], r.files[2], r.files[3], r.files[4], r.files[5]}
+	a := RoutedScopeRecoveryAnchorsV3{r.files[0], r.files[1], r.files[2], r.files[3], r.files[4], r.files[5], r.files[6]}
 	if validateScopeRecoveryAnchorsV3(a, r.record) != nil {
 		return ErrIdentity
 	}
