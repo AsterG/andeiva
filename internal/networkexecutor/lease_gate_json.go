@@ -30,7 +30,8 @@ func leaseGateObjects(wan string) []any {
 		return leaseGateObject{"match": leaseGateObject{"op": op, "left": leaseGateObject{"meta": leaseGateObject{"key": key}}, "right": right}}
 	}
 	for _, key := range []string{"iifname", "oifname"} {
-		for _, check := range []any{match("nfproto", "!=", "ipv4"), match(key, "!=", "@enabled"), match(key, "!=", "@live")} {
+		// Numeric observation mode emits Linux NFPROTO_IPV4 as 2.
+		for _, check := range []any{match("nfproto", "!=", 2), match(key, "!=", "@enabled"), match(key, "!=", "@live")} {
 			objects = append(objects, leaseGateObject{"rule": leaseGateObject{"family": "inet", "table": leaseGateTable, "chain": "forward", "expr": []any{match(key, "==", wan), check, leaseGateObject{"drop": nil}}}})
 		}
 	}
@@ -177,13 +178,66 @@ func leaseGateRead(b []byte, wan string, enabled, token bool, digest string, ttl
 	}
 	// Round-trip the expected projection to use json.Number on both sides.
 	expectedBytes := leaseGateEncode(leaseGateObjects(wan))
-	var expected map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(expectedBytes))
-	decoder.UseNumber()
-	if decoder.Decode(&expected) != nil || !reflect.DeepEqual(clean, expected["nftables"]) {
+	actualProjection, actualErr := leaseGateProjection(clean)
+	expectedProjection, expectedErr := leaseGateProjectionFromRoot(expectedBytes)
+	if actualErr != nil || expectedErr != nil || !reflect.DeepEqual(actualProjection, expectedProjection) {
 		return 0, ErrObservation
 	}
 	return remaining, nil
+}
+
+type leaseGateObjectProjection struct {
+	Declarations map[string]any
+	Rules        []any
+}
+
+func leaseGateProjectionFromRoot(data []byte) (leaseGateObjectProjection, error) {
+	var root map[string]any
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+	if d.Decode(&root) != nil {
+		return leaseGateObjectProjection{}, ErrObservation
+	}
+	objects, ok := root["nftables"].([]any)
+	if !ok {
+		return leaseGateObjectProjection{}, ErrObservation
+	}
+	return leaseGateProjection(objects)
+}
+
+// Kernel enumeration places chains before sets, independently of creation order.
+// Only declarations are compared as a set; every rule remains in exact order.
+func leaseGateProjection(objects []any) (leaseGateObjectProjection, error) {
+	p := leaseGateObjectProjection{Declarations: map[string]any{}, Rules: []any{}}
+	for _, item := range objects {
+		o, ok := item.(map[string]any)
+		if !ok || len(o) != 1 {
+			return p, ErrObservation
+		}
+		for kind, raw := range o {
+			v, ok := raw.(map[string]any)
+			if !ok {
+				return p, ErrObservation
+			}
+			if kind == "rule" {
+				p.Rules = append(p.Rules, o)
+				continue
+			}
+			if kind != "table" && kind != "chain" && kind != "set" {
+				return p, ErrObservation
+			}
+			name, ok := v["name"].(string)
+			if !ok || name == "" {
+				return p, ErrObservation
+			}
+			key := kind + ":" + name
+			if _, exists := p.Declarations[key]; exists {
+				return p, ErrObservation
+			}
+			p.Declarations[key] = o
+		}
+	}
+	return p, nil
 }
 
 func leaseGateNumber(v any) (int64, bool) {

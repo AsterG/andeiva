@@ -385,6 +385,38 @@ func TestLeaseGateExactProjectionRejectsSemanticDrift(t *testing.T) {
 	}
 }
 
+func TestLeaseGateKernelDeclarationOrderPreservesRuleSemantics(t *testing.T) {
+	g, k, _, _ := gateFixture(t)
+	b, err := k.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if json.Unmarshal(b, &root) != nil {
+		t.Fatal("fixture")
+	}
+	objects := root["nftables"].([]any)
+	// nft emits table, chain, sets, then the chain's ordered rules.
+	objects[1], objects[2], objects[3] = objects[3], objects[1], objects[2]
+	b, _ = json.Marshal(root)
+	if _, err := leaseGateRead(b, g.wan.Binding.Name, false, false, "", 0); err != nil {
+		t.Fatal("kernel declaration order rejected", err)
+	}
+	rule := objects[4].(map[string]any)["rule"].(map[string]any)
+	match := rule["expr"].([]any)[1].(map[string]any)["match"].(map[string]any)
+	match["right"] = 10 // IPv6 must never substitute for the IPv4-only guard.
+	b, _ = json.Marshal(root)
+	if _, err := leaseGateRead(b, g.wan.Binding.Name, false, false, "", 0); err == nil {
+		t.Fatal("IPv6 substitution accepted")
+	}
+	match["right"] = 2
+	root["nftables"] = append(objects, objects[1])
+	b, _ = json.Marshal(root)
+	if _, err := leaseGateRead(b, g.wan.Binding.Name, false, false, "", 0); err == nil {
+		t.Fatal("duplicate declaration accepted")
+	}
+}
+
 func TestLeaseGateOpenBatchTouchesOnlyEnableSet(t *testing.T) {
 	var got map[string]any
 	if json.Unmarshal(leaseGateOpen("wan0"), &got) != nil {
