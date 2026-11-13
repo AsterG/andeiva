@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -167,22 +168,22 @@ func (c *v2Coordinator) publishRoutedBootWorkV2(ctx context.Context, record v2Re
 		return ErrRecovery
 	}
 	if err != nil || routedHistoricalWitnessV2(previous, saved.Composite.Hash, c.store.readObject) != nil {
-		return ErrRecovery
+		return fmt.Errorf("routed startup provenance: %w", ErrRecovery)
 	}
 	prepared, err := c.options.Routed.PrepareBoot(ctx, applied, saved)
 	if err != nil {
-		return err
+		return fmt.Errorf("routed boot preparation: %w", err)
 	}
 	receipt, current, err := c.options.Routed.Observe(ctx)
 	if err != nil || receipt.Phase != "bootstrap" || current != "" {
-		return ErrRecovery
+		return fmt.Errorf("routed boot initial observation: %w", ErrRecovery)
 	}
 	planned := clone(prepared.Before)
 	planned.LegacyFirewall = TableStateV1{Presence: Present, Revision: &saved.Firewall}
 	baseline := RoutedBaselineV1{Saved: saved, Owned: planned, Dependencies: prepared.Dependencies}
 	prepared, err = routedBootPreparationV2(prepared, baseline, applied, previous, c.store.readObject)
 	if err != nil {
-		return err
+		return fmt.Errorf("routed boot preparation validation: %w", err)
 	}
 	original, err := c.store.object(record)
 	if err != nil {
@@ -203,19 +204,19 @@ func (c *v2Coordinator) applyRoutedBootV2(ctx context.Context, record v2Recovery
 	}
 	plan, err := c.selectedRoutedPlanV2()
 	if err != nil || plan.work.Kind != v2BootKind || !routedBootRecordMatchesV2(plan, record) {
-		return ErrRecovery
+		return fmt.Errorf("routed boot selected work: %w", ErrRecovery)
 	}
 	if err = c.options.Routed.Bootstrap(ctx, plan, record.Started); err != nil {
-		return err
+		return fmt.Errorf("routed boot application: %w", err)
 	}
 	if _, err = c.bootRemainingV2(record); err != nil {
 		return err
 	}
 	if !c.readback(target) {
-		return ErrRecovery
+		return fmt.Errorf("routed boot application readback: %w", ErrRecovery)
 	}
 	if err = c.options.Routed.Confirm(ctx, plan); err != nil {
-		return err
+		return fmt.Errorf("routed boot confirmation: %w", err)
 	}
 	if _, err = c.bootRemainingV2(record); err != nil {
 		return err
