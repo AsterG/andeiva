@@ -26,6 +26,7 @@ import (
 // their trusted deployment configuration, but cannot replace these descriptors,
 // invent a peer identity or open a configuration writer before the V3 factory.
 type RoutedLaunchContextV3 struct {
+	LocalOrigin                *RoutedLocalOriginV3
 	Integrity                  bool
 	IntegrityRoot              *os.Root // Helper only; always nil in the API role.
 	Management                 *os.File // API only; borrowed supervisor listener.
@@ -166,7 +167,7 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 	if e = unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0); e != nil || os.Getppid() != b.ParentPID {
 		return fail()
 	}
-	if b.Metadata.ValidateRouted() != nil || b.Identities.Validate() != nil {
+	if (b.LocalOrigin != nil && validateRoutedLocalOriginV3(b.LocalOrigin) != nil) || (b.Metadata.SchemaVersion == RoutedMetadataSchemaVersion && b.LocalOrigin == nil) || b.Metadata.ValidateRouted() != nil || b.Identities.Validate() != nil {
 		return fail()
 	}
 	if role == RoutedHelperRoleV3 {
@@ -289,7 +290,7 @@ func (f *routedLaunchFilesV3) context(b routedLaunchBootstrapV3) RoutedLaunchCon
 	if b.StoreBudget != nil {
 		value = *b.StoreBudget
 	}
-	return RoutedLaunchContextV3{StoreBudget: value, Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Management: f.managementFile, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
+	return RoutedLaunchContextV3{LocalOrigin: cloneRoutedLocalOriginV3(b.LocalOrigin), StoreBudget: value, Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Management: f.managementFile, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
 }
 
 // RunRoutedLaunchRoleV3 handles only the two fixed, root-launched child roles.

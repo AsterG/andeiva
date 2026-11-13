@@ -35,6 +35,7 @@ const (
 // Callers retain every descriptor and own namespace teardown. This opt-in does
 // not provision identities, storage, interfaces, listeners or deployed units.
 type RoutedLaunchResourcesV3 struct {
+	LocalOrigin                       *RoutedLocalOriginV3
 	Metadata                          Metadata
 	Identities                        Identities
 	Gateway                           *os.File
@@ -48,6 +49,7 @@ type RoutedLaunchResourcesV3 struct {
 }
 
 type routedLaunchBootstrapV3 struct {
+	LocalOrigin *RoutedLocalOriginV3              `json:"local_origin,omitempty"`
 	Version     int                               `json:"version"`
 	Integrity   bool                              `json:"integrity,omitempty"`
 	Management  bool                              `json:"management,omitempty"`
@@ -97,7 +99,7 @@ type RoutedLaunchSupervisorV3 struct {
 }
 
 func validateRoutedLaunchV3(r RoutedLaunchResourcesV3) error {
-	if r.Metadata.ValidateRouted() != nil || r.Identities.Validate() != nil || r.Gateway == nil || r.Host == nil || r.Directory == nil {
+	if (r.LocalOrigin != nil && validateRoutedLocalOriginV3(r.LocalOrigin) != nil) || (r.Metadata.SchemaVersion == RoutedMetadataSchemaVersion && r.LocalOrigin == nil) || r.Metadata.ValidateRouted() != nil || r.Identities.Validate() != nil || r.Gateway == nil || r.Host == nil || r.Directory == nil {
 		return ErrIdentity
 	}
 	st, e := r.Gateway.Stat()
@@ -204,6 +206,7 @@ func trustedRoutedExecutableV3(path string) error {
 // pinned gateway; API remains in the host namespace with no capabilities. Unix
 // sockets are created by the helper after dropping privileges, never by root.
 func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr io.Writer) (*RoutedLaunchSupervisorV3, error) {
+	r.LocalOrigin = cloneRoutedLocalOriginV3(r.LocalOrigin)
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || validateRoutedLaunchV3(r) != nil {
 		return nil, ErrIdentity
 	}
@@ -256,7 +259,7 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 
 func (s *RoutedLaunchSupervisorV3) bootstrap(helper int32, epoch uint64) routedLaunchBootstrapV3 {
 	r := s.resources
-	b := routedLaunchBootstrapV3{Version: 3, Integrity: r.IntegrityRoot != nil, Management: r.Management != nil, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
+	b := routedLaunchBootstrapV3{LocalOrigin: cloneRoutedLocalOriginV3(r.LocalOrigin), Version: 3, Integrity: r.IntegrityRoot != nil, Management: r.Management != nil, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
 	if r.StoreBudget != (configpoc.BudgetV2{}) {
 		value := r.StoreBudget
 		b.StoreBudget = &value

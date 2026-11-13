@@ -20,7 +20,7 @@ import (
 
 func deploymentFixtureV3() routedDeploymentRecordV3 {
 	ids := Identities{SchemaVersion: 1, APIUID: 1001, APIGID: 1002, HelperUID: 1003, IPCGID: 1004}
-	record := routedDeploymentRecordV3{Version: 1, NamespaceProfile: "host-gateway-v2", Identities: ids, AccountsSHA256: strings.Repeat("a", 64), WriteBudget: routedWriteBudgetV3{Bytes: 1 << 30, Inodes: 32768}, ReadBudget: routedReadBudgetV3{Entries: 20000, Objects: 16000, Edges: 200000, IOCalls: 2000000, Bytes: 256 << 20, ActiveBytes: 16 << 20, Depth: 128}}
+	record := routedDeploymentRecordV3{LocalOrigin: localOriginFixtureV3(), Version: 1, NamespaceProfile: "host-gateway-v2", Identities: ids, AccountsSHA256: strings.Repeat("a", 64), WriteBudget: routedWriteBudgetV3{Bytes: 1 << 30, Inodes: 32768}, ReadBudget: routedReadBudgetV3{Entries: 20000, Objects: 16000, Edges: 200000, IOCalls: 2000000, Bytes: 256 << 20, ActiveBytes: 16 << 20, Depth: 128}}
 	for i := 0; i < 4; i++ {
 		record.Access = append(record.Access, routedAccessRecordV3{Version: 1, OwnerUID: ids.APIUID, ReaderGID: 1005, Device: 1, Inode: uint64(100 + i)})
 	}
@@ -43,7 +43,7 @@ func TestRoutedDeploymentV3StrictDescriptor(t *testing.T) {
 		t.Fatal(decoded, err)
 	}
 	for _, mutate := range []func(*routedDeploymentRecordV3){
-		func(r *routedDeploymentRecordV3) { r.Version = 2 }, func(r *routedDeploymentRecordV3) { r.NamespaceProfile = "" }, func(r *routedDeploymentRecordV3) { r.NamespaceProfile = "lab-four-namespaces" }, func(r *routedDeploymentRecordV3) { r.AccountsSHA256 = "" },
+		func(r *routedDeploymentRecordV3) { r.Version = 2 }, func(r *routedDeploymentRecordV3) { r.LocalOrigin = nil }, func(r *routedDeploymentRecordV3) { r.LocalOrigin.Kind = "legacy" }, func(r *routedDeploymentRecordV3) { r.NamespaceProfile = "" }, func(r *routedDeploymentRecordV3) { r.NamespaceProfile = "lab-four-namespaces" }, func(r *routedDeploymentRecordV3) { r.AccountsSHA256 = "" },
 		func(r *routedDeploymentRecordV3) { r.WriteBudget.Bytes = 0 }, func(r *routedDeploymentRecordV3) { r.ReadBudget.Depth = 0 },
 		func(r *routedDeploymentRecordV3) { r.Access = r.Access[:3] }, func(r *routedDeploymentRecordV3) { r.Access = append(r.Access, r.Access[0]) },
 		func(r *routedDeploymentRecordV3) { r.Access[1] = r.Access[0] }, func(r *routedDeploymentRecordV3) { r.Access[0].ReaderGID = r.Identities.APIGID },

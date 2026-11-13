@@ -154,7 +154,7 @@ func NewRoutedApplianceFactoriesV3(c Config) (RoutedLaunchFactoriesV3, error) {
 }
 
 func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (out RoutedHelperComponentsV3, result error) {
-	if ctx == nil || ctx.Err() != nil || !c.Integrity || c.IntegrityRoot == nil || c.Management != nil {
+	if ctx == nil || ctx.Err() != nil || (c.Metadata.SchemaVersion == RoutedMetadataSchemaVersion && validateRoutedLocalOriginV3(c.LocalOrigin) != nil) || !c.Integrity || c.IntegrityRoot == nil || c.Management != nil {
 		return out, ErrIdentity
 	}
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: c.Identities.HelperUID, GID: c.Identities.IPCGID, Namespace: c.Metadata.GatewayNamespace, Host: c.Metadata.HostNamespace, BootID: c.Metadata.BootID, RunID: c.Metadata.RunID}
@@ -176,6 +176,11 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 	reader, err := configpoc.NewRoutedSelectionReaderV2(c.Store, configpoc.SelectionReaderOptionsV2{Access: c.Access, Identity: identity, Admission: pools[0], Plan: pools[1], Emergency: pools[2], Budget: c.Budget})
 	if err != nil {
 		return out, err
+	}
+	if c.LocalOrigin != nil {
+		if verifySelectedRoutedLocalOriginV3(ctx, reader, c.LocalOrigin) != nil {
+			return out, ErrIdentity
+		}
 	}
 	view, err := reader.PrepareCurrentView(ctx)
 	if err != nil {

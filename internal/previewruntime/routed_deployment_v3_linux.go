@@ -67,6 +67,7 @@ func (b routedReadBudgetV3) budget() configpoc.SelectionReadBudgetV2 {
 }
 
 type routedDeploymentRecordV3 struct {
+	LocalOrigin      *RoutedLocalOriginV3    `json:"local_origin"`
 	Version          int                     `json:"version"`
 	NamespaceProfile string                  `json:"namespace_profile"`
 	Identities       Identities              `json:"identities"`
@@ -81,7 +82,7 @@ type routedDeploymentRecordV3 struct {
 // apply it. Independent helper readers must still validate every authority edge.
 func decodeRoutedDeploymentV3(data []byte, ids Identities) (routedDeploymentRecordV3, error) {
 	var record routedDeploymentRecordV3
-	if len(data) == 0 || len(data) > 16384 || !jsoncheck.UniqueControlFields(data) || firewallipc.Decode(data, &record) != nil || record.Version != 1 || record.NamespaceProfile != "host-gateway-v2" || len(record.Access) != 4 || len(record.Profiles) != 3 || ids.Validate() != nil || record.Identities != ids || !validHex(record.AccountsSHA256, 32) || record.WriteBudget.Bytes == 0 || record.WriteBudget.Inodes == 0 {
+	if len(data) == 0 || len(data) > 16384 || !jsoncheck.UniqueControlFields(data) || firewallipc.Decode(data, &record) != nil || record.Version != 1 || validateRoutedLocalOriginV3(record.LocalOrigin) != nil || record.NamespaceProfile != "host-gateway-v2" || len(record.Access) != 4 || len(record.Profiles) != 3 || ids.Validate() != nil || record.Identities != ids || !validHex(record.AccountsSHA256, 32) || record.WriteBudget.Bytes == 0 || record.WriteBudget.Inodes == 0 {
 		return record, ErrConfiguration
 	}
 	b := record.ReadBudget
@@ -187,7 +188,7 @@ func openRoutedDeploymentV3(ctx context.Context, c Config) (resources *routedDep
 			result = errors.Join(result, r.Close())
 		}
 	}()
-	r.launch = RoutedLaunchResourcesV3{Metadata: m, Identities: ids, Budget: record.ReadBudget.budget(), StoreBudget: configpoc.BudgetV2{Bytes: record.WriteBudget.Bytes, Inodes: record.WriteBudget.Inodes}}
+	r.launch = RoutedLaunchResourcesV3{LocalOrigin: cloneRoutedLocalOriginV3(record.LocalOrigin), Metadata: m, Identities: ids, Budget: record.ReadBudget.budget(), StoreBudget: configpoc.BudgetV2{Bytes: record.WriteBudget.Bytes, Inodes: record.WriteBudget.Inodes}}
 	gateway, err := openRoutedNamespacePinV3(filepath.Join(routedDeploymentRunV3, "netns", "gateway"), m.GatewayNamespace)
 	if err != nil {
 		return nil, err
