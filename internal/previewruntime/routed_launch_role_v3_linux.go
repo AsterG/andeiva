@@ -26,6 +26,8 @@ import (
 // their trusted deployment configuration, but cannot replace these descriptors,
 // invent a peer identity or open a configuration writer before the V3 factory.
 type RoutedLaunchContextV3 struct {
+	Integrity                  bool
+	IntegrityRoot              *os.Root // Helper only; always nil in the API role.
 	Metadata                   Metadata
 	Identities                 Identities
 	Gateway, Host              *os.File
@@ -51,11 +53,19 @@ type RoutedLaunchFactoriesV3 struct {
 }
 
 type routedLaunchFilesV3 struct {
-	files [10]*os.File
-	roots [5]*os.Root
+	integrityFile *os.File
+	integrityRoot *os.Root
+	files         [10]*os.File
+	roots         [5]*os.Root
 }
 
 func (f *routedLaunchFilesV3) close() {
+	if f.integrityRoot != nil {
+		_ = f.integrityRoot.Close()
+	}
+	if f.integrityFile != nil {
+		_ = f.integrityFile.Close()
+	}
 	for _, r := range f.roots {
 		if r != nil {
 			_ = r.Close()
@@ -160,6 +170,32 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 	} else if role != RoutedAPIRoleV3 || b.Epoch == 0 || b.Epoch > 0xffffffff || b.HelperPID <= 1 {
 		return fail()
 	}
+	// Adopt FD13 before opening any roots: those opens may reuse an absent FD13.
+	if b.Integrity && role == RoutedHelperRoleV3 {
+		f.integrityFile = os.NewFile(13, "routed-integrity-root")
+		var other []os.FileInfo
+		for _, item := range f.files {
+			info, err := item.Stat()
+			if err != nil {
+				return fail()
+			}
+			other = append(other, info)
+		}
+		if validateRoutedIntegrityDirectoryV3(f.integrityFile, b.Identities.HelperUID, b.Identities.IPCGID, other) != nil {
+			return fail()
+		}
+		unix.CloseOnExec(13)
+		private, err := os.OpenRoot("/proc/self/fd/13")
+		if err != nil {
+			return fail()
+		}
+		f.integrityRoot = private
+		before, err := f.integrityFile.Stat()
+		after, ae := private.Stat(".")
+		if err != nil || ae != nil || !os.SameFile(before, after) {
+			return fail()
+		}
+	}
 	for i := range f.roots {
 		r, e := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", i+4))
 		if e != nil {
@@ -172,7 +208,7 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 			return fail()
 		}
 	}
-	resources := RoutedLaunchResourcesV3{Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Directory: f.roots[0], Store: RoutedReaderRootV3{Root: f.roots[1], Access: b.Access[0]}, Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget}
+	resources := RoutedLaunchResourcesV3{Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Directory: f.roots[0], IntegrityRoot: f.integrityRoot, Store: RoutedReaderRootV3{Root: f.roots[1], Access: b.Access[0]}, Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget}
 	if validateRoutedLaunchV3(resources) != nil {
 		return fail()
 	}
@@ -232,7 +268,7 @@ func rootRoutedParentStatusV3(data []byte, pid int) bool {
 	return seenPID && seenUID
 }
 func (f *routedLaunchFilesV3) context(b routedLaunchBootstrapV3) RoutedLaunchContextV3 {
-	return RoutedLaunchContextV3{Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
+	return RoutedLaunchContextV3{Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
 }
 
 // RunRoutedLaunchRoleV3 handles only the two fixed, root-launched child roles.
@@ -282,7 +318,11 @@ func runRoutedAPILaunchV3(ctx context.Context, f *routedLaunchFilesV3, b routedL
 		_ = routed.Close()
 		return e
 	}
-	runtime, e := OpenRoutedOperationsRuntimeV3(ctx, b.Metadata, b.Identities, routed, legacy, b.HelperPID, b.HelperPID, o)
+	open := OpenRoutedOperationsRuntimeV3
+	if b.Integrity {
+		open = OpenRoutedIntegrityOperationsRuntimeV3
+	}
+	runtime, e := open(ctx, b.Metadata, b.Identities, routed, legacy, b.HelperPID, b.HelperPID, o)
 	if e != nil {
 		return e
 	}
@@ -369,7 +409,7 @@ func runRoutedHelperLaunchV3(ctx context.Context, cancel context.CancelFunc, f *
 	if !ok || owner == nil || c.Compatibility.routedOwner != owner || c.Compatibility.routedReadback == nil {
 		return ErrIdentity
 	}
-	o := RoutedHelperOptionsV3{Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Authority: c.Authority}
+	o := RoutedHelperOptionsV3{IntegrityRoot: f.integrityRoot, Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Authority: c.Authority}
 	runtime, e := OpenRoutedHelperV3(ctx, b.Metadata, b.Identities, o)
 	if e != nil {
 		return e

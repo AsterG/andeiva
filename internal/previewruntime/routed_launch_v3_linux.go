@@ -38,12 +38,14 @@ type RoutedLaunchResourcesV3 struct {
 	Gateway                           *os.File
 	Host                              *os.File
 	Directory                         *os.Root
+	IntegrityRoot                     *os.Root // Optional pre-provisioned private helper-only root.
 	Store, Admission, Plan, Emergency RoutedReaderRootV3
 	Budget                            configpoc.SelectionReadBudgetV2
 }
 
 type routedLaunchBootstrapV3 struct {
 	Version    int                               `json:"version"`
+	Integrity  bool                              `json:"integrity,omitempty"`
 	Metadata   Metadata                          `json:"metadata"`
 	Identities Identities                        `json:"identities"`
 	Access     [4]recoveryreserve.ReaderAccessV2 `json:"access"`
@@ -152,6 +154,16 @@ func validateRoutedLaunchV3(r RoutedLaunchResourcesV3) error {
 			profiles[p.ID] = true
 		}
 	}
+	if r.IntegrityRoot != nil {
+		file, err := r.IntegrityRoot.Open(".")
+		if err != nil {
+			return ErrIdentity
+		}
+		defer file.Close()
+		if validateRoutedIntegrityDirectoryV3(file, r.Identities.HelperUID, r.Identities.IPCGID, seen) != nil {
+			return ErrIdentity
+		}
+	}
 	return nil
 }
 
@@ -238,7 +250,7 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 
 func (s *RoutedLaunchSupervisorV3) bootstrap(helper int32, epoch uint64) routedLaunchBootstrapV3 {
 	r := s.resources
-	return routedLaunchBootstrapV3{Version: 3, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
+	return routedLaunchBootstrapV3{Version: 3, Integrity: r.IntegrityRoot != nil, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
 }
 func (s *RoutedLaunchSupervisorV3) sendBootstrap(c *routedLaunchChildV3, helper int32, epoch uint64) error {
 	e := writeRoutedLaunchV3(c.bootstrap, s.bootstrap(helper, epoch))
@@ -319,6 +331,17 @@ func (s *RoutedLaunchSupervisorV3) startChild(role string) (*routedLaunchChildV3
 	}
 	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
 	cmd.ExtraFiles = append(files, bootR, controlR, eventW, s.resources.Host)
+	if role == RoutedHelperRoleV3 && s.resources.IntegrityRoot != nil {
+		private, err := s.resources.IntegrityRoot.Open(".")
+		if err != nil {
+			_ = bootW.Close()
+			_ = controlW.Close()
+			_ = eventR.Close()
+			return nil, err
+		}
+		defer private.Close()
+		cmd.ExtraFiles = append(cmd.ExtraFiles, private) // FD13 is never inherited by the API.
+	}
 	cmd.Stdin = nil
 	cmd.Stdout = io.Discard
 	cmd.Stderr = s.stderr
