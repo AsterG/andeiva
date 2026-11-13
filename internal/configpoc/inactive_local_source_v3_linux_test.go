@@ -5,6 +5,7 @@ package configpoc
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ type inactiveSourceAbsenceFixtureV3 struct {
 	calls    int
 	failAt   int
 	applyErr bool
+	onApply  func()
 }
 
 func (e *inactiveSourceAbsenceFixtureV3) Name() string { return "modeled-inactive-source" }
@@ -30,6 +32,9 @@ func (e *inactiveSourceAbsenceFixtureV3) Validate(c Config) error {
 func (e *inactiveSourceAbsenceFixtureV3) Apply(_ context.Context, r Revision) error {
 	if e.applyErr {
 		return errors.New("absence not verified")
+	}
+	if e.onApply != nil {
+		e.onApply()
 	}
 	e.hash = r.Hash
 	return nil
@@ -88,5 +93,57 @@ func TestInactiveLocalSourceV3FailedAbsenceDoesNotCreateClaim(t *testing.T) {
 	cancel()
 	if _, _, err := PrepareInactiveLocalSourceV3(ctx, area, &inactiveSourceAbsenceFixtureV3{}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+func TestInactiveLocalSourceV3PinnedRootRejectsPathReplacement(t *testing.T) {
+	for _, point := range []string{"apply", "after_stage_sync", "after_record_destination_check", "after_rename"} {
+		t.Run(point, func(t *testing.T) {
+			area, path := checkpointFixtureArea(t)
+			moved := path + "-retained"
+			swapped := false
+			swap := func() {
+				if swapped {
+					return
+				}
+				swapped = true
+				if err := os.Rename(path, moved); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.RemoveAll(moved) })
+			}
+			engine := &inactiveSourceAbsenceFixtureV3{}
+			if point == "apply" {
+				engine.onApply = swap
+			}
+			hook := func(at string) error {
+				if at == point {
+					swap()
+				}
+				return nil
+			}
+			revision, created, err := prepareInactiveLocalSourceV3(context.Background(), area, engine, hook)
+			if !swapped || err == nil || !created.IsZero() || revision.Hash != "" {
+				t.Fatal("replaced scope acknowledged", err, created, revision.Hash)
+			}
+			entries, err := os.ReadDir(path)
+			if err != nil || len(entries) != 0 {
+				t.Fatal("replacement directory was written", entries, err)
+			}
+			if point == "apply" {
+				original, openErr := area.Open(".")
+				if openErr != nil {
+					t.Fatal(openErr)
+				}
+				entries, err = original.ReadDir(1)
+				_ = original.Close()
+				if (err != nil && err != io.EOF) || len(entries) != 0 {
+					t.Fatal("proof failure wrote original", entries, err)
+				}
+			}
+		})
 	}
 }

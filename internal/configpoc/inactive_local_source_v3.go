@@ -14,6 +14,10 @@ import (
 // domain. The trusted absence engine must perform actual readback in Apply and
 // Current, without creating listeners or rules. It is never supplied by HTTP.
 func PrepareInactiveLocalSourceV3(ctx context.Context, area *os.Root, absence Engine) (revision Revision, created time.Time, result error) {
+	return prepareInactiveLocalSourceV3(ctx, area, absence, nil)
+}
+
+func prepareInactiveLocalSourceV3(ctx context.Context, area *os.Root, absence Engine, hook func(string) error) (revision Revision, created time.Time, result error) {
 	if ctx == nil || area == nil || absence == nil {
 		return revision, created, ErrInvalid
 	}
@@ -47,7 +51,7 @@ func PrepareInactiveLocalSourceV3(ctx context.Context, area *os.Root, absence En
 	if absence.Apply(ctx, clone(revision)) != nil || ctx.Err() != nil || absence.Current() != revision.Hash || ctx.Err() != nil {
 		return Revision{}, time.Time{}, ErrEngine
 	}
-	store, err := openStore(area.Name(), 1)
+	store, err := openInactiveLocalSourceV3(area)
 	if err != nil {
 		return Revision{}, time.Time{}, err
 	}
@@ -67,10 +71,15 @@ func PrepareInactiveLocalSourceV3(ctx context.Context, area *os.Root, absence En
 	}
 	created = time.Now().UTC()
 	state := durableState{Snapshot: Snapshot{Generation: 1, Running: revision, Startup: revision, LastGood: revision, Revoked: []string{}}, Receipts: map[string]receipt{}}
-	if err = store.append(state, Audit{Sequence: 1, At: created, Actor: "system", Surface: API, Operation: "initialize", Result: "ok", RunningHash: revision.Hash}, true, nil); err != nil {
+	if err = store.append(state, Audit{Sequence: 1, At: created, Actor: "system", Surface: API, Operation: "initialize", Result: "ok", RunningHash: revision.Hash}, true, hook); err != nil {
 		return Revision{}, time.Time{}, err
 	}
 	if absence.Current() != revision.Hash || ctx.Err() != nil {
+		return Revision{}, time.Time{}, ErrRecovery
+	}
+	actual, nameErr := os.Lstat(area.Name())
+	pinned, pinErr := area.Stat(".")
+	if nameErr != nil || pinErr != nil || actual.Mode()&os.ModeSymlink != 0 || !os.SameFile(actual, pinned) {
 		return Revision{}, time.Time{}, ErrRecovery
 	}
 	return revision, created, nil
