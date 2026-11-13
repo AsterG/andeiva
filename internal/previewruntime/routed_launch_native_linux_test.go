@@ -292,6 +292,9 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 				return out, err
 			}
 			out.Cleanup = nativeCloseV3(func() error { return errors.Join(authority.group.Close(), network.Close()) })
+			if c.FreshScopeEnabled {
+				out.NetworkInventory = routedInventoryProviderV3(c.Metadata)
+			}
 			out.Authority = authority
 			out.Compatibility, err = NewRoutedReadbackSessionV3(c.Metadata.RunID, c.Metadata.GatewayNamespace, authority)
 			if err != nil {
@@ -401,7 +404,7 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 					return out, cleanup, err
 				}
 			}
-			out = OperationsRuntimeOptionsV2{RoutedFreshScope: c.FreshScopeEnabled, Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
+			out = OperationsRuntimeOptionsV2{RoutedInventory: c.FreshScopeEnabled, RoutedFreshScope: c.FreshScopeEnabled, Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
 			fmt.Fprintln(os.Stderr, "ANDEIVA_NATIVE_STEP api-options-prepared")
 			return out, cleanup, nil
 		},
