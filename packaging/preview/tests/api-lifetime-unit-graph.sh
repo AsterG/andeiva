@@ -20,3 +20,13 @@ for unit in andeiva-preview-helper.service andeiva-preview-namespaces.service; d
   ! grep -Eq '^(Requires|BindsTo|After)=.*andeiva-preview-api' "$units/$unit"
 done
 printf 'PASS: administration stop/failure does not propagate to helper or namespaces; explicit target shutdown remains intact\n'
+
+# Root alone publishes bounded recovery anchors; retention survives a failed
+# service, but acceptance and removal still require actual manager readback.
+[[ $(value andeiva-preview-grouped.service NotifyAccess) = main ]]
+[[ $(value andeiva-preview-grouped.service FileDescriptorStoreMax) = 7 ]]
+[[ $(value andeiva-preview-grouped.service FileDescriptorStorePreserve) = yes ]]
+[[ $(value andeiva-preview-grouped.service ReadWritePaths) = $'/var/lib/andeiva-preview/grouped /var/lib/andeiva-preview/audit /run/andeiva-preview/grouped\n/var/lib/andeiva-preview-package/grouped-retirement-v3 /var/lib/andeiva-preview-package/grouped-scope-v3' ]]
+printf 'PASS: grouped Root FD store is bounded and main-only; writes use exact preallocated slots\n'
+
+[[ $(value andeiva-preview-grouped.service Delegate) = no ]]

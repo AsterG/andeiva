@@ -1,7 +1,7 @@
 package configpoc
 
 func metadataOperationV2(kind string) bool {
-	return kind == OpStage || kind == OpValidate || kind == OpSave
+	return kind == OpStage || kind == OpValidate || kind == OpSave || kind == OpReplaceCandidate || kind == OpDiscardCandidate
 }
 
 func domainSnapshotV2(state *v2Configuration, domain string) *v2DomainSnapshot {

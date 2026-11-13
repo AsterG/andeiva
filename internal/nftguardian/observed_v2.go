@@ -1,7 +1,5 @@
 package nftguardian
 
-import "time"
-
 // SnapshotObserved is a read-only, atomic view of authority metadata and engine
 // identity. It does not reconcile expiry: the independent timer owns that work.
 func (g *Guardian) SnapshotObserved() (State, string, error) {
@@ -17,24 +15,7 @@ func (g *Guardian) observedLocked() (State, string, error) {
 	if g.closed || g.engine == nil {
 		return State{}, "", ErrLease
 	}
-	hash := g.engine.Current()
-	s := g.state
-	switch s.Phase {
-	case "bootstrap":
-		if s.ID != "" || s.Previous != "" || s.Target != "" || !s.Deadline.IsZero() || hash != "" {
-			return State{}, "", ErrLease
-		}
-	case "idle", "armed", "pending", "expired":
-		if hash == "" {
-			return State{}, "", ErrLease
-		}
-		if (s.Phase == "armed" || s.Phase == "pending") && !time.Now().Before(g.deadline) {
-			return State{}, "", ErrLease
-		}
-	default:
-		return State{}, "", ErrLease
-	}
-	return s, hash, nil
+	return g.snapshotLocked(g.engine.Current(), false)
 }
 
 // MatchObserved compares every scope field under the same guardian lock as the

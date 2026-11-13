@@ -52,12 +52,14 @@ type v2Namespace struct {
 	Open          []string        `json:"open"`
 }
 type v2Request struct {
-	Kind           string  `json:"kind"`
-	Config         *Config `json:"config,omitempty"`
-	ConfirmSeconds *uint64 `json:"confirm_seconds,omitempty"`
-	Target         string  `json:"target_revision,omitempty"`
-	Origin         string  `json:"origin_commit_operation_id,omitempty"`
-	Subject        string  `json:"target_subject_id,omitempty"`
+	ExpectedCandidateStage string  `json:"expected_candidate_stage_operation_id,omitempty"`
+	LocalServicesConfig    *Config `json:"local_services_config,omitempty"`
+	Kind                   string  `json:"kind"`
+	Config                 *Config `json:"config,omitempty"`
+	ConfirmSeconds         *uint64 `json:"confirm_seconds,omitempty"`
+	Target                 string  `json:"target_revision,omitempty"`
+	Origin                 string  `json:"origin_commit_operation_id,omitempty"`
+	Subject                string  `json:"target_subject_id,omitempty"`
 }
 type v2Outcome struct {
 	Code                 string     `json:"code"`
@@ -94,34 +96,38 @@ type v2Operation struct {
 	Retired       bool             `json:"retired"`
 }
 type v2State struct {
-	ActiveReserves         []v2ActiveReserve `json:"active_reserves,omitempty"`
-	SystemBundle           *v2ActiveReserve  `json:"system_bundle,omitempty"`
-	RecoveryReserveVersion uint8             `json:"recovery_reserve_version,omitempty"`
-	ReserveArchiveRoot     string            `json:"reserve_archive_root,omitempty"`
-	ClosingCredits         []v2ClosingCredit `json:"closing_credits,omitempty"`
-	ClosingIndexRoot       string            `json:"closing_index_root,omitempty"`
-	OccupiedOrdinary       uint64            `json:"occupied_ordinary,string,omitempty"`
-	OccupiedClosing        uint64            `json:"occupied_closing,string,omitempty"`
-	RequiredFeatures       []string          `json:"required_features,omitempty"`
-	ReclamationVersion     uint8             `json:"reclamation_version,omitempty"`
-	Format                 string            `json:"format"`
-	Lineage                string            `json:"lineage"`
-	Generation             uint64            `json:"generation,string"`
-	HighWater              uint64            `json:"operation_high_water,string"`
-	LiveSlots              uint64            `json:"live_slots,string"`
-	SubjectSlots           uint64            `json:"subject_slots,string"`
-	NamespaceSlots         uint64            `json:"namespace_slots,string"`
-	NamespaceSequence      uint64            `json:"namespace_sequence,string"`
-	SubjectSequence        uint64            `json:"subject_sequence,string"`
-	Index                  string            `json:"index"`
-	Subjects               []v2Subject       `json:"subjects"`
-	Namespaces             []v2Namespace     `json:"namespaces"`
-	ReservedBytes          uint64            `json:"reserved_bytes,string"`
-	ReservedInodes         uint64            `json:"reserved_inodes,string"`
-	Clock                  time.Time         `json:"clock"`
-	Migration              string            `json:"migration,omitempty"`
-	Operational            bool              `json:"operational"`
-	Configuration          *v2Configuration  `json:"configuration,omitempty"`
+	RoutedDHCP             *v3RoutedDHCPState    `json:"routed_dhcp,omitempty"`
+	RoutedDHCPLast         string                `json:"routed_dhcp_last,omitempty"`
+	RoutedBootBoundary     *v2RoutedBootBoundary `json:"routed_boot_boundary,omitempty"`
+	RoutedActive           *v2RoutedActive       `json:"routed_active,omitempty"`
+	ActiveReserves         []v2ActiveReserve     `json:"active_reserves,omitempty"`
+	SystemBundle           *v2ActiveReserve      `json:"system_bundle,omitempty"`
+	RecoveryReserveVersion uint8                 `json:"recovery_reserve_version,omitempty"`
+	ReserveArchiveRoot     string                `json:"reserve_archive_root,omitempty"`
+	ClosingCredits         []v2ClosingCredit     `json:"closing_credits,omitempty"`
+	ClosingIndexRoot       string                `json:"closing_index_root,omitempty"`
+	OccupiedOrdinary       uint64                `json:"occupied_ordinary,string,omitempty"`
+	OccupiedClosing        uint64                `json:"occupied_closing,string,omitempty"`
+	RequiredFeatures       []string              `json:"required_features,omitempty"`
+	ReclamationVersion     uint8                 `json:"reclamation_version,omitempty"`
+	Format                 string                `json:"format"`
+	Lineage                string                `json:"lineage"`
+	Generation             uint64                `json:"generation,string"`
+	HighWater              uint64                `json:"operation_high_water,string"`
+	LiveSlots              uint64                `json:"live_slots,string"`
+	SubjectSlots           uint64                `json:"subject_slots,string"`
+	NamespaceSlots         uint64                `json:"namespace_slots,string"`
+	NamespaceSequence      uint64                `json:"namespace_sequence,string"`
+	SubjectSequence        uint64                `json:"subject_sequence,string"`
+	Index                  string                `json:"index"`
+	Subjects               []v2Subject           `json:"subjects"`
+	Namespaces             []v2Namespace         `json:"namespaces"`
+	ReservedBytes          uint64                `json:"reserved_bytes,string"`
+	ReservedInodes         uint64                `json:"reserved_inodes,string"`
+	Clock                  time.Time             `json:"clock"`
+	Migration              string                `json:"migration,omitempty"`
+	Operational            bool                  `json:"operational"`
+	Configuration          *v2Configuration      `json:"configuration,omitempty"`
 }
 type v2Page struct {
 	Format string              `json:"format"`
@@ -152,6 +158,12 @@ func v2Canonical(value any) ([]byte, string, error) {
 	return data, checkpointDigest(data), nil
 }
 func v2RequestValid(domain string, r v2Request) bool {
+	if domain == "routed" {
+		return routedRequestValidV2(r)
+	}
+	if r.LocalServicesConfig != nil || r.ExpectedCandidateStage != "" {
+		return false
+	}
 	if domain != "firewall" && domain != "local_services" {
 		return false
 	}

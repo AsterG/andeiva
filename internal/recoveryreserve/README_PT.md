@@ -45,3 +45,5 @@ retirada autorizada e continuidade do tráfego. Pré-alocação e testes ext4 n�
 garantem capacidade de metadados/journal/COW em todos os dispositivos. Saídas de
 processo não comprovam resistência a cortes de energia.
 Os testes Debian13 passaram esgotamento real de blocos/inodes em ext4 isolado64MiB, UID1000 sem capacidades. Binding/reabertura0,62s; CPU de preparação/teste0,414153s/pico cgroup74.477.568B incluem formatador e cache. Regressão nativa separada: CPU0,049284s/pico16.248.832B. São medições do fixture; não RSS do serviço, garantia universal nem continuidade integral do appliance.
+
+As leituras compartilhadas mantêm identidades separadas: `ReaderAccessV2.ReadFile` exige o grupo exclusivo do helper; `ReadOwnedFile` exige o proprietário exato não root. Ambas verificam limites, diretório fixado, UID/GID, permissões, ACL e ausência de links. A API não ingressa no grupo leitor. Essas funções não concedem bloqueio de escrita nem autoridade para aplicar políticas.

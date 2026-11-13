@@ -11,7 +11,8 @@ func reserveRecoveryFingerprintV2(record v2RecoveryRecord) string {
 		ID, Origin, Lease, Kind, Previous, Target, Subject, Lineage string
 		Boot                                                        *v2BootID
 		Started                                                     time.Time
-	}{record.ID, record.Origin, record.Lease, record.Kind, record.Previous, record.Target, record.Subject, record.Lineage, record.BootID, record.Started.UTC()})
+		ServiceRestart                                              *v3RoutedServiceRestart `json:"service_restart,omitempty"`
+	}{record.ID, record.Origin, record.Lease, record.Kind, record.Previous, record.Target, record.Subject, record.Lineage, record.BootID, record.Started.UTC(), record.ServiceRestart})
 	return hash
 }
 
@@ -30,7 +31,7 @@ func (m *v2ReserveManager) prepareBoot(s *v2Store, st *v2State, record *v2Recove
 	if s.readObject(record.Target, &target) != nil {
 		return ErrRecovery
 	}
-	if err = m.bootProfile(s, *record, target, owner); err != nil {
+	if err = m.bootProfile(s, *record, target, owner, st.RoutedBootBoundary); err != nil {
 		return err
 	}
 	claims, err := m.claimOwner(recoveryreserve.SystemV2, owner)
@@ -38,6 +39,9 @@ func (m *v2ReserveManager) prepareBoot(s *v2Store, st *v2State, record *v2Recove
 		return err
 	}
 	scope := recoveryreserve.ScopeV2{Kind: "boot", Lineage: st.Lineage, Bundle: claims.Admission.Owner, Recovery: record.ID, Boot: string(*record.BootID), Domain: "firewall", Fingerprint: reserveRecoveryFingerprintV2(*record), Global: st.Generation, Generation: st.Configuration.Firewall.Generation}
+	if intent.Domain == "routed" {
+		scope.Domain = "routed"
+	}
 	data, _, err := v2Canonical(v2ReserveAdmission{Format: v2Format, Version: 1, Scope: scope, Claims: claims})
 	if err != nil || len(data) > claims.Admission.Capacity {
 		return errV2Limited

@@ -66,15 +66,30 @@ func (s *v2Store) reserveArchiveBundleLookupV2(root string, expected v2ReserveAr
 					continue
 				}
 				if kind == "claim" {
+					if s.archiveObserver != nil {
+						if err := s.archiveObserver(ref); err != nil {
+							return v2ReserveArchive{}, false, err
+						}
+					}
 					return archive, true, nil
 				}
 				if entry.Binding != nil && expected.Binding != nil && *entry.Binding == *expected.Binding {
+					if s.archiveObserver != nil {
+						if err := s.archiveObserver(ref); err != nil {
+							return v2ReserveArchive{}, false, err
+						}
+					}
 					return archive, true, nil
 				}
 			}
 			if kind == "claim" {
 				for _, claim := range archive.UnusedEscrow {
 					if claim == expected.Claim {
+						if s.archiveObserver != nil {
+							if err := s.archiveObserver(ref); err != nil {
+								return v2ReserveArchive{}, false, err
+							}
+						}
 						return archive, true, nil
 					}
 				}

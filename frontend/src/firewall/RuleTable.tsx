@@ -9,12 +9,14 @@ import { matchesRuleSearch, ruleChange, sameRuleAtPosition } from './rulePresent
 import { ruleTableMessages } from './ruleTableMessages.js';
 import { ColumnChooser } from '../design-system/ColumnChooser.js';
 
-type Drag = { from: number; to: number; id: string; rules: Rule[]; generation: number; view: string; pointer?: number; y?: number };
+type TableState = Omit<FirewallState, 'snapshot'> & { snapshot: Pick<FirewallState['snapshot'], 'running' | 'startup'> & { generation: number | string; pending?: unknown } };
+
+type Drag = { from: number; to: number; id: string; rules: Rule[]; generation: number | string; view: string; pointer?: number; y?: number };
 
 export function RuleTable({ controls, view, rules, reference, state, locale, copy, editable, reorderable, showCounters, verified, editing, supportsEnabled, onToggle, onMove, onEdit, onRemove }: {
   controls: ReactNode;
   view: string;
-  rules: Rule[]; reference: Rule[] | undefined; state: FirewallState; locale: Locale; copy: FirewallMessages; editable: boolean; reorderable: boolean;
+  rules: Rule[]; reference: Rule[] | undefined; state: TableState; locale: Locale; copy: FirewallMessages; editable: boolean; reorderable: boolean;
   showCounters: boolean; verified: boolean; editing: boolean; supportsEnabled: boolean; onToggle: (index: number, enabled: boolean) => void; onMove: (from: number, to: number) => void; onEdit: (index: number) => void; onRemove: (index: number) => void;
 }) {
   const labels = ruleTableMessages[locale];

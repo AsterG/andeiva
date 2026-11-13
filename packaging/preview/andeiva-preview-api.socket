@@ -1,4 +1,5 @@
 [Unit]
+ConditionPathExists=!/var/lib/andeiva-preview/grouped-cutover.json
 Description=ANDEIVA preview LAN HTTPS listener
 ConditionPathExists=/var/lib/andeiva-preview/identities.json
 ConditionPathExists=/etc/systemd/system/andeiva-preview-api.socket.d/listen.conf

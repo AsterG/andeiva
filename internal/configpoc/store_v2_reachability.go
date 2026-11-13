@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"io"
 	"os"
 	"strings"
@@ -33,14 +34,21 @@ type v2ReachabilityReport struct {
 }
 
 type v2ReachabilityReader struct {
-	ctx     context.Context
-	area    *os.Root
-	budget  v2ReachabilityBudget
-	report  v2ReachabilityReport
-	active  uint64
-	objects map[string]bool
-	edges   map[string]uint8
-	root    os.FileInfo
+	// Per-inspection evidence only: set after a successful bounded read proves
+	// an immutable record's hash or encoding is invalid. I/O is not corruption.
+	integrityCorruption bool
+	action              *actionReadDependenciesV2
+	ctx                 context.Context
+	area                *os.Root
+	budget              v2ReachabilityBudget
+	report              v2ReachabilityReport
+	active              uint64
+	objects             map[string]bool
+	edges               map[string]uint8
+	root                os.FileInfo
+	shared              *recoveryreserve.ReaderAccessV2
+	ownerRead           bool // Writer-owned maintenance only; helper readers remain group-scoped.
+	cache               *selectedReadCacheV2
 }
 
 func (r *v2ReachabilityReader) step() error {
@@ -98,6 +106,11 @@ func (r *v2ReachabilityReader) object(hash string, target any) error {
 		return err
 	}
 	defer release()
+	if r.action != nil {
+		if audit, ok := target.(*v2CoordinatorAudit); ok && !validActionAuditShapeV2(*audit) {
+			return errV2Unavailable
+		}
+	}
 	return nil
 }
 
@@ -129,6 +142,7 @@ func (r *v2ReachabilityReader) loadBound(hash string, target any, limit int64) (
 		return nil, err
 	}
 	if checkpointDigest(data) != hash || checkpointDecode(data, target) != nil {
+		r.integrityCorruption = true
 		release()
 		return nil, errV2Unavailable
 	}
@@ -137,6 +151,9 @@ func (r *v2ReachabilityReader) loadBound(hash string, target any, limit int64) (
 
 func (r *v2ReachabilityReader) read(name string, limit int64) (data []byte, release func(), result error) {
 	release = func() {}
+	if r.shared != nil {
+		return r.readSharedRecordV2(name, limit)
+	}
 	if limit <= 0 || limit > v2ObjectLimit {
 		return nil, release, ErrInvalid
 	}
@@ -335,7 +352,7 @@ func (r *v2ReachabilityReader) census() (result error) {
 				return err
 			}
 			info, err := r.area.Lstat(name)
-			if err != nil || !regularOwned(info, v2ObjectLimit) || !v2PhysicalSameDevice(r.root, info) {
+			if err != nil || !r.profileRecordV2(name, info) || !v2PhysicalSameDevice(r.root, info) {
 				return errV2Unavailable
 			}
 		}
@@ -349,6 +366,9 @@ func (r *v2ReachabilityReader) census() (result error) {
 }
 
 func (r *v2ReachabilityReader) directory() (*os.File, os.FileInfo, error) {
+	if r.shared != nil {
+		return r.sharedDirectoryV2()
+	}
 	if err := r.step(); err != nil {
 		return nil, nil, err
 	}
@@ -394,6 +414,9 @@ func (r *v2ReachabilityReader) operationAudit(op v2Operation, state v2State, dep
 		Data      []byte `json:"data"`
 	}
 	if checkpointDecode(payload, &catalogue) == nil {
+		if r.action != nil {
+			return errV2Unavailable
+		}
 		if catalogue.Format != v2Format || catalogue.Operation != op.ID || len(catalogue.Data) == 0 || len(catalogue.Data) > 8192 {
 			return errV2Unavailable
 		}

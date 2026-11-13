@@ -142,6 +142,17 @@ func checkPrivileges(ids Identities, helper bool) error {
 	return privilegeFields(string(status), helper)
 }
 func Helper(ctx context.Context, c Config) error {
+	return helperProtocol(ctx, c, false)
+}
+
+// HelperV2 fixes this helper instance to the authenticated v2 protocol. The
+// deployed entry point remains Helper until the complete runtime is activated.
+func HelperV2(ctx context.Context, c Config) error { return helperProtocol(ctx, c, true) }
+
+func helperProtocol(ctx context.Context, c Config, v2 bool) error {
+	if err := LegacyRuntimeAllowedV3(); err != nil {
+		return err
+	}
 	ids, e := LoadIdentities(c)
 	if e != nil {
 		return e
@@ -191,7 +202,16 @@ func Helper(ctx context.Context, c Config) error {
 	})
 	guardian := nftguardian.NewRestricted(engine)
 	defer guardian.Close()
-	s := NewSession(run, current, engine, guardian, engine.Observe)
+	var legacy *Session
+	var sessionV2 *SessionV2
+	if v2 {
+		sessionV2, e = NewSessionV2(run, current, engine, guardian, engine.Observe)
+		if e != nil {
+			return e
+		}
+	} else {
+		legacy = NewSession(run, current, engine, guardian, engine.Observe)
+	}
 	l, e := listenPrivate(HelperSocket, ids.HelperUID, ids.IPCGID)
 	if e != nil {
 		return e
@@ -206,5 +226,8 @@ func Helper(ctx context.Context, c Config) error {
 	if notifyReady() != nil {
 		return ErrUnavailable
 	}
-	return serveController(ctx, l, m, ids, s)
+	if v2 {
+		return serveControllerV2(ctx, l, m, ids, sessionV2)
+	}
+	return serveController(ctx, l, m, ids, legacy)
 }

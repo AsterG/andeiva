@@ -32,6 +32,9 @@ func reserveMetadataFutureFitsV2(state v2State, load func(string, any) error) er
 	confirmed := clone(*current)
 	own := domainSnapshotV2(&confirmed, pending.Domain)
 	own.LastGood = own.Running
+	if pending.Domain == "routed" {
+		confirmed.LocalServices.LastGood = confirmed.LocalServices.Running
+	}
 	confirmed.Pending = nil
 	confirmed.Intent = nil
 	if err = confirmed.refresh(); err != nil {
@@ -39,6 +42,9 @@ func reserveMetadataFutureFitsV2(state v2State, load func(string, any) error) er
 	}
 	projected := state
 	projected.Configuration = &confirmed
+	if pending.Domain == "routed" {
+		projected.RoutedActive = &v2RoutedActive{Work: pending.Target, Side: "target"}
+	}
 	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited
 	}
@@ -48,6 +54,12 @@ func reserveMetadataFutureFitsV2(state v2State, load func(string, any) error) er
 	own.Running = prior.Running
 	own.LastGood = prior.LastGood
 	own.Candidate = nil
+	if pending.Domain == "routed" {
+		expired.LocalServices.Running = previous.LocalServices.Running
+		expired.LocalServices.LastGood = previous.LocalServices.LastGood
+		expired.LocalServices.Candidate = nil
+		expired.CandidateGroup = nil
+	}
 	expired.Pending = nil
 	expired.Intent = nil
 	expired.RecoveryRequired = false
@@ -55,6 +67,9 @@ func reserveMetadataFutureFitsV2(state v2State, load func(string, any) error) er
 		return errV2Unavailable
 	}
 	projected.Configuration = &expired
+	if pending.Domain == "routed" {
+		projected.RoutedActive = &v2RoutedActive{Work: pending.Target, Side: "before"}
+	}
 	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited
 	}

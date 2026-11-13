@@ -56,7 +56,7 @@ func (r *v2ReachabilityReader) verifyScope(lock *os.File) error {
 		return err
 	}
 	current, err := r.area.Stat(".")
-	if err != nil || !current.IsDir() || current.Mode().Perm() != 0700 || !owned(current) || !os.SameFile(r.root, current) {
+	if err != nil || !r.profileDirectoryV2(current) || !os.SameFile(r.root, current) {
 		return errV2Unavailable
 	}
 	if err := r.step(); err != nil {

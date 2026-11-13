@@ -8,14 +8,35 @@ import (
 
 const reserveMetadataObjectLimitV2 = 256 * 1024
 
-func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, target v2Configuration, owner string) error {
+func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, target v2Configuration, owner string, boundary ...*v2RoutedBootBoundary) error {
 	if raw, _, err := v2Canonical(s.state); err != nil || len(raw) > 128*1024 {
 		return errV2Limited
 	}
 	if raw, _, err := v2Canonical(target); err != nil || len(raw) > 128*1024 {
 		return errV2Limited
 	}
-	if !reserveMetadataStateFitsV2(reserveProjectedEnvelopeV2(s.state, target, "firewall")) {
+	projected := reserveProjectedEnvelopeV2(s.state, target, "firewall")
+	boundaryObjects := uint64(0)
+	if len(boundary) > 0 && boundary[0] != nil {
+		if !validRoutedBootBoundaryShapeV2(boundary[0]) {
+			return ErrRecovery
+		}
+		projected.RoutedBootBoundary = clone(boundary[0])
+		addFeatureV2(&projected, v2RoutedBootBoundaryFeature)
+		// Source configuration, preserved origin and the terminal supersession
+		// record/audit/index allowance are additional to ordinary boot work.
+		boundaryObjects = 12
+	}
+	if target.Running.Config.SchemaVersion == 7 {
+		addFeatureV2(&projected, v2RoutedBootFeature)
+		if routedConfigurationUsesDHCPV3(target) {
+			addFeatureV2(&projected, v3RoutedDHCPFeature)
+		}
+		if target.Firewall.Running.Config.SchemaVersion == 4 {
+			addFeatureV2(&projected, v2RoutedNoNetworkFeature)
+		}
+	}
+	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited
 	}
 	key, err := reserveBundleKeyV2(s.state.Lineage, owner)
@@ -38,7 +59,11 @@ func (m *v2ReserveManager) bootProfile(s *v2Store, record v2RecoveryRecord, targ
 	if err != nil {
 		return err
 	}
-	if 18+8+archive+2*initial+verified > v2OperationReserveInodes {
+	routedObjects := uint64(0)
+	if target.Running.Config.SchemaVersion == 7 {
+		routedObjects = 5
+	}
+	if 18+8+archive+2*initial+verified+routedObjects+boundaryObjects > v2OperationReserveInodes {
 		return errV2Limited
 	}
 	return nil
@@ -58,6 +83,7 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 			return err
 		}
 		projected := reserveProjectedEnvelopeV2(s.state, target, op.Domain)
+		reserveGuardFeatureBudgetV2(s, &projected)
 		if !reserveMetadataStateFitsV2(projected) {
 			return errV2Limited
 		}
@@ -80,6 +106,10 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 		return errV2Limited
 	}
 	projected := reserveProjectedEnvelopeV2(s.state, target, op.Domain)
+	if op.Request.Kind == OpReplaceCandidate || op.Request.Kind == OpDiscardCandidate {
+		addFeatureV2(&projected, v2OwnedCandidateFeature)
+	}
+	reserveGuardFeatureBudgetV2(s, &projected)
 	if !reserveMetadataStateFitsV2(projected) {
 		return errV2Limited
 	}
@@ -103,7 +133,7 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 		return err
 	}
 	base := uint64(30)
-	if op.Request.Kind == OpStage {
+	if op.Request.Kind == OpStage || op.Request.Kind == OpReplaceCandidate {
 		base = 32
 	}
 	if op.Request.Kind == OpRollback {
@@ -116,6 +146,17 @@ func (m *v2ReserveManager) operationProfile(s *v2Store, op v2Operation, owner st
 }
 
 func reserveTargetEnvelopeV2(s *v2Store, op v2Operation) (v2Configuration, error) {
+	if op.Domain == "routed" {
+		now := op.Accepted
+		if now.IsZero() {
+			now = s.state.Clock
+		}
+		target, _, err := routedTargetV2(s, op, *s.state.Configuration, now, "reserve-forecast")
+		if target.Pending != nil && target.Pending.OriginCommit == op.ID {
+			target.Pending.Deadline = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+		}
+		return target, err
+	}
 	target := clone(*s.state.Configuration)
 	target.Intent = nil
 	domain := domainSnapshotV2(&target, op.Domain)
@@ -189,6 +230,7 @@ func reserveTargetEnvelopeV2(s *v2Store, op v2Operation) (v2Configuration, error
 
 func reserveProfileFutureFitsV2(s *v2Store, target v2Configuration) error {
 	state := s.state
+	reserveGuardFeatureBudgetV2(s, &state)
 	state.Configuration = &target
 	_, hash, err := v2Canonical(*s.state.Configuration)
 	if err != nil {
@@ -215,6 +257,9 @@ func reserveProfileFutureFitsV2(s *v2Store, target v2Configuration) error {
 func reserveProjectedEnvelopeV2(st v2State, target v2Configuration, _ string) v2State {
 	projected := st
 	projected.Configuration = &target
+	if hasFeatureV2(st, v2RoutedFeature) {
+		projected.RoutedActive = &v2RoutedActive{Work: strings.Repeat("f", 64), Side: "target"}
+	}
 	reserveNormalizeEnvelopeScalarsV2(&projected)
 	return projected
 }

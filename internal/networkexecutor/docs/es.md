@@ -1,5 +1,15 @@
 # Ejecutor IPv4 estático en namespace — NET-EXECUTOR-001
 
+`ObservedSnapshot` captura inventario IPv4 vacío real sin plan deseado ni PlanHash.
+PrepareObserved sólo recibe bindings físicos autenticados por el supervisor; no
+escribe direcciones/rutas ni crea transacciones. VerifyObserved comprueba baseline
+real. RecoverObserved exige además identidad inmutable original retenida sólo por
+NewInOwnedNamespace; no concede propiedad L3. ObservedMatchesPrepared compara todos
+los hechos físicos cuando se entrega posteriormente un plan deseado real. Igualdad
+no es autorización. El perfil inicial admite dos enlaces propios y loopback
+opcional, sin direcciones/rutas IPv4. Interfaces ya configuradas y leases DHCP
+continúan fuera de este perfil.
+
 Responsable: ejecutor de red. Estado: cualificación aislada verificada;
 PR/integración pendientes. Lo consume el laboratorio aislado de routing; sin conexión
 a API, CLI, runtime o helper privilegiado del appliance.
@@ -90,3 +100,35 @@ runtime del appliance y recuperación durable tras crash. Ejecución en contened
 y presupuesto de recursos del appliance sin cualificar. Sin integración
 Docker/EKS/Helm ni declaración de release o cierre del hito. Requisitos en las
 guías EN/ES/PT del runner.
+# Adaptador L3 DHCP aislado experimental
+
+`NewLeaseInOwnedNamespace` es un ejecutor separado y optativo. El constructor
+sólo lee: exige LAN estática configurada, WAN DHCP vacía, reglas IPv4 de routing
+por defecto y forwarding IPv4/IPv6 cerrado. Reutiliza identidad y capacidades del
+constructor no root para namespaces propios; rechaza el namespace del host.
+No cambia el contrato del ejecutor estático existente.
+
+El ensamblado confiable proporciona `LeaseOptions.Current`: incarnation del
+propietario autenticada, identidad boot/run, PID/inicio, secuencia creciente,
+hash de configuración y vínculo de interfaz exactos, y deadline CLOCK_BOOTTIME.
+No son entradas JSON públicas. `Refresh` instala únicamente dirección WAN y ruta
+por defecto concedidas, verifica estado real y conserva todos los hechos LAN.
+La renovación del mismo tuple sólo actualiza evidencia en memoria. Un tuple
+nuevo retira primero el lease anterior; la compensación nunca resucita uno ya
+invalidado. Expiración o pérdida de autoridad retira WAN. Estado ajeno o fallo de
+compensación bloquean el objeto. `Withdraw` restaura LAN/WAN vacía original;
+`wan_withdrawn` no significa restauración de un lease anterior. `Close` rechaza
+abandonar una WAN instalada.
+
+Este corte carece de worker de expiración, propiedad durable, recuperación entre
+procesos, NAT/DNS y permiso de forwarding. El ensamblado debe llamar `Refresh`
+ante eventos/deadlines. `Verify` sólo lee y no impone expiración en el kernel.
+Una nueva instancia rechaza WAN ocupada: direcciones o hashes no prueban propiedad.
+La recuperación futura requiere trabajo seleccionado autenticado del almacén de
+configuración existente, no otro journal. No adopta managers/interfaces del host.
+
+`go test -race ./internal/networkexecutor` cubre efectos del constructor, hechos
+inválidos/repetidos, drift LAN, lectura cambiante, cambio de lease, expiración,
+cancelación y fallos antes/después de cada efecto mediante transporte simulado.
+La prueba nativa y medición de recursos de este adaptador están pendientes;
+la evidencia estática/DHCP anterior no acredita esta integración.

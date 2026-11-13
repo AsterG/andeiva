@@ -26,6 +26,13 @@ func (m *v2ReserveManager) maintainWork(s *v2Store, preferred string) error {
 	}
 	for {
 		var work *v2ActiveReserve
+		if b := s.state.RoutedBootBoundary; b != nil && b.CompletedBoot != "" && b.Resolution != "" && b.OldBoot != nil {
+			record, err := (&v2Coordinator{store: s}).recoveryLookupLocked(b.OldBoot.ID)
+			if err != nil || record.SupersededBy != b.CompletedBoot {
+				return ErrRecovery
+			}
+			work = &v2ActiveReserve{Work: record.ID, Bundle: record.Reserve, CanonicalHeld: true}
+		}
 		for _, active := range s.state.ActiveReserves {
 			if active.Work == preferred && active.Bundle.Scope.Origin != "" {
 				preferred = active.Bundle.Scope.Origin
@@ -33,7 +40,7 @@ func (m *v2ReserveManager) maintainWork(s *v2Store, preferred string) error {
 			}
 		}
 		for _, active := range s.state.ActiveReserves {
-			if active.CanonicalHeld && active.Work == preferred {
+			if work == nil && active.CanonicalHeld && active.Work == preferred {
 				value := active
 				work = &value
 				break
@@ -57,6 +64,9 @@ func (m *v2ReserveManager) maintainWork(s *v2Store, preferred string) error {
 		}
 		if work == nil && s.state.SystemBundle != nil && s.state.SystemBundle.CanonicalHeld {
 			work = clone(s.state.SystemBundle)
+		}
+		if d := s.state.RoutedDHCP; work == nil && routedDHCPTerminalV3(d) {
+			work = &v2ActiveReserve{Work: reserveWorkV2(d.Bundle), Bundle: clone(d.Bundle), CanonicalHeld: true}
 		}
 		if work == nil {
 			return nil
@@ -298,7 +308,19 @@ func (m *v2ReserveManager) buildTerminalArchive(s *v2Store, active v2ActiveReser
 	archive := v2ReserveArchive{Format: v2Format, Version: 1, Lineage: s.state.Lineage, Origin: active.Work, Dependencies: []string{}}
 	facts := v2ReserveFinality{Format: v2Format, Version: 1, Lineage: s.state.Lineage, Origin: v2ReserveWorkRef{ID: active.Work}}
 	bundles := []*v2ReserveBundle{active.Bundle}
-	if active.Bundle.Scope.Kind == "boot" {
+	if active.Bundle.PlanIntent != nil && active.Bundle.PlanIntent.DHCPWork != "" {
+		d := s.state.RoutedDHCP
+		if !routedDHCPTerminalV3(d) || !reserveJSONEqualV2(d.Bundle, active.Bundle) || validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+			return archive, ErrRecovery
+		}
+		facts.Kind = v3RoutedDHCPKind
+		var err error
+		facts.Origin.Object, err = s.object(d)
+		if err != nil {
+			return archive, err
+		}
+		archive.Audit = d.Audit
+	} else if active.Bundle.Scope.Kind == "boot" {
 		facts.Kind = "system"
 		record, err := (&v2Coordinator{store: s}).recoveryLookupLocked(active.Work)
 		if err != nil || record.State != "final" || record.Pinned || !reflect.DeepEqual(record.Reserve, active.Bundle) {

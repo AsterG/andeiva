@@ -15,8 +15,8 @@ func reserveArchiveFrozenV2(state v2State) bool {
 	return state.RecoveryReserveVersion == 1 && cfg != nil && (cfg.Intent != nil || cfg.Pending != nil || cfg.RecoveryRequired)
 }
 
-// A selection-chain comparison needs only these flags, not another retained
-// copy of complete configuration payloads from every predecessor.
+// Selection comparisons retain flags and the small immutable timed scope,
+// never another copy of configuration payloads or traversable root objects.
 func reserveFreezeSummaryV2(cfg *v2Configuration) *v2Configuration {
 	if cfg == nil {
 		return nil
@@ -24,6 +24,16 @@ func reserveFreezeSummaryV2(cfg *v2Configuration) *v2Configuration {
 	summary := &v2Configuration{RecoveryRequired: cfg.RecoveryRequired}
 	if cfg.Intent != nil {
 		summary.Intent = &v2CoordinatorIntent{}
+		if cfg.Intent.RoutedWork != "" {
+			in := *cfg.Intent
+			summary.Intent = &in
+		}
+		if cfg.Intent.GuardDeadline != nil {
+			in := *cfg.Intent
+			deadline := *in.GuardDeadline
+			in.GuardDeadline = &deadline
+			summary.Intent = &in
+		}
 	}
 	if cfg.Pending != nil {
 		summary.Pending = &v2Confirmation{}

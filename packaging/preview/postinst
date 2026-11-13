@@ -6,6 +6,15 @@ identity_file="$identity_dir/identities"
 if [ -e "$identity_dir" ] || [ -L "$identity_dir" ]; then
   [ ! -L "$identity_dir" ] && [ -d "$identity_dir" ] && [ "$(stat -c '%u:%a' "$identity_dir")" = 0:700 ] || { echo ANDEIVA_PREVIEW_IDENTITY_STORE >&2; exit 1; }
 fi
+reader_file="$identity_dir/config-reader-v1"
+reader_name=andeiva-config-reader
+if [ -e "$reader_file" ] || [ -L "$reader_file" ]; then
+  [ ! -L "$reader_file" ] && [ -f "$reader_file" ] && [ "$(stat -c '%u:%g:%a:%h' "$reader_file")" = 0:0:600:1 ] || { echo ANDEIVA_PREVIEW_READER_IDENTITY >&2; exit 1; }
+else
+  if getent group "$reader_name" >/dev/null || getent passwd "$reader_name" >/dev/null; then
+    echo ANDEIVA_PREVIEW_EXISTING_READER_REQUIRES_REVIEW >&2; exit 1
+  fi
+fi
 if [ -e "$identity_file" ] || [ -L "$identity_file" ]; then
   [ ! -L "$identity_file" ] && [ -f "$identity_file" ] && [ "$(stat -c '%u:%a' "$identity_file")" = 0:600 ] || { echo ANDEIVA_PREVIEW_IDENTITY_STORE >&2; exit 1; }
 else
@@ -46,6 +55,25 @@ if [ -e "$identity_file" ]; then
   cmp -s "$identity_file" "$identity_tmp" || { echo ANDEIVA_PREVIEW_IDENTITY_CHANGED >&2; exit 1; }
 else
   mv -T -- "$identity_tmp" "$identity_file"
+fi
+if ! getent group "$reader_name" >/dev/null; then
+  [ ! -e "$reader_file" ] || { echo ANDEIVA_PREVIEW_READER_IDENTITY >&2; exit 1; }
+  addgroup --system "$reader_name"
+fi
+reader_entry=$(getent group "$reader_name")
+reader_gid=$(printf '%s\n' "$reader_entry" | cut -d: -f3)
+case "$reader_gid" in ''|0|*[!0-9]*) echo ANDEIVA_PREVIEW_READER_IDENTITY >&2; exit 1;; esac
+[ -z "$(printf '%s\n' "$reader_entry" | cut -d: -f4)" ] || { echo ANDEIVA_PREVIEW_READER_MEMBERS >&2; exit 1; }
+reader_accounts=$(getent passwd) || { echo ANDEIVA_PREVIEW_READER_MEMBERS >&2; exit 1; }
+printf '%s\n' "$reader_accounts" | awk -F: -v gid="$reader_gid" '$4==gid {found=1} END {exit found}' || { echo ANDEIVA_PREVIEW_READER_MEMBERS >&2; exit 1; }
+for name in andeiva-preview-api andeiva-preview-helper andeiva-preview-ipc; do
+  [ "$(getent group "$name" | cut -d: -f3)" != "$reader_gid" ] || { echo ANDEIVA_PREVIEW_READER_IDENTITY >&2; exit 1; }
+done
+reader_record=$(printf '{"version":1,"name":"andeiva-config-reader","gid":%s}' "$reader_gid")
+if [ -e "$reader_file" ]; then
+  [ "$(cat "$reader_file")" = "$reader_record" ] || { echo ANDEIVA_PREVIEW_READER_IDENTITY >&2; exit 1; }
+else
+  (umask 077; set -C; printf '%s\n' "$reader_record" > "$reader_file")
 fi
 if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 echo 'ANDEIVA preview installed. Review configuration and provision before enabling the target.'

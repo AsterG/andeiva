@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/netip"
+	"strconv"
 	"testing"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
@@ -302,5 +303,128 @@ func TestStatefulResponsesAndRevocation(t *testing.T) {
 	c.Rules = append(c.Rules, deny)
 	if allowed, _ := evaluate(t, c, reply); !allowed {
 		t.Fatal("later deny violated first match")
+	}
+}
+
+// Numeric constants are specified independently of the readback comparator.
+func numericLegacyObservation(t testing.TB, revision configpoc.Revision) []byte {
+	t.Helper()
+	objects := policyObjects(revision)
+	for _, entry := range objects[2:] {
+		rule := entry["rule"].(object)
+		expr := rule["expr"].([]object)
+		reverse := expr[8]["match"].(object)["right"] == "reply"
+		direction := 0
+		var states any = []int{2, 8}
+		if reverse {
+			direction = 1
+			states = 2
+		}
+		expr[8] = match(ct("direction"), direction)
+		expr[9] = object{"match": object{"op": "in", "left": ct("state"), "right": states}}
+		rule["expr"] = append(append([]object{}, expr[1:5]...), expr[6:]...)
+	}
+	data, err := json.Marshal(object{"nftables": objects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func BenchmarkNumericLegacyReadback64Rules(b *testing.B) {
+	c := testConfig()
+	rule := c.Rules[0]
+	c.Rules = nil
+	for i := 0; i < 64; i++ {
+		rule.ID = "rule-" + strconv.Itoa(i)
+		c.Rules = append(c.Rules, rule)
+	}
+	revision, err := configpoc.Canonical(c)
+	if err != nil {
+		b.Fatal(err)
+	}
+	data := numericLegacyObservation(b, revision)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := VerifyObservation(data, revision); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestNumericLegacyConntrackReadbackIsExact(t *testing.T) {
+	for _, schema := range []int{2, 4} {
+		c := testConfig()
+		c.SchemaVersion = schema
+		if schema == 4 {
+			enabled := true
+			c.Rules[0].Enabled = &enabled
+		}
+		udp := c.Rules[0]
+		udp.ID = "datagram"
+		m := *udp.Match
+		m.Protocol = "udp"
+		m.DestinationPorts = configpoc.PortRange{From: 18081, To: 18082}
+		udp.Match = &m
+		c.Rules = append(c.Rules, udp)
+		revision, err := configpoc.Canonical(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		valid := numericLegacyObservation(t, revision)
+		if _, err := VerifyObservation(valid, revision); err != nil {
+			t.Fatalf("numeric schema%d: %v", schema, err)
+		}
+		for name, mutate := range map[string]func([]any){
+			"extra-state":       func(e []any) { e[7].(map[string]any)["match"].(map[string]any)["right"] = []int{2, 4, 8} },
+			"unknown-state":     func(e []any) { e[7].(map[string]any)["match"].(map[string]any)["right"] = []int{2, 64} },
+			"duplicate-state":   func(e []any) { e[7].(map[string]any)["match"].(map[string]any)["right"] = []int{2, 8, 8} },
+			"direction":         func(e []any) { e[6].(map[string]any)["match"].(map[string]any)["right"] = 1 },
+			"direction-unknown": func(e []any) { e[6].(map[string]any)["match"].(map[string]any)["right"] = 2 },
+			"new-reply":         func(e []any) { e[7].(map[string]any)["match"].(map[string]any)["right"] = 8 },
+			"operator":          func(e []any) { e[7].(map[string]any)["match"].(map[string]any)["op"] = "==" },
+			"order":             func(e []any) { e[6], e[7] = e[7], e[6] },
+			"mark":              func(e []any) { e[8] = object{"mangle": object{"key": ct("mark"), "value": 1}} },
+			"verdict":           func(e []any) { e[10] = object{"drop": nil} },
+		} {
+			var envelope struct {
+				Objects []object `json:"nftables"`
+			}
+			if err := json.Unmarshal(valid, &envelope); err != nil {
+				t.Fatal(err)
+			}
+			index := 2
+			if name == "new-reply" {
+				index = 3
+			}
+			body := envelope.Objects[index]["rule"].(map[string]any)
+			mutate(body["expr"].([]any))
+			data, _ := json.Marshal(envelope)
+			if _, err := VerifyObservation(data, revision); err == nil {
+				t.Fatalf("accepted schema%d %s", schema, name)
+			}
+		}
+		for i := 0; i < 11; i++ {
+			var envelope struct {
+				Objects []object `json:"nftables"`
+			}
+			_ = json.Unmarshal(valid, &envelope)
+			body := envelope.Objects[2]["rule"].(map[string]any)
+			expr := body["expr"].([]any)
+			body["expr"] = append(expr[:i], expr[i+1:]...)
+			data, _ := json.Marshal(envelope)
+			if _, err := VerifyObservation(data, revision); err == nil {
+				t.Fatalf("accepted lost condition %d", i)
+			}
+		}
+		duplicate := bytes.Replace(valid, []byte(`"right":[2,8]`), []byte(`"right":[2,8],"right":[2,8]`), 1)
+		if bytes.Equal(duplicate, valid) {
+			t.Fatal("missing duplicate mutation")
+		}
+		if _, err := VerifyObservation(duplicate, revision); err == nil {
+			t.Fatal("accepted duplicate JSON")
+		}
 	}
 }

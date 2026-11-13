@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
-	"slices"
 
 	"github.com/AsterG/andeiva/internal/localpolicy"
 )
@@ -36,11 +35,7 @@ type object = map[string]any
 
 // NeighborLink is trusted executor inventory, never a service-editing parameter.
 // Exact peers let denied service clients resolve neighbors without an L4 grant.
-type NeighborLink struct {
-	Interface      string   `json:"interface"`
-	LocalAddresses []string `json:"local_addresses"`
-	PeerAddresses  []string `json:"peer_addresses"`
-}
+type NeighborLink = localpolicy.NeighborLink
 
 type Artifact struct {
 	Revision   localpolicy.Revision        `json:"revision"`
@@ -187,62 +182,16 @@ func rule(comment string, expr []object) object {
 }
 
 func canonicalNeighbors(c localpolicy.Config, links []NeighborLink) ([]NeighborLink, error) {
-	if len(links) > MaxInterfaces {
+	result, err := localpolicy.CanonicalNeighborInventory(c, links)
+	if err != nil {
 		return nil, ErrPolicy
 	}
-	result := make([]NeighborLink, 0, len(links))
-	seen := map[string]bool{}
-	for _, link := range links {
-		if seen[link.Interface] || len(link.LocalAddresses) == 0 || len(link.LocalAddresses) > MaxNeighborAddresses || len(link.PeerAddresses) == 0 || len(link.PeerAddresses) > MaxNeighborAddresses {
-			return nil, ErrPolicy
-		}
-		seen[link.Interface] = true
-		var inventory []string
-		for _, i := range c.Interfaces {
-			if i.Name == link.Interface {
-				inventory = i.Addresses
-			}
-		}
-		if inventory == nil {
-			return nil, ErrPolicy
-		}
-		local, err := addresses(link.LocalAddresses)
-		if err != nil {
-			return nil, err
-		}
-		peers, err := addresses(link.PeerAddresses)
-		if err != nil {
-			return nil, err
-		}
-		for _, a := range local {
-			if !slices.Contains(inventory, a) || slices.Contains(peers, a) {
-				return nil, ErrPolicy
-			}
-		}
-		result = append(result, NeighborLink{link.Interface, local, peers})
-	}
-	slices.SortFunc(result, func(a, b NeighborLink) int {
-		if a.Interface < b.Interface {
-			return -1
-		}
-		if a.Interface > b.Interface {
-			return 1
-		}
-		return 0
-	})
 	return result, nil
 }
 
 func addresses(values []string) ([]string, error) {
-	result := slices.Clone(values)
-	for _, text := range result {
-		a, err := netip.ParseAddr(text)
-		if err != nil || !a.Is6() || a.Is4In6() || a.IsUnspecified() || a.IsMulticast() || a.IsLoopback() || a.Zone() != "" || a.String() != text {
-			return nil, ErrPolicy
-		}
-	}
-	slices.Sort(result)
-	if len(slices.Compact(slices.Clone(result))) != len(result) {
+	result, err := localpolicy.CanonicalNeighborAddresses(values)
+	if err != nil {
 		return nil, ErrPolicy
 	}
 	return result, nil

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — routed administration workflows
+
+- Add authenticated Web and CLI consumers for grouped network, forwarding and source NAT configuration, with confirmed application, explicit persistence and durable operation lookup.
+- Preserve exact revision identities, block writes after uncertain execution and support explicit resumption of accepted requests without duplicate admission.
+- Expose bounded administrator-only v2 audit history and retain unbound reserve claims during reachability inspection without treating them as written plans.
+- Preserve historical candidates without automatic rebasing, and add explicit owner-checked replacement/discard with exact stage and generation guards.
+- Retain schema4 rule editing without fabricating routed network configuration.
+- Label startup recovery audit events in English, Spanish and Portuguese, and keep long revision details within the responsive audit panel.
+- Keep runtime migration, privileged helper activation and native appliance qualification independently gated.
+- Restrict the grouped helper's legacy compatibility session to observation; policy changes remain subject to selected-state authorization.
+- Prepare a namespace-bound nft transport with fixed commands and shared strict table-presence decoding; native service activation remains gated.
+- Prepare separate grouped API/helper supervision and verified legacy-table readback without a second policy guardian; preserve counter discontinuities across attempted replacement and rollback.
+- Add optional quiescent integrity inspection under the configuration writer barrier, with exact selection correlation, bounded scheduler wakeups and reserved confirmation handling.
+- Define an explicit host/gateway namespace profile while retaining strict legacy laboratory metadata validation.
+- Add bounded isolated DHCP ownership and a closed-forwarding lease executor that preserves the static LAN and compensates only its WAN changes.
+- Prepare history-preserving routed migration with both source journals locked through fingerprint verification and publication; require physical boot before readiness.
+- Add opt-in native lease qualification, including capless refusal, occupied-WAN rejection and compensation after authority changes during final readback.
+- Derive local interface inventory for routed candidates without service definitions, preserving historical local revisions and independent listener validation.
+- Distinguish service restart from OS reboot during grouped recovery; keep root retirement evidence private to the helper and require separate native recovery qualification.
+- Add isolated credential-access checks with explicit test-execution evidence; keep migration, HTTP authorization and installed activation as separate gates.
+
 ## Unreleased — administrative service isolation
 
 - Retain the last applied isolated firewall policy when the administrative API and socket are stopped or fail.

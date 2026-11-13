@@ -42,7 +42,7 @@ jobs:
 
   source:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,8 +56,26 @@ jobs:
           node-version: 24.20.0
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: frontend
+      - name: Verify inherited-descriptor fixture before the full suite
+        run: go test ./internal/previewruntime -count=1 -run '^TestRoutedMigrationInspectV3ExtraDescriptors$'
       - run: bash scripts/check.sh
-      - run: go test -race ./cmd/... ./internal/...
+      # The complete package suite exceeds Go's default ten-minute aggregate
+      # budget. This does not alter RPC or persisted transaction deadlines.
+      - run: go test -race -timeout=20m ./cmd/... ./internal/...
+      - name: DHCP laboratory guard without privileged network operations
+        run: |
+          bash -n scripts/dhcp-native-isolated.sh
+          refusal=0
+          CI=1 ANDEIVA_DHCP_LAB_AUTHORIZED=1 bash scripts/dhcp-native-isolated.sh isolated || refusal=$?
+          test "$refusal" -eq 64
+          bash -n scripts/dhcp-lease-native-isolated.sh
+          refusal=0
+          CI=1 ANDEIVA_DHCP_LEASE_LAB_AUTHORIZED=1 bash scripts/dhcp-lease-native-isolated.sh lifecycle || refusal=$?
+          test "$refusal" -eq 1
+          bash -n scripts/routed-links-native-isolated.sh
+          refusal=0
+          CI=1 ANDEIVA_ROUTED_LINKS_LAB_AUTHORIZED=1 bash scripts/routed-links-native-isolated.sh || refusal=$?
+          test "$refusal" -eq 1
       - name: Local service policy contracts without runtime activation
         run: |
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./internal/localpolicy
@@ -67,6 +85,7 @@ jobs:
       - name: Configuration experiment platform source selection
         run: |
           bash scripts/check-config-platforms.sh
+          bash packaging/preview/tests/config-reader-identity.sh
           bash -n packaging/preview/tests/storage-pressure.sh
           bash packaging/preview/tests/storage-pressure-log-test.sh
           bash -n packaging/preview/tests/recovery-reserve-pressure.sh
@@ -111,6 +130,34 @@ jobs:
             '
       - name: Nftables POC unprivileged contracts and platform compilation
         run: bash scripts/check-nft-poc.sh
+      - name: Grouped runtime contracts and native fixture guard without privileges
+        run: |
+          go test -race -count=1 -run 'TestRouted(KernelV3|KernelParentDeathV3|EmptyListenersV3|LaunchV3|HelperV3|CompatibilityV2|APIV3)' ./internal/previewruntime
+          go test -race -count=1 -run '^TestTablePresence' ./internal/routedactivation
+          bash -n packaging/preview/tests/routed-kernel-native.sh
+          if CI=1 bash packaging/preview/tests/routed-kernel-native.sh --isolated-lab /bin/true; then
+            echo 'Privileged fixture was incorrectly accepted in CI' >&2
+            exit 1
+          else
+            status=$?
+            test "$status" -eq 2
+          fi
+          bash -n packaging/preview/tests/routed-launch-native.sh
+          if CI=1 bash packaging/preview/tests/routed-launch-native.sh --isolated-lab /bin/true; then
+            echo 'Privileged launch fixture was incorrectly accepted in CI' >&2
+            exit 1
+          else
+            status=$?
+            test "$status" -eq 2
+          fi
+          bash -n packaging/preview/tests/grouped-accounts-native.sh
+          if CI=1 bash packaging/preview/tests/grouped-accounts-native.sh --isolated-accounts-lab /bin/true; then
+            echo 'Privileged credential fixture was incorrectly accepted in CI' >&2
+            exit 1
+          else
+            status=$?
+            test "$status" -eq 2
+          fi
       - name: Administrative firewall platform compilation without privileges
         run: bash scripts/check-firewall-admin.sh
       - run: bash scripts/smoke-api.sh

@@ -23,6 +23,9 @@ type SessionV2 struct {
 	domain                 string
 	epoch, last            uint64
 	active, attached, cold bool
+	readOnly               bool
+	routedReadback         routedLegacyReadbackV3
+	routedOwner            *RoutedAuthority
 }
 
 func NewSessionV2(run string, namespace uint64, engine Engine, guardian *nftguardian.Guardian, observe Observer) (*SessionV2, error) {
@@ -30,6 +33,18 @@ func NewSessionV2(run string, namespace uint64, engine Engine, guardian *nftguar
 		return nil, errHelper
 	}
 	return &SessionV2{base: NewSession(run, namespace, engine, guardian, observe), domain: "firewall"}, nil
+}
+
+// NewRoutedCompatibilitySessionV2 exposes only observation to a grouped writer.
+// All effects belong to the independently selected v3 authority. This choice
+// is fixed for the session lifetime and cannot be changed by a wire request.
+func NewRoutedCompatibilitySessionV2(run string, namespace uint64, engine Engine, guardian *nftguardian.Guardian, observe Observer) (*SessionV2, error) {
+	s, err := NewSessionV2(run, namespace, engine, guardian, observe)
+	if err != nil {
+		return nil, err
+	}
+	s.readOnly = true
+	return s, nil
 }
 func NewLocalSessionV2(run string, namespace uint64, engine Engine, guardian *nftguardian.Guardian, compile firewallipc.Compiler, observe func(context.Context) (string, localpolicy.Observation, error)) (*SessionV2, error) {
 	b, e := NewLocalSession(run, namespace, engine, guardian, compile, observe)
@@ -45,7 +60,7 @@ func stateV2(s nftguardian.State) firewalladmin.LeaseState {
 // ServeV2 requires assembly-authenticated channel provenance. The Unix wrappers
 // perform kernel peer checks; no public runtime selects this prepared session.
 func (s *SessionV2) ServeV2(ctx context.Context, conn io.ReadWriteCloser, runtimeRun string) error {
-	if s == nil || s.base == nil || s.base.guardian == nil || s.base.engine == nil || !firewallipc.DomainV2(s.domain) || ctx == nil || conn == nil || !ValidRun(runtimeRun) {
+	if s == nil || s.base == nil || (s.routedReadback == nil && (s.base.guardian == nil || s.base.engine == nil)) || (s.routedReadback != nil && (!s.readOnly || s.domain != "firewall")) || !firewallipc.DomainV2(s.domain) || ctx == nil || conn == nil || !ValidRun(runtimeRun) {
 		if conn != nil {
 			_ = conn.Close()
 		}
@@ -161,9 +176,15 @@ func (s *SessionV2) handleV2(ctx context.Context, epoch uint64, m firewallipc.Re
 		return firewallipc.ReplyV2{}, errHelper
 	}
 	s.last = m.Sequence
+	if s.routedReadback != nil {
+		return s.handleRoutedReadbackV3(ctx, m, p)
+	}
 	reply := firewallipc.ReplyV2{ProtocolVersion: 2, Run: m.Run, Sequence: m.Sequence, Namespace: m.Namespace, Domain: m.Domain, Verb: m.Verb}
 	result := firewallipc.ResultV2{}
 	var err error
+	if s.readOnly && m.Verb != "state" && m.Verb != "observe" && m.Verb != "attach_observed" {
+		err = errHelper
+	}
 	if m.Verb != "state" && m.Verb != "observe" && m.Verb != "attach_observed" && (!s.attached || (s.cold && m.Verb != "bootstrap")) {
 		err = errHelper
 	}
@@ -201,6 +222,22 @@ func (s *SessionV2) handleV2(ctx context.Context, epoch uint64, m firewallipc.Re
 			} else {
 				err = b.guardian.Arm(p.Arm.ID, p.Arm.Previous, p.Arm.Target, p.Arm.TTL)
 			}
+		case "arm_until":
+			if !b.validRevision(p.ArmUntil.Previous) || !b.validRevision(p.ArmUntil.Target) {
+				err = errHelper
+			} else {
+				err = b.guardian.ArmUntil(p.ArmUntil.ID, p.ArmUntil.Previous, p.ArmUntil.Target, p.ArmUntil.Deadline)
+			}
+		case "apply_scoped":
+			scope := p.ApplyScoped.Scope
+			if !b.validRevision(p.ApplyScoped.Revision) {
+				err = errHelper
+			} else {
+				err = b.guardian.ApplyLease(ctx, p.ApplyScoped.Revision, nftguardian.State{ID: scope.ID, Previous: scope.Previous, Target: scope.Target, Deadline: scope.Deadline})
+			}
+		case "confirm_scoped":
+			scope := p.Recovery
+			err = b.guardian.ConfirmLease(nftguardian.State{ID: scope.ID, Previous: scope.Previous, Target: scope.Target, Deadline: scope.Deadline})
 		case "confirm":
 			err = b.guardian.Confirm(p.Confirm.ID, p.Confirm.Target)
 		case "recover_scoped":
@@ -238,10 +275,16 @@ func (s *SessionV2) handleV2(ctx context.Context, epoch uint64, m firewallipc.Re
 			result.Hash = hash
 		}
 	}
-	if err == nil && (m.Verb == "apply" || m.Verb == "bootstrap" || m.Verb == "arm") {
+	if err == nil && (m.Verb == "apply" || m.Verb == "bootstrap" || m.Verb == "arm" || m.Verb == "arm_until" || m.Verb == "apply_scoped") {
 		r := p.Revision
 		if m.Verb == "arm" {
 			r = p.Arm.Target
+		}
+		if m.Verb == "arm_until" {
+			r = p.ArmUntil.Target
+		}
+		if m.Verb == "apply_scoped" {
+			r = p.ApplyScoped.Revision
 		}
 		result.Artifact, err = b.digest(r.Config)
 	}

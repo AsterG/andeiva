@@ -3,32 +3,52 @@ package configpoc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
 
 type v2CoordinatorOptions struct {
-	Reserves    *v2ReserveManager
-	LocalPolicy LocalPolicyV2
-	BootID      *v2BootID
-	Now         func() time.Time
-	Hook        func(string) error
+	RebootScope       RoutedRebootScopeAuthorityV4
+	FreshScope        RoutedFreshScopeAuthorityV3
+	DHCPRecovery      RoutedDHCPRecoveryV3
+	integrityAttached bool // Set only after the trusted pre-coordinator Attach.
+	Integrity         RuntimeIntegrityV1
+	SharedReader      *recoveryreserve.ReaderAccessV2
+	Routed            RoutedAuthorityV1
+	RoutedIdentity    networkexecutor.OwnedNamespaceIdentity
+	GuardDeadlines    bool
+	Reserves          *v2ReserveManager
+	LocalPolicy       LocalPolicyV2
+	BootID            *v2BootID
+	Now               func() time.Time
+	Hook              func(string) error
 	// Tests may drive deadlines explicitly; appliance integration must not opt
 	// out of the independent timeout worker. There is no runtime caller yet.
 	ManualTimeout bool
 }
 type v2Coordinator struct {
-	store       *v2Store
-	firewall    []Engine
-	local       []Engine
-	options     v2CoordinatorOptions
-	timer       *time.Timer
-	timerLease  string
-	timerOrigin string
-	closed      bool
+	integrity       runtimeIntegrityStateV1
+	bootBoundary    *v2RoutedBootBoundary
+	bootFreshScope  *RoutedFreshScopeEvidenceV3
+	bootRebootScope *RoutedRebootScopeEvidenceV4
+	store           *v2Store
+	firewall        []Engine
+	local           []Engine
+	options         v2CoordinatorOptions
+	timer           *time.Timer
+	timerLease      string
+	timerOrigin     string
+	closed          bool
 }
 
 func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []Engine, options v2CoordinatorOptions) (*v2Coordinator, error) {
+	if options.FreshScope != nil && options.RebootScope != nil {
+		return nil, ErrInvalid
+	}
 	if options.BootID != nil {
 		boot := *options.BootID
 		if !validBootIDV2(boot) {
@@ -52,6 +72,14 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	c := &v2Coordinator{store: store, firewall: append([]Engine{}, firewall...), local: append([]Engine{}, local...), options: options}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if options.Integrity != nil {
+		c.integrity.attached = options.integrityAttached
+		c.integrity.kick = make(chan struct{}, 1)
+		store.afterPublication = c.integrityPublicationV1
+	}
+	if (hasFeatureV2(store.state, v2RoutedOfflineSeedFeature) || hasFeatureV2(store.state, v2RoutedOfflineMigrationFeature)) && (options.Routed == nil || options.BootID == nil || options.Reserves == nil || !options.GuardDeadlines) {
+		return nil, ErrRecovery
+	}
 	if store.blocked {
 		if store.state.RecoveryReserveVersion != 1 || options.Reserves == nil {
 			return nil, errV2Unavailable
@@ -76,8 +104,19 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	if !validV2Configuration(store.state.Configuration) {
 		return nil, errV2Unavailable
 	}
-	if err := c.validateReferencesLocked(); err != nil {
+	if err := c.guardDeadlineOpenV2(); err != nil {
 		return nil, err
+	}
+	if err := c.validateReferencesLocked(); err != nil {
+		return nil, fmt.Errorf("selected references: %w", err)
+	}
+	// A previous dynamic lease is never resumed by the static boot engine.
+	// Trusted DHCP recovery must withdraw it before this coordinator can open.
+	if err := c.recoverRoutedDHCPAtOpenV3(ctx); err != nil {
+		return nil, err
+	}
+	if handled, err := c.openRoutedBootBoundaryV2(ctx); handled {
+		return c, err
 	}
 	if store.state.Configuration.Intent != nil {
 		if err := c.reconcileLocked(ctx, "restart"); err != nil {
@@ -89,6 +128,11 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 			return c, err
 		}
 	}
+	if store.state.RoutedBootBoundary != nil && store.state.Configuration.Intent == nil && store.state.Configuration.Pending == nil {
+		if err := c.finishRoutedBootBoundaryV2(); err != nil {
+			return c, err
+		}
+	}
 	if store.reserves != nil {
 		if err := store.reserves.maintain(store); err != nil {
 			return c, err
@@ -96,8 +140,11 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	}
 	if options.BootID != nil {
 		if err := c.bootStartupLocked(ctx, *options.BootID); err != nil {
-			return c, err
+			return c, fmt.Errorf("startup reconciliation: %w", err)
 		}
+	}
+	if err := c.resumeRoutedLockedV2(ctx); err != nil {
+		return c, err
 	}
 	if !c.readback(*store.state.Configuration) {
 		return c, ErrRecovery
@@ -128,6 +175,7 @@ func (c *v2Coordinator) close() {
 	c.store.mu.Lock()
 	defer c.store.mu.Unlock()
 	c.closed = true
+	c.store.afterPublication = nil
 	c.invalidateLocalLocked()
 	if c.timer != nil {
 		c.timer.Stop()
@@ -249,6 +297,39 @@ func (c *v2Coordinator) persistRevisions(state v2Configuration) error {
 }
 
 func (c *v2Coordinator) readback(state v2Configuration) bool {
+	if state.Firewall.Running.Config.SchemaVersion == 6 || c.store.state.RoutedActive != nil || c.store.state.Configuration != nil && c.store.state.Configuration.Intent != nil && c.store.state.Configuration.Intent.RoutedWork != "" {
+		if c.options.Routed == nil {
+			return false
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if in := c.store.state.Configuration.Intent; in != nil && in.Domain == "routed" && in.Recovery && in.Kind != v2BootKind && in.RoutedWork != "" {
+			plan, err := c.selectedRoutedPlanV2()
+			return err == nil && plan.previous.Composite.Hash == state.Running.Hash && c.options.Routed.Match(ctx, plan, "before") == nil
+		}
+		_, hash, err := c.options.Routed.Observe(ctx)
+		if err != nil {
+			return false
+		}
+		if hash == state.Running.Hash {
+			return true
+		}
+		if hash != "" || state.Firewall.Running.Config.SchemaVersion != 4 {
+			return false
+		}
+		var plan RoutedSelectedPlanV1
+		if in := c.store.state.Configuration.Intent; in != nil && in.RoutedWork != "" {
+			plan, err = c.selectedRoutedPlanV2()
+		} else if active := c.store.state.RoutedActive; active != nil && active.Side == "before" {
+			plan, err = loadRoutedWorkV2(active.Work, c.store.state.Lineage, c.store.readObject)
+			if plan.Scope().Identity != c.options.RoutedIdentity {
+				return false
+			}
+		} else {
+			return false
+		}
+		return err == nil && plan.Cold() && plan.previous.Composite.Hash == state.Running.Hash && c.options.Routed.Match(ctx, plan, "before") == nil
+	}
 	for _, engine := range c.firewall {
 		if engine.Current() != state.Firewall.Running.Hash {
 			return false
@@ -302,6 +383,18 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	if principal.Role != RoleAdmin || !s.principalV2Locked(principal) {
 		return v2CoordinatorResult{}, ErrDenied
+	}
+	if c.options.Integrity != nil {
+		op, err := s.lookupLocked(principal.Subject, id)
+		if err != nil {
+			return v2CoordinatorResult{}, err
+		}
+		if op.State != "accepted" {
+			return result(op), nil
+		}
+		if !c.integrityAllowsV1(c.integrityClosingV1(op)) {
+			return result(op), ErrRecovery
+		}
 	}
 	if s.reserves != nil {
 		if err := s.reserves.maintain(s); err != nil {
@@ -426,6 +519,25 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	if err != nil {
 		return result(op), err
 	}
+	if op.Domain == "routed" && op.Request.Kind == OpValidate && c.options.Routed != nil {
+		candidate, e := NewRoutedActivationBundleV1(target.Firewall.Candidate.Revision, target.LocalServices.Candidate.Revision)
+		if e != nil {
+			return result(op), e
+		}
+		var baseline *RoutedBaselineV1
+		if c.store.state.RoutedActive != nil {
+			_, baseline, e = c.routedBaselineV2()
+			if e != nil {
+				return result(op), e
+			}
+		}
+		if _, e = c.options.Routed.Prepare(ctx, candidate, baseline); e != nil {
+			return result(op), e
+		}
+	}
+	if err = c.absoluteGuardPreflightV2(op, state, target); err != nil {
+		return result(op), err
+	}
 	if err = c.persistRevisions(target); err != nil {
 		s.blocked = true
 		return result(op), err
@@ -450,11 +562,25 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	op.State = "pending"
 	op.Pinned = true
 	st := clone(s.state)
-	if op.Domain == "local_services" {
+	if op.Domain == "local_services" || op.Domain == "routed" {
 		addFeatureV2(&st, v2LocalFeature)
 	}
 	st.Clock = now
 	st.Configuration.Intent = &v2CoordinatorIntent{Operation: op.ID, Subject: op.Subject, Domain: op.Domain, Kind: op.Request.Kind, Previous: previousHash, Target: targetHash, TargetGeneration: generation}
+	if op.Request.Kind == OpReplaceCandidate || op.Request.Kind == OpDiscardCandidate {
+		addFeatureV2(&st, v2OwnedCandidateFeature)
+	}
+	if err = c.publishRoutedWorkV2(ctx, op, state, target, st.Configuration.Intent); err != nil {
+		return result(op), err
+	}
+	if routedConfigurationUsesDHCPV3(target) {
+		addFeatureV2(&st, v3RoutedDHCPFeature)
+	}
+	if c.options.GuardDeadlines && immediateGuardIntentV2(st.Configuration.Intent, state, target) {
+		deadline := c.now().Add(10 * time.Second).UTC()
+		st.Configuration.Intent.GuardDeadline = &deadline
+		addFeatureV2(&st, v2GuardDeadlineFeature)
+	}
 	if s.reserves != nil {
 		if err = s.reserves.selectedPlan(s, &op, &st, *st.Configuration.Intent, target); err != nil {
 			return result(op), err
@@ -535,6 +661,25 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 }
 
 func (c *v2Coordinator) targetLocked(op v2Operation, state v2Configuration, now time.Time) (v2Configuration, bool, error) {
+	if op.Domain == "routed" {
+		// Joint effects require the separately assembled group authority. Never
+		// fall through to the independent legacy component guard loops.
+		if c.options.Routed == nil && (op.Request.Kind == OpCommit || op.Request.Kind == OpRollback || op.Request.Kind == OpConfirm) {
+			return state, false, ErrRecovery
+		}
+		lease := ""
+		if op.Request.Kind == OpCommit || op.Request.Kind == OpRollback {
+			var err error
+			lease, err = v2ID("lease", op.Sequence)
+			if err != nil {
+				return state, false, err
+			}
+		}
+		return routedTargetV2(c.store, op, state, now, lease)
+	}
+	if state.CandidateGroup != nil || state.Firewall.Running.Config.SchemaVersion == 6 || c.options.Routed != nil && hasFeatureV2(c.store.state, v2RoutedFeature) {
+		return state, false, ErrConflict
+	}
 	target := clone(state)
 	target.Intent = nil
 	domain := domainSnapshotV2(&target, op.Domain)
@@ -682,7 +827,7 @@ func (c *v2Coordinator) loadDomainRevision(hash, domain string) (Revision, error
 		return Revision{}, ErrInvalid
 	}
 	var composite v2CompositeConfig
-	data, readErr := checkpointRead(c.store.root, name, v2ObjectLimit)
+	data, readErr := c.store.readRecordV2(name, v2ObjectLimit)
 	if readErr != nil || checkpointDigest(data) != hash {
 		c.store.blocked = true
 		return Revision{}, errV2Unavailable
@@ -720,6 +865,13 @@ func (c *v2Coordinator) applyGuardedLocked(ctx context.Context, previous, target
 	domain := effectDomainV2(previous, target)
 	if len(domains) == 1 {
 		domain = domains[0]
+	}
+	if domain == "routed" && (forceGuard || recoverDrift || previous.Running.Hash != target.Running.Hash) {
+		plan, err := c.selectedRoutedPlanV2()
+		if err != nil {
+			return err
+		}
+		return c.options.Routed.Apply(ctx, plan)
 	}
 	if target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash && target.Firewall.Running.Hash != previous.Firewall.Running.Hash {
 		return ErrDenied

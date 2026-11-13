@@ -114,7 +114,7 @@ func validClosingStateV2(st v2State, ordinaryReservations uint64) bool {
 	seenIDs, seenOrigins, seenChildren := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	credits := map[string]v2ClosingCredit{}
 	for _, credit := range st.ClosingCredits {
-		if credit.ID == "" || len(credit.ID) > 128 || credit.Origin == "" || len(credit.Origin) > 128 || seenIDs[credit.ID] || seenOrigins[credit.Origin] || credit.Subject == "" || len(credit.Subject) > 128 || (credit.Domain != "firewall" && credit.Domain != "local_services") || credit.Namespace == "" || len(credit.Namespace) > 128 || len(credit.Child) > 128 || len(credit.ChildNamespace) > 128 || len(credit.ClosingNamespace) > 128 || (credit.Child == "") != (credit.ChildNamespace == "") || credit.Child == credit.Origin || (credit.Child != "" && seenChildren[credit.Child]) {
+		if credit.ID == "" || len(credit.ID) > 128 || credit.Origin == "" || len(credit.Origin) > 128 || seenIDs[credit.ID] || seenOrigins[credit.Origin] || credit.Subject == "" || len(credit.Subject) > 128 || !configurationDomainV2(credit.Domain, hasFeatureV2(st, v2RoutedFeature)) || credit.Namespace == "" || len(credit.Namespace) > 128 || len(credit.Child) > 128 || len(credit.ChildNamespace) > 128 || len(credit.ClosingNamespace) > 128 || (credit.Child == "") != (credit.ChildNamespace == "") || credit.Child == credit.Origin || (credit.Child != "" && seenChildren[credit.Child]) {
 			return false
 		}
 		seenIDs[credit.ID], seenOrigins[credit.Origin] = true, true

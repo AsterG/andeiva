@@ -1,5 +1,15 @@
 # Static IPv4 namespace executor — NET-EXECUTOR-001
 
+`ObservedSnapshot` captures actual empty-IPv4 inventory without a desired plan or
+PlanHash. PrepareObserved accepts only supervisor-authenticated physical bindings;
+it performs no address/route writes and creates no transaction. VerifyObserved
+checks the actual baseline. RecoverObserved also requires the original immutable
+namespace identity retained only by NewInOwnedNamespace. It never grants L3
+ownership. ObservedMatchesPrepared compares every physical fact when a subsequent
+real desired plan is supplied; equality is not authorization. The initial profile
+is exactly two owned links plus optional loopback, with no IPv4 addresses/routes.
+Existing configured interfaces and DHCP leases remain outside this helper profile.
+
 Owner: network executor. Status: isolated qualification verified; PR/integration
 pending. The isolated routing laboratory consumes this package; appliance API, CLI,
 runtime and privileged helpers do not.
@@ -92,3 +102,36 @@ Existing management LAN migration, DHCP, appliance runtime activation and durabl
 crash recovery remain unsupported. Container execution and appliance resource
 budgets remain unqualified. No Docker/EKS/Helm integration or release/milestone
 completion is claimed. See the routing runner's EN/ES/PT guides for prerequisites.
+
+## Experimental isolated DHCP L3 adapter
+
+`NewLeaseInOwnedNamespace` is a separate opt-in executor. Its constructor only
+reads state: one configured static LAN, one empty DHCP WAN, the default IPv4
+routing rules, and closed IPv4/IPv6 forwarding are required. It reuses the
+non-root owned-namespace identity and capability checks; the host namespace is
+rejected. Existing static executor semantics remain unchanged.
+
+Trusted assembly supplies `LeaseOptions.Current`, with authenticated owner
+incarnation, boot/run identity, PID/start time, increasing sequence, exact desired
+hash/interface binding and a CLOCK_BOOTTIME deadline. These facts are not public
+JSON input. `Refresh` installs only the granted WAN address and default route,
+checks actual readback, and preserves all LAN facts. Same-tuple renewal updates
+only in-memory evidence. A changed tuple removes the previous lease first;
+partial failure cannot restore an invalidated older lease. Expiry or lost owner
+authority withdraws WAN. Foreign state or failed compensation fences the object.
+`Withdraw` restores the original LAN/empty-WAN baseline; `wan_withdrawn` does not
+mean an older DHCP lease was restored. `Close` refuses installed WAN ownership.
+
+This cut has no expiry worker, durable ownership record, cross-process recovery,
+NAT/DNS integration or forwarding permission. Trusted assembly must invoke
+`Refresh` for events/deadlines. `Verify` is read-only and is not a kernel expiry
+guard. A new instance rejects an occupied WAN; addresses or hashes do not prove
+ownership. Future recovery must use authenticated selected work from the existing
+configuration store, not a second journal. No host manager/interface adoption is
+implemented.
+
+`go test -race ./internal/networkexecutor` covers constructor side effects,
+invalid/replayed owner facts, LAN drift, changing readback, lease changes, expiry,
+cancellation and failures before/after each effect. These are simulated transport
+tests. Native qualification and resource measurements for this new adapter are
+pending; earlier static/DHCP fixture evidence does not qualify this integration.

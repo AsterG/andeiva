@@ -23,7 +23,7 @@
 !/packaging/
 
 # Build and dependency outputs
-**/node_modules/
+**/node_modules
 **/dist/
 **/.test-dist/
 **/.test-build/

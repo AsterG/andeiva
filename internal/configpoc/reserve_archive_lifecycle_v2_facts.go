@@ -1,6 +1,7 @@
 package configpoc
 
 import (
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"reflect"
 	"time"
 )
@@ -42,6 +43,45 @@ func terminalReserveOperationV2(op v2Operation, state v2State) bool {
 // This proves immutable canonical facts only. The caller separately verifies
 // the live selected closure and the exact physical binding before retirement.
 func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load func(string, any) error) error {
+	return validateArchiveFinalityWithWorkV2(archive, state, load, func(hash, lineage string) (RoutedSelectedPlanV1, error) { return loadRoutedWorkV2(hash, lineage, load) })
+}
+
+// The optional internal loader reuses only intrinsic immutable-work validation.
+// All state, feature, capsule and finality checks remain in this function.
+func validateArchiveFinalityWithWorkV2(archive v2ReserveArchive, state v2State, load func(string, any) error, loadWork func(string, string) (RoutedSelectedPlanV1, error)) error {
+	if loadWork == nil {
+		return errV2Unavailable
+	}
+	for _, entry := range archive.Entries {
+		if entry.Binding == nil || entry.Claim.Role != recoveryreserve.PlanV2 {
+			continue
+		}
+		var capsule v2ReservePlan
+		if checkpointDecode(entry.Raw, &capsule) != nil {
+			return errV2Unavailable
+		}
+		if capsule.Intent.RoutedWork != "" {
+			plan, err := loadWork(capsule.Intent.RoutedWork, state.Lineage)
+			if err != nil || !hasFeatureV2(state, v2RoutedFeature) || plan.work.Kind == v2BootKind && !hasFeatureV2(state, v2RoutedBootFeature) || validateRoutedWorkIntentV2(&capsule.Intent, plan, load) != nil {
+				return errV2Unavailable
+			}
+			if routedWorkUsesNoNetworkV2(plan) && !hasFeatureV2(state, v2RoutedNoNetworkFeature) {
+				return errV2Unavailable
+			}
+			if routedWorkUsesDHCPV3(plan) && !hasFeatureV2(state, v3RoutedDHCPFeature) {
+				return ErrRecovery
+			}
+			if plan.work.FreshScope != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
+				return ErrRecovery
+			}
+			if plan.work.RebootScope != nil && !hasFeatureV2(state, v4RoutedRebootScopeFeature) {
+				return ErrRecovery
+			}
+		}
+	}
+	if validateArchiveGuardDeadlinesV2(archive, state, load) != nil {
+		return errV2Unavailable
+	}
 	var facts v2ReserveFinality
 	if validateArchiveCapsulesV2(archive) != nil || load == nil || load(archive.FinalWork, &facts) != nil || facts.Format != v2Format || (facts.Version != 1 && facts.Version != 2) || (facts.Version == 2 && !hasFeatureV2(state, v2ReserveCompensationFeature)) || facts.Lineage != state.Lineage || archive.Lineage != state.Lineage || !validReserveWorkRefV2(facts.Origin) || facts.Origin.ID != archive.Origin || facts.Resolution != archive.LeaseResolution {
 		return errV2Unavailable
@@ -51,10 +91,22 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 		if facts.Version != 1 || facts.Child != nil || facts.Recovery != nil || facts.Resolution != "" || archive.Child != "" || load(facts.Origin.Object, &record) != nil || !validRecoveryRecordV2(record, state.Lineage) || record.ID != facts.Origin.ID || record.State != "final" || record.Pinned || record.Audit != archive.Audit {
 			return errV2Unavailable
 		}
+		if record.SupersededBy != "" && (!hasFeatureV2(state, v2RoutedBootBoundaryFeature) || validateRoutedBootSupersessionV2(record, state.Lineage, load) != nil) {
+			return errV2Unavailable
+		}
 		if !archiveMatchesBundleV2(archive, record.Reserve, false) || len(archive.UnusedEscrow) != 0 {
 			return errV2Unavailable
 		}
+		if record.Reserve != nil && record.Reserve.PlanIntent != nil && record.Reserve.PlanIntent.RoutedWork != "" {
+			plan, err := loadWork(record.Reserve.PlanIntent.RoutedWork, state.Lineage)
+			if err != nil || !routedBootRecordMatchesV2(plan, record) {
+				return errV2Unavailable
+			}
+		}
 		return nil
+	}
+	if facts.Kind == v3RoutedDHCPKind {
+		return validateRoutedDHCPArchiveV3(archive, facts, state, load)
 	}
 	if facts.Kind != "operation" {
 		return errV2Unavailable
@@ -79,6 +131,9 @@ func validateArchiveFinalityV2(archive v2ReserveArchive, state v2State, load fun
 			return errV2Unavailable
 		}
 		audit = recovery.Audit
+		if recovery.SupersededBy != "" && (!hasFeatureV2(state, v2RoutedBootBoundaryFeature) || validateRoutedBootSupersessionV2(recovery, state.Lineage, load) != nil) {
+			return errV2Unavailable
+		}
 	}
 	if audit != archive.Audit {
 		return errV2Unavailable

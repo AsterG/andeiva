@@ -52,11 +52,11 @@ func (s *v2Store) physicalRecord(name string, expected os.FileInfo) (info os.Fil
 		}
 	}()
 	info, err = f.Stat()
-	if err != nil || !sameRecordFile(expected, info) || !v2PhysicalSameDevice(s.physical.directoryInfo, info) {
+	if err != nil || !s.sameProfileRecordV2(name, expected, info) || !v2PhysicalSameDevice(s.physical.directoryInfo, info) {
 		return nil, errV2Unavailable
 	}
 	named, err := s.root.Lstat(name)
-	if err != nil || !sameRecordFile(info, named) {
+	if err != nil || !s.sameProfileRecordV2(name, info, named) {
 		return nil, errV2Unavailable
 	}
 	return info, nil
@@ -77,7 +77,7 @@ func (s *v2Store) physicalAddFile(info os.FileInfo) error {
 }
 
 func (s *v2Store) physicalDirectory() (directory *os.File, result error) {
-	directory, err := v2Directory(s.root)
+	directory, err := s.recordDirectoryV2()
 	if err != nil {
 		return nil, errV2Unavailable
 	}

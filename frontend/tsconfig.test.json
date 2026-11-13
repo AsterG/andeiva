@@ -5,5 +5,5 @@
     "outDir": ".test-build",
     "rootDir": "src"
   },
-  "include": ["src/App.tsx", "src/preferences.ts", "src/messages.ts"]
+  "include": ["src/App.tsx", "src/preferences.ts", "src/messages.ts", "src/routing/**/*.ts", "src/routing/**/*.tsx"]
 }

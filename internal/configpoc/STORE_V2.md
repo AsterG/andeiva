@@ -223,3 +223,21 @@ copied-volume run. The cgroup peak includes filesystem cache; it is not process
 RSS, application heap or a production memory-sizing result.
 
 See [transaction recovery reserves](RECOVERY_RESERVES_V2.md) for the separate internal pool/coordinator integration and its remaining qualification gates.
+
+### Fresh offline routed seed
+
+`PrepareOfflineRoutedStoreV3` is a trusted installation primitive for an empty
+private directory and three existing recovery pools. It accepts only canonical
+empty, default-deny schema4 firewall and schema3 local-service configurations.
+It stores declared Running/Startup/LastGood references and an `offline_seed /
+prepared` audit record, without a verified revision or effective-state claim.
+The sticky `configuration.routed-offline-seed.v1` feature rejects older readers.
+Runtime opening requires the real routed authority, boot identity, reserves and
+deadline enforcement; successful physical boot reconciliation remains mandatory
+before readiness. The initial declaration has a narrowly scoped integrity-walk
+exception, not a synthetic verification witness. Later generations require the
+ordinary verified witness. The caller must close writers and convert reader
+permissions offline before shared runtime access. Cancellation and partial
+publication never authorize reseeding a nonempty destination. Existing appliances
+must use the separate history-preserving migration; this primitive cannot replace
+their configuration or prove a complete installer/deployment.

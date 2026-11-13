@@ -58,13 +58,21 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		previousSelection = selection
 		// Only the preceding feature set is needed by the selection edge. Do not
 		// retain every decoded state while traversing historical selections.
-		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration)}
+		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary), Generation: state.Generation, RoutedDHCP: clone(state.RoutedDHCP), RoutedDHCPLast: state.RoutedDHCPLast}
 		hash = selection.Previous
 	}
 	return errV2InspectionBudget
 }
 
 func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error {
+	if validateRoutedBootBoundaryV2(state, r.object) != nil {
+		return errV2Unavailable
+	}
+	if state.RoutedBootBoundary != nil {
+		if err := r.routedBootBoundary(state.RoutedBootBoundary, key, state, depth+1); err != nil {
+			return err
+		}
+	}
 	if err := reserveMetadataFutureFitsV2(state, r.object); err != nil {
 		return err
 	}
@@ -204,6 +212,11 @@ func (r *v2ReachabilityReader) lookup(state v2State, subject, id string) (v2Oper
 			if !(&v2Store{state: state}).validOperation(op) || op.ID != id || op.Sequence != seq || op.Subject != subject || op.Lineage != state.Lineage || op.ClosingCredit == "" {
 				return op, errV2Unavailable
 			}
+			if r.action != nil && op.Outcome != nil {
+				if err := r.operationAudit(op, state, 2); err != nil {
+					return op, err
+				}
+			}
 			return op, nil
 		}
 	}
@@ -226,12 +239,25 @@ func (r *v2ReachabilityReader) lookup(state v2State, subject, id string) (v2Oper
 	if !(&v2Store{state: state}).validOperation(op) || op.ID != id || op.Sequence != seq || op.Subject != subject || op.Lineage != state.Lineage {
 		return op, errV2Unavailable
 	}
+	if r.action != nil && op.Outcome != nil {
+		if err := r.operationAudit(op, state, 2); err != nil {
+			return op, err
+		}
+	}
 	return op, nil
 }
 
 func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, state v2State, depth int, live bool) error {
-	if !validV2Configuration(&cfg) {
+	if !r.selectedConfigurationValidV2(&cfg) {
 		return errV2Unavailable
+	}
+	if live && validateCandidateGroupEvidenceV2(cfg, r.object) != nil {
+		return errV2Unavailable
+	}
+	if live {
+		if err := r.routedActive(key, state, depth+1); err != nil {
+			return err
+		}
 	}
 	if live && cfg.AuditTip != "" {
 		var audit v2CoordinatorAudit
@@ -242,7 +268,7 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 			return errV2Unavailable
 		}
 	}
-	if live && cfg.Pending == nil {
+	if live && cfg.Pending == nil && !declaredOfflineSeedV3(state, cfg, r.object) {
 		entry, err := r.findWitness(cfg.VerifiedIndex, cfg.Running.Hash)
 		if err != nil {
 			return err
@@ -253,6 +279,11 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 		}
 		if audit.Operation != entry.Operation || audit.Running != cfg.Running.Hash || audit.Sequence > cfg.AuditSequence || (audit.Result != "applied" && audit.Result != "verified") {
 			return errV2Unavailable
+		}
+		if r.action != nil {
+			if err := r.actionAuditLeafV2(entry.Audit, audit.Sequence, state.Generation, depth); err != nil {
+				return err
+			}
 		}
 	}
 	for _, domain := range []v2DomainSnapshot{cfg.Firewall, cfg.LocalServices} {
@@ -282,24 +313,36 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 			return err
 		}
 	}
+	if r.action != nil && !live {
+		if cfg.Intent != nil {
+			return errV2Unavailable
+		}
+		return nil
+	}
 	view := state
 	view.Configuration = &cfg
-	if cfg.VerifiedIndex != "" {
+	if r.action == nil && cfg.VerifiedIndex != "" {
 		if err := r.witness(cfg.VerifiedIndex, 0, "", false, key, view, depth); err != nil {
 			return err
 		}
 	}
-	if cfg.RecoveryIndex != "" {
+	if r.action == nil && cfg.RecoveryIndex != "" {
 		if err := r.witness(cfg.RecoveryIndex, 0, "", true, key, view, depth); err != nil {
 			return err
 		}
 	}
 	if cfg.Intent != nil {
 		in := cfg.Intent
+		if in.RoutedWork != "" {
+			if err := r.routedIntent(in, key, state, depth+1); err != nil {
+				return err
+			}
+		}
 		if in.TargetGeneration < state.Generation || (in.TargetGeneration != state.Generation && (state.Generation == ^uint64(0) || in.TargetGeneration != state.Generation+1)) {
 			return errV2Unavailable
 		}
-		for _, hash := range []string{in.Previous, in.Target} {
+		var sides [2]v2Configuration
+		for i, hash := range []string{in.Previous, in.Target} {
 			var snapshot v2Configuration
 			if err := r.object(hash, &snapshot); err != nil {
 				return err
@@ -307,9 +350,13 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 			if snapshot.Intent != nil {
 				return errV2Unavailable
 			}
+			sides[i] = snapshot
 			if err := r.snapshot(hash, key, state, depth+1); err != nil {
 				return err
 			}
+		}
+		if validateGuardDeadlineContextV2(in, sides[0], sides[1], hasFeatureV2(state, v2GuardDeadlineFeature), live) != nil {
+			return errV2Unavailable
 		}
 		if in.Recovery && cfg.LastRecovery == "" {
 			return errV2Unavailable
@@ -395,7 +442,7 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 						return errV2Unavailable
 					}
 				case "final":
-					if !op.Pinned || cfg.Pending == nil || cfg.Pending.OriginCommit != op.ID || cfg.Pending.Owner != op.Subject {
+					if (!op.Pinned || cfg.Pending == nil || cfg.Pending.OriginCommit != op.ID || cfg.Pending.Owner != op.Subject) && !boundaryRetainsOriginV2(state, op) {
 						return errV2Unavailable
 					}
 				default:
@@ -439,6 +486,15 @@ func (r *v2ReachabilityReader) findWitness(hash, revision string) (v2VerifiedEnt
 }
 
 func (r *v2ReachabilityReader) snapshot(hash, key string, state v2State, depth int) error {
+	if r.cache != nil {
+		// The complete state, not a traversal-path label, is the validation context.
+		// Keep all fields in the digest so future state fields cannot be omitted.
+		_, contextHash, err := v2Canonical(state)
+		if err != nil {
+			return err
+		}
+		key = contextHash
+	}
 	return r.walk("snapshot:"+key+":"+hash, depth, func() error {
 		var cfg v2Configuration
 		release, err := r.load(hash, &cfg)
@@ -458,7 +514,7 @@ func (r *v2ReachabilityReader) canonicalConfig(hash string, schema, depth int) e
 			return err
 		}
 		defer release()
-		canonical, err := Canonical(cfg)
+		canonical, err := canonicalDomainRevisionV2(cfg, schema == 6)
 		if err != nil || cfg.SchemaVersion != schema || canonical.Hash != hash {
 			return errV2Unavailable
 		}
@@ -474,11 +530,27 @@ func (r *v2ReachabilityReader) composite(hash string, depth int) error {
 			return err
 		}
 		defer release()
-		canonical, err := CanonicalComposite(cfg)
+		var canonical v2CompositeRevision
+		if cfg.SchemaVersion == 7 {
+			canonical, err = resolveRoutedCompositeV1(cfg, func(hash string, value any) error {
+				out, ok := value.(*Revision)
+				if !ok {
+					return errV2Unavailable
+				}
+				var config Config
+				if e := r.object(hash, &config); e != nil {
+					return e
+				}
+				*out = Revision{Hash: hash, Config: config}
+				return nil
+			})
+		} else {
+			canonical, err = CanonicalComposite(cfg)
+		}
 		if err != nil || canonical.Hash != hash {
 			return errV2Unavailable
 		}
-		if err := r.canonicalConfig(cfg.Domains.Firewall.Revision, 4, depth+1); err != nil {
+		if err := r.canonicalConfig(cfg.Domains.Firewall.Revision, cfg.Domains.Firewall.Schema, depth+1); err != nil {
 			return err
 		}
 		return r.canonicalConfig(cfg.Domains.LocalServices.Revision, 3, depth+1)
@@ -486,6 +558,9 @@ func (r *v2ReachabilityReader) composite(hash string, depth int) error {
 }
 
 func (r *v2ReachabilityReader) auditChain(hash string, sequence, generation uint64, depth int) error {
+	if r.action != nil {
+		return r.actionAuditLeafV2(hash, sequence, generation, depth)
+	}
 	var pending []string
 	for hash != "" {
 		if err := r.ctx.Err(); err != nil {
@@ -590,6 +665,16 @@ func (r *v2ReachabilityReader) recovery(hash, id, key string, state v2State, dep
 	return r.recoveryWithOrigin(hash, id, key, state, depth, nil)
 }
 func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2State, depth int, archived *v2Operation) error {
+	if r.cache != nil {
+		contextKey, err := selectedValidationKeyV2(struct {
+			State    v2State
+			Archived *v2Operation
+		}{state, archived})
+		if err != nil {
+			return err
+		}
+		key = contextKey
+	}
 	return r.walk("recovery:"+key+":"+id+":"+hash, depth, func() error {
 		var record v2RecoveryRecord
 		release, err := r.load(hash, &record)
@@ -600,7 +685,26 @@ func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2
 		if !validRecoveryRecordV2(record, state.Lineage) || (id != "" && record.ID != id) {
 			return errV2Unavailable
 		}
+		if record.ServiceRestart != nil {
+			if !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
+				return errV2Unavailable
+			}
+			if err := r.snapshot(record.ServiceRestart.Source, key, state, depth+1); err != nil {
+				return err
+			}
+		}
+		if record.SupersededBy != "" {
+			if !hasFeatureV2(state, v2RoutedBootBoundaryFeature) || validateRoutedBootSupersessionV2(record, state.Lineage, r.object) != nil {
+				return errV2Unavailable
+			}
+			if err := r.routedBootBoundary(record.BootBoundary, key, state, depth+1); err != nil {
+				return err
+			}
+		}
 		for _, snapshot := range []string{record.Previous, record.Target} {
+			if record.SupersededBy != "" && snapshot == record.Previous {
+				continue
+			}
 			if err := r.snapshot(snapshot, key, state, depth+1); err != nil {
 				return err
 			}
@@ -613,7 +717,7 @@ func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2
 			if audit.Operation != record.ID || audit.Kind != record.Kind {
 				return errV2Unavailable
 			}
-			if record.Kind == v2BootKind && record.State == "final" {
+			if record.Kind == v2BootKind && record.State == "final" && record.SupersededBy == "" {
 				var previous, target v2Configuration
 				if err := r.object(record.Previous, &previous); err != nil {
 					return err
@@ -621,7 +725,7 @@ func (r *v2ReachabilityReader) recoveryWithOrigin(hash, id, key string, state v2
 				if err := r.object(record.Target, &target); err != nil {
 					return err
 				}
-				if !validBootTargetV2(previous, target) || audit.Result != "verified" || audit.Subject != "system" || audit.OriginCommit != "" || audit.Lease != "" || state.Configuration == nil || audit.Sequence > state.Configuration.AuditSequence || !audit.At.Equal(*record.Completed) || audit.Running != target.Running.Hash || audit.Startup != target.Startup.Hash {
+				if !r.selectedPureV2("boot-target:"+hash+":"+record.Previous+":"+record.Target, func() bool { return validRecoveryBootTargetV3(record, previous, target, r.object) }) || audit.Result != "verified" || audit.Subject != "system" || audit.OriginCommit != "" || audit.Lease != "" || state.Configuration == nil || audit.Sequence > state.Configuration.AuditSequence || !audit.At.Equal(*record.Completed) || audit.Running != target.Running.Hash || audit.Startup != target.Startup.Hash {
 					return errV2Unavailable
 				}
 			}
