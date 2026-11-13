@@ -34,7 +34,11 @@ cleanup() {
         failed=1
         continue
       fi
-      pids=$(/usr/bin/ip netns pids "$item") || failed=1
+      if ! pids=$(/usr/bin/ip netns pids "$item"); then
+        printf '%s\n' 'Unable to verify namespace process absence; preserving its pin.' >&2
+        failed=1
+        continue
+      fi
       if [[ -n $pids ]]; then
         printf '%s\n' 'Namespace still has processes; containing cgroup cleanup is required.' >&2
         failed=1
