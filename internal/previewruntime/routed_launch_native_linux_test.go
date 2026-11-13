@@ -190,8 +190,8 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 			var bindings []networkplan.Binding
 			for _, name := range []string{"lan0", "wan0"} {
 				link, err := net.InterfaceByName(name)
-				if err != nil || link.Flags&net.FlagUp != 0 {
-					return out, errors.New("native link is absent or unexpectedly enabled")
+				if err != nil || link.Flags&net.FlagUp == 0 {
+					return out, errors.New("native isolated L2 link is absent or disabled")
 				}
 				bindings = append(bindings, networkplan.Binding{Name: name, HardwareAddress: link.HardwareAddr.String()})
 			}
@@ -212,6 +212,9 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 			report.ReadOnlyDescriptors, err = nativeReadOnlyPoolsV3()
 			if err != nil {
 				return out, err
+			}
+			if _, err := c.Access.ReadOwnedFile(ctx, c.Store, "selected.json", 4096); !errors.Is(err, recoveryreserve.ErrInvalid) {
+				return out, errors.New("helper acquired owner-only read entry")
 			}
 			writer, writeErr := os.OpenFile("/proc/self/fd/5/checkpoint.lock", os.O_WRONLY, 0)
 			if writer != nil {
@@ -234,6 +237,9 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 				}
 			}()
 			launch = c
+			if _, err := c.Access.ReadFile(ctx, c.Store, "selected.json", 4096); !errors.Is(err, recoveryreserve.ErrInvalid) {
+				return out, nil, errors.New("API unexpectedly acquired helper reader identity")
+			}
 			var auth nativeAuthV3
 			data, err := os.ReadFile("/proc/self/fd/5/../api-auth.json")
 			if err != nil {

@@ -60,10 +60,16 @@ for suffix in s g w; do
   /usr/bin/ip netns add "$item"
   owned[$item]=$(stat -Lc '%i' -- "/run/netns/$item")
 done
-# Physical observations require two real links. They stay DOWN with no IPv4
-# addresses, routes, forwarding or external connectivity.
-/usr/bin/ip -n "andlv3-${nonce}-g" link add lan0 address 02:00:00:00:01:01 type dummy
-/usr/bin/ip -n "andlv3-${nonce}-g" link add wan0 address 02:00:00:00:02:01 type dummy
+# Physical observations require two supported, active L2 links. Each peer stays
+# inside a disposable namespace, without IPv4 addresses or external connectivity.
+/usr/bin/ip -n "andlv3-${nonce}-g" link add lan0 address 02:00:00:00:01:01 type veth peer name source0
+/usr/bin/ip -n "andlv3-${nonce}-g" link set source0 netns "andlv3-${nonce}-s"
+/usr/bin/ip -n "andlv3-${nonce}-g" link add wan0 address 02:00:00:00:02:01 type veth peer name sink0
+/usr/bin/ip -n "andlv3-${nonce}-g" link set sink0 netns "andlv3-${nonce}-w"
+/usr/bin/ip -n "andlv3-${nonce}-s" link set source0 up
+/usr/bin/ip -n "andlv3-${nonce}-w" link set sink0 up
+/usr/bin/ip -n "andlv3-${nonce}-g" link set lan0 up
+/usr/bin/ip -n "andlv3-${nonce}-g" link set wan0 up
 sha256sum -- "$fixture"
 exec 3<"/run/netns/andlv3-${nonce}-g"
 exec 4<"/run/netns/andlv3-${nonce}-s"
