@@ -17,6 +17,11 @@ import (
 )
 
 func run(args []string) error {
+	if len(args) == 1 && args[0] == previewruntime.RoutedIntegrityPrepareRoleV3 {
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer cancel()
+		return previewruntime.RunRoutedIntegrityPrepareRoleV3(ctx)
+	}
 	if handled, code := nftfixture.HandleRole(args); handled {
 		if code != 0 {
 			return roleExit(code)

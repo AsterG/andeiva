@@ -3,9 +3,13 @@ set -euo pipefail
 
 # Explicit root laboratory harness. Run inside a private mount namespace with
 # a private /run/netns mount and a supervisor-owned process cgroup.
-if [[ $# != 2 || $1 != --isolated-lab || ${EUID} != 0 || -n ${CI:-} ]]; then
-  printf '%s\n' 'Use --isolated-lab TEST_BINARY only in an authorized root laboratory.' >&2
+if [[ $# != 2 || ( $1 != --isolated-lab && $1 != --isolated-integrity-lab ) || ${EUID} != 0 || -n ${CI:-} ]]; then
+  printf '%s\n' 'Use --isolated-lab or --isolated-integrity-lab TEST_BINARY only in an authorized root laboratory.' >&2
   exit 2
+fi
+pattern='^TestNativeRoutedLaunchV3$'
+if [[ $1 == --isolated-integrity-lab ]]; then
+  pattern='^TestNativeRoutedIntegrityLaunchV3$'
 fi
 grep -qx 'ID=debian' /etc/os-release
 grep -qx 'VERSION_ID="13"' /etc/os-release
@@ -75,4 +79,4 @@ exec 3<"/run/netns/andlv3-${nonce}-g"
 exec 4<"/run/netns/andlv3-${nonce}-s"
 exec 5<"/run/netns/andlv3-${nonce}-w"
 ANDEIVA_NATIVE_LAUNCH_V3=1 /usr/bin/timeout --kill-after=2s 105s \
-  "$fixture" -test.run '^TestNativeRoutedLaunchV3$' -test.count=1 -test.timeout=100s -test.v
+  "$fixture" -test.run "$pattern" -test.count=1 -test.timeout=100s -test.v
