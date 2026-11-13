@@ -26,6 +26,8 @@ fixture=$(mktemp -d /var/backups/andeiva-scope-retire.XXXXXXXX)
 chmod 0755 "$fixture"
 root=$fixture/root
 mkdir -m 0755 "$root"
+[[ ! -L $root && $(realpath -e -- "$root") == "$root" ]]
+[[ $(stat -c '%u:%g:%a' -- "$root") == 0:0:755 ]]
 for directory in etc usr proc sys dev run run/systemd run/dbus var var/lib var/lib/andeiva-preview var/lib/andeiva-preview/grouped run/andeiva-preview run/andeiva-preview/grouped fixture; do
   mkdir -m 0755 "$root/$directory"
 done
@@ -68,18 +70,23 @@ while (( SECONDS < deadline )); do
   if [[ $state == inactive || $state == failed ]]; then break; fi
   sleep 1
 done
-timeout 5s journalctl --no-pager -u "$unit" > "$fixture/journal.txt"
+timeout 5s journalctl --no-pager -u "$unit" > "$fixture/journal-all.txt"
 timeout 5s systemctl show "$unit" > "$fixture/unit.txt"
 if [[ ${state:-} != active || ${substate:-} != exited || ! -f $root/fixture/retired.json ]]; then
   printf '%s\n' 'Qualification did not pass. Evidence and manager-held descriptors retained; no automatic stop or deletion.' >&2
   exit 1
 fi
-grep -q '^PASS$' "$fixture/journal.txt" || grep -q ' PASS$' "$fixture/journal.txt"
 [[ $(timeout 4s systemctl show -p NFileDescriptorStore --value "$unit") == 0 ]]
 [[ $(timeout 4s systemctl show -p MainPID --value "$unit") == 0 ]]
 [[ $(timeout 4s systemctl show -p NRestarts --value "$unit") == 1 ]]
 invocation=$(timeout 4s systemctl show -p InvocationID --value "$unit")
 [[ $invocation =~ ^[a-f0-9]{32}$ && $(cat "$root/fixture/recovery-attempt") == "$invocation" ]]
+[[ $(timeout 4s systemctl show -p RootDirectory --value "$unit") == "$root" ]]
+[[ $(timeout 4s systemctl show -p Result --value "$unit") == success ]]
+[[ $(timeout 4s systemctl show -p ExecMainCode --value "$unit") == 1 ]]
+[[ $(timeout 4s systemctl show -p ExecMainStatus --value "$unit") == 0 ]]
+timeout 5s journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$invocation" "_SYSTEMD_UNIT=$unit" > "$fixture/journal.txt"
+grep -qx PASS "$fixture/journal.txt"
 # Only this successfully completed, correlated invocation may be stopped. On
 # any earlier error the driver deliberately leaves the unit/store for review.
 timeout 8s systemctl stop "$unit"

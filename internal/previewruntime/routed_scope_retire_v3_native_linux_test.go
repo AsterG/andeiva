@@ -28,6 +28,70 @@ import (
 
 const nativeScopeRetireCaptureV3 = "/fixture/first.json"
 
+func nativeScopeRetireRootPathV3(path string) bool {
+	const prefix = "/var/backups/andeiva-scope-retire."
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, "/root") || filepath.Clean(path) != path {
+		return false
+	}
+	nonce := strings.TrimSuffix(strings.TrimPrefix(path, prefix), "/root")
+	if len(nonce) != 8 {
+		return false
+	}
+	for _, c := range nonce {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func nativeScopeRetireRootPropertiesV3(raw []byte, self int, invocation string) error {
+	if self <= 1 || !validHex(invocation, 16) || len(raw) == 0 || len(raw) > 4096 {
+		return ErrIdentity
+	}
+	wanted := map[string]string{"MainPID": strconv.Itoa(self), "InvocationID": invocation, "PrivateMounts": "yes"}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || seen[key] {
+			return ErrIdentity
+		}
+		seen[key] = true
+		if key == "RootDirectory" {
+			if !nativeScopeRetireRootPathV3(value) {
+				return ErrIdentity
+			}
+		} else if expected, ok := wanted[key]; !ok || value != expected {
+			return ErrIdentity
+		}
+	}
+	if len(seen) != 4 {
+		return ErrIdentity
+	}
+	return nil
+}
+
+func nativeScopeRetireRootUnitV3(ctx context.Context) error {
+	if trustedRoutedExecutableV3("/usr/bin/systemctl") != nil {
+		return ErrIdentity
+	}
+	call, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(call, "/usr/bin/systemctl", "--no-pager", "show", "--property=RootDirectory", "--property=PrivateMounts", "--property=MainPID", "--property=InvocationID", "andeiva-preview-grouped.service")
+	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C", "SYSTEMD_COLORS=0", "SYSTEMD_OFFLINE=0"}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	cmd.WaitDelay = 200 * time.Millisecond
+	var out scopeRecoveryOutputV3
+	cmd.Stdout = &out
+	runtime.LockOSThread()
+	err := cmd.Run()
+	runtime.UnlockOSThread()
+	if err != nil || call.Err() != nil {
+		return ErrIdentity
+	}
+	return nativeScopeRetireRootPropertiesV3(out.Bytes(), os.Getpid(), os.Getenv("INVOCATION_ID"))
+}
+
 type nativeScopeRetireCapture struct {
 	Version     int                `json:"version"`
 	Launch      Metadata           `json:"launch"`
@@ -467,12 +531,13 @@ func TestRoutedScopeRetireV3Native(t *testing.T) {
 	if err != nil || self != "/fixture/native.test" || trustedRoutedExecutableV3(self) != nil {
 		t.Fatal("fixed root-owned fixture executable required")
 	}
-	root, e1 := os.Stat("/")
-	host, e2 := os.Stat("/proc/1/root")
-	mount, e3 := namespaceID("/proc/self/ns/mnt")
-	hostMount, e4 := namespaceID("/proc/1/ns/mnt")
-	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || os.SameFile(root, host) || mount == hostMount {
-		t.Fatal("private RootDirectory and mount namespace required")
+	if _, err = namespaceID("/proc/self/ns/mnt"); err != nil {
+		t.Fatal("current mount namespace unavailable", err)
+	}
+	// Read manager-owned properties rather than PID1 namespace/root symlinks,
+	// which would require an unnecessary CAP_SYS_PTRACE in this fixture.
+	if err = nativeScopeRetireRootUnitV3(ctx); err != nil {
+		t.Fatal("actual private RootDirectory binding", err)
 	}
 	if err = scopeStoreNativeUnitV3(ctx); err != nil {
 		t.Fatal("fixed transient service properties", err)
@@ -580,6 +645,25 @@ func TestRoutedScopeRetireV3NativeNames(t *testing.T) {
 	for _, bad := range [][3]string{{"78", "7", names}, {"77", "07", names}, {"77", "6", names}, {"77", "8", names + ":" + RoutedScopeManagementFDNameV3}, {"77", "7", strings.Replace(names, scopeRecoveryNamesV3[0], "unknown", 1)}, {"77", "7", strings.Replace(names, scopeRecoveryNamesV3[0], scopeRecoveryNamesV3[1], 1)}} {
 		if _, err := nativeScopeRetireNamesV3(bad[0], bad[1], bad[2], 77); err == nil {
 			t.Fatal("ambiguous inherited authority accepted")
+		}
+	}
+}
+
+func TestRoutedScopeRetireV3NativeRootGuard(t *testing.T) {
+	path := "/var/backups/andeiva-scope-retire.aB0129Zx/root"
+	invocation := strings.Repeat("a", 32)
+	good := "RootDirectory=" + path + "\nPrivateMounts=yes\nMainPID=77\nInvocationID=" + invocation + "\n"
+	if err := nativeScopeRetireRootPropertiesV3([]byte(good), 77, invocation); err != nil {
+		t.Fatal("actual shaped private root refused", err)
+	}
+	for _, path := range []string{"", "/", "/root", "/var/backups/foreign.aB0129Zx/root", "/var/backups/andeiva-scope-retire.aB0129Zx/../root", "/var/backups/andeiva-scope-retire.aB0129Zx/./root", "/var/backups//andeiva-scope-retire.aB0129Zx/root", "/var/backups/andeiva-scope-retire.aB0129Zx/root/", "/var/backups/andeiva-scope-retire.alias/root", "file:///var/backups/andeiva-scope-retire.aB0129Zx/root", "/var/backups/andeiva-scope-retire.%2e%2e00/root", "/var/backups/andeiva-scope-retire.aB0129Zx/root\n"} {
+		if nativeScopeRetireRootPathV3(path) {
+			t.Fatalf("foreign/aliased root accepted: %q", path)
+		}
+	}
+	for _, raw := range []string{strings.Replace(good, "PrivateMounts=yes", "PrivateMounts=no", 1), strings.Replace(good, "MainPID=77", "MainPID=78", 1), strings.Replace(good, invocation, strings.Repeat("b", 32), 1), good + "RootDirectory=" + path + "\n", good + "Unknown=yes\n", strings.Replace(good, "RootDirectory="+path+"\n", "", 1)} {
+		if nativeScopeRetireRootPropertiesV3([]byte(raw), 77, invocation) == nil {
+			t.Fatal("uncorrelated manager root properties accepted")
 		}
 	}
 }

@@ -44,6 +44,9 @@ dispatch. The fixed `systemctl show` queries use `SYSTEMD_OFFLINE=0` for explici
 online operation inside RootDirectory; this follows the
 [systemd 257 verb dispatcher](https://github.com/systemd/systemd/blob/v257/src/shared/verbs.c).
 No loader validation or LocalOrigin contract is weakened.
+The test checks RootDirectory, PrivateMounts, MainPID and InvocationID through
+the real manager; it does not read PID1 root/namespace symlinks or add SYS_PTRACE.
+The external driver rejects root-path aliases using canonical-path equality.
 
 Root-only command, after independent source/artifact and host-invariant checks:
 
@@ -60,7 +63,9 @@ creation and is not the appliance helper budget. Limits: two invocations,
 Failure retains the unit's FD store, manifest, receipt slot and fixture files;
 there is no automatic stop or recursive cleanup. Success requires the correlated
 second invocation, an empty FD store and no MainPID before stopping that exact
-unit. Keep the journal, unit properties, artifact hashes and receipt. Root must
+unit. PASS comes only from that invocation's journal with successful process
+exit/status, never the unit's older log history. Keep the journal, unit properties,
+artifact hashes and receipt. Root must
 compare host dual-stack addresses/routes/rules, nftables, forwarding, namespaces
 and PID1 mountinfo before/after, and record CPU/memory from the actual run.
 

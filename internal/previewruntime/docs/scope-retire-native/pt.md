@@ -23,6 +23,9 @@ procedência de migração, restart managed, reboot ou handoff management de oit
 FD. A árvore de integração precisa do dispatch TestMain do preflight e consultas
 fixas systemctl com `SYSTEMD_OFFLINE=0` dentro de RootDirectory; LocalOrigin não
 é enfraquecido.
+RootDirectory, PrivateMounts, MainPID e InvocationID são consultados no manager
+real; sem leitura de symlinks do PID1 ou SYS_PTRACE adicional. O driver rejeita
+aliases de caminho por comparação canônica e exige PASS/exit da invocação atual.
 
 ```sh
 go test -race ./internal/previewruntime -run '^TestRoutedScopeRetireV3Native' -count=1 -v
