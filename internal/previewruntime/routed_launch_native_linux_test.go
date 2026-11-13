@@ -353,6 +353,18 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 				}
 			}
 			launch = c
+			if c.FreshScopeEnabled {
+				// Report descriptor isolation before coordinator reconciliation. This
+				// fixture intentionally has no selected history for its old receipt.
+				report, err := nativeReportProcessV3("api", c)
+				if err != nil {
+					return out, nil, err
+				}
+				report.Role = "api-bootstrap"
+				if err = nativeEmitV3(report); err != nil {
+					return out, nil, err
+				}
+			}
 			if _, err := c.Access.ReadFile(ctx, c.Store, "selected.json", 4096); !errors.Is(err, recoveryreserve.ErrInvalid) {
 				return out, nil, errors.New("API unexpectedly acquired helper reader identity")
 			}
@@ -752,6 +764,14 @@ func testNativeRoutedLaunchV3(t *testing.T, integrity, freshScope bool) {
 		defer retirement.Receipt.Close()
 	}
 	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{FreshScope: retirement, Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
+	if freshScope {
+		if e == nil {
+			_ = supervisor.Close()
+			t.Fatal("uncorrelated fixture receipt authorized a recovered runtime")
+		}
+		nativeAssertReceiptRejectionV3(t, logs.String(), metadata)
+		return
+	}
 	if e != nil {
 		t.Fatalf("native launch failed: %v\n%s", e, logs.String())
 	}
@@ -844,6 +864,56 @@ func testNativeRoutedLaunchV3(t *testing.T, integrity, freshScope bool) {
 	if freshScope {
 		t.Log("root receipt FD14 readable only by helper; API receipt inheritance, reopening and reading denied before and after API restart; fictitious old identity, no retirement/recovery qualification")
 	}
+}
+
+func nativeAssertReceiptRejectionV3(t *testing.T, logs string, metadata Metadata) {
+	t.Helper()
+	if !strings.Contains(logs, "startup reconciliation: routed boot preparation: ANDEIVA_CONFIG_RECOVERY_REQUIRED") {
+		t.Fatalf("unexpected bootstrap rejection: %s", logs)
+	}
+	var helper, api int
+	for _, line := range strings.Split(logs, "\n") {
+		if !strings.HasPrefix(line, "ANDEIVA_NATIVE_REPORT ") {
+			continue
+		}
+		var r nativeReportV3
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "ANDEIVA_NATIVE_REPORT ")), &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.Role == "prepare" {
+			continue
+		}
+		wantCap := "0000000000000000"
+		if r.Role == "helper" {
+			helper++
+			wantCap = "0000000000001000"
+			if r.UID != 62002 || r.GID != 62003 || r.Namespace != metadata.GatewayNamespace || !r.RetirementFD || !r.PrivateRoot || r.ReadOnlyDescriptors < 3 {
+				t.Fatal("helper receipt descriptor profile differs", r)
+			}
+		} else if r.Role == "api-bootstrap" {
+			api++
+			if r.UID != 62001 || r.GID != 62001 || r.Namespace != metadata.HostNamespace || r.RetirementFD || r.PrivateRoot || r.PeerPID <= 1 {
+				t.Fatal("API inherited retirement authority", r)
+			}
+		} else {
+			t.Fatal("unexpected native bootstrap role", r.Role)
+		}
+		if !r.FreshScope || !r.RetirementPathDenied || !r.Integrity || r.Caps["NoNewPrivs"] != "1" || r.PID <= 1 {
+			t.Fatal("bootstrap isolation profile differs", r)
+		}
+		for _, key := range []string{"CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"} {
+			if r.Caps[key] != wantCap {
+				t.Fatal("bootstrap capability mismatch", r.Role, key, r.Caps[key])
+			}
+		}
+		if _, err := os.Stat("/proc/" + strconv.Itoa(r.PID)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("bootstrap child not observed retired", r.PID, err)
+		}
+	}
+	if helper != 1 || api != 1 {
+		t.Fatalf("missing descriptor isolation reports: helper=%d api=%d %s", helper, api, logs)
+	}
+	t.Log("helper-only readonly FD14 and API path/inheritance denial verified; uncorrelated old receipt refused; no recovered runtime or API restart claimed")
 }
 
 func nativeRetirementReceiptV3(t *testing.T, base string, m Metadata) *RoutedFreshScopeOptionsV3 {

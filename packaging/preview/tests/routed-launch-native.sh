@@ -11,6 +11,8 @@ pattern='^TestNativeRoutedLaunchV3$'
 if [[ $1 == --isolated-integrity-lab ]]; then
   pattern='^TestNativeRoutedIntegrityLaunchV3$'
 elif [[ $1 == --isolated-fresh-scope-lab ]]; then
+  # Descriptor isolation and rejection of an uncorrelated old receipt only.
+  # Successful selected-history recovery is a separate native qualification.
   pattern='^TestNativeRoutedIntegrityFreshScopeLaunchV3$'
 fi
 grep -qx 'ID=debian' /etc/os-release

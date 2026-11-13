@@ -51,6 +51,14 @@ Paradas repetidas durante una recuperación boot-boundary aún pendiente pueden
 retener ambos slots System; otro boundary queda bloqueado hasta disponer de
 retirada probada por separado. Este incremento no descarta esas reservas.
 
+El modo explícito `routed-launch-native.sh --isolated-fresh-scope-lab TEST_BINARY`
+comprueba FD14 de sólo lectura en el helper, ausencia de herencia y acceso desde
+la API sin capacidades, y rechazo de un recibo antiguo deliberadamente ajeno al
+historial. No acredita recuperación ni reinicio de API con ese recibo. El modo
+independiente `--isolated-integrity-lab` verifica arranque agrupado y reinicio de
+API conservando el helper, sin recibo de retirada. Ninguno sustituye la prueba
+instalada de recuperación same-Boot o reinicio del sistema.
+
 ```sh
 go test -race ./internal/configpoc ./internal/previewruntime ./internal/firewallipc -run 'Test(RoutedFreshScopeV3|RootRetirementReceiptV3|RoutedOSBootBoundary|ColdContinuationV1)' -count=1
 go vet ./internal/configpoc ./internal/previewruntime ./internal/firewallipc

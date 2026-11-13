@@ -50,6 +50,14 @@ Repeated stops while an earlier boot-boundary recovery is still pending can
 retain both System slots; a further boundary remains blocked until separately
 proven retirement is available. This increment does not discard those reserves.
 
+The opt-in `routed-launch-native.sh --isolated-fresh-scope-lab TEST_BINARY`
+checks the real helper's read-only FD14, the capless API's inability to inherit
+or reopen it, and rejection of a deliberately uncorrelated old receipt. It does
+not prove successful recovery or API restart under that receipt. The separate
+`--isolated-integrity-lab` mode verifies grouped bootstrap and retained-helper
+API restart without a retirement receipt. Neither substitutes for an installed
+same-Boot recovery or OS-reboot test.
+
 ```sh
 go test -race ./internal/configpoc ./internal/previewruntime ./internal/firewallipc -run 'Test(RoutedFreshScopeV3|RootRetirementReceiptV3|RoutedOSBootBoundary|ColdContinuationV1)' -count=1
 go vet ./internal/configpoc ./internal/previewruntime ./internal/firewallipc
