@@ -28,6 +28,7 @@ import (
 type RoutedLaunchContextV3 struct {
 	Integrity                  bool
 	IntegrityRoot              *os.Root // Helper only; always nil in the API role.
+	Management                 *os.File // API only; borrowed supervisor listener.
 	Metadata                   Metadata
 	Identities                 Identities
 	Gateway, Host              *os.File
@@ -35,6 +36,7 @@ type RoutedLaunchContextV3 struct {
 	Access                     recoveryreserve.ReaderAccessV2
 	Admission, Plan, Emergency RoutedReaderRootV3
 	Budget                     configpoc.SelectionReadBudgetV2
+	StoreBudget                configpoc.BudgetV2
 	Epoch                      uint64
 	PeerPID                    int32
 }
@@ -53,13 +55,17 @@ type RoutedLaunchFactoriesV3 struct {
 }
 
 type routedLaunchFilesV3 struct {
-	integrityFile *os.File
-	integrityRoot *os.Root
-	files         [10]*os.File
-	roots         [5]*os.Root
+	managementFile *os.File
+	integrityFile  *os.File
+	integrityRoot  *os.Root
+	files          [10]*os.File
+	roots          [5]*os.Root
 }
 
 func (f *routedLaunchFilesV3) close() {
+	if f.managementFile != nil {
+		_ = f.managementFile.Close()
+	}
 	if f.integrityRoot != nil {
 		_ = f.integrityRoot.Close()
 	}
@@ -196,6 +202,17 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 			return fail()
 		}
 	}
+	if b.Management && role == RoutedAPIRoleV3 {
+		var st unix.Stat_t
+		if unix.Fstat(13, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFSOCK {
+			return fail()
+		}
+		f.managementFile = os.NewFile(13, "routed-management-listener")
+		if f.managementFile == nil {
+			return fail()
+		}
+		unix.CloseOnExec(13)
+	}
 	for i := range f.roots {
 		r, e := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", i+4))
 		if e != nil {
@@ -268,7 +285,11 @@ func rootRoutedParentStatusV3(data []byte, pid int) bool {
 	return seenPID && seenUID
 }
 func (f *routedLaunchFilesV3) context(b routedLaunchBootstrapV3) RoutedLaunchContextV3 {
-	return RoutedLaunchContextV3{Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
+	value := configpoc.BudgetV2{}
+	if b.StoreBudget != nil {
+		value = *b.StoreBudget
+	}
+	return RoutedLaunchContextV3{StoreBudget: value, Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Management: f.managementFile, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
 }
 
 // RunRoutedLaunchRoleV3 handles only the two fixed, root-launched child roles.

@@ -60,6 +60,10 @@ func TestRoutedIntegrityV3OpaqueStoreBridge(t *testing.T) {
 
 func TestRoutedIntegrityV3FencedPendingCannotAdmitNewConfirmationEffect(t *testing.T) {
 	f := newRoutedIPCFixtureWithPolicyV3(t, configpoc.SelectionActionAuthorityV2)
+	health := routedApplianceHealthV3{runtime: &RoutedOperationsRuntimeV3{Service: f.service, routed: f.client}}
+	if observation, err := health.Observed(context.Background(), configpoc.Principal{}); err != nil || observation.RecoveryRequired {
+		t.Fatal("initial full qualification unavailable", observation, err)
+	}
 	before, err := f.service.Status(f.binding)
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +74,11 @@ func TestRoutedIntegrityV3FencedPendingCannotAdmitNewConfirmationEffect(t *testi
 	f.run(configpoc.OperationRequestV2{Kind: configpoc.OpStage, Config: &edited})
 	seconds := uint64(30)
 	pending := f.run(configpoc.OperationRequestV2{Kind: configpoc.OpCommit, ConfirmSeconds: &seconds})
+	// The management channel remains available for its authorized closing path,
+	// while health must not advertise a pending lease as fully qualified.
+	if observation, err := health.Observed(context.Background(), configpoc.Principal{}); err != nil || !observation.RecoveryRequired {
+		t.Fatal("pending lease incorrectly healthy", observation, err)
+	}
 	ref, err := f.reader.CaptureReferenceV1(context.Background())
 	if err != nil {
 		t.Fatal(err)

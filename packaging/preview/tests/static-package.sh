@@ -37,12 +37,22 @@ else
   [[ $? == 2 ]]
 fi
 for language in en es pt; do
+  [[ -s "$stage/root/usr/share/doc/andeiva-firewall-preview/docs/grouped-runtime-v3.$language.md" ]]
   [[ -s "$stage/root/usr/share/doc/andeiva-firewall-preview/firewalladmin/docs/$language.md" ]]
   grep -q '../firewalladmin/docs/' "$stage/root/usr/share/doc/andeiva-firewall-preview/docs/$language.md"
   console="$stage/root/usr/share/doc/andeiva-firewall-preview/console/$language.md"
   [[ -s "$console" && -s "$stage/root/usr/share/doc/andeiva-firewall-preview/docs/$language.md" ]]
   if ! grep -Fq "(../docs/$language.md#" "$console" || grep -Fq '../../packaging/preview/docs/' "$console"; then
     echo ANDEIVA_PREVIEW_CONSOLE_GUIDE_LINK >&2; exit 1
+  fi
+done
+for role in --andeiva-routed-helper-v3 --andeiva-routed-api-v3; do
+  # Invalid administrative arguments must fail before any inherited descriptor
+  # adoption, config lookup, namespace operation or configuration writer open.
+  if output=$("$stage/root/usr/lib/andeiva-preview/andeiva-preview" "$role" --config /caller-selected.json 2>&1); then
+    echo ANDEIVA_PREVIEW_CHILD_ARGUMENTS_ACCEPTED >&2; exit 1
+  else
+    [[ $? == 1 && "$output" = ANDEIVA_PREVIEW_UNAVAILABLE ]]
   fi
 done
 if find "$stage/root" -type f \( -name '*.key' -o -name 'accounts.json' -o -name 'identities.json' \) | read -r _; then

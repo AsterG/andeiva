@@ -17,6 +17,14 @@ import (
 )
 
 func run(args []string) error {
+	if len(args) > 0 && (args[0] == previewruntime.RoutedHelperRoleV3 || args[0] == previewruntime.RoutedAPIRoleV3) {
+		if len(args) != 1 {
+			return previewruntime.ErrConfiguration
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer cancel()
+		return previewruntime.RunRoutedApplianceRoleV3(ctx, args[0])
+	}
 	if len(args) == 1 && args[0] == previewruntime.RoutedIntegrityPrepareRoleV3 {
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer cancel()

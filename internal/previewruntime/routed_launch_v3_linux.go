@@ -27,6 +27,8 @@ const (
 	RoutedHelperRoleV3  = "--andeiva-routed-helper-v3"
 	RoutedAPIRoleV3     = "--andeiva-routed-api-v3"
 	routedLaunchFrameV3 = 16384
+	// Child construction/full inspection is distinct from the fixed effect RPC.
+	routedLaunchStartupV3 = 45 * time.Second
 )
 
 // RoutedLaunchResourcesV3 contains exclusively supervisor-pinned resources.
@@ -36,24 +38,28 @@ type RoutedLaunchResourcesV3 struct {
 	Metadata                          Metadata
 	Identities                        Identities
 	Gateway                           *os.File
+	Management                        *os.File // Optional supervisor-owned HTTPS listener; API only.
 	Host                              *os.File
 	Directory                         *os.Root
 	IntegrityRoot                     *os.Root // Optional pre-provisioned private helper-only root.
 	Store, Admission, Plan, Emergency RoutedReaderRootV3
 	Budget                            configpoc.SelectionReadBudgetV2
+	StoreBudget                       configpoc.BudgetV2
 }
 
 type routedLaunchBootstrapV3 struct {
-	Version    int                               `json:"version"`
-	Integrity  bool                              `json:"integrity,omitempty"`
-	Metadata   Metadata                          `json:"metadata"`
-	Identities Identities                        `json:"identities"`
-	Access     [4]recoveryreserve.ReaderAccessV2 `json:"access"`
-	Profiles   [3]recoveryreserve.ProfileV2      `json:"profiles"`
-	Budget     configpoc.SelectionReadBudgetV2   `json:"budget"`
-	ParentPID  int                               `json:"parent_pid"`
-	HelperPID  int32                             `json:"helper_pid"`
-	Epoch      uint64                            `json:"epoch"`
+	Version     int                               `json:"version"`
+	Integrity   bool                              `json:"integrity,omitempty"`
+	Management  bool                              `json:"management,omitempty"`
+	StoreBudget *configpoc.BudgetV2               `json:"store_budget,omitempty"`
+	Metadata    Metadata                          `json:"metadata"`
+	Identities  Identities                        `json:"identities"`
+	Access      [4]recoveryreserve.ReaderAccessV2 `json:"access"`
+	Profiles    [3]recoveryreserve.ProfileV2      `json:"profiles"`
+	Budget      configpoc.SelectionReadBudgetV2   `json:"budget"`
+	ParentPID   int                               `json:"parent_pid"`
+	HelperPID   int32                             `json:"helper_pid"`
+	Epoch       uint64                            `json:"epoch"`
 }
 type routedLaunchControlV3 struct {
 	Epoch uint64 `json:"epoch"`
@@ -250,7 +256,12 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 
 func (s *RoutedLaunchSupervisorV3) bootstrap(helper int32, epoch uint64) routedLaunchBootstrapV3 {
 	r := s.resources
-	return routedLaunchBootstrapV3{Version: 3, Integrity: r.IntegrityRoot != nil, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
+	b := routedLaunchBootstrapV3{Version: 3, Integrity: r.IntegrityRoot != nil, Management: r.Management != nil, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
+	if r.StoreBudget != (configpoc.BudgetV2{}) {
+		value := r.StoreBudget
+		b.StoreBudget = &value
+	}
+	return b
 }
 func (s *RoutedLaunchSupervisorV3) sendBootstrap(c *routedLaunchChildV3, helper int32, epoch uint64) error {
 	e := writeRoutedLaunchV3(c.bootstrap, s.bootstrap(helper, epoch))
@@ -342,6 +353,9 @@ func (s *RoutedLaunchSupervisorV3) startChild(role string) (*routedLaunchChildV3
 		defer private.Close()
 		cmd.ExtraFiles = append(cmd.ExtraFiles, private) // FD13 is never inherited by the API.
 	}
+	if role == RoutedAPIRoleV3 && s.resources.Management != nil {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, s.resources.Management)
+	}
 	cmd.Stdin = nil
 	cmd.Stdout = io.Discard
 	cmd.Stderr = s.stderr
@@ -424,7 +438,7 @@ func writeLocalRoutedEventV3(w *os.File, event string, epoch uint64) error {
 	return writeRoutedLaunchV3(w, routedLaunchEventV3{Event: event, Epoch: epoch, PID: pid})
 }
 func (c *routedLaunchChildV3) waitEvent(ctx context.Context, event string, epoch uint64) error {
-	timer := time.NewTimer(15 * time.Second)
+	timer := time.NewTimer(routedLaunchStartupV3)
 	defer timer.Stop()
 	select {
 	case got, ok := <-c.events:
