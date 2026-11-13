@@ -50,6 +50,8 @@ func TestMain(m *testing.M) {
 		defer cancel()
 		var err error
 		switch os.Args[1] {
+		case nativeAccountsAPIRoleV3, nativeAccountsHelperRoleV3, nativeAccountsReaderRoleV3, nativeAccountsMissingRoleV3:
+			err = nativeAccountsRoleV3(os.Args[1])
 		case RoutedHelperRoleV3, RoutedAPIRoleV3:
 			err = RunRoutedLaunchRoleV3(ctx, os.Args[1], nativeFactoriesV3())
 		case RoutedMigrationPrepareRoleV3:

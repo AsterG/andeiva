@@ -17,6 +17,9 @@
 - Add bounded isolated DHCP ownership and a closed-forwarding lease executor that preserves the static LAN and compensates only its WAN changes.
 - Prepare history-preserving routed migration with both source journals locked through fingerprint verification and publication; require physical boot before readiness.
 - Add opt-in native lease qualification, including capless refusal, occupied-WAN rejection and compensation after authority changes during final readback.
+- Derive local interface inventory for routed candidates without service definitions, preserving historical local revisions and independent listener validation.
+- Distinguish service restart from OS reboot during grouped recovery; keep root retirement evidence private to the helper and require separate native recovery qualification.
+- Add isolated credential-access checks with explicit test-execution evidence; keep migration, HTTP authorization and installed activation as separate gates.
 
 ## Unreleased — administrative service isolation
 

@@ -150,6 +150,14 @@ jobs:
             status=$?
             test "$status" -eq 2
           fi
+          bash -n packaging/preview/tests/grouped-accounts-native.sh
+          if CI=1 bash packaging/preview/tests/grouped-accounts-native.sh --isolated-accounts-lab /bin/true; then
+            echo 'Privileged credential fixture was incorrectly accepted in CI' >&2
+            exit 1
+          else
+            status=$?
+            test "$status" -eq 2
+          fi
       - name: Administrative firewall platform compilation without privileges
         run: bash scripts/check-firewall-admin.sh
       - run: bash scripts/smoke-api.sh
