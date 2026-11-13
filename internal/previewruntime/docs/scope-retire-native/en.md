@@ -107,3 +107,11 @@ run before effects. These unit checks do not replace that native failure evidenc
 or qualify successful retirement with the amended budget. No helper gains capabilities.
 
 [Español](es.md) · [Português](pt.md)
+
+## Observed component result
+
+An authorized Debian 13 amd64 run completed the two-invocation fixture: the first root process stored seven anchors and was interrupted; the replacement verified the selected configuration under the original lock, drained processes, retired the gateway, verified an empty FD store and published the exact receipt. The harness required one automatic restart and stopped only after success. Host address, route, rule, forwarding, namespace and mount comparisons matched.
+
+The recovery test took 0.67 s; its invocation reported 0.541928 s cumulative CPU and 12,828,672 bytes peak cgroup memory. These measure this fixture, not steady appliance operation. A preceding missing-capability run failed at entry into the retained mount namespace, preserved the seven anchors and produced no receipt. CAP_SYS_CHROOT is required with CAP_SYS_ADMIN for that entry and restoration; API/helper budgets remain unchanged.
+
+Deployment-loader provenance, eight-descriptor management activation, managed reboot and interruption of every teardown step remain separate gates. This result does not close appliance recovery or the Firewall & Routing milestone.

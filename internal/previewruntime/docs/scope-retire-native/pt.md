@@ -80,3 +80,11 @@ negativa nem qualificam uma retirada bem-sucedida com o novo orçamento.
 Nenhum helper ganha capacidades.
 
 [English](en.md) · [Español](es.md)
+
+## Resultado observado do componente
+
+Uma execução autorizada em Debian 13 amd64 completou duas invocações: o primeiro processo root armazenou sete anchors e foi interrompido; o substituto verificou a configuração selecionada sob o lock original, drenou processos, retirou o gateway, verificou FD store vazio e publicou o recibo exato. O harness exigiu um reinício automático e parou a unidade somente após sucesso. Endereços, rotas, regras, forwarding, namespaces e montagens do host coincidiram.
+
+A recuperação levou 0,67 s; sua invocação registrou CPU acumulada de 0,541928 s e pico de memória cgroup de 12.828.672 bytes. São medidas do harness, não do appliance estável. A negativa anterior sem a capacidade necessária falhou ao entrar no namespace de montagem, preservou sete anchors e não produziu recibo. Entrada e restauração exigem CAP_SYS_CHROOT junto com CAP_SYS_ADMIN; os orçamentos de API/helper não mudam.
+
+Permanecem pendentes procedência do loader instalado, ativação administrativa de oito descritores, reboot gerenciado e interrupções em cada etapa de teardown. Esse resultado não encerra recuperação do appliance nem o marco Firewall & Routing.

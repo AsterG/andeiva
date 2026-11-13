@@ -79,3 +79,11 @@ ausente preceden a los efectos. No sustituyen esa evidencia nativa negativa ni
 califican un retiro exitoso con el nuevo presupuesto. Ningún helper gana capacidades.
 
 [English](en.md) · [Português](pt.md)
+
+## Resultado observado del componente
+
+Una ejecución autorizada en Debian 13 amd64 completó las dos invocaciones: el primer proceso root almacenó siete anchors y fue interrumpido; el reemplazo verificó la configuración seleccionada bajo el lock original, drenó procesos, retiró el gateway, verificó FD store vacío y publicó el recibo exacto. El arnés exigió un reinicio automático y sólo detuvo la unidad tras éxito. Coincidieron direcciones, rutas, reglas, forwarding, namespaces y montajes del host.
+
+La recuperación duró 0,67 s; su invocación registró CPU acumulada de 0,541928 s y pico de memoria cgroup de 12.828.672 bytes. Son medidas del arnés, no del appliance estable. La negativa previa sin la capacidad requerida falló al entrar en el namespace de montaje, conservó siete anchors y no produjo recibo. Esa entrada y restauración requieren CAP_SYS_CHROOT junto con CAP_SYS_ADMIN; no cambian los presupuestos de API/helper.
+
+Siguen pendientes la procedencia del loader instalado, activación administrativa de ocho descriptores, reboot gestionado e interrupciones en cada etapa de teardown. Este resultado no cierra la recuperación del appliance ni el hito Firewall & Routing.
