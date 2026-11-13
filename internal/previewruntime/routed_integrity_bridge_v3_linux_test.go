@@ -77,10 +77,10 @@ func TestRoutedIntegrityV3FencedPendingCannotAdmitNewConfirmationEffect(t *testi
 	if err := f.integrity.Attach(context.Background(), ref); err != nil {
 		t.Fatal(err)
 	}
-	// The helper fixture latches the real marker only after the new Confirm
-	// Intent exists, then invokes the real fenced resolver with the old opaque
-	// Pending anchor. No supplied success flag or synthetic plan is involved.
-	f.corruptConfirm.Store(true)
+	// After the new Confirm Intent is selected, the wrapper latches the real
+	// marker and reattaches through authenticated IPC before the effect RPC.
+	// It verifies the tuple, original deadline, readback and old opaque anchor.
+	f.reattachConfirm.Store(true)
 	status, err := f.service.Status(f.binding)
 	if err != nil {
 		t.Fatal(err)
@@ -109,5 +109,36 @@ func TestRoutedIntegrityV3FencedPendingCannotAdmitNewConfirmationEffect(t *testi
 	}
 	if f.integrity.IntegrityPublicationAllowedV1() {
 		t.Fatal("effect error retained publication")
+	}
+	// A fresh helper process model sees the same persisted marker but has no
+	// historical opaque RAM anchor. Even authenticated Attach must not capture
+	// a new Confirm authority from the currently selected store.
+	f.disconnect()
+	private, uid, gid := f.fence.area, f.fence.uid, f.fence.gid
+	if err := f.fence.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.fence, err = openRoutedIntegrityFenceV3(private, uid, gid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.source, err = NewRoutedStoreSourceV3(f.reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.session, err = NewRoutedIntegritySessionV3(f.authority, f.source, f.fullReader, f.fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.connect()
+	current, err := f.reader.CaptureReferenceV1(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.integrity.Attach(context.Background(), current); err == nil {
+		t.Fatal("fresh fenced helper attached new authority")
+	}
+	if f.source.cold.Reference() != (configpoc.SelectionReferenceV2{}) || f.integrity.IntegrityClosingAllowedV1() {
+		t.Fatal("fresh fenced helper gained anchor/closing permission")
 	}
 }

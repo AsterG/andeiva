@@ -34,30 +34,30 @@ import (
 // network I/O use the existing typed fixtures. UID 2000 is logical helper scope;
 // Unix peer credentials are the actual non-root test process, not three UIDs.
 type routedIPCFixtureV3 struct {
-	t              *testing.T
-	area           *os.Root
-	budget         configpoc.BudgetV2
-	auth           *adminauth.Manager
-	binding        adminauth.SessionBinding
-	legacy, local  configpoc.Revision
-	engines        []*configpoc.SimEngine
-	pools          configpoc.RuntimePoolsV2
-	access         recoveryreserve.ReaderAccessV2
-	reader         *configpoc.RoutedSelectionReaderV2
-	fullReader     *configpoc.RoutedSelectionReaderV2
-	fence          *routedIntegrityFenceV3
-	session        *RoutedSessionV3
-	integrity      *RoutedRemoteIntegrityV3
-	identity       networkexecutor.OwnedNamespaceIdentity
-	kernel         *routedTestKernel
-	network        *routedTestNetwork
-	authority      *RoutedAuthority
-	source         *RoutedStoreSourceV3
-	remote         *RoutedRemoteAuthority
-	corruptConfirm atomic.Bool
-	client         *firewallipc.RoutedClientV3
-	serverDone     chan error
-	service        *configpoc.ServiceV2
+	t               *testing.T
+	area            *os.Root
+	budget          configpoc.BudgetV2
+	auth            *adminauth.Manager
+	binding         adminauth.SessionBinding
+	legacy, local   configpoc.Revision
+	engines         []*configpoc.SimEngine
+	pools           configpoc.RuntimePoolsV2
+	access          recoveryreserve.ReaderAccessV2
+	reader          *configpoc.RoutedSelectionReaderV2
+	fullReader      *configpoc.RoutedSelectionReaderV2
+	fence           *routedIntegrityFenceV3
+	session         *RoutedSessionV3
+	integrity       *RoutedRemoteIntegrityV3
+	identity        networkexecutor.OwnedNamespaceIdentity
+	kernel          *routedTestKernel
+	network         *routedTestNetwork
+	authority       *RoutedAuthority
+	source          *RoutedStoreSourceV3
+	remote          *RoutedRemoteAuthority
+	reattachConfirm atomic.Bool
+	client          *firewallipc.RoutedClientV3
+	serverDone      chan error
+	service         *configpoc.ServiceV2
 }
 
 // Explicit TEST-ONLY offline conversion after every private writer is closed.
@@ -293,7 +293,7 @@ func (f *routedIPCFixtureV3) connect() {
 	f.t.Helper()
 	var err error
 	if f.session == nil {
-		source := routedIPCObservedSourceV3{RoutedStoreSourceV3: f.source, t: f.t, fixture: f}
+		source := routedIPCObservedSourceV3{RoutedStoreSourceV3: f.source, t: f.t}
 		if f.fullReader != nil {
 			f.session, err = NewRoutedIntegritySessionV3(f.authority, source, f.fullReader, f.fence)
 		} else {
@@ -342,7 +342,7 @@ func (f *routedIPCFixtureV3) open() {
 		f.t.Fatal("writer opened before handshake")
 	}
 	var err error
-	options := configpoc.RuntimeOptionsV2{SharedReader: &f.access, Pools: f.pools, GuardDeadlines: true, Routed: f.remote, RoutedIdentity: f.identity, BootID: f.identity.BootID}
+	options := configpoc.RuntimeOptionsV2{SharedReader: &f.access, Pools: f.pools, GuardDeadlines: true, Routed: &routedIPCConfirmHookV3{RoutedRemoteAuthority: f.remote, fixture: f}, RoutedIdentity: f.identity, BootID: f.identity.BootID}
 	if f.integrity != nil {
 		options.Integrity = f.integrity
 	}
@@ -387,8 +387,7 @@ func (f *routedIPCFixtureV3) run(request configpoc.OperationRequestV2) configpoc
 
 type routedIPCObservedSourceV3 struct {
 	*RoutedStoreSourceV3
-	t       *testing.T
-	fixture *routedIPCFixtureV3
+	t *testing.T
 }
 
 func (s routedIPCObservedSourceV3) PrepareView(ctx context.Context) (RoutedPreparationViewV3, error) {
@@ -399,12 +398,6 @@ func (s routedIPCObservedSourceV3) PrepareView(ctx context.Context) (RoutedPrepa
 }
 
 func (s routedIPCObservedSourceV3) Resolve(ctx context.Context, ref firewallipc.RoutedReferenceV3, purpose string) (configpoc.RoutedSelectedPlanV1, error) {
-	if purpose == "confirm" && s.fixture != nil && s.fixture.corruptConfirm.CompareAndSwap(true, false) {
-		if err := s.fixture.fence.MarkBlocked(); err != nil {
-			return configpoc.RoutedSelectedPlanV1{}, err
-		}
-		return s.RoutedStoreSourceV3.ResolveFencedContinuationV1(ctx, ref, purpose)
-	}
 	start := time.Now()
 	value, err := s.RoutedStoreSourceV3.Resolve(ctx, ref, purpose)
 	s.t.Log("helper Resolve", purpose, time.Since(start), err)
@@ -506,4 +499,47 @@ func testRoutedIPCV3SharedStoreLifecycle(t *testing.T, readerPolicy configpoc.Se
 		t.Fatal("inverse did not restore exact no-network baseline")
 	}
 	f.run(configpoc.OperationRequestV2{Kind: configpoc.OpConfirm, Origin: rolled.Operation.ID, Target: rolled.Current.RunningRevision})
+}
+
+// Test-only interception occurs after the durable Confirm Intent is selected,
+// but before its effect RPC; Attach still traverses the real authenticated IPC.
+type routedIPCConfirmHookV3 struct {
+	*RoutedRemoteAuthority
+	fixture *routedIPCFixtureV3
+}
+
+func (h *routedIPCConfirmHookV3) Confirm(ctx context.Context, p configpoc.RoutedSelectedPlanV1) error {
+	f := h.fixture
+	if f.reattachConfirm.CompareAndSwap(true, false) {
+		original := f.session.integrity.anchor
+		before, err := f.reader.CaptureReferenceV1(ctx)
+		if err != nil {
+			return err
+		}
+		receipt, hash, err := f.authority.Observe(ctx)
+		if err != nil {
+			return err
+		}
+		if err := f.fence.MarkBlocked(); err != nil {
+			return err
+		}
+		if err := f.integrity.Attach(ctx, before); err != nil {
+			return err
+		}
+		after, err := f.reader.CaptureReferenceV1(ctx)
+		if err != nil {
+			return err
+		}
+		afterReceipt, afterHash, err := f.authority.Observe(ctx)
+		if err != nil {
+			return err
+		}
+		f.source.coldMu.Lock()
+		captured := f.source.cold.Reference()
+		f.source.coldMu.Unlock()
+		if before != after || receipt != afterReceipt || hash != afterHash || !receipt.Deadline.Equal(p.Deadline()) || f.session.integrity.anchor != original || captured != original {
+			f.t.Error("reattachment changed selected tuple, deadline, readback or original anchor")
+		}
+	}
+	return h.RoutedRemoteAuthority.Confirm(ctx, p)
 }
