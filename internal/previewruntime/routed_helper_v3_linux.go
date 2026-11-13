@@ -43,7 +43,7 @@ type RoutedHelperRuntimeV3 struct {
 }
 
 func routedHelperReadinessV3(m Metadata, ids Identities, o RoutedHelperOptionsV3) error {
-	if m.Validate() != nil || ids.Validate() != nil || o.Authority == nil || o.Store == nil || o.Access.Version != 1 || o.Access.OwnerUID != ids.APIUID || o.Access.ReaderGID == 0 || o.Access.ReaderGID == ids.APIGID || o.Access.CheckDirectory(o.Store) != nil {
+	if m.ValidateRouted() != nil || ids.Validate() != nil || o.Authority == nil || o.Store == nil || o.Access.Version != 1 || o.Access.OwnerUID != ids.APIUID || o.Access.ReaderGID == 0 || o.Access.ReaderGID == ids.APIGID || o.Access.CheckDirectory(o.Store) != nil {
 		return ErrIdentity
 	}
 	expected := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}

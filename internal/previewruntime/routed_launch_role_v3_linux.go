@@ -166,7 +166,7 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 	if e = unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0); e != nil || os.Getppid() != b.ParentPID {
 		return fail()
 	}
-	if b.Metadata.Validate() != nil || b.Identities.Validate() != nil {
+	if b.Metadata.ValidateRouted() != nil || b.Identities.Validate() != nil {
 		return fail()
 	}
 	if role == RoutedHelperRoleV3 {

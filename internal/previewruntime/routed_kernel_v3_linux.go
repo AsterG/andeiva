@@ -21,7 +21,7 @@ import (
 type routedKernelV3 struct{ namespace, host uint64 }
 
 func newRoutedKernelV3(m Metadata) (*routedKernelV3, error) {
-	if m.Validate() != nil {
+	if m.ValidateRouted() != nil {
 		return nil, ErrIdentity
 	}
 	runtime.LockOSThread()

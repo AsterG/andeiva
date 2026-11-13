@@ -71,7 +71,7 @@ func openRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identities,
 		}
 		return nil, ErrIdentity
 	}
-	if ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.Validate() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
+	if ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.ValidateRouted() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
 		return fail()
 	}
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}

@@ -97,7 +97,7 @@ type RoutedLaunchSupervisorV3 struct {
 }
 
 func validateRoutedLaunchV3(r RoutedLaunchResourcesV3) error {
-	if r.Metadata.Validate() != nil || r.Identities.Validate() != nil || r.Gateway == nil || r.Host == nil || r.Directory == nil {
+	if r.Metadata.ValidateRouted() != nil || r.Identities.Validate() != nil || r.Gateway == nil || r.Host == nil || r.Directory == nil {
 		return ErrIdentity
 	}
 	st, e := r.Gateway.Stat()
