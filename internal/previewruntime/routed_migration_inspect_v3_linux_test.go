@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -86,6 +88,7 @@ func TestRoutedMigrationInspectV3ExtraDescriptors(t *testing.T) {
 		}
 		err := checkMigrationInspectFDsV3()
 		if (mode == "deny") != (err != nil) {
+			inspectFDEnvironmentDiagnosticV3()
 			os.Exit(2)
 		}
 		os.Exit(0)
@@ -95,7 +98,9 @@ func TestRoutedMigrationInspectV3ExtraDescriptors(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRoutedMigrationInspectV3ExtraDescriptors$")
-			cmd.Env = append(os.Environ(), "ANDEIVA_TEST_INSPECT_FDS="+mode)
+			// The fixture exercises one descriptor policy, not inherited CI coverage,
+			// tracing or automatic container CPU discovery. Production is unchanged.
+			cmd.Env = []string{"PATH=/usr/bin:/bin", "LC_ALL=C", "GOMAXPROCS=2", "ANDEIVA_TEST_INSPECT_FDS=" + mode}
 			if mode == "deny" {
 				first, err := os.Open("/dev/null")
 				if err != nil {
@@ -137,5 +142,23 @@ func TestRoutedMigrationInspectV3DraftPublicationNeverReplaces(t *testing.T) {
 	after, err := root.ReadFile("grouped-migration-plan.json")
 	if err != nil || string(before) != string(after) {
 		t.Fatal("existing approval context changed", err)
+	}
+}
+
+// Fixture-only diagnostics deliberately omit descriptor targets and file paths.
+func inspectFDEnvironmentDiagnosticV3() {
+	var limit unix.Rlimit
+	_ = unix.Getrlimit(unix.RLIMIT_NOFILE, &limit)
+	fmt.Fprintf(os.Stderr, "fixture descriptor policy: maxprocs=%d soft=%d hard=%d\n", runtime.GOMAXPROCS(0), limit.Cur, limit.Max)
+	entries, _ := os.ReadDir("/proc/self/fd")
+	for _, entry := range entries {
+		fd, e := strconv.Atoi(entry.Name())
+		if e != nil {
+			continue
+		}
+		var info unix.Stat_t
+		statErr := unix.Fstat(fd, &info)
+		flags, flagErr := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
+		fmt.Fprintf(os.Stderr, "fd=%d type=%#o flags=%#x stat_ok=%t flags_ok=%t\n", fd, info.Mode&unix.S_IFMT, flags, statErr == nil, flagErr == nil)
 	}
 }
