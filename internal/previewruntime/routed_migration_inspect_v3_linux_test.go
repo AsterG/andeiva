@@ -74,26 +74,60 @@ func TestRoutedMigrationInspectV3DraftCreatesNoHistoricalGrantOrCredentialOutput
 
 func TestRoutedMigrationInspectV3ExtraDescriptors(t *testing.T) {
 	if mode := os.Getenv("ANDEIVA_TEST_INSPECT_FDS"); mode != "" {
-		// WSL's launcher injects unrelated PTY descriptors into the test process.
-		// Remove them only in this disposable fixture; production rejects them.
-		entries, _ := os.ReadDir("/proc/self/fd")
-		for _, entry := range entries {
-			target, _ := os.Readlink("/proc/self/fd/" + entry.Name())
-			if target == "/dev/ptmx" {
-				fd, _ := strconv.Atoi(entry.Name())
-				if fd > 3 {
+		// This cleanup exists only in the disposable reexec fixture. Preserve
+		// its explicit negative descriptor and Go's allowed poller descriptors.
+		sanitize := func(unexpected int) {
+			entries, err := os.ReadDir("/proc/self/fd")
+			if err != nil {
+				os.Exit(3)
+			}
+			for _, entry := range entries {
+				target, _ := os.Readlink("/proc/self/fd/" + entry.Name())
+				fd, parseErr := strconv.Atoi(entry.Name())
+				if parseErr == nil && fd > 3 && fd != unexpected && target != "anon_inode:[eventpoll]" && target != "anon_inode:[eventfd]" {
 					_ = unix.Close(fd)
 				}
 			}
 		}
+		if mode == "clean-inherited" {
+			sanitize(-1)
+			if checkMigrationInspectFDsV3() != nil {
+				inspectFDEnvironmentDiagnosticV3()
+				os.Exit(3)
+			}
+			var pipe [2]int
+			if unix.Pipe(pipe[:]) != nil || unix.Dup3(pipe[0], 142, 0) != nil || unix.Dup3(pipe[1], 145, 0) != nil {
+				os.Exit(3)
+			}
+			_ = unix.Close(pipe[0])
+			_ = unix.Close(pipe[1])
+			if checkMigrationInspectFDsV3() == nil {
+				os.Exit(4)
+			}
+			mode = "clean"
+		}
+		// WSL and CI runners can inherit non-CLOEXEC PTYs or high-numbered
+		// pipes. Sanitize only this disposable fixture. Retain the explicitly
+		// injected negative descriptor and Go's allowed poller descriptors;
+		// production continues to reject every unexpected inherited handle.
+		unexpected := -1
+		if mode == "deny" {
+			unexpected = 4
+		} else if mode == "deny-high" {
+			if unix.Dup3(4, 147, 0) != nil {
+				os.Exit(3)
+			}
+			unexpected = 147
+		}
+		sanitize(unexpected)
 		err := checkMigrationInspectFDsV3()
-		if (mode == "deny") != (err != nil) {
+		if (mode != "clean") != (err != nil) {
 			inspectFDEnvironmentDiagnosticV3()
 			os.Exit(2)
 		}
 		os.Exit(0)
 	}
-	for _, mode := range []string{"clean", "deny"} {
+	for _, mode := range []string{"clean", "clean-inherited", "deny", "deny-high"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -101,7 +135,7 @@ func TestRoutedMigrationInspectV3ExtraDescriptors(t *testing.T) {
 			// The fixture exercises one descriptor policy, not inherited CI coverage,
 			// tracing or automatic container CPU discovery. Production is unchanged.
 			cmd.Env = []string{"PATH=/usr/bin:/bin", "LC_ALL=C", "GOMAXPROCS=2", "ANDEIVA_TEST_INSPECT_FDS=" + mode}
-			if mode == "deny" {
+			if mode == "deny" || mode == "deny-high" {
 				first, err := os.Open("/dev/null")
 				if err != nil {
 					t.Fatal(err)
