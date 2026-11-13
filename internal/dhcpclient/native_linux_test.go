@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strconv"
@@ -68,6 +69,12 @@ func TestNativeDHCPCDOwner(t *testing.T) {
 	if _, err := StartIsolated(ctx, scope); !errors.Is(err, ErrScope) {
 		t.Fatal("second owner accepted", err)
 	}
+	// Acquisition-only mode deliberately leaves the WAN unconfigured. Apply
+	// this fixture's confirmed lease as an explicit, reversible L3 delta before
+	// testing unicast renewal. This is not an appliance adoption transaction.
+	removeWAN := nativeApplyWANLease(t, scope, first)
+	configured := nativeBaseline(t)
+	t.Log("fixture L3 applied confirmed WAN lease; LAN baseline retained")
 	if err := c.Renew(); err != nil {
 		t.Fatal("renew", err)
 	}
@@ -81,11 +88,15 @@ func TestNativeDHCPCDOwner(t *testing.T) {
 	}
 	rebound := awaitLease(t, c, renewed.Epoch, 35*time.Second)
 	t.Logf("rebound: epoch=%d reason=%s", rebound.Epoch, rebound.Event.Reason)
-	if !bytes.Equal(before, nativeBaseline(t)) {
-		t.Fatal("acquisition configured baseline")
+	if !bytes.Equal(configured, nativeBaseline(t)) {
+		t.Fatal("client changed explicit fixture L3 state")
 	}
 	oldPID := c.pid
 	c.Stop()
+	removeWAN()
+	if !bytes.Equal(before, nativeBaseline(t)) {
+		t.Fatal("WAN delta rollback changed baseline")
+	}
 	if _, err := c.Current(); err == nil {
 		t.Fatal("stopped owner returned lease")
 	}
@@ -99,6 +110,7 @@ func TestNativeDHCPCDOwner(t *testing.T) {
 	}
 	restarted := awaitLease(t, c, 0, 35*time.Second)
 	t.Logf("restarted: owner=%s reason=%s", c.PID(), restarted.Event.Reason)
+	removeRestartWAN := nativeApplyWANLease(t, scope, restarted)
 	stopNativeServer(t)
 	deadline := time.Now().Add(130 * time.Second)
 	for {
@@ -113,6 +125,7 @@ func TestNativeDHCPCDOwner(t *testing.T) {
 	}
 	t.Log("expired without server; no stale lease returned")
 	c.Stop()
+	removeRestartWAN()
 	if !bytes.Equal(before, nativeBaseline(t)) {
 		t.Fatal("stop/expiry altered nonempty baseline")
 	}
@@ -132,6 +145,79 @@ func TestNativeDHCPCDOwner(t *testing.T) {
 	c.Stop()
 	if !bytes.Equal(before, nativeBaseline(t)) {
 		t.Fatal("rollback baseline differs")
+	}
+}
+
+func nativeApplyWANLease(t *testing.T, scope Scope, lease Lease) func() {
+	t.Helper()
+	if err := verifyScope(scope); err != nil {
+		t.Fatal("L3 scope", err)
+	}
+	now, err := bootNow()
+	if err != nil || lease.Event.validate() != nil || lease.DeadlineBootNS <= now || lease.Event.Interface != scope.Interface || scope.Interface != "wan0" || lease.Event.Address != "198.18.1.10/24" || lease.Event.Gateway != "198.18.1.1" {
+		t.Fatal("L3 fixture lease binding")
+	}
+	if len(nativeWANAddresses(t, scope)) != 0 {
+		t.Fatal("fixture WAN was not empty")
+	}
+	removed := false
+	remove := func() {
+		if removed {
+			return
+		}
+		if err := verifyScope(scope); err != nil {
+			t.Error("L3 rollback scope", err)
+			return
+		}
+		for _, prefix := range nativeWANAddresses(t, scope) {
+			if prefix == lease.Event.Address {
+				nativeIP(t, "address", "del", lease.Event.Address, "dev", scope.Interface)
+			}
+		}
+		if len(nativeWANAddresses(t, scope)) != 0 {
+			t.Error("L3 rollback left WAN state")
+			return
+		}
+		removed = true
+	}
+	t.Cleanup(remove)
+	nativeIP(t, "address", "add", lease.Event.Address, "dev", scope.Interface)
+	addresses := nativeWANAddresses(t, scope)
+	if len(addresses) != 1 || addresses[0] != lease.Event.Address {
+		t.Fatal("L3 delta readback")
+	}
+	return remove
+}
+
+func nativeWANAddresses(t *testing.T, scope Scope) []string {
+	t.Helper()
+	iface, err := net.InterfaceByName(scope.Interface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addresses, err := iface.Addrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result []string
+	for _, address := range addresses {
+		prefix, err := netip.ParsePrefix(address.String())
+		if err != nil {
+			t.Fatal("interface address format")
+		}
+		if prefix.Addr().Is4() {
+			result = append(result, prefix.String())
+		}
+	}
+	return result
+}
+
+func nativeIP(t *testing.T, args ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "/usr/bin/ip", append([]string{"-4"}, args...)...).Run(); err != nil {
+		t.Fatal("fixed fixture L3 operation", err)
 	}
 }
 

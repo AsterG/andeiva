@@ -32,8 +32,12 @@ transport delay. Expired evidence is unavailable even if the EXPIRE hook is lost
 Restart never imports a lease file as live authority. A new confirmed ACK is required.
 
 The native fixture uses an isolated BusyBox DHCP server and an already configured
-LAN. It checks acquisition, exclusive ownership, renewal, rebind, restart, server loss,
-expiry, offline restart and unchanged IPv4 baseline. Preserving that baseline is
+LAN. After acquisition the test explicitly applies the fixture's exact confirmed
+WAN address and verifies readback before checking renewal. It removes that owned
+delta after stopping the client and verifies the original IPv4 baseline. The client
+still runs with `--noconfigure`; these test-only L3 operations are not a production
+lease executor. The fixture checks exclusive ownership, renewal, rebind, restart,
+server loss, expiry and offline restart. Restoring this fixture baseline is
 not adoption/rollback of an existing host DHCP manager: ifupdown/dhcpcd ownership
 migration, durable mementos, L3 effects, NAT renewal, service policy, management
 continuity and production activation remain separate required integrations.
@@ -65,6 +69,10 @@ Rebind emitted RECONFIGURE, which the hook rejected. A regression reproduced tha
 rejection before the fix. The native test now separately checks actual RENEW and
 rebind, and reports fixed failure stages without exposing raw engine stderr or
 hook environment. Those additional native phases remain unqualified until rerun.
+The next native run stayed alive after SIGUSR1 but received no renewal hook in
+35 seconds with an unconfigured WAN. The explicit L3 probe above tests the
+configuration boundary without increasing that deadline or accepting a silent
+no-op as renewal. A passing renewal still requires a new RENEW hook from the engine.
 
 ## Engine contract sources
 
