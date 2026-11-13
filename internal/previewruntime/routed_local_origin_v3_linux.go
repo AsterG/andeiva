@@ -27,7 +27,7 @@ func cloneRoutedLocalOriginV3(value *RoutedLocalOriginV3) *RoutedLocalOriginV3 {
 	return &detached
 }
 func validateRoutedLocalOriginV3(value *RoutedLocalOriginV3) error {
-	if value == nil || value.Version != 1 || value.Kind != "new-inactive-v1" || value.CreatedAt.IsZero() || value.Source.Domain != "local_services" || !validHex(value.Source.Source, 32) || !validHex(value.Source.Tip, 32) || !validHex(value.Source.ReceiptIndex, 32) || value.Source.Sequence == 0 || value.Source.Projection == 0 || !validHex(value.Revision, 32) {
+	if value == nil || value.Version != 1 || value.Kind != "new-inactive-v1" || value.CreatedAt.IsZero() || value.Source.Domain != "local_services" || !validHex(value.Source.Source, 32) || !validHex(value.Source.Tip, 32) || !validHex(value.Source.ReceiptIndex, 32) || value.Source.Sequence != 1 || value.Source.Projection != 1 || !validHex(value.Revision, 32) {
 		return ErrIdentity
 	}
 	return nil

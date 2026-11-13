@@ -47,6 +47,13 @@ func TestRoutedLocalOriginV3ExactFactsAndDetachedBootstrap(t *testing.T) {
 	if validateRoutedLocalOriginV3(&changed) == nil {
 		t.Fatal("invented legacy label accepted")
 	}
+	for _, change := range []func(*RoutedLocalOriginV3){func(p *RoutedLocalOriginV3) { p.Source.Sequence = 2 }, func(p *RoutedLocalOriginV3) { p.Source.Projection = 2 }} {
+		changed := *origin
+		change(&changed)
+		if validateRoutedLocalOriginV3(&changed) == nil {
+			t.Fatal("historical journal accepted as new domain")
+		}
+	}
 	supervisor := &RoutedLaunchSupervisorV3{resources: RoutedLaunchResourcesV3{LocalOrigin: cloneRoutedLocalOriginV3(origin)}}
 	origin.Source.Tip = strings.Repeat("f", 64)
 	bootstrap := supervisor.bootstrap(0, 0)
@@ -68,29 +75,24 @@ func TestRoutedLocalOriginV3ExactFactsAndDetachedBootstrap(t *testing.T) {
 	}
 }
 
-func TestRoutedLocalOriginV3MatchesActualSelectedMigrationWithoutEffects(t *testing.T) {
+func TestRoutedLocalOriginV3RejectsLegacyDomainHistoryWithoutEffects(t *testing.T) {
 	// Real store/reserve/G1/IPC with explicitly simulated kernel/network engines.
+	// Its old local journal includes initialize/resume history, so it cannot be
+	// reclassified as the single new-inactive-v1 creation record.
 	fixture := newRoutedIPCFixtureWithPolicyV3(t, configpoc.SelectionActionAuthorityV2)
-	actual, err := fixture.fullReader.MigrationProvenanceV3(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	expected := &RoutedLocalOriginV3{Version: 1, Kind: "new-inactive-v1", CreatedAt: actual.LocalInitializedAt, Source: actual.Sources[1], Revision: actual.LocalRevision.Hash}
 	before, err := fixture.service.Current(fixture.binding, "routed")
 	if err != nil {
 		t.Fatal(err)
 	}
 	batches := len(fixture.kernel.batches)
-	if err = verifySelectedRoutedLocalOriginV3(context.Background(), fixture.fullReader, expected); err != nil {
-		t.Fatal(err)
+	if _, err = fixture.fullReader.MigrationProvenanceV3(context.Background()); err == nil {
+		t.Fatal("legacy local history labeled new")
 	}
-	changed := *expected
-	changed.CreatedAt = changed.CreatedAt.Add(time.Nanosecond)
-	if verifySelectedRoutedLocalOriginV3(context.Background(), fixture.fullReader, &changed) == nil {
-		t.Fatal("mismatching creation event accepted")
+	if verifySelectedRoutedLocalOriginV3(context.Background(), fixture.fullReader, localOriginFixtureV3()) == nil {
+		t.Fatal("existing journal accepted with new label")
 	}
 	after, err := fixture.service.Current(fixture.binding, "routed")
 	if err != nil || before.Global != after.Global || len(fixture.kernel.batches) != batches {
-		t.Fatal("provenance check changed selected state or kernel", err)
+		t.Fatal("provenance refusal changed selected state or kernel", err)
 	}
 }

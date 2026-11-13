@@ -55,7 +55,7 @@ func migrationProvenanceFromStateV3(state v2State, read func(string, any) error)
 		return out, ErrRecovery
 	}
 	var migration v2Migration
-	if read(state.Migration, &migration) != nil || migration.Firewall.Domain != "firewall" || migration.LocalServices.Domain != "local_services" || len(migration.LocalServices.Records) == 0 {
+	if read(state.Migration, &migration) != nil || migration.Firewall.Domain != "firewall" || migration.LocalServices.Domain != "local_services" || len(migration.LocalServices.Records) != 1 || migration.LocalServices.Sequence != 1 || migration.LocalServices.Projection != 1 {
 		return out, ErrRecovery
 	}
 	image := migration.LocalServices

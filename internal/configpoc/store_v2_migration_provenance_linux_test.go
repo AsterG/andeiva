@@ -63,9 +63,18 @@ func migrationProvenanceFixtureV3(t *testing.T, localOperation ...string) (*Rout
 		operation := "initialize"
 		if i == 1 && len(localOperation) > 0 {
 			operation = localOperation[0]
+			if operation == "second-save" {
+				operation = "initialize"
+			}
 		}
 		if e = store.append(state, Audit{Sequence: 1, At: at, Actor: "system", Surface: API, Operation: operation, Result: "ok", RunningHash: rev.Hash}, true, nil); e != nil {
 			t.Fatal(e)
+		}
+		if i == 1 && len(localOperation) > 0 && localOperation[0] == "second-save" {
+			state.Snapshot.Generation = 2
+			if e = store.append(state, Audit{Sequence: 2, At: at.Add(time.Nanosecond), Actor: "system", Surface: API, Operation: OpSave, Result: "ok", RunningHash: rev.Hash}, true, nil); e != nil {
+				t.Fatal(e)
+			}
 		}
 		if e = store.lock.Close(); e != nil {
 			t.Fatal(e)
@@ -220,5 +229,17 @@ func TestWithLegacyFingerprintV3RetainsAndRechecksOriginalLock(t *testing.T) {
 	}
 	if WithLegacyFingerprintV3(nil, area, "firewall", nil) == nil {
 		t.Fatal("nil invocation accepted")
+	}
+}
+
+func TestMigrationProvenanceV3RejectsExistingInactiveDomainHistory(t *testing.T) {
+	r, _, _, _, _ := migrationProvenanceFixtureV3(t, "second-save")
+	// This is a valid imported journal and complete G1, but it is not the single
+	// creation record permitted by new-inactive-v1.
+	if _, err := r.PrepareCurrentView(context.Background()); err != nil {
+		t.Fatal("fixture must remain valid selected history", err)
+	}
+	if _, err := r.MigrationProvenanceV3(context.Background()); err == nil {
+		t.Fatal("preexisting empty domain history mislabeled as newly created")
 	}
 }
