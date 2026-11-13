@@ -205,7 +205,7 @@ func TestNativeLeaseLifecycle(t *testing.T) {
 	runtime.LockOSThread()
 	output, childErr := cmd.CombinedOutput()
 	runtime.UnlockOSThread()
-	if childErr != nil {
+	if childErr != nil || !strings.Contains(string(output), "--- PASS: TestNativeLeaseOccupiedDenied (") || strings.Contains(string(output), "--- SKIP:") {
 		t.Fatalf("occupied WAN process negative: %v: %.4096s", childErr, output)
 	}
 	t.Log("new process occupied-WAN denial passed")
