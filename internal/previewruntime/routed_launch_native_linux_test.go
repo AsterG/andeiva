@@ -29,6 +29,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/localpolicy"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
@@ -60,6 +61,7 @@ func TestMain(m *testing.M) {
 			err = nativeAccountsRoleV3(os.Args[1])
 		case RoutedHelperRoleV3, RoutedAPIRoleV3:
 			err = RunRoutedLaunchRoleV3(ctx, os.Args[1], nativeFactoriesV3())
+			err = errors.Join(err, firewallipc.FlushRoutedDHCPDiagnosticsV1(os.Stderr))
 		case RoutedMigrationPrepareRoleV3:
 			err = RunRoutedMigrationPrepareRoleV3(context.Background())
 		case RoutedMigrationInspectRoleV3:

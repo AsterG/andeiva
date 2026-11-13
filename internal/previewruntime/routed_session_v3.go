@@ -155,7 +155,13 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 			timeout = configpoc.IntegrityInspectionDeadlineV1
 		}
 		call, cancel := context.WithTimeout(ctx, timeout)
+		diagnosticStarted := firewallipc.RoutedDHCPDiagnosticStartV1(command.Verb)
 		payload, operationErr := s.dispatch(call, command)
+		diagnosticErr := operationErr
+		if diagnosticErr == errRoutedDHCPInitialWaitingV1 {
+			diagnosticErr = firewallipc.ErrRoutedDHCPWaitingV1
+		}
+		firewallipc.RecordRoutedDHCPDiagnosticV1("helper", command.Verb, diagnosticStarted, diagnosticErr, call.Err())
 		if operationErr == errRoutedDHCPInitialWaitingV1 && call.Err() != nil {
 			operationErr = configpoc.ErrRecovery
 		}
