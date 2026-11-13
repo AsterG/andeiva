@@ -51,6 +51,15 @@ func TestMain(m *testing.M) {
 		switch os.Args[1] {
 		case RoutedHelperRoleV3, RoutedAPIRoleV3:
 			err = RunRoutedLaunchRoleV3(ctx, os.Args[1], nativeFactoriesV3())
+		case RoutedIntegrityPrepareRoleV3:
+			err = RunRoutedIntegrityPrepareRoleV3(ctx)
+			if err == nil {
+				var report nativeReportV3
+				report, err = nativeReportProcessV3("prepare", RoutedLaunchContextV3{})
+				if err == nil {
+					err = nativeEmitV3(report)
+				}
+			}
 		case nativeSeedRoleV3:
 			err = nativeSeedStoreV3(ctx)
 		default:
@@ -74,21 +83,22 @@ type nativeSeedResultV3 struct {
 	Profiles [3]recoveryreserve.ProfileV2
 }
 type nativeReportV3 struct {
-	Role                         string `json:"role"`
-	PID, UID, GID, PeerPID       int
-	Groups                       []int
-	Caps                         map[string]string
-	Namespace, Epoch, Generation uint64
-	ReadOnlyDescriptors          int
-	Running, Observed            string
-	FactoryOpened                bool
+	Role                                   string `json:"role"`
+	PID, UID, GID, PeerPID                 int
+	Groups                                 []int
+	Caps                                   map[string]string
+	Namespace, Epoch, Generation           uint64
+	ReadOnlyDescriptors                    int
+	Running, Observed                      string
+	FactoryOpened                          bool
+	Integrity, PrivateRoot, IntegrityReady bool
 }
 type nativeCloseV3 func() error
 
 func (f nativeCloseV3) Close() error { return f() }
 
 func nativeReportProcessV3(role string, c RoutedLaunchContextV3) (nativeReportV3, error) {
-	r := nativeReportV3{Role: role, PID: os.Getpid(), UID: os.Getuid(), GID: os.Getgid(), PeerPID: int(c.PeerPID), Epoch: c.Epoch, Caps: map[string]string{}}
+	r := nativeReportV3{Integrity: c.Integrity, PrivateRoot: c.IntegrityRoot != nil, Role: role, PID: os.Getpid(), UID: os.Getuid(), GID: os.Getgid(), PeerPID: int(c.PeerPID), Epoch: c.Epoch, Caps: map[string]string{}}
 	var err error
 	r.Groups, err = os.Getgroups()
 	if err != nil {
@@ -236,6 +246,24 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 					err = fmt.Errorf("native fixture %s: %w", step, err)
 				}
 			}()
+			if c.Integrity {
+				if c.IntegrityRoot != nil {
+					return out, nil, errors.New("API inherited private integrity root")
+				}
+				if _, e := os.ReadFile("/proc/self/fd/5/../integrity/integrity-fence"); !errors.Is(e, os.ErrPermission) {
+					return out, nil, errors.New("API private marker access not denied")
+				}
+				files, e := os.ReadDir("/proc/self/fd")
+				if e != nil {
+					return out, nil, e
+				}
+				for _, file := range files {
+					path, e := os.Readlink("/proc/self/fd/" + file.Name())
+					if e == nil && (strings.HasSuffix(path, "/integrity") || strings.Contains(path, "/integrity/")) {
+						return out, nil, errors.New("API inherited private integrity descriptor")
+					}
+				}
+			}
 			launch = c
 			if _, err := c.Access.ReadFile(ctx, c.Store, "selected.json", 4096); !errors.Is(err, recoveryreserve.ErrInvalid) {
 				return out, nil, errors.New("API unexpectedly acquired helper reader identity")
@@ -362,6 +390,10 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 			if err != nil {
 				return err
 			}
+			report.IntegrityReady = r.Service.RuntimeIntegrityReadyV1()
+			if launch.Integrity && !report.IntegrityReady {
+				return errors.New("native API not integrity qualified")
+			}
 			report.FactoryOpened = true
 			report.Generation = current.Global.Generation
 			report.Running = current.Global.Running
@@ -441,7 +473,9 @@ func (b *nativeLogV3) Write(p []byte) (int, error) {
 }
 func (b *nativeLogV3) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.buffer.String() }
 
-func TestNativeRoutedLaunchV3(t *testing.T) {
+func TestNativeRoutedLaunchV3(t *testing.T)          { testNativeRoutedLaunchV3(t, false) }
+func TestNativeRoutedIntegrityLaunchV3(t *testing.T) { testNativeRoutedLaunchV3(t, true) }
+func testNativeRoutedLaunchV3(t *testing.T, integrity bool) {
 	if os.Getenv("ANDEIVA_NATIVE_LAUNCH_V3") != "1" {
 		t.Skip("requires authorized isolated root laboratory harness")
 	}
@@ -587,7 +621,36 @@ func TestNativeRoutedLaunchV3(t *testing.T) {
 		return v
 	}
 	var logs nativeLogV3
-	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
+	var private *os.Root
+	if integrity {
+		path := filepath.Join(base, "integrity")
+		if e = os.Mkdir(path, 0700); e != nil {
+			t.Fatal(e)
+		}
+		if e = os.Chown(path, int(nativeIdentitiesV3.HelperUID), int(nativeIdentitiesV3.IPCGID)); e != nil {
+			t.Fatal(e)
+		}
+		private, e = os.OpenRoot(path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer private.Close()
+		if e = PrepareRoutedIntegrityLaunchV3(ctx, nativeIdentitiesV3, private, &logs); e != nil {
+			t.Fatalf("explicit capless preparation failed: %v %s", e, logs.String())
+		}
+		original, e := private.ReadFile(routedIntegrityFenceNameV3)
+		if e != nil || len(original) != 4096 || original[routedIntegrityFenceStateV3] != 0 {
+			t.Fatal("invalid prepared marker", e)
+		}
+		if e = PrepareRoutedIntegrityLaunchV3(ctx, nativeIdentitiesV3, private, io.Discard); e == nil {
+			t.Fatal("installer reset an existing marker")
+		}
+		after, e := private.ReadFile(routedIntegrityFenceNameV3)
+		if e != nil || !bytes.Equal(original, after) {
+			t.Fatal("failed preparation changed marker", e)
+		}
+	}
+	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
 	if e != nil {
 		t.Fatalf("native launch failed: %v\n%s", e, logs.String())
 	}
@@ -609,7 +672,7 @@ func TestNativeRoutedLaunchV3(t *testing.T) {
 	if strings.Contains(logs.String(), "native role failed:") {
 		t.Fatalf("child cleanup failed: %s", logs.String())
 	}
-	var helpers, apis int
+	var helpers, apis, preparers int
 	var previous nativeReportV3
 	for _, line := range strings.Split(logs.String(), "\n") {
 		if !strings.HasPrefix(line, "ANDEIVA_NATIVE_REPORT ") {
@@ -620,7 +683,15 @@ func TestNativeRoutedLaunchV3(t *testing.T) {
 			t.Fatal(e)
 		}
 		wantCap := "0000000000000000"
-		if r.Role == "helper" {
+		if r.Role == "prepare" {
+			preparers++
+			if !integrity || r.UID != 62002 || r.GID != 62003 || len(r.Groups) != 0 || r.Namespace != metadata.HostNamespace {
+				t.Fatal("preparer identity/capless namespace mismatch", r)
+			}
+		} else if r.Role == "helper" {
+			if r.Integrity != integrity || r.PrivateRoot != integrity {
+				t.Fatal("helper integrity profile mismatch", r)
+			}
 			helpers++
 			wantCap = "0000000000001000"
 			if r.PID != helper || r.UID != 62002 || r.GID != 62003 || r.Namespace != metadata.GatewayNamespace || r.ReadOnlyDescriptors < 3 {
@@ -630,6 +701,9 @@ func TestNativeRoutedLaunchV3(t *testing.T) {
 				t.Fatal("helper groups differ", r.Groups)
 			}
 		} else if r.Role == "api" {
+			if r.Integrity != integrity || r.PrivateRoot || (integrity && !r.IntegrityReady) {
+				t.Fatal("API integrity/root/readiness mismatch", r)
+			}
 			apis++
 			if r.UID != 62001 || r.GID != 62001 || r.Namespace != metadata.HostNamespace || r.PeerPID != helper || !r.FactoryOpened || r.Running == "" || r.Running != r.Observed || r.Epoch != uint64(apis) {
 				t.Fatal("API profile/readback mismatch", r)
@@ -652,6 +726,9 @@ func TestNativeRoutedLaunchV3(t *testing.T) {
 		if r.Caps["NoNewPrivs"] != "1" {
 			t.Fatal("NNP missing")
 		}
+	}
+	if (integrity && preparers != 1) || (!integrity && preparers != 0) {
+		t.Fatal("incomplete preparation report", preparers)
 	}
 	if helpers != 1 || apis != 2 {
 		t.Fatalf("incomplete native reports %d/%d: %s", helpers, apis, logs.String())
