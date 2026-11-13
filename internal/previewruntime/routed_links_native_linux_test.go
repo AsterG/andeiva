@@ -169,6 +169,26 @@ func TestRoutedGatewayLinksV3Native(t *testing.T) {
 	if err = managed.Close(); err != nil {
 		t.Fatal("managed cleanup idempotency", err)
 	}
+	managed, err = prepareRoutedManagedNamespaceV3(ctx, area, node, nativeIdentitiesV3)
+	if err != nil {
+		t.Fatal("managed sentinel resources", err)
+	}
+	if err = area.WriteFile("unknown-sentinel", []byte("retain\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = managed.Close(); !errors.Is(err, ErrStorage) {
+		t.Fatal("unknown runtime file not reported", err)
+	}
+	if raw, e := area.ReadFile("unknown-sentinel"); e != nil || string(raw) != "retain\n" {
+		t.Fatal("sentinel removed", e)
+	}
+	if retry, e := prepareRoutedManagedNamespaceV3(ctx, area, node, nativeIdentitiesV3); e == nil || retry != nil {
+		t.Fatal("adopted nonempty runtime")
+	}
+	// The fixture, not the manager, removes its known sentinel after asserting it.
+	if err = area.Remove("unknown-sentinel"); err != nil {
+		t.Fatal(err)
+	}
 	remainingEntries, err := area.ReadFile("runtime.json")
 	if !os.IsNotExist(err) || len(remainingEntries) != 0 {
 		t.Fatal("managed metadata retained", err)

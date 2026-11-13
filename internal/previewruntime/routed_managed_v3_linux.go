@@ -71,6 +71,10 @@ func (r *routedManagedNamespaceV3) Close() error {
 	if err != nil {
 		return errors.Join(result, err)
 	}
+	entries, readErr := parent.ReadDir(1)
+	if len(entries) != 0 || (readErr != nil && !errors.Is(readErr, io.EOF)) {
+		return errors.Join(result, ErrStorage, parent.Close())
+	}
 	return errors.Join(result, parent.Sync(), parent.Close())
 }
 
