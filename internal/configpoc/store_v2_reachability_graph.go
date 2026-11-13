@@ -337,7 +337,11 @@ func (r *v2ReachabilityReader) configuration(cfg v2Configuration, key string, st
 			return errV2Unavailable
 		}
 		if op.Outcome != nil && (op.Outcome.ConfirmationLease != p.Lease || op.Outcome.RunningRevision != p.Target || op.Outcome.ConfirmationDeadline == nil || !op.Outcome.ConfirmationDeadline.Equal(p.Deadline)) {
-			return errV2Unavailable
+			// Only a non-live, exact plan target may describe a prospective
+			// lease that was compensated before it became a published outcome.
+			if live || !reserveCompensatedSnapshotV2(cfg, state, op, r.object) {
+				return errV2Unavailable
+			}
 		}
 		if err := r.snapshot(p.Previous, key, state, depth+1); err != nil {
 			return err

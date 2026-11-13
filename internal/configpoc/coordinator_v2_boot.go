@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"sort"
 	"time"
 )
 
@@ -26,9 +27,12 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 }
 
 func validFeaturesV2(state v2State) bool {
+	if hasFeatureV2(state, v2ReserveCompensationFeature) && state.RecoveryReserveVersion != 1 {
+		return false
+	}
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2BootFeature && feature != v2LocalFeature) || feature <= last {
+		if (feature != v2BootFeature && feature != v2LocalFeature && feature != v2ReserveCompensationFeature) || feature <= last {
 			return false
 		}
 		last = feature
@@ -57,9 +61,7 @@ func addFeatureV2(state *v2State, feature string) {
 		return
 	}
 	state.RequiredFeatures = append(state.RequiredFeatures, feature)
-	if len(state.RequiredFeatures) == 2 && state.RequiredFeatures[0] > state.RequiredFeatures[1] {
-		state.RequiredFeatures[0], state.RequiredFeatures[1] = state.RequiredFeatures[1], state.RequiredFeatures[0]
-	}
+	sort.Strings(state.RequiredFeatures)
 }
 
 func preservesFeaturesV2(previous, next v2State) bool {

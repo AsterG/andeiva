@@ -11,6 +11,12 @@
 - Preserve host separation, stable link bindings, bounded fixed commands, exact compensation and uncertainty fences; keep recovery authority independent of request cancellation.
 - Qualify the existing three-namespace routing laboratory with real TCP/UDP SNAT, conntrack, deny/revocation and verified restoration. Existing management LAN migration, DHCP, durable crash recovery and appliance runtime integration remain unsupported.
 
+## Unreleased — compensated reserve-plan finality
+
+- Preserve the original lease and deadline while archiving verified compensation before a confirmation outcome is published.
+- Require a sticky reader-compatibility feature and exact typed plan, snapshot and audit evidence before physical reserve reuse; retain interrupted retirement and immutable replay.
+- Reject existing incomplete archives without rewriting them; keep pool quotas, protected audit retention and runtime activation unchanged.
+
 ## Unreleased — internal transaction recovery reserves
 
 - Bind preallocated admission, plan and emergency pools to the selected v2 transaction lifecycle; retain uncertain operations without publishing unverified Running state.
