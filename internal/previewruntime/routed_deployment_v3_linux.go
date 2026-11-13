@@ -170,7 +170,7 @@ func openRoutedDeploymentV3(ctx context.Context, c Config) (resources *routedDep
 	if err != nil {
 		return nil, err
 	}
-	accounts, err := readOwned(DataDir+"/accounts.json", 0, ids.APIGID, 0440, 16384)
+	accounts, err := readOwned(routedAccountsPathV3, 0, ids.APIGID, 0440, 16384)
 	if err != nil {
 		return nil, err
 	}

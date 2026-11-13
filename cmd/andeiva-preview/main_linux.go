@@ -92,6 +92,12 @@ func run(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(result)
 	case "grouped-links":
 		return previewruntime.PrepareRoutedNodeLinksV3(ctx, c, os.Stdin)
+	case "grouped-accounts":
+		digest, err := previewruntime.PrepareRoutedAccountsV3(ctx, c)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"accounts_sha256": digest})
 	case "grouped-inspect":
 		result, err := previewruntime.InspectRoutedMigrationV3(ctx, c)
 		if err != nil {

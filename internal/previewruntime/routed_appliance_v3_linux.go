@@ -84,7 +84,7 @@ func NewRoutedApplianceFactoriesV3(c Config) (RoutedLaunchFactoriesV3, error) {
 			if err != nil {
 				return out, nil, err
 			}
-			accounts, err := loadAccounts(actual)
+			accounts, err := loadRoutedAccountsV3(actual)
 			if err != nil {
 				return out, nil, err
 			}
