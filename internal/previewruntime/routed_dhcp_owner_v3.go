@@ -189,9 +189,15 @@ func (f *routedDHCPOwnerFactsV3) revoke() error {
 	return ErrUnavailable
 }
 func (f *routedDHCPOwnerFactsV3) accept(l routedDHCPOwnerLeaseV3, now int64) (RoutedDHCPOwnerFactV3, error) {
+	return f.acceptBound(l, now, routedDHCPOwnerBindingValidV3(f.binding), f.binding.Owner, f.binding.Desired, int(f.binding.Owner.PID))
+}
+
+// The caller supplies an already authenticated profile binding. Acquisition
+// PID can differ from the producer identity only in the explicit v4 profile.
+func (f *routedDHCPOwnerFactsV3) acceptBound(l routedDHCPOwnerLeaseV3, now int64, valid bool, owner networkexecutor.LeaseOwner, desired networkplan.Revision, acquisitionPID int) (RoutedDHCPOwnerFactV3, error) {
 	var empty RoutedDHCPOwnerFactV3
 	l.Event.DNS = append([]string(nil), l.Event.DNS...)
-	if !routedDHCPOwnerBindingValidV3(f.binding) || !routedDHCPOwnerEventV3(l.Event) || now <= 0 || l.Epoch == 0 || l.Epoch < f.last.Epoch || l.Event.PID != int(f.binding.Owner.PID) || l.Event.BootNS > now || l.DeadlineBootNS <= 0 || l.DeadlineBootNS > l.Event.BootNS && l.DeadlineBootNS-l.Event.BootNS > int64(l.Event.Seconds)*int64(time.Second) {
+	if !valid || !routedDHCPOwnerEventV3(l.Event) || now <= 0 || l.Epoch == 0 || l.Epoch < f.last.Epoch || l.Event.PID != acquisitionPID || l.Event.BootNS > now || l.DeadlineBootNS <= 0 || l.DeadlineBootNS > l.Event.BootNS && l.DeadlineBootNS-l.Event.BootNS > int64(l.Event.Seconds)*int64(time.Second) {
 		return empty, ErrIdentity
 	}
 	switch l.Event.Reason {
@@ -199,7 +205,7 @@ func (f *routedDHCPOwnerFactsV3) accept(l routedDHCPOwnerLeaseV3, now int64) (Ro
 	default:
 		return empty, ErrIdentity
 	}
-	n := f.binding.Desired.Config
+	n := desired.Config
 	n.Interfaces = append([]networkplan.Interface(nil), n.Interfaces...)
 	var wan networkplan.Binding
 	for i := range n.Interfaces {
@@ -229,19 +235,23 @@ func (f *routedDHCPOwnerFactsV3) accept(l routedDHCPOwnerLeaseV3, now int64) (Ro
 	if l.DeadlineBootNS <= now {
 		return empty, f.revoke()
 	}
-	return RoutedDHCPOwnerFactV3{Epoch: l.Epoch, Fact: networkexecutor.LeaseFact{Owner: f.binding.Owner, Sequence: f.sequence, DesiredHash: f.binding.Desired.Hash, WAN: wan, Address: l.Event.Address, Gateway: l.Event.Gateway, DeadlineBootNS: l.DeadlineBootNS}}, nil
+	return RoutedDHCPOwnerFactV3{Epoch: l.Epoch, Fact: networkexecutor.LeaseFact{Owner: owner, Sequence: f.sequence, DesiredHash: desired.Hash, WAN: wan, Address: l.Event.Address, Gateway: l.Event.Gateway, DeadlineBootNS: l.DeadlineBootNS}}, nil
 }
 
 type RoutedDHCPOwnerReaderV3 struct {
-	gate      chan struct{}
-	files     RoutedDHCPOwnerFilesV3
-	scanner   *bufio.Scanner
-	facts     routedDHCPOwnerFactsV3
-	request   uint64
-	dead      bool
-	alive     func() bool
-	now       func() (int64, error)
-	closeOnce sync.Once
+	gate        chan struct{}
+	files       RoutedDHCPOwnerFilesV3
+	scanner     *bufio.Scanner
+	facts       routedDHCPOwnerFactsV3
+	request     uint64
+	dead        bool
+	alive       func() bool
+	now         func() (int64, error)
+	closeOnce   sync.Once
+	profile     int
+	incarnation string
+	decode      func([]byte, routedDHCPOwnerRequestV3) (*routedDHCPOwnerLeaseV3, bool, error)
+	accept      func(routedDHCPOwnerLeaseV3, int64) (RoutedDHCPOwnerFactV3, error)
 }
 
 // Current performs a new request every time. Stored fields only detect replay;
@@ -281,17 +291,25 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 	}()
 	r.request++
 	b := r.facts.binding
-	q := routedDHCPOwnerRequestV3{3, b.Owner.Incarnation, r.request, "current"}
+	version, incarnation := 3, b.Owner.Incarnation
+	if r.profile != 0 {
+		version, incarnation = r.profile, r.incarnation
+	}
+	q := routedDHCPOwnerRequestV3{version, incarnation, r.request, "current"}
 	if routedDHCPOwnerWriteV3(r.files.Request, q) != nil || !r.scanner.Scan() {
 		r.closeLocked()
 		return empty, ErrUnavailable
 	}
-	var reply routedDHCPOwnerReplyV3
-	if routedDHCPOwnerDecodeV3(r.scanner.Bytes(), &reply) != nil || reply.Version != 3 || reply.Incarnation != b.Owner.Incarnation || reply.Sequence != q.Sequence || reply.Unavailable == (reply.Lease != nil) || ctx.Err() != nil || !r.alive() {
+	decode := r.decode
+	if decode == nil {
+		decode = decodeRoutedDHCPOwnerReplyV3
+	}
+	lease, unavailable, err := decode(r.scanner.Bytes(), q)
+	if err != nil || ctx.Err() != nil || !r.alive() {
 		r.closeLocked()
 		return empty, ErrUnavailable
 	}
-	if reply.Unavailable {
+	if unavailable {
 		return empty, r.facts.revoke()
 	}
 	now, err := r.now()
@@ -299,7 +317,11 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 		r.closeLocked()
 		return empty, ErrUnavailable
 	}
-	out, err := r.facts.accept(*reply.Lease, now)
+	accept := r.accept
+	if accept == nil {
+		accept = r.facts.accept
+	}
+	out, err := accept(*lease, now)
 	if err != nil && err != ErrUnavailable {
 		r.closeLocked()
 		return empty, ErrUnavailable
@@ -309,6 +331,14 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 		return empty, ErrUnavailable
 	}
 	return out, err
+}
+
+func decodeRoutedDHCPOwnerReplyV3(raw []byte, q routedDHCPOwnerRequestV3) (*routedDHCPOwnerLeaseV3, bool, error) {
+	var reply routedDHCPOwnerReplyV3
+	if routedDHCPOwnerDecodeV3(raw, &reply) != nil || q.Version != 3 || reply.Version != 3 || reply.Incarnation != q.Incarnation || reply.Sequence != q.Sequence || reply.Unavailable == (reply.Lease != nil) {
+		return nil, false, ErrIdentity
+	}
+	return reply.Lease, reply.Unavailable, nil
 }
 func (r *RoutedDHCPOwnerReaderV3) closeLocked() {
 	r.dead = true

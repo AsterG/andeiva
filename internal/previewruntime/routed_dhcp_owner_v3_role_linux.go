@@ -89,6 +89,12 @@ func routedDHCPOwnerPrivateMountsV3() error {
 // Run is a root-only dispatch entry, not a user command. FDs 3..10 belong to
 // this separate role, not to the helper's integrity/retirement descriptor map.
 func RunRoutedDHCPOwnerRoleV3(parent context.Context) (result error) {
+	return runRoutedDHCPOwnerProfileV3(parent, 3)
+}
+func runRoutedDHCPOwnerProfileV3(parent context.Context, profile int) (result error) {
+	if profile != 3 && profile != 4 {
+		return ErrIdentity
+	}
 	if parent == nil || parent.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return ErrIdentity
 	}
@@ -121,7 +127,7 @@ func RunRoutedDHCPOwnerRoleV3(parent context.Context) (result error) {
 		return ErrIdentity
 	}
 	var b routedDHCPOwnerBootstrapV3
-	if routedDHCPOwnerDecodeV3(scan.Bytes(), &b) != nil || scan.Scan() || scan.Err() != nil || b.Version != 3 || !ValidRun(b.Incarnation) || b.Metadata.ValidateRouted() != nil || b.ParentPID != os.Getppid() || b.ParentPID <= 1 || b.MountNamespace == 0 || b.MountNamespace == b.HostMountNamespace {
+	if routedDHCPOwnerDecodeV3(scan.Bytes(), &b) != nil || scan.Scan() || scan.Err() != nil || b.Version != profile || !ValidRun(b.Incarnation) || b.Metadata.ValidateRouted() != nil || b.ParentPID != os.Getppid() || b.ParentPID <= 1 || b.MountNamespace == 0 || b.MountNamespace == b.HostMountNamespace {
 		return ErrIdentity
 	}
 	_ = files[3].Close()
@@ -165,6 +171,9 @@ func RunRoutedDHCPOwnerRoleV3(parent context.Context) (result error) {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	if profile == 4 {
+		return runRoutedDHCPDeferredRoleV4(ctx, b, files, dhcpclient.Scope{HostNetwork: files[1], HostMount: files[2], Interface: wan.Name, Index: iface.Index, HardwareAddress: wan.HardwareAddress})
+	}
 	client, err := dhcpclient.StartIsolated(ctx, dhcpclient.Scope{HostNetwork: files[1], HostMount: files[2], Interface: wan.Name, Index: iface.Index, HardwareAddress: wan.HardwareAddress})
 	if err != nil {
 		return ErrUnavailable

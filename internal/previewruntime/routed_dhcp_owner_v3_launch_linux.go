@@ -52,6 +52,12 @@ type RoutedDHCPOwnerV3 struct {
 	done                   chan struct{}
 	closed, transferred    bool
 	closeErr               error
+	profile                int
+	deferred               RoutedDHCPDeferredBindingV4
+	acquisition            RoutedDHCPAcquisitionIdentityV4
+	acquisitionFD          *os.File
+	producerFD             *os.File
+	activated              bool
 }
 
 // Start launches only the current trusted executable's fixed DHCP role. The
@@ -61,6 +67,13 @@ type RoutedDHCPOwnerV3 struct {
 // integrity readiness, LAN bootstrap/readback and independent EmptyListeners
 // validation for this exact Desired revision. This function is not an API gate.
 func StartRoutedDHCPOwnerV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3) (_ *RoutedDHCPOwnerV3, result error) {
+	return startRoutedDHCPOwnerProfileV3(ctx, o, 3)
+}
+
+func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3, profile int) (_ *RoutedDHCPOwnerV3, result error) {
+	if profile != 3 && profile != 4 {
+		return nil, ErrIdentity
+	}
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || o.Metadata.ValidateRouted() != nil || !routedDHCPOwnerNamespaceV3(o.Gateway, unix.CLONE_NEWNET, o.Metadata.GatewayNamespace) || !routedDHCPOwnerNamespaceV3(o.Host, unix.CLONE_NEWNET, o.Metadata.HostNamespace) || routedDHCPOwnerCgroupV3() != nil {
 		return nil, ErrIdentity
 	}
@@ -133,12 +146,16 @@ func StartRoutedDHCPOwnerV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3) (_ 
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", self, RoutedDHCPOwnerRoleV3) // #nosec G204 -- Fixed nsenter role, current root-trusted executable, inherited namespace FD; no caller path or shell.
+	role := RoutedDHCPOwnerRoleV3
+	if profile == 4 {
+		role = RoutedDHCPDeferredOwnerRoleV4
+	}
+	cmd := exec.Command("/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", self, role) // #nosec G204 -- Two fixed profile roles, current root-trusted executable, inherited namespace FD; no caller path or shell.
 	cmd.ExtraFiles = []*os.File{o.Gateway, o.Host, hostMount, bootR, eventW, queryR, replyW, controlR}
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWNS, Pdeathsig: syscall.SIGKILL}
-	s := &RoutedDHCPOwnerV3{cmd: cmd, control: controlW, events: eventR, scanner: routedDHCPOwnerScannerV3(eventR), done: make(chan struct{})}
+	s := &RoutedDHCPOwnerV3{cmd: cmd, control: controlW, events: eventR, scanner: routedDHCPOwnerScannerV3(eventR), done: make(chan struct{}), profile: profile}
 	started := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
@@ -165,6 +182,9 @@ func StartRoutedDHCPOwnerV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3) (_ 
 				_ = s.mount.Close()
 			}
 			_ = s.files.Close()
+			if s.producerFD != nil {
+				_ = s.producerFD.Close()
+			}
 		}
 	}()
 	for _, f := range []*os.File{bootR, eventW, queryR, replyW, controlR} {
@@ -192,7 +212,7 @@ func StartRoutedDHCPOwnerV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3) (_ 
 	if bootW.SetWriteDeadline(deadline) != nil || eventR.SetReadDeadline(deadline) != nil {
 		return nil, ErrUnavailable
 	}
-	b := routedDHCPOwnerBootstrapV3{3, os.Getpid(), parentStart, o.Metadata, desired, incarnation, mountID, hostMountID}
+	b := routedDHCPOwnerBootstrapV3{profile, os.Getpid(), parentStart, o.Metadata, desired, incarnation, mountID, hostMountID}
 	if routedDHCPOwnerWriteV3(bootW, b) != nil {
 		return nil, ErrUnavailable
 	}
@@ -201,25 +221,50 @@ func StartRoutedDHCPOwnerV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3) (_ 
 		return nil, ErrUnavailable
 	}
 	var ready routedDHCPOwnerReadyV3
-	if routedDHCPOwnerDecodeV3(s.scanner.Bytes(), &ready) != nil || ready.Version != 3 || ready.Incarnation != incarnation || ready.RolePID != pid || ready.LeasePID <= 1 || ready.LeasePID > math.MaxInt32 || ready.Stopped || startup.Err() != nil {
+	var prepared routedDHCPDeferredEventV4
+	if profile == 3 && (routedDHCPOwnerDecodeV3(s.scanner.Bytes(), &ready) != nil || ready.Version != 3 || ready.Incarnation != incarnation || ready.RolePID != pid || ready.LeasePID <= 1 || ready.LeasePID > math.MaxInt32 || ready.Stopped) {
 		return nil, ErrIdentity
+	}
+	if profile == 4 && (routedDHCPOwnerDecodeV3(s.scanner.Bytes(), &prepared) != nil || prepared.Version != 4 || prepared.Incarnation != incarnation || prepared.ProducerPID != int32(pid) || prepared.Phase != "prepared" || prepared.Acquisition != nil) {
+		return nil, ErrIdentity
+	}
+	if startup.Err() != nil {
+		return nil, ErrUnavailable
 	}
 	roleFD, roleStart, err := routedDHCPOwnerPinV3(pid, os.Getpid(), o.Metadata.GatewayNamespace, mountID)
 	if err != nil {
 		return nil, err
 	}
 	s.files.RolePIDFD = roleFD
-	leaseFD, leaseStart, err := routedDHCPOwnerPinV3(ready.LeasePID, pid, o.Metadata.GatewayNamespace, mountID)
-	if err != nil {
-		return nil, err
-	}
-	s.files.LeasePIDFD = leaseFD
-	if roleStart != ready.RoleStartTicks || leaseStart != ready.LeaseStartTicks {
-		return nil, ErrIdentity
-	}
-	s.binding = RoutedDHCPOwnerBindingV3{Version: 3, RolePID: int32(pid), RoleStartTicks: roleStart, MountNamespace: mountID, HostMountNamespace: hostMountID, Desired: desired, Owner: networkexecutor.LeaseOwner{Namespace: o.Metadata.GatewayNamespace, BootID: o.Metadata.BootID, RunID: o.Metadata.RunID, Incarnation: incarnation, PID: uint32(ready.LeasePID), StartTicks: leaseStart}}
-	if !routedDHCPOwnerBindingValidV3(s.binding) {
-		return nil, ErrIdentity
+	if profile == 4 {
+		if roleStart != prepared.ProducerStartTicks {
+			return nil, ErrIdentity
+		}
+		fd, e := unix.FcntlInt(roleFD.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+		if e != nil {
+			return nil, ErrIdentity
+		}
+		s.producerFD = os.NewFile(uintptr(fd), "dhcp-producer-root-pidfd")
+		s.deferred = RoutedDHCPDeferredBindingV4{Version: 4, MountNamespace: mountID, HostMountNamespace: hostMountID, Desired: desired, Owner: networkexecutor.LeaseOwner{Namespace: o.Metadata.GatewayNamespace, BootID: o.Metadata.BootID, RunID: o.Metadata.RunID, Incarnation: incarnation, PID: uint32(pid), StartTicks: roleStart}}
+		if !routedDHCPDeferredBindingValidV4(s.deferred) {
+			return nil, ErrIdentity
+		}
+	} else {
+		if ready.LeasePID <= 1 || ready.LeasePID > math.MaxInt32 {
+			return nil, ErrIdentity
+		}
+		leaseFD, leaseStart, err := routedDHCPOwnerPinV3(ready.LeasePID, pid, o.Metadata.GatewayNamespace, mountID)
+		if err != nil {
+			return nil, err
+		}
+		s.files.LeasePIDFD = leaseFD
+		if roleStart != ready.RoleStartTicks || leaseStart != ready.LeaseStartTicks {
+			return nil, ErrIdentity
+		}
+		s.binding = RoutedDHCPOwnerBindingV3{Version: 3, RolePID: int32(pid), RoleStartTicks: roleStart, MountNamespace: mountID, HostMountNamespace: hostMountID, Desired: desired, Owner: networkexecutor.LeaseOwner{Namespace: o.Metadata.GatewayNamespace, BootID: o.Metadata.BootID, RunID: o.Metadata.RunID, Incarnation: incarnation, PID: uint32(ready.LeasePID), StartTicks: leaseStart}}
+		if !routedDHCPOwnerBindingValidV3(s.binding) {
+			return nil, ErrIdentity
+		}
 	}
 	s.files.Request, s.files.Reply = queryW, replyR
 	// Successful startup transfers precisely these four pipe endpoints to s.
@@ -241,7 +286,7 @@ func (s *RoutedDHCPOwnerV3) TakeReaderFiles() (RoutedDHCPOwnerFilesV3, RoutedDHC
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.transferred || !routedDHCPOwnerPIDFDAliveV3(s.files.RolePIDFD, int(s.binding.RolePID)) || !routedDHCPOwnerPIDFDAliveV3(s.files.LeasePIDFD, int(s.binding.Owner.PID)) {
+	if s.profile != 3 || s.closed || s.transferred || !routedDHCPOwnerPIDFDAliveV3(s.files.RolePIDFD, int(s.binding.RolePID)) || !routedDHCPOwnerPIDFDAliveV3(s.files.LeasePIDFD, int(s.binding.Owner.PID)) {
 		return RoutedDHCPOwnerFilesV3{}, RoutedDHCPOwnerBindingV3{}, ErrUnavailable
 	}
 	b, err := jsonOwnerBindingV3(s.binding)
@@ -267,6 +312,9 @@ func (s *RoutedDHCPOwnerV3) Close() error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.profile == 4 {
+		return s.closeDeferredLockedV4()
+	}
 	if s.closed {
 		return s.closeErr
 	}
