@@ -47,12 +47,16 @@ func (r *RoutedScopeRecoveryV3) detachNamespaceThreadV3(ctx context.Context) (re
 		return ErrIdentity
 	}
 	if err = unix.Unshare(unix.CLONE_FS); err != nil {
-		return err
+		return fmt.Errorf("private filesystem unshare: %w", err)
 	}
 	if err = unix.Setns(int(r.files[2].Fd()), unix.CLONE_NEWNS); err != nil {
-		return err
+		return fmt.Errorf("enter retained mount namespace: %w", err)
 	}
-	defer func() { result = errors.Join(result, unix.Setns(int(current.Fd()), unix.CLONE_NEWNS)) }()
+	defer func() {
+		if err := unix.Setns(int(current.Fd()), unix.CLONE_NEWNS); err != nil {
+			result = errors.Join(result, fmt.Errorf("restore current mount namespace: %w", err))
+		}
+	}()
 	actual, err := namespaceID("/proc/thread-self/ns/mnt")
 	if err != nil || actual != r.record.Mount.Inode || ctx.Err() != nil {
 		return ErrIdentity
@@ -93,7 +97,7 @@ func (r *RoutedScopeRecoveryV3) detachNamespaceThreadV3(ctx context.Context) (re
 		_ = n.directory.Close()
 		_ = n.underlay.Close()
 		_ = n.pin.Close()
-		return err
+		return fmt.Errorf("close owned namespace pin: %w", err)
 	}
 	return ctx.Err()
 }

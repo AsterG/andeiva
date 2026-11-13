@@ -88,4 +88,16 @@ artifact hashes and receipt. Root must
 compare host dual-stack addresses/routes/rules, nftables, forwarding, namespaces
 and PID1 mountinfo before/after, and record CPU/memory from the actual run.
 
+While recovery requires retained descriptors, do not use `reset-failed`, stop,
+or recreate the failed transient unit. An observed `reset-failed` caused manager
+garbage collection and lost all seven stored descriptors. A remaining manifest
+does not authorize adoption or a retirement receipt. Preserve the original
+invocation evidence; a direct retry after the start limit expires still requires
+verification of the retained descriptors and a new real manager invocation.
+It is not qualified by this driver's fresh-unit success checks.
+
+Root recovery errors identify fixed operation stages and retain the underlying
+error. An `EPERM` alone does not prove which capability or operation failed;
+the mount-entry stage must be observed before changing the capability budget.
+
 [Español](es.md) · [Português](pt.md)

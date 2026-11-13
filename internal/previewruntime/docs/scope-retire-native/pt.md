@@ -59,4 +59,17 @@ antes de parar essa unidade. Preservar journal, propriedades, hashes e recibo.
 Root deve comparar endereços/rotas/rules IPv4/IPv6, nftables, forwarding,
 namespaces e mountinfo do PID1, registrando CPU/RAM reais.
 
+Enquanto a recuperação precisar dos descritores retidos, não executar
+`reset-failed`, parar nem recriar a unidade transitória que falhou. Um
+`reset-failed` observado causou a coleta da unidade pelo manager e a perda dos
+sete descritores. O manifest restante não autoriza adoção nem recibo de retirada.
+Preservar a evidência original; uma tentativa direta após expirar o limite de
+partidas exige verificar os descritores retidos e uma nova invocação real.
+As verificações de sucesso deste driver para uma unidade nova não qualificam
+essa tentativa.
+
+Erros de recuperação Root identificam etapas fixas e preservam a causa.
+Um `EPERM` isolado não prova qual capacidade ou operação falhou; observar a
+etapa de entrada no mount namespace antes de mudar o orçamento de capacidades.
+
 [English](en.md) · [Español](es.md)

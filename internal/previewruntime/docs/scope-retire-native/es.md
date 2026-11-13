@@ -59,4 +59,17 @@ MainPID cero antes de detener esa unidad. Conservar journal, propiedades, hashes
 y recibo. Root debe comparar direcciones/rutas/rules IPv4/IPv6, nftables,
 forwarding, namespaces y mountinfo de PID1 y registrar CPU/RAM reales.
 
+Mientras la recuperación necesite descriptores retenidos, no ejecutar
+`reset-failed`, detener ni recrear la unidad transitoria fallida. Un
+`reset-failed` observado provocó la recolección de la unidad por el manager y la
+pérdida de los siete descriptores. El manifest restante no autoriza adopción ni
+recibo de retiro. Conservar la evidencia original; un reintento directo tras
+vencer el límite de arranques requiere verificar los descriptores retenidos y
+una nueva invocación real. Las comprobaciones de éxito de este driver para una
+unidad nueva no califican ese reintento.
+
+Los errores de recuperación Root identifican etapas fijas y conservan la causa.
+Un `EPERM` aislado no demuestra qué capacidad u operación falló; observar la
+etapa de entrada al mount namespace antes de cambiar el presupuesto de capacidades.
+
 [English](en.md) · [Português](pt.md)
