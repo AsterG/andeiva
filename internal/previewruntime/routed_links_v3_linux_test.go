@@ -88,7 +88,7 @@ func TestRoutedGatewayLinksV3OwnedLifecycle(t *testing.T) {
 	}
 	for _, op := range f.ops {
 		program, args, err := f.l.arguments(op)
-		if err != nil || (program != "/usr/sbin/ip" && program != "/usr/bin/nsenter") {
+		if err != nil || (program != "/usr/bin/ip" && program != "/usr/bin/nsenter") {
 			t.Fatal("unbounded executable")
 		}
 		for _, a := range args {

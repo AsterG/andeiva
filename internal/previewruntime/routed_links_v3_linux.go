@@ -161,13 +161,13 @@ func (l *RoutedGatewayLinksV3) arguments(op routedLinkOperationV3) (string, []st
 	name := routedLinkNameV3(op.slot)
 	switch op.kind {
 	case "parent":
-		return "/usr/sbin/ip", []string{"-d", "-j", "link", "show", "dev", p.Name}, nil
+		return "/usr/bin/ip", []string{"-d", "-j", "link", "show", "dev", p.Name}, nil
 	case "gateway":
-		return "/usr/bin/nsenter", []string{"--net=/proc/self/fd/3", "--", "/usr/sbin/ip", "-d", "-j", "link", "show"}, nil
+		return "/usr/bin/nsenter", []string{"--net=/proc/self/fd/3", "--", "/usr/bin/ip", "-d", "-j", "link", "show"}, nil
 	case "create":
-		return "/usr/sbin/ip", []string{"link", "add", "link", p.Name, "name", name, "address", l.macs[op.slot], "mtu", fmt.Sprint(p.MTU), "netns", "/proc/self/fd/3", "type", "macvlan", "mode", "private"}, nil
+		return "/usr/bin/ip", []string{"link", "add", "link", p.Name, "name", name, "address", l.macs[op.slot], "mtu", fmt.Sprint(p.MTU), "netns", "/proc/self/fd/3", "type", "macvlan", "mode", "private"}, nil
 	case "remove":
-		return "/usr/bin/nsenter", []string{"--net=/proc/self/fd/3", "--", "/usr/sbin/ip", "link", "delete", "dev", name}, nil
+		return "/usr/bin/nsenter", []string{"--net=/proc/self/fd/3", "--", "/usr/bin/ip", "link", "delete", "dev", name}, nil
 	default:
 		return "", nil, ErrConfiguration
 	}
