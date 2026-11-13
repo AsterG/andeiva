@@ -5,6 +5,7 @@ package previewruntime
 import (
 	"context"
 	"reflect"
+	"syscall"
 	"testing"
 
 	"github.com/AsterG/andeiva/internal/firewallnft"
@@ -17,8 +18,14 @@ func TestRoutedKernelV3FixedDispatch(t *testing.T) {
 	for table, name := range map[routedactivation.Table]string{routedactivation.LegacyTable: firewallnft.TableName, routedactivation.RoutedTable: routednft.TableName, routedactivation.LocalTable: localnft.TableName} {
 		cmd, err := routedKernelCommandV3(context.Background(), "observe", table)
 		want := []string{"/usr/sbin/nft", "-j", "-n", "-y", "list", "table", "inet", name}
-		if err != nil || cmd.Path != want[0] || !reflect.DeepEqual(cmd.Args, want) {
+		if err != nil || cmd.Path != want[0] || !reflect.DeepEqual(cmd.Args, want) || cmd.SysProcAttr == nil || cmd.SysProcAttr.Pdeathsig != syscall.SIGKILL {
 			t.Fatal("dispatch differs from the engine table", table, err)
+		}
+	}
+	for _, operation := range []string{"check", "apply", "tables"} {
+		cmd, err := routedKernelCommandV3(context.Background(), operation, 0)
+		if err != nil || cmd.SysProcAttr == nil || cmd.SysProcAttr.Pdeathsig != syscall.SIGKILL {
+			t.Fatal("kernel subprocess can outlive its helper", operation, err)
 		}
 	}
 	for _, operation := range []string{"", "flush", "list ruleset", "observe;sh"} {

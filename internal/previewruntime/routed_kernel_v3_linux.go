@@ -7,6 +7,7 @@ import (
 	"context"
 	"os/exec"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/AsterG/andeiva/internal/firewallnft"
@@ -36,24 +37,31 @@ func routedKernelCommandV3(ctx context.Context, operation string, table routedac
 	if ctx == nil || ctx.Err() != nil {
 		return nil, ErrUnavailable
 	}
+	var cmd *exec.Cmd
 	switch operation {
 	case "check":
-		return exec.CommandContext(ctx, "/usr/sbin/nft", "--check", "-j", "-f", "-"), nil
+		cmd = exec.CommandContext(ctx, "/usr/sbin/nft", "--check", "-j", "-f", "-")
 	case "apply":
-		return exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "-f", "-"), nil
+		cmd = exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "-f", "-")
 	case "tables":
-		return exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "list", "tables"), nil
+		cmd = exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "list", "tables")
 	case "observe":
 		switch table {
 		case routedactivation.LegacyTable:
-			return exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "-n", "-y", "list", "table", "inet", firewallnft.TableName), nil
+			cmd = exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "-n", "-y", "list", "table", "inet", firewallnft.TableName)
 		case routedactivation.RoutedTable:
-			return exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "-n", "-y", "list", "table", "inet", routednft.TableName), nil
+			cmd = exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "-n", "-y", "list", "table", "inet", routednft.TableName)
 		case routedactivation.LocalTable:
-			return exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "-n", "-y", "list", "table", "inet", localnft.TableName), nil
+			cmd = exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "-n", "-y", "list", "table", "inet", localnft.TableName)
 		}
 	}
-	return nil, ErrIdentity
+	if cmd == nil {
+		return nil, ErrIdentity
+	}
+	// The caller pins its launching OS thread through Wait. A helper death
+	// must also terminate nft after its in-process timeout has disappeared.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	return cmd, nil
 }
 
 func (k *routedKernelV3) bound() bool {

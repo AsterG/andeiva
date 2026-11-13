@@ -48,3 +48,8 @@ y rechaza CI. Comprueba check/apply real, lectura schema4 con revisión confiabl
 rechazo de validación incorrecta y del hilo que abandona el namespace. Los anclajes
 se cierran al ejecutar subprocesos. No acredita tráfico ni identidades de los
 procesos de administración/helper.
+
+Cada subproceso nft recibe `SIGKILL` si muere el hilo fijado del helper que lo
+inició. Esto limita descendientes tras una caída abrupta; no deshace un lote ya
+aceptado por el kernel. La recuperación debe comprobar el estado efectivo y la
+transacción seleccionada antes de admitir nuevas escrituras.

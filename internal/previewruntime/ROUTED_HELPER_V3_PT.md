@@ -46,3 +46,8 @@ rejeita CI. Verifica check/apply real, leitura schema4 com revisão confiável,
 rejeição de validação inválida e da thread que abandona o namespace. Os descritores
 âncora fecham ao executar subprocessos. Não qualifica tráfego ou identidades dos
 processos de administração/helper.
+
+Cada subprocesso nft recebe `SIGKILL` se morrer a thread fixada do helper que o
+iniciou. Isso limita descendentes após falha abrupta; não desfaz um lote já aceito
+pelo kernel. A recuperação deve verificar o estado efetivo e a transação
+selecionada antes de admitir novas gravações.

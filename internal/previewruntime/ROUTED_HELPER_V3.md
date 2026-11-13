@@ -55,3 +55,8 @@ cleanup and rejects CI. The opt-in test verifies native schema4 check/apply,
 complete trusted readback, malformed-check preservation and rejection after the
 launching thread leaves the gateway. Namespace anchors are close-on-exec.
 It does not test packet traffic or the management/helper process identities.
+
+Each nft subprocess receives `SIGKILL` if its pinned launching helper thread
+dies. This limits descendants after an abrupt helper failure; it does not undo a
+batch already accepted by the kernel. Recovery must still inspect effective
+state and the selected transaction before admitting further writes.
