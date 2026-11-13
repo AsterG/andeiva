@@ -52,7 +52,7 @@ func TestIndependentLegacyReadbackRejectsUnselectedDisabledPolicy(t *testing.T) 
 	disabled := false
 	changed.Rules = append(append([]configpoc.Rule(nil), changed.Rules...), configpoc.Rule{
 		ID: "not-selected", Action: "allow", Enabled: &disabled,
-		Match: &configpoc.Match{Source: "192.0.2.0/24", Destination: "198.51.100.0/24", Protocol: "tcp", DestinationPorts: configpoc.PortRange{From: 443, To: 443}},
+		Match: &configpoc.Match{Source: "192.0.2.0/24", Destination: "198.51.100.0/24", Protocol: "tcp", SourcePorts: configpoc.PortRange{From: 1, To: 65535}, DestinationPorts: configpoc.PortRange{From: 443, To: 443}},
 	})
 	foreign, err := configpoc.Canonical(changed)
 	if err != nil || foreign.Hash == known.Hash {

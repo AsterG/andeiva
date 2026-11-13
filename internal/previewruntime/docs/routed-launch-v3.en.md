@@ -8,7 +8,7 @@ The API stays in the host namespace with no capabilities. The helper enters the 
 
 Inherited descriptors are fixed: 3 gateway namespace, 4 helper socket directory, 5 selected store, 6 admission pool, 7 plan pool, 8 emergency pool, 9 bootstrap pipe, 10 control pipe, 11 event pipe, 12 host namespace. Namespace descriptors and directories are read-only. Pipes are root-owned. Each slot is validated before roots are reopened; aliases, inappropriate types and access modes are rejected. Bootstrap is bounded and binds the root parent, boot, namespaces, identities and resource profiles.
 
-The helper factory supplies the existing routed authority and `NewRoutedCompatibilitySessionV2` session. The API factory supplies `OperationsRuntimeOptionsV2`, using the inherited store and matching shared-reader profile. It must not open a configuration writer before `OpenRoutedOperationsRuntimeV3`. Both factories own only the additional resources returned through `Cleanup`.
+The helper factory supplies the existing routed authority and `NewRoutedReadbackSessionV3` session. The API factory supplies `OperationsRuntimeOptionsV2`, using the inherited store and matching shared-reader profile. It must not open a configuration writer before `OpenRoutedOperationsRuntimeV3`. Both factories own only the additional resources returned through `Cleanup`.
 
 The helper creates Unix sockets after dropping privileges. Each side checks the actual peer UID, GID and PID; a root-created inherited socket pair is not used. `ServeAPI` receives the opened runtime and a `ready` callback. It binds its trusted TLS listener after boot/resume and readback, calls `ready` exactly once, and returns promptly on cancellation. A helper-ready event alone never means the API is ready.
 

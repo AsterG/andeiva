@@ -8,7 +8,7 @@ A API permanece no namespace do host sem capacidades. O helper entra no gateway 
 
 Os descritores herdados são fixos: 3 namespace gateway, 4 diretório de sockets, 5 armazenamento selecionado, 6 pool admission, 7 pool plan, 8 pool emergency, 9 pipe bootstrap, 10 pipe controle, 11 pipe eventos, 12 namespace host. Namespaces e diretórios são somente leitura; os pipes pertencem ao root. As posições são validadas antes da reabertura dos roots; aliases, tipos e modos incorretos são rejeitados. O bootstrap limitado vincula pai root, inicialização, namespaces, identidades e perfis.
 
-A factory helper fornece a autoridade existente e uma sessão `NewRoutedCompatibilitySessionV2`. A factory API retorna `OperationsRuntimeOptionsV2` com o armazenamento herdado e seu perfil leitor. Não deve abrir um escritor antes de `OpenRoutedOperationsRuntimeV3`. Cada factory retorna seus recursos adicionais por `Cleanup`.
+A factory helper fornece a autoridade existente e uma sessão `NewRoutedReadbackSessionV3`. A factory API retorna `OperationsRuntimeOptionsV2` com o armazenamento herdado e seu perfil leitor. Não deve abrir um escritor antes de `OpenRoutedOperationsRuntimeV3`. Cada factory retorna seus recursos adicionais por `Cleanup`.
 
 O helper cria sockets Unix após reduzir privilégios. Cada lado verifica UID, GID e PID reais do peer; nenhum socketpair criado pelo root é herdado. `ServeAPI` recebe o runtime aberto e o callback `ready`. Vincula seu listener TLS confiável após boot/resume e readback, chama `ready` exatamente uma vez e retorna quando o contexto é cancelado. Helper pronto não significa API pronta.
 
