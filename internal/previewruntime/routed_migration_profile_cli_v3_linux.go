@@ -137,6 +137,10 @@ func ConvertRoutedMigrationProfileV3(parent context.Context, c Config) (out rout
 	if e = scan.validatePoolProfilesV3(prepared.Profiles); e != nil {
 		return out, e
 	}
+	nss, e := readOwned("/etc/nsswitch.conf", 0, 0, 0644, 65536)
+	if e != nil || checkProfileNSSV3(ctx, nss, reader, enumerateProfilePasswdV3) != nil {
+		return out, ErrIdentity
+	}
 	access, e := scan.convert(ctx, reader, nil)
 	if e != nil {
 		return out, e
@@ -153,6 +157,10 @@ func ConvertRoutedMigrationProfileV3(parent context.Context, c Config) (out rout
 	}
 	actual, e = readOwned("/etc/group", 0, 0, 0644, 1<<20)
 	if e != nil || !bytes.Equal(actual, groups) {
+		return out, ErrIdentity
+	}
+	actual, e = readOwned("/etc/nsswitch.conf", 0, 0, 0644, 65536)
+	if e != nil || !bytes.Equal(actual, nss) || checkProfileNSSV3(ctx, actual, reader, enumerateProfilePasswdV3) != nil {
 		return out, ErrIdentity
 	}
 	area, e := os.OpenRoot("/etc/andeiva-preview")
