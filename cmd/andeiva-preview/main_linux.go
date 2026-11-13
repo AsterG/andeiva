@@ -25,6 +25,17 @@ func run(args []string) error {
 		defer cancel()
 		return previewruntime.RunRoutedApplianceRoleV3(ctx, args[0])
 	}
+	if len(args) > 0 && (args[0] == previewruntime.RoutedMigrationStateRoleV3 || args[0] == previewruntime.RoutedMigrationSourceRoleV3) {
+		if len(args) != 1 {
+			return previewruntime.ErrConfiguration
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer cancel()
+		if args[0] == previewruntime.RoutedMigrationStateRoleV3 {
+			return previewruntime.RunRoutedMigrationStateRoleV3(ctx)
+		}
+		return previewruntime.RunRoutedMigrationSourceRoleV3(ctx)
+	}
 	if len(args) == 1 && args[0] == previewruntime.RoutedIntegrityPrepareRoleV3 {
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer cancel()
