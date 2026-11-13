@@ -12,6 +12,7 @@
 - Restrict the grouped helper's legacy compatibility session to observation; policy changes remain subject to selected-state authorization.
 - Prepare a namespace-bound nft transport with fixed commands and shared strict table-presence decoding; native service activation remains gated.
 - Prepare separate grouped API/helper supervision and verified legacy-table readback without a second policy guardian; preserve counter discontinuities across attempted replacement and rollback.
+- Add optional quiescent integrity inspection under the configuration writer barrier, with exact selection correlation, bounded scheduler wakeups and reserved confirmation handling.
 
 ## Unreleased — prepared routed composite references
 
