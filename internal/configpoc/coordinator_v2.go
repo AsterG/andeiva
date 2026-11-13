@@ -103,13 +103,13 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	if err := c.validateReferencesLocked(); err != nil {
 		return nil, fmt.Errorf("selected references: %w", err)
 	}
-	if handled, err := c.openRoutedBootBoundaryV2(ctx); handled {
-		return c, err
-	}
 	// A previous dynamic lease is never resumed by the static boot engine.
 	// Trusted DHCP recovery must withdraw it before this coordinator can open.
 	if err := c.recoverRoutedDHCPAtOpenV3(ctx); err != nil {
 		return nil, err
+	}
+	if handled, err := c.openRoutedBootBoundaryV2(ctx); handled {
+		return c, err
 	}
 	if store.state.Configuration.Intent != nil {
 		if err := c.reconcileLocked(ctx, "restart"); err != nil {

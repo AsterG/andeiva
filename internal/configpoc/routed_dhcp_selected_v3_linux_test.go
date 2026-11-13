@@ -313,3 +313,29 @@ func TestRoutedDHCPSelectedV3BindsPhysicalPlanAndContext(t *testing.T) {
 		})
 	}
 }
+
+func TestRoutedDHCPSelectedV3BlocksBootBoundaryBeforeWithdrawal(t *testing.T) {
+	for _, differentBoot := range []bool{false, true} {
+		w, a := dhcpStoreFixtureV3(t)
+		hash, err := w.Prepare(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.state = networkexecutor.LeaseSelectedTargetV3
+		if err = w.Applied(context.Background(), hash); err != nil {
+			t.Fatal(err)
+		}
+		if differentBoot {
+			boot := v2BootID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+			w.c.options.BootID = &boot
+		}
+		// Deliberately invalid pending boundary: rejection must happen before any
+		// boundary inspection, callback or attempted boot publication.
+		w.c.store.state.RoutedBootBoundary = &v2RoutedBootBoundary{}
+		before := w.c.store.selector
+		handled, err := w.c.openRoutedBootBoundaryV2(context.Background())
+		if !handled || !errors.Is(err, ErrRecovery) || w.c.store.selector != before || a.withdrawCalls != 0 {
+			t.Fatal("boot boundary bypassed outstanding DHCP work")
+		}
+	}
+}

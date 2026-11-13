@@ -101,6 +101,9 @@ func preservesRoutedBootBoundaryV2(previous, next v2State) bool {
 }
 
 func (c *v2Coordinator) openRoutedBootBoundaryV2(ctx context.Context) (bool, error) {
+	if c.store.state.RoutedDHCP != nil {
+		return true, ErrRecovery
+	}
 	s := c.store
 	if !hasFeatureV2(s.state, v2RoutedFeature) || c.options.Routed == nil || c.options.BootID == nil {
 		return false, nil
