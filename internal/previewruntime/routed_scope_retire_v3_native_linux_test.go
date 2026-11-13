@@ -28,6 +28,12 @@ import (
 
 const nativeScopeRetireCaptureV3 = "/fixture/first.json"
 
+func nativeScopeRetireMountCapabilitiesV3(effective, permitted uint64) bool {
+	// setns(CLONE_NEWNS) requires both in the caller's user namespace.
+	const required = uint64(1)<<unix.CAP_SYS_ADMIN | uint64(1)<<unix.CAP_SYS_CHROOT
+	return effective&required == required && permitted&required == required
+}
+
 func nativeScopeRetireRootPathV3(path string) bool {
 	const prefix = "/var/backups/andeiva-scope-retire."
 	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, "/root") || filepath.Clean(path) != path {
@@ -546,6 +552,14 @@ func TestRoutedScopeRetireV3Native(t *testing.T) {
 	if _, err = readScopeRecoveryUnitV3(ctx); err != nil {
 		t.Fatal("actual invocation/nondelegation", err)
 	}
+	var capabilities [2]unix.CapUserData
+	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+	if err = unix.Capget(&header, &capabilities[0]); err != nil || !nativeScopeRetireMountCapabilitiesV3(
+		uint64(capabilities[0].Effective)|uint64(capabilities[1].Effective)<<32,
+		uint64(capabilities[0].Permitted)|uint64(capabilities[1].Permitted)<<32,
+	) {
+		t.Fatal("mount namespace entry requires effective/permitted SYS_ADMIN and SYS_CHROOT", err)
+	}
 	if err = unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
 		t.Fatal("private mount propagation", err)
 	}
@@ -571,6 +585,22 @@ func TestRoutedScopeRetireV3Native(t *testing.T) {
 		t.Fatal("first invocation store not empty", err)
 	}
 	nativeScopeRetireFirstV3(t, ctx, area, operational)
+}
+
+func TestRoutedScopeRetireV3NativeMountCapabilities(t *testing.T) {
+	const both = uint64(1)<<unix.CAP_SYS_ADMIN | uint64(1)<<unix.CAP_SYS_CHROOT
+	if !nativeScopeRetireMountCapabilitiesV3(both, both) {
+		t.Fatal("required mount capabilities rejected")
+	}
+	for _, capability := range []uint{unix.CAP_SYS_ADMIN, unix.CAP_SYS_CHROOT} {
+		missing := both &^ (uint64(1) << capability)
+		if nativeScopeRetireMountCapabilitiesV3(missing, both) || nativeScopeRetireMountCapabilitiesV3(both, missing) {
+			t.Fatal("missing effective/permitted mount capability accepted", capability)
+		}
+	}
+	if nativeScopeRetireMountCapabilitiesV3(0, 0) {
+		t.Fatal("capless process accepted")
+	}
 }
 
 // This deliberately does not claim coverage of the production eight-FD

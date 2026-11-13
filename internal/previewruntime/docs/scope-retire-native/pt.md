@@ -69,7 +69,14 @@ As verificações de sucesso deste driver para uma unidade nova não qualificam
 essa tentativa.
 
 Erros de recuperação Root identificam etapas fixas e preservam a causa.
-Um `EPERM` isolado não prova qual capacidade ou operação falhou; observar a
-etapa de entrada no mount namespace antes de mudar o orçamento de capacidades.
+A execução do scope retido com fonte `b0eeaec` falhou especificamente em
+`detach namespace: enter retained mount namespace` com `EPERM`; preservou sete
+descritores do manager e a captura original, sem emitir recibo. A fixture
+adiciona somente `CAP_SYS_CHROOT`, necessária junto com `CAP_SYS_ADMIN` para
+entrar no mount namespace ([setns(2)](https://manpages.debian.org/trixie/manpages-dev/setns.2.en.html)).
+Uma verificação das capacidades efetivas/permitidas e negativas unitárias por
+capacidade ausente precedem os efeitos. Não substituem essa evidência nativa
+negativa nem qualificam uma retirada bem-sucedida com o novo orçamento.
+Nenhum helper ganha capacidades.
 
 [English](en.md) · [Español](es.md)

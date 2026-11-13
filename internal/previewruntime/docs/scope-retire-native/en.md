@@ -97,7 +97,13 @@ verification of the retained descriptors and a new real manager invocation.
 It is not qualified by this driver's fresh-unit success checks.
 
 Root recovery errors identify fixed operation stages and retain the underlying
-error. An `EPERM` alone does not prove which capability or operation failed;
-the mount-entry stage must be observed before changing the capability budget.
+error. The retained-scope run of diagnostic source `b0eeaec` failed specifically
+at `detach namespace: enter retained mount namespace` with `EPERM`, retained
+seven manager descriptors and the original capture, and produced no receipt.
+The fixture now adds only `CAP_SYS_CHROOT`: mount-namespace entry requires it
+together with `CAP_SYS_ADMIN` ([setns(2)](https://manpages.debian.org/trixie/manpages-dev/setns.2.en.html)).
+An effective/permitted capability preflight and missing-capability unit negatives
+run before effects. These unit checks do not replace that native failure evidence
+or qualify successful retirement with the amended budget. No helper gains capabilities.
 
 [Español](es.md) · [Português](pt.md)

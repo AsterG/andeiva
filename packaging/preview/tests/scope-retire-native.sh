@@ -68,7 +68,7 @@ timeout 8s systemd-run --unit="$unit" --service-type=exec \
   --property=RuntimeMaxSec=100s --property=TimeoutStopSec=5s \
   --property=LimitNOFILE=256 --property=MemoryMax=384M --property=TasksMax=128 \
   --property=CPUAccounting=yes --property=MemoryAccounting=yes --property=UMask=0077 \
-  --property='CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL' \
+  --property='CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_CHROOT CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL' \
   --setenv=ANDEIVA_SCOPE_RETIRE_NATIVE=1 \
   /fixture/native.test -test.run '^TestRoutedScopeRetireV3Native$' -test.count=1 -test.timeout=90s -test.v
 
