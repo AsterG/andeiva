@@ -35,7 +35,24 @@ func readerBasenameV2(name string) bool {
 // Callers must validate content hashes, types, contextual edges and selection.
 // Cancellation is cooperative; it cannot interrupt a blocked filesystem syscall.
 func (a ReaderAccessV2) ReadFile(ctx context.Context, area *os.Root, basename string, maxBytes int) (data []byte, result error) {
-	if ctx == nil || !readerBasenameV2(basename) || maxBytes < 1 || maxBytes > 1<<20 || !a.valid() || !accessReaderV2(a) || area == nil {
+	if !accessReaderV2(a) {
+		return nil, ErrInvalid
+	}
+	return a.readBoundedFileV2(ctx, area, basename, maxBytes)
+}
+
+// ReadOwnedFile retains the pinned shared profile and bounded read checks, but
+// requires its exact non-root owner instead of the helper's reader group. It
+// grants neither a writer lock nor permission to change files.
+func (a ReaderAccessV2) ReadOwnedFile(ctx context.Context, area *os.Root, basename string, maxBytes int) ([]byte, error) {
+	if !a.valid() || !accessWriterV2(a) {
+		return nil, ErrInvalid
+	}
+	return a.readBoundedFileV2(ctx, area, basename, maxBytes)
+}
+
+func (a ReaderAccessV2) readBoundedFileV2(ctx context.Context, area *os.Root, basename string, maxBytes int) (data []byte, result error) {
+	if ctx == nil || !readerBasenameV2(basename) || maxBytes < 1 || maxBytes > 1<<20 || !a.valid() || area == nil {
 		return nil, ErrInvalid
 	}
 	if ctx.Err() != nil || a.CheckDirectory(area) != nil {

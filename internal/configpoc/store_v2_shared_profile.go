@@ -20,7 +20,13 @@ func (s *v2Store) readRecordV2(name string, limit int64) ([]byte, error) {
 	if limit < 1 || limit > v2ObjectLimit {
 		return nil, errV2Unavailable
 	}
-	data, err := s.access.ReadFile(context.Background(), s.root, name, int(limit))
+	var data []byte
+	var err error
+	if s.readOnly {
+		data, err = s.access.ReadFile(context.Background(), s.root, name, int(limit))
+	} else {
+		data, err = s.access.ReadOwnedFile(context.Background(), s.root, name, int(limit))
+	}
 	if err != nil {
 		return nil, errV2Unavailable
 	}

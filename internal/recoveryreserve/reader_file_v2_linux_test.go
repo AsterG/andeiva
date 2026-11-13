@@ -64,6 +64,53 @@ func TestReadOnlyV2BoundedFile(t *testing.T) {
 	}
 }
 
+func TestOwnerV2BoundedFile(t *testing.T) {
+	_, _, area, access, path := sharedPoolV2(t)
+	before := snapshotV2(t, area)
+	data, err := access.ReadOwnedFile(context.Background(), area, "pool.json", 4096)
+	if err != nil || len(data) == 0 {
+		t.Fatal("owner read", err)
+	}
+	for _, name := range []string{"../pool.json", "/pool.json", ".", "..", "POOL.json"} {
+		if _, err = access.ReadOwnedFile(context.Background(), area, name, 4096); err != ErrInvalid {
+			t.Fatal("invalid name", err)
+		}
+	}
+	if _, err = access.ReadOwnedFile(context.Background(), area, "pool.json", len(data)-1); err != ErrUnavailable {
+		t.Fatal("owner size bound", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err = access.ReadOwnedFile(ctx, area, "pool.json", 4096); err != ErrUnavailable {
+		t.Fatal("owner cancellation", err)
+	}
+	foreign := access
+	foreign.OwnerUID++
+	if _, err = foreign.ReadOwnedFile(context.Background(), area, "pool.json", 4096); err != ErrInvalid {
+		t.Fatal("foreign owner", err)
+	}
+	foreign = access
+	foreign.OwnerUID = 0
+	if _, err = foreign.ReadOwnedFile(context.Background(), area, "pool.json", 4096); err != ErrInvalid {
+		t.Fatal("root profile", err)
+	}
+	if !reflect.DeepEqual(before, snapshotV2(t, area)) {
+		t.Fatal("owner read changed pool")
+	}
+	if err = syscall.Mkfifo(filepath.Join(path, "owner-pipe"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = access.ReadOwnedFile(context.Background(), area, "owner-pipe", 4096); err != ErrUnavailable {
+		t.Fatal("owner FIFO", err)
+	}
+	if err = os.Symlink("pool.json", filepath.Join(path, "owner-link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = access.ReadOwnedFile(context.Background(), area, "owner-link", 4096); err != ErrUnavailable {
+		t.Fatal("owner symlink", err)
+	}
+}
+
 // Umask changes are confined to separate test processes, never the test runner.
 func TestReadOnlyV2Umask(t *testing.T) {
 	args := flag.Args()
