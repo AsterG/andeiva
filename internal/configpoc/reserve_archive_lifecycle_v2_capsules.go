@@ -30,6 +30,9 @@ func validReserveBundleV2(bundle *v2ReserveBundle) bool {
 		return false
 	}
 	if bundle.Plan != nil {
+		if in := bundle.PlanIntent; in.DHCPWork != "" && (bundle.Scope.Kind != "recovery" || bundle.Scope.Domain != "routed" || bundle.Scope.Fingerprint != in.DHCPWork || bundle.ClosingEscrow != nil) {
+			return false
+		}
 		if !validGuardDeadlineShapeV2(bundle.PlanIntent) || (bundle.PlanIntent.GuardDeadline != nil && !bundle.PlanScope.Deadline.IsZero()) {
 			return false
 		}

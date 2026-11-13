@@ -54,6 +54,7 @@ type v2Confirmation struct {
 	Deadline     time.Time `json:"deadline"`
 }
 type v2CoordinatorIntent struct {
+	DHCPWork         string     `json:"dhcp_work,omitempty"`
 	RoutedWork       string     `json:"routed_work,omitempty"`
 	GuardDeadline    *time.Time `json:"guard_deadline,omitempty"`
 	BootID           *v2BootID  `json:"boot_id,omitempty"`
@@ -178,6 +179,9 @@ func (state *v2Configuration) refresh() error {
 }
 
 func validV2Configuration(state *v2Configuration) bool {
+	if state != nil && state.Intent != nil && state.Intent.DHCPWork != "" {
+		return false
+	}
 	if state == nil {
 		return false
 	}

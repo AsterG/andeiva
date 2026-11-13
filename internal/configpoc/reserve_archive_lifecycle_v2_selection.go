@@ -93,6 +93,18 @@ func (s *v2Store) releaseArchivedReserveV2(archive v2ReserveArchive) error {
 		kept = append(kept, active)
 	}
 	st.ActiveReserves = kept
+	if d := st.RoutedDHCP; d != nil && reserveWorkV2(d.Bundle) == archive.Origin {
+		if d.Phase != "withdrawn" {
+			return ErrRecovery
+		}
+		var facts v2ReserveFinality
+		if s.readObject(archive.FinalWork, &facts) != nil || facts.Kind != v3RoutedDHCPKind {
+			return ErrRecovery
+		}
+		st.RoutedDHCPLast = facts.Origin.Object
+		st.RoutedDHCP = nil
+		held++
+	}
 	if st.SystemBundle != nil && st.SystemBundle.Work == archive.Origin {
 		if !st.SystemBundle.CanonicalHeld {
 			return ErrRecovery

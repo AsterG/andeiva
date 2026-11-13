@@ -12,6 +12,7 @@ func reserveMetadataCoreV2(st v2State) v2State {
 	core := st
 	core.ActiveReserves = nil
 	core.SystemBundle = nil
+	core.RoutedDHCP = nil
 	core.ClosingCredits = nil
 	core.Namespaces = make([]v2Namespace, 0, len(st.Namespaces))
 	for _, namespace := range st.Namespaces {

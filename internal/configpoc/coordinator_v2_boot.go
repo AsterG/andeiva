@@ -27,12 +27,15 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 }
 
 func validFeaturesV2(state v2State) bool {
+	if !validRoutedDHCPShapeV3(state) || hasFeatureV2(state, v3RoutedDHCPFeature) && (!hasFeatureV2(state, v2RoutedFeature) || !hasFeatureV2(state, v2SharedReaderFeature) || state.RecoveryReserveVersion != 1) {
+		return false
+	}
 	if hasFeatureV2(state, v2ReserveCompensationFeature) && state.RecoveryReserveVersion != 1 {
 		return false
 	}
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
+		if (feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
 			return false
 		}
 		last = feature
@@ -89,6 +92,9 @@ func addFeatureV2(state *v2State, feature string) {
 }
 
 func preservesFeaturesV2(previous, next v2State) bool {
+	if !preservesRoutedDHCPV3(previous, next) {
+		return false
+	}
 	if previous.Configuration != nil && next.Configuration != nil {
 		p, n := previous.Configuration.Intent, next.Configuration.Intent
 		if p != nil && n != nil && p.RoutedWork != "" {

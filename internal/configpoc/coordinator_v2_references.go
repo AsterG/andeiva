@@ -2,6 +2,9 @@ package configpoc
 
 func (c *v2Coordinator) validateReferencesLocked() error {
 	s := c.store
+	if validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+		return ErrRecovery
+	}
 	state := s.state.Configuration
 	if state == nil || !validV2Configuration(state) {
 		return errV2Unavailable

@@ -10,6 +10,23 @@ func (r *v2ReachabilityReader) reserveArchiveFinality(archive v2ReserveArchive, 
 	if facts.Kind == "system" {
 		return r.recoveryWithOrigin(facts.Origin.Object, facts.Origin.ID, key, state, depth, nil)
 	}
+	if facts.Kind == v3RoutedDHCPKind {
+		var d v3RoutedDHCPState
+		if r.object(facts.Origin.Object, &d) != nil {
+			return ErrRecovery
+		}
+		if _, err := loadRoutedDHCPWorkV3(d.Work, state.Lineage, r.object); err != nil {
+			return err
+		}
+		if err := r.reserveBundle(d.Bundle, key, state, depth); err != nil {
+			return err
+		}
+		var audit v2CoordinatorAudit
+		if r.object(d.Audit, &audit) != nil {
+			return ErrRecovery
+		}
+		return r.auditChain(d.Audit, audit.Sequence, state.Generation, depth)
+	}
 	var origin v2Operation
 	if err := r.object(facts.Origin.Object, &origin); err != nil {
 		return err

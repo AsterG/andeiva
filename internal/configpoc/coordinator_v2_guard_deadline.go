@@ -9,6 +9,12 @@ import (
 const v2GuardDeadlineFeature = "configuration.guard-deadline.v1"
 
 func validGuardDeadlineShapeV2(in *v2CoordinatorIntent) bool {
+	if in != nil && in.DHCPWork != "" {
+		return validHash(in.DHCPWork) && in.Kind == v3RoutedDHCPKind && in.Domain == "routed" && in.Recovery && in.RoutedWork == "" && in.GuardDeadline == nil && in.BootID == nil && in.Subject == "" && in.Lease == "" && in.OriginCommit == ""
+	}
+	if in != nil && in.Kind == v3RoutedDHCPKind {
+		return false
+	}
 	if in == nil || in.GuardDeadline == nil {
 		return true
 	}

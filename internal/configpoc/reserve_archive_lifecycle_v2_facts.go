@@ -96,6 +96,9 @@ func validateArchiveFinalityWithWorkV2(archive v2ReserveArchive, state v2State, 
 		}
 		return nil
 	}
+	if facts.Kind == v3RoutedDHCPKind {
+		return validateRoutedDHCPArchiveV3(archive, facts, state, load)
+	}
 	if facts.Kind != "operation" {
 		return errV2Unavailable
 	}

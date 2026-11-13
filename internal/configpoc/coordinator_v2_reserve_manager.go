@@ -218,6 +218,9 @@ func reserveAdmissionScopeV2(s *v2Store, st v2State, op v2Operation, owner strin
 }
 
 func (s *v2Store) reserveMaintenanceReadyV2(exceptOrigin string) error {
+	if s.state.RoutedDHCP != nil {
+		return ErrRecovery
+	}
 	if s.state.RoutedBootBoundary != nil {
 		return ErrRecovery
 	}
@@ -300,6 +303,15 @@ func (m *v2ReserveManager) verifyBundle(s *v2Store, bundle *v2ReserveBundle) err
 }
 
 func (m *v2ReserveManager) verifySelected(s *v2Store) error {
+	if validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+		return ErrRecovery
+	}
+	if s.verifyRoutedDHCPLastV3() != nil {
+		return ErrRecovery
+	}
+	if d := s.state.RoutedDHCP; d != nil && m.verifyBundle(s, d.Bundle) != nil {
+		return ErrRecovery
+	}
 	if m.validateProfiles() != nil || len(s.state.ActiveReserves) > 16 {
 		return ErrRecovery
 	}

@@ -12,6 +12,7 @@ import (
 )
 
 type v2CoordinatorOptions struct {
+	DHCPRecovery      RoutedDHCPRecoveryV3
 	integrityAttached bool // Set only after the trusted pre-coordinator Attach.
 	Integrity         RuntimeIntegrityV1
 	SharedReader      *recoveryreserve.ReaderAccessV2
@@ -104,6 +105,11 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	}
 	if handled, err := c.openRoutedBootBoundaryV2(ctx); handled {
 		return c, err
+	}
+	// A previous dynamic lease is never resumed by the static boot engine.
+	// Trusted DHCP recovery must withdraw it before this coordinator can open.
+	if err := c.recoverRoutedDHCPAtOpenV3(ctx); err != nil {
+		return nil, err
 	}
 	if store.state.Configuration.Intent != nil {
 		if err := c.reconcileLocked(ctx, "restart"); err != nil {
