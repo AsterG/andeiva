@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — DHCPv4 server configuration contract
+
+- Add bounded validation for LAN scopes, address pools, exclusions, MAC reservations and gateway/DNS/NTP/lease options.
+- Document offline engine dependencies and service-activation gates; server execution and administrative integration remain unimplemented.
+
 ## Unreleased — administrative service isolation
 
 - Retain the last applied isolated firewall policy when the administrative API and socket are stopped or fail.
