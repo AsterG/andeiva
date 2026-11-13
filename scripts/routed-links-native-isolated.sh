@@ -43,21 +43,23 @@ ip link add lan-parent address 02:11:22:33:44:55 type dummy
 ip link add wan-parent address 02:11:22:33:44:56 type dummy
 ip link set lan-parent up
 ip link set wan-parent up
-ip netns add gateway
-created=true
-cleanup() {
-  rc=$?; trap - EXIT; set +e
-  if [[ $created == true ]]; then ip netns delete gateway || rc=1; fi
-  # Private PID1/cgroup teardown owns descendants and unnamed namespace pins.
-  exit "$rc"
-}
-trap cleanup EXIT
+mkdir -m 0700 /run/andeiva-routed-namespace
 trap 'exit 130' INT
 trap 'exit 143' TERM
 exec 3</proc/self/ns/net
-exec 4</run/netns/gateway
+exec 4</run/andeiva-routed-namespace
 exec 6<&-
-ANDEIVA_ROUTED_LINKS_NATIVE=1 ./routed-links-native.test -test.run '^TestRoutedGatewayLinksV3Native$' -test.v -test.timeout 45s
+if ANDEIVA_ROUTED_LINKS_NATIVE=1 ./routed-links-native.test -test.run '^TestRoutedGatewayLinksV3Native$' -test.v -test.timeout 45s > /run/andeiva-routed-result.log 2>&1; then
+  cat /run/andeiva-routed-result.log
+else
+  failed=$?
+  cat /run/andeiva-routed-result.log
+  exit "$failed"
+fi
+[[ $(grep -c '^--- PASS: TestRoutedGatewayLinksV3Native ' /run/andeiva-routed-result.log) == 1 ]]
+! grep -Eq '^--- (FAIL|SKIP):|^FAIL' /run/andeiva-routed-result.log
+grep -Fxq PASS /run/andeiva-routed-result.log
+[[ -z $(find /run/andeiva-routed-namespace -mindepth 1 -maxdepth 1 -print -quit) ]]
 ip -d -j link show > parent-after.json
 [[ $(ip -j address show | jq '[.[].addr_info[]]|length') == 0 ]]
 [[ $(ip -j route show table all | jq length) == 0 ]]

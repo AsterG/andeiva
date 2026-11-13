@@ -121,6 +121,9 @@ func NewRoutedGatewayLinksV3(ctx context.Context, m Metadata, host, gateway *os.
 		if err != nil {
 			return nil, err
 		}
+		if trustedRoutedExecutableV3(program) != nil {
+			return nil, ErrIdentity
+		}
 		commandCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(commandCtx, program, args...) // #nosec G204 -- Closed launcher operations, fixed executables and validated physical bindings; no shell.

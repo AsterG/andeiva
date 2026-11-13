@@ -19,3 +19,13 @@ mudanças dos pais, substituições e confirmações incertas. O script opcional
 em namespaces privados de rede/montagem/PID. Exige Debian 13 descartável e grupo
 systemd root limitado; nunca runner compartilhado. Não comprova NIC física,
 DHCP, forwarding nem instalação do produto.
+O produtor root também cria um pin gateway novo, sem adoção, em diretório vazio
+root:root 0700. Montagens usam o FD retido do diretório. Unshare roda em thread
+exclusiva fixada; falha de restauração retira essa thread. Operações fixas
+nsenter/sysctl configuram apenas o namespace novo e verificam forwarding desligado
+e IPv6 desabilitado antes de retornar. A limpeza registra detach e remoção
+separadamente para repetir interrupções sem apagar uma substituição. O harness
+nativo injeta ambas as interrupções e exige nova tentativa bem-sucedida e diretório
+vazio. MNT_DETACH não comprova drenagem de processos: o supervisor deve parar seu
+cgroup antes de liberar o namespace. Integração/ativação exige gates separados;
+esses construtores não habilitam serviços instalados.

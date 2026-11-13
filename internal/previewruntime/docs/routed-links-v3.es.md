@@ -19,3 +19,13 @@ cambios del padre, reemplazos y confirmaciones inciertas. El script optativo
 dummy en namespaces privados de red/montaje/PID. Exige Debian 13 descartable y
 un grupo systemd root limitado; nunca un runner compartido. No acredita NIC
 física, DHCP, forwarding ni instalación del producto.
+El productor root crea además un pin gateway nuevo, sin adopción, en un directorio
+vacío root:root 0700. Los montajes usan el FD retenido del directorio. Unshare se
+ejecuta en un hilo exclusivo fijado; si falla la restauración, ese hilo se retira.
+Operaciones fijas nsenter/sysctl configuran sólo el namespace nuevo y verifican
+forwarding apagado e IPv6 deshabilitado antes de retornar. La limpieza registra
+por separado detach y eliminación para reintentar interrupciones sin borrar un
+reemplazo. El arnés nativo inyecta ambas interrupciones y exige reintento correcto
+y directorio vacío. MNT_DETACH no acredita drenaje de procesos: el supervisor debe
+parar su cgroup antes de liberar el namespace. La integración/activación requiere
+gates separados; estos constructores no habilitan servicios instalados.

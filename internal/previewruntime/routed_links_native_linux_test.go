@@ -4,6 +4,7 @@ package previewruntime
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"strings"
@@ -19,12 +20,37 @@ func TestRoutedGatewayLinksV3Native(t *testing.T) {
 	if os.Getenv("CI") != "" || os.Getuid() != 0 || os.Geteuid() != 0 {
 		t.Fatal("native identity")
 	}
-	host, target := os.NewFile(3, "isolated-parent-namespace"), os.NewFile(4, "isolated-gateway-namespace")
+	version, err := os.ReadFile("/proc/version")
+	if err != nil || strings.Contains(strings.ToLower(string(version)), "microsoft") {
+		t.Fatal("native platform")
+	}
+	release, err := os.ReadFile("/etc/os-release")
+	if err != nil || !strings.Contains(string(release), "ID=debian\n") || !strings.Contains(string(release), "VERSION_ID=\"13\"\n") {
+		t.Fatal("native Debian 13 required")
+	}
+	host := os.NewFile(3, "isolated-parent-namespace")
 	defer host.Close()
-	defer target.Close()
+	area, err := os.OpenRoot("/proc/self/fd/4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer area.Close()
+	owned, err := CreateRoutedGatewayNamespaceV3(context.Background(), area)
+	if err != nil {
+		t.Fatal("namespace creation", err)
+	}
+	defer func() {
+		if err := owned.Close(); err != nil {
+			t.Error("namespace cleanup", err)
+		}
+	}()
+	target := owned.File()
 	var hs, ts unix.Stat_t
-	if unix.Fstat(3, &hs) != nil || unix.Fstat(4, &ts) != nil || hs.Ino == ts.Ino {
+	if unix.Fstat(3, &hs) != nil || unix.Fstat(int(target.Fd()), &ts) != nil || hs.Ino == ts.Ino || ts.Ino != owned.ID() {
 		t.Fatal("namespace pins")
+	}
+	if _, err := CreateRoutedGatewayNamespaceV3(context.Background(), area); err == nil {
+		t.Fatal("existing namespace adopted")
 	}
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil {
@@ -70,6 +96,29 @@ func TestRoutedGatewayLinksV3Native(t *testing.T) {
 	remaining, err := l.observe(ctx, routedLinkOperationV3{kind: "gateway"})
 	if err != nil || len(remaining) != 1 || remaining[0].Name != "lo" {
 		t.Fatal("namespace not empty after cleanup")
+	}
+	if err := owned.Close(); err != nil {
+		t.Fatal("namespace close", err)
+	}
+	for _, stage := range []string{"after-detach", "after-remove"} {
+		n, err := CreateRoutedGatewayNamespaceV3(ctx, area)
+		if err != nil {
+			t.Fatal("fault namespace create", err)
+		}
+		sentinel := errors.New("injected cleanup interruption")
+		n.closeStep = func(at string) error {
+			if at == stage {
+				return sentinel
+			}
+			return nil
+		}
+		if err := n.Close(); !errors.Is(err, sentinel) {
+			t.Fatal("missing cleanup interruption", stage, err)
+		}
+		n.closeStep = nil
+		if err := n.Close(); err != nil {
+			t.Fatal("cleanup retry", stage, err)
+		}
 	}
 	t.Log("real pinned namespaces: two private down children created/read back/removed; parents unchanged")
 }
