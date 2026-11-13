@@ -227,7 +227,15 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 	if e != nil {
 		t.Fatalf("native DHCP launch failed: %v\n%s", e, logs.String())
 	}
-	defer supervisor.Close()
+	defer func() {
+		trace, closeErr := nativeDHCPJobsCloseTraceV4(&logs, supervisor.Close)
+		if trace != "" {
+			t.Log(trace)
+		}
+		if closeErr != nil {
+			t.Error("native supervisor close failed")
+		}
+	}()
 	defer stopDiagnostic() // Collect before supervisor teardown on failure.
 	helper, api := supervisor.PIDs()
 	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata, &logs)
@@ -335,6 +343,64 @@ func nativeDHCPJobsWaitReportV4(t *testing.T, ctx context.Context, logs *nativeL
 		case <-ticker.C:
 		}
 	}
+}
+
+// The failure report precedes deferred teardown. Capture only new, bounded
+// fixed-schema diagnostics after the existing graceful close has finished.
+func nativeDHCPJobsCloseTraceV4(logs *nativeLogV3, closeRuntime func() error) (string, error) {
+	before := len(logs.String())
+	err := closeRuntime()
+	after := logs.String()
+	if before > len(after) {
+		return "", err
+	}
+	type record struct {
+		Side      string `json:"side,omitempty"`
+		Verb      string `json:"verb,omitempty"`
+		BootNS    int64  `json:"boot_ns,omitempty"`
+		ElapsedMS int64  `json:"elapsed_ms,omitempty"`
+		Error     string `json:"error,omitempty"`
+		Context   string `json:"context,omitempty"`
+		Truncated bool   `json:"truncated,omitempty"`
+		Dropped   uint64 `json:"dropped,omitempty"`
+	}
+	knownClass := func(v string) bool {
+		switch v {
+		case "ok", "deadline", "cancelled", "channel", "initial_waiting_v1", "recovery", "conflict", "storage", "lease_unavailable", "observation", "uncertain", "scope", "other":
+			return true
+		}
+		return false
+	}
+	var output strings.Builder
+	var count, omitted int
+	for _, line := range strings.Split(after[before:], "\n") {
+		raw, ok := strings.CutPrefix(line, "ANDEIVA_NATIVE_DHCP_RPC ")
+		if !ok || len(line)+1 > 512 {
+			continue
+		}
+		var r record
+		if firewallipc.Decode([]byte(raw), &r) != nil || r.BootNS < 0 || r.ElapsedMS < 0 {
+			continue
+		}
+		if r.Truncated {
+			if r.Side != "" || r.Verb != "" || r.Error != "" || r.Context != "" || r.Dropped == 0 {
+				continue
+			}
+		} else if (r.Side != "helper" && r.Side != "client") || !firewallipc.RoutedDHCPVerbV3(r.Verb) || !knownClass(r.Error) || !knownClass(r.Context) {
+			continue
+		}
+		if count == 63 {
+			omitted++
+			continue
+		}
+		output.WriteString(line)
+		output.WriteByte('\n')
+		count++
+	}
+	if omitted != 0 {
+		fmt.Fprintf(&output, "ANDEIVA_NATIVE_DHCP_RPC {\"truncated\":true,\"dropped\":%d}\n", omitted)
+	}
+	return output.String(), err
 }
 
 func nativeDHCPJobsKernelV4(t *testing.T, ctx context.Context, gateway *os.File, snapshot networkexecutor.LeaseSelectedSnapshotV3) {
