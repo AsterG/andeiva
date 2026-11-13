@@ -12,6 +12,7 @@ import (
 )
 
 type v2CoordinatorOptions struct {
+	Integrity      RuntimeIntegrityV1
 	SharedReader   *recoveryreserve.ReaderAccessV2
 	Routed         RoutedAuthorityV1
 	RoutedIdentity networkexecutor.OwnedNamespaceIdentity
@@ -26,6 +27,7 @@ type v2CoordinatorOptions struct {
 	ManualTimeout bool
 }
 type v2Coordinator struct {
+	integrity    runtimeIntegrityStateV1
 	bootBoundary *v2RoutedBootBoundary
 	store        *v2Store
 	firewall     []Engine
@@ -361,6 +363,18 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	if principal.Role != RoleAdmin || !s.principalV2Locked(principal) {
 		return v2CoordinatorResult{}, ErrDenied
+	}
+	if c.options.Integrity != nil {
+		op, err := s.lookupLocked(principal.Subject, id)
+		if err != nil {
+			return v2CoordinatorResult{}, err
+		}
+		if op.State != "accepted" {
+			return result(op), nil
+		}
+		if !c.integrityAllowsV1(op.ClosingCredit != "") {
+			return result(op), ErrRecovery
+		}
 	}
 	if s.reserves != nil {
 		if err := s.reserves.maintain(s); err != nil {

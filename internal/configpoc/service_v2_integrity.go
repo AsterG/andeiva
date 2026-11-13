@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,6 +31,74 @@ const (
 type IntegrityResultV1 struct {
 	Selection SelectionReferenceV2 `json:"selection"`
 	State     IntegrityStateV1     `json:"state"`
+}
+
+type runtimeIntegrityStateV1 struct {
+	inspecting atomic.Bool
+	ready      bool // All remaining fields are protected by store.mu.
+	fenced     bool
+	checked    time.Time
+	sequence   uint64
+}
+
+// InspectRuntimeV1 is called only by trusted runtime assembly. Holding the
+// existing writer lock prevents catalogue, timer and execution publication
+// throughout the independently authenticated helper inspection.
+func (s *ServiceV2) InspectRuntimeV1(ctx context.Context) error {
+	if s == nil || s.coordinator == nil || ctx == nil {
+		return ErrInvalid
+	}
+	c := s.coordinator
+	if c.options.Integrity == nil {
+		return ErrInvalid
+	}
+	if !c.integrity.inspecting.CompareAndSwap(false, true) {
+		return ErrConflict
+	}
+	defer c.integrity.inspecting.Store(false)
+	c.store.mu.Lock()
+	defer c.store.mu.Unlock()
+	if c.closed || c.store.blocked || c.integrity.fenced || !inspectionQuiescentV1(c.store.state) {
+		return ErrRecovery
+	}
+	c.integrity.ready = false
+	expected, err := selectedReferenceV2(c.store)
+	if err != nil {
+		return err
+	}
+	bounded, cancel := context.WithTimeout(ctx, IntegrityInspectionDeadlineV1)
+	defer cancel()
+	result, err := c.options.Integrity.Inspect(bounded, expected)
+	if result.State == IntegrityFencedV1 {
+		c.integrity.fenced = true
+	}
+	current, currentErr := selectedReferenceV2(c.store)
+	if err != nil || bounded.Err() != nil || currentErr != nil || current != expected || result.Selection != expected || result.State != IntegrityCompleteV1 || c.integrity.fenced {
+		return ErrRecovery
+	}
+	c.integrity.ready = true
+	c.integrity.checked = c.now()
+	c.integrity.sequence = expected.Sequence
+	return nil
+}
+
+// Caller holds store.mu. Due inspections stop new work, never the independent
+// guardian. An already admitted closing operation can retain its original
+// recovery path while its selected lease prevents quiescent inspection.
+func (c *v2Coordinator) integrityAllowsV1(closing bool) bool {
+	if c.options.Integrity == nil {
+		return true
+	}
+	i := &c.integrity
+	if i.inspecting.Load() || !i.ready || i.fenced {
+		return false
+	}
+	if closing && c.store.state.Configuration.Pending != nil {
+		return true
+	}
+	now := c.now()
+	sequence := c.store.selection.Sequence
+	return !now.Before(i.checked) && now.Sub(i.checked) < IntegrityInspectionIntervalV1 && sequence >= i.sequence && sequence-i.sequence < IntegrityPublicationLimitV1
 }
 
 // Accepted catalogue work and reserved closing potential are not physical

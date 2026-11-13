@@ -17,6 +17,7 @@ type RuntimePoolsV2 struct {
 	Emergency *recoveryreserve.PoolV2
 }
 type RuntimeOptionsV2 struct {
+	Integrity      RuntimeIntegrityV1
 	SharedReader   *recoveryreserve.ReaderAccessV2
 	Routed         RoutedAuthorityV1
 	RoutedIdentity networkexecutor.OwnedNamespaceIdentity
@@ -32,6 +33,9 @@ func OpenRuntimeServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, a
 	if !options.GuardDeadlines || options.Pools.Admission == nil || options.Pools.Plan == nil || options.Pools.Emergency == nil {
 		return nil, ErrInvalid
 	}
+	if options.Integrity != nil && (options.Routed == nil || options.SharedReader == nil || options.BootID == "") {
+		return nil, ErrInvalid
+	}
 	manager, err := newReserveManagerV2(options.Pools.Admission, options.Pools.Plan, options.Pools.Emergency)
 	if err != nil {
 		return nil, err
@@ -39,7 +43,7 @@ func OpenRuntimeServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, a
 	if options.Routed != nil && (!validRoutedIdentityV1(options.RoutedIdentity) || options.Routed.Identity() != options.RoutedIdentity) {
 		return nil, ErrInvalid
 	}
-	trusted := v2CoordinatorOptions{SharedReader: options.SharedReader, Reserves: manager, GuardDeadlines: true, LocalPolicy: options.LocalPolicy, Routed: options.Routed, RoutedIdentity: options.RoutedIdentity}
+	trusted := v2CoordinatorOptions{Integrity: options.Integrity, SharedReader: options.SharedReader, Reserves: manager, GuardDeadlines: true, LocalPolicy: options.LocalPolicy, Routed: options.Routed, RoutedIdentity: options.RoutedIdentity}
 	if options.BootID != "" {
 		id := v2BootID(options.BootID)
 		if !validBootIDV2(id) {

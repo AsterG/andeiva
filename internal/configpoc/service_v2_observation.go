@@ -111,7 +111,7 @@ func (s *ServiceV2) Observe(binding adminauth.SessionBinding, id string) (Observ
 }
 func (s *ServiceV2) AdmitObserved(binding adminauth.SessionBinding, namespace string, expected uint64, request OperationRequestV2) (ObservationV2, error) {
 	var result ObservationV2
-	err := s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
+	err := s.catalogueMutationV1(binding, func(store *v2Store, p v2TrustedPrincipal) (err error) {
 		// Revoke has a reserved union member but no D execution implementation.
 		// Do not reserve an operation that this prepared adapter cannot execute.
 		switch request.Kind {
@@ -194,7 +194,7 @@ func (s *ServiceV2) ObserveList(binding adminauth.SessionBinding, namespace, sta
 // Standalone Local Service admission/closure remains unavailable until its
 // transport proof mapping exists. Routed observations require the selected gate.
 func (s *ServiceV2) CloseObservedNamespace(binding adminauth.SessionBinding, namespace string) error {
-	return s.catalogue(binding, func(store *v2Store, p v2TrustedPrincipal) error {
+	return s.catalogueMutationV1(binding, func(store *v2Store, p v2TrustedPrincipal) error {
 		i := store.namespaceIndex(p.Subject, namespace)
 		if i < 0 {
 			return errV2NotFound
