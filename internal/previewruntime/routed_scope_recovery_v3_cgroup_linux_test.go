@@ -12,11 +12,11 @@ import (
 )
 
 func TestRoutedScopeRecoveryV3UnitRequiresExactMainAndNoDelegation(t *testing.T) {
-	raw := "MainPID=200\nControlGroup=" + routedSupervisorCgroupV3 + "\nDelegate=no\nInvocationID=" + strings.Repeat("a", 32) + "\n"
+	raw := "MainPID=200\nControlGroup=" + routedSupervisorCgroupV3 + "\nDelegate=no\nPrivateMounts=yes\nInvocationID=" + strings.Repeat("a", 32) + "\n"
 	if _, err := parseScopeRecoveryUnitV3([]byte(raw), 200); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{strings.Replace(raw, "MainPID=200", "MainPID=201", 1), strings.Replace(raw, "Delegate=no", "Delegate=yes", 1), strings.Replace(raw, routedSupervisorCgroupV3, "/system.slice/foreign.service", 1), strings.Replace(raw, strings.Repeat("a", 32), "", 1), raw + "Delegate=no\n", raw + "Unknown=1\n"} {
+	for _, bad := range []string{strings.Replace(raw, "MainPID=200", "MainPID=201", 1), strings.Replace(raw, "Delegate=no", "Delegate=yes", 1), strings.Replace(raw, "PrivateMounts=yes", "PrivateMounts=no", 1), strings.Replace(raw, routedSupervisorCgroupV3, "/system.slice/foreign.service", 1), strings.Replace(raw, strings.Repeat("a", 32), "", 1), raw + "Delegate=no\n", raw + "Unknown=1\n"} {
 		if _, err := parseScopeRecoveryUnitV3([]byte(bad), 200); err == nil {
 			t.Fatal("ambiguous/delegated unit accepted")
 		}

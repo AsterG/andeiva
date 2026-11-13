@@ -27,13 +27,15 @@ KillMode=control-group
 Delegate=no
 UMask=0077
 NoNewPrivileges=yes
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_READ_SEARCH CAP_KILL CAP_CHOWN
+# Entering and restoring a retained mount namespace requires both capabilities.
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_CHROOT CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_READ_SEARCH CAP_KILL CAP_CHOWN
 RuntimeDirectory=andeiva-preview/grouped
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateMounts=yes
 PrivateDevices=yes
 # /proc/sys/net must resolve in the executing namespace, never a bind-mounted
 # host net subtree. Every write uses the fixed namespace-bound executor.
