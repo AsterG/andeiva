@@ -66,9 +66,19 @@ func TestRoutedGatewayLinksV3Native(t *testing.T) {
 		bindings[i] = RoutedParentLinkV3{Index: iface.Index, Name: name, MAC: iface.HardwareAddr.String(), MTU: iface.MTU}
 	}
 	ctx := context.Background()
-	l, err := NewRoutedGatewayLinksV3(ctx, m, host, target, bindings)
+	linkIdentity := "ffeeddccbbaa99887766554433221100"
+	l, err := NewRoutedGatewayLinksV3(ctx, m, host, target, bindings, linkIdentity)
 	if err != nil {
 		t.Fatal("constructor", err)
+	}
+	nextMetadata := m
+	nextMetadata.RunID = "00112233445566778899aabbccddeeff"
+	next, err := NewRoutedGatewayLinksV3(ctx, nextMetadata, host, target, bindings, linkIdentity)
+	if err != nil || next.macs != l.macs {
+		t.Fatal("per-run metadata changed persistent interface bindings", err)
+	}
+	if err := next.Close(); err != nil {
+		t.Fatal(err)
 	}
 	if err = l.Create(ctx); err != nil {
 		t.Fatal("create", err)

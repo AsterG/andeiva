@@ -99,8 +99,10 @@ func newRoutedGatewayLinksV3(ctx context.Context, runID string, parents [2]Route
 }
 
 // NewRoutedGatewayLinksV3 constructs a root-only launcher capability from pinned
-// namespace descriptors. No request supplies a command, pathname or namespace.
-func NewRoutedGatewayLinksV3(ctx context.Context, m Metadata, host, gateway *os.File, parents [2]RoutedParentLinkV3) (*RoutedGatewayLinksV3, error) {
+// namespace descriptors. linkIdentity is a persistent node-local deployment key,
+// separate from the per-boot RunID, so Startup bindings keep their MAC addresses.
+// No request supplies a command, pathname or namespace.
+func NewRoutedGatewayLinksV3(ctx context.Context, m Metadata, host, gateway *os.File, parents [2]RoutedParentLinkV3, linkIdentity string) (*RoutedGatewayLinksV3, error) {
 	if os.Getuid() != 0 || os.Geteuid() != 0 || m.SchemaVersion != RoutedMetadataSchemaVersion || m.ValidateRouted() != nil || !routedLinkNamespaceV3(host, m.HostNamespace) || !routedLinkNamespaceV3(gateway, m.GatewayNamespace) {
 		return nil, ErrIdentity
 	}
@@ -137,7 +139,7 @@ func NewRoutedGatewayLinksV3(ctx context.Context, m Metadata, host, gateway *os.
 		return out.Bytes(), err
 	}
 	var err error
-	l, err = newRoutedGatewayLinksV3(ctx, m.RunID, parents, runner)
+	l, err = newRoutedGatewayLinksV3(ctx, linkIdentity, parents, runner)
 	return l, err
 }
 

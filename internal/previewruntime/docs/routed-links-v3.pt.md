@@ -3,7 +3,7 @@
 O supervisor root pode criar dois filhos MACVLAN em modo privado diretamente no
 namespace gateway fixado e de propriedade exclusiva. Valida índice, nome, MAC e
 MTU de cada pai pela leitura atual. Não move nem reconfigura os pais. As MACs dos
-filhos derivam da identidade da execução. Os filhos permanecem desativados e sem
+filhos derivam de uma identidade persistente local do nó. Os filhos permanecem desativados e sem
 endereços: L3, forwarding e ativação pertencem ao executor transacional.
 
 O gateway deve conter apenas loopback. Mudanças inesperadas do pai, enlaces

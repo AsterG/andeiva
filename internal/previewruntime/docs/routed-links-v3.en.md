@@ -3,7 +3,7 @@
 The root supervisor can construct two private-mode MACVLAN children directly in
 its pinned, exclusively owned gateway namespace. Parent selection binds index,
 name, MAC and MTU to current readback; no parent is moved or reconfigured. Child
-MACs derive from the run identity. Children remain down and unaddressed: L3,
+MACs derive from a persistent node-local deployment identity. Children remain down and unaddressed: L3,
 forwarding and policy activation belong to the transactional executor.
 
 Creation requires an otherwise empty gateway (loopback only). Unexpected parent
