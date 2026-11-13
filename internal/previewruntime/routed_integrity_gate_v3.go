@@ -23,6 +23,10 @@ type routedIntegrityFenceOpsV3 interface {
 type routedColdContinuationV3 interface {
 	ResolveColdContinuationV1(context.Context, firewallipc.RoutedReferenceV3, string) (configpoc.RoutedSelectedPlanV1, error)
 }
+type routedFencedContinuationV3 interface {
+	ResolveFencedContinuationV1(context.Context, firewallipc.RoutedReferenceV3, string) (configpoc.RoutedSelectedPlanV1, error)
+}
+
 type routedIntegrityPhaseV3 string
 
 const (
@@ -36,6 +40,7 @@ const (
 type routedIntegrityGateV3 struct {
 	mu                   sync.Mutex
 	reader               routedIntegrityReaderV3
+	source               RoutedSelectionSourceV3
 	fence                routedIntegrityFenceOpsV3
 	phase                routedIntegrityPhaseV3
 	anchor, lastComplete configpoc.SelectionReferenceV2
@@ -49,7 +54,7 @@ func NewRoutedIntegritySessionV3(authority configpoc.RoutedAuthorityV1, source R
 	if err != nil {
 		return nil, err
 	}
-	s.integrity = &routedIntegrityGateV3{reader: reader, fence: fence, phase: routedIntegrityColdV3}
+	s.integrity = &routedIntegrityGateV3{reader: reader, source: source, fence: fence, phase: routedIntegrityColdV3}
 	return s, nil
 }
 func (g *routedIntegrityGateV3) blockedLocked() bool {
@@ -62,6 +67,9 @@ func (g *routedIntegrityGateV3) attach(ctx context.Context, expected configpoc.S
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.blockedLocked()
+	if g.phase == routedIntegrityCheckingV3 {
+		return configpoc.IntegrityResultV1{State: configpoc.IntegrityUnavailableV1}, nil
+	}
 	current, err := g.reader.CaptureReferenceV1(ctx)
 	if err != nil {
 		return integrityIncompleteV3(ctx, current, err), nil
@@ -69,9 +77,14 @@ func (g *routedIntegrityGateV3) attach(ctx context.Context, expected configpoc.S
 	if current != expected {
 		return configpoc.IntegrityResultV1{Selection: current, State: configpoc.IntegrityStaleV1}, nil
 	}
-	if g.anchor == (configpoc.SelectionReferenceV2{}) {
-		g.anchor = current
+	if capture, ok := g.source.(interface {
+		CaptureColdAnchorV1(context.Context, configpoc.SelectionReferenceV2) error
+	}); ok {
+		if err := capture.CaptureColdAnchorV1(ctx, current); err != nil {
+			return integrityIncompleteV3(ctx, current, err), nil
+		}
 	}
+	g.anchor = current
 	if g.phase == routedIntegrityColdV3 {
 		g.phase = routedIntegrityReconcilingV3
 	}
@@ -103,9 +116,9 @@ func (g *routedIntegrityGateV3) inspect(ctx context.Context, expected configpoc.
 	// Do not hold the gate mutex or any guardian lock during the full graph walk.
 	// The sole API writer holds its publication barrier; helper dispatch ownership
 	// independently prevents a replacement controller until this call drains.
-	receipt, _, err := authority.Observe(ctx)
+	receipt, revision, err := authority.Observe(ctx)
 	result := integrityIncompleteV3(ctx, configpoc.SelectionReferenceV2{}, err)
-	if err == nil && (receipt.Phase == "idle" || receipt.Phase == "bootstrap") && receipt.ID == "" && receipt.Deadline.IsZero() {
+	if err == nil && integrityPhysicalIdleV3(receipt, revision) {
 		result, err = g.reader.InspectQuiescentV1(ctx, expected)
 		if !firewallipc.ValidRoutedIntegrityResultV3(result) {
 			result = configpoc.IntegrityResultV1{State: configpoc.IntegrityUnavailableV1}
@@ -114,9 +127,9 @@ func (g *routedIntegrityGateV3) inspect(ctx context.Context, expected configpoc.
 			result = integrityIncompleteV3(ctx, result.Selection, err)
 		}
 		if result.State == configpoc.IntegrityCompleteV1 {
-			receipt, _, err = authority.Observe(ctx)
-			if err != nil || receipt.ID != "" || !receipt.Deadline.IsZero() || (receipt.Phase != "idle" && receipt.Phase != "bootstrap") || result.Selection != expected || ctx.Err() != nil {
-				result = integrityIncompleteV3(ctx, result.Selection, err)
+			after, afterRevision, observeErr := authority.Observe(ctx)
+			if observeErr != nil || !integrityPhysicalIdleV3(after, afterRevision) || after != receipt || afterRevision != revision || result.Selection != expected || ctx.Err() != nil {
+				result = integrityIncompleteV3(ctx, result.Selection, observeErr)
 			}
 		}
 	}
@@ -154,6 +167,13 @@ func (g *routedIntegrityGateV3) resolve(ctx context.Context, source RoutedSelect
 		}
 		return plan, nil
 	}
+	if blocked {
+		fenced, ok := source.(routedFencedContinuationV3)
+		if !ok || g.anchor == (configpoc.SelectionReferenceV2{}) {
+			return configpoc.RoutedSelectedPlanV1{}, configpoc.ErrRecovery
+		}
+		return fenced.ResolveFencedContinuationV1(ctx, ref, purpose)
+	}
 	continuation, ok := source.(routedColdContinuationV3)
 	if !ok || g.anchor == (configpoc.SelectionReferenceV2{}) {
 		return configpoc.RoutedSelectedPlanV1{}, configpoc.ErrRecovery
@@ -161,4 +181,11 @@ func (g *routedIntegrityGateV3) resolve(ctx context.Context, source RoutedSelect
 	// The source must retain its own opaque, reader-issued cold anchor. The gate's
 	// tuple above is correlation only and is deliberately not passed as authority.
 	return continuation.ResolveColdContinuationV1(ctx, ref, purpose)
+}
+
+func integrityPhysicalIdleV3(receipt configpoc.RoutedReceiptV1, _ string) bool {
+	// Observe independently validates actual owned state. Idle may retain the
+	// original idempotent receipt; its historical deadline is not an active lease.
+	// The full scan additionally requires this exact receipt/hash before and after.
+	return receipt.Phase == "idle" || receipt.Phase == "bootstrap"
 }

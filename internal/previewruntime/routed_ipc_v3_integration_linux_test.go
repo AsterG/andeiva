@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -33,25 +34,30 @@ import (
 // network I/O use the existing typed fixtures. UID 2000 is logical helper scope;
 // Unix peer credentials are the actual non-root test process, not three UIDs.
 type routedIPCFixtureV3 struct {
-	t             *testing.T
-	area          *os.Root
-	budget        configpoc.BudgetV2
-	auth          *adminauth.Manager
-	binding       adminauth.SessionBinding
-	legacy, local configpoc.Revision
-	engines       []*configpoc.SimEngine
-	pools         configpoc.RuntimePoolsV2
-	access        recoveryreserve.ReaderAccessV2
-	reader        *configpoc.RoutedSelectionReaderV2
-	identity      networkexecutor.OwnedNamespaceIdentity
-	kernel        *routedTestKernel
-	network       *routedTestNetwork
-	authority     *RoutedAuthority
-	source        *RoutedStoreSourceV3
-	remote        *RoutedRemoteAuthority
-	client        *firewallipc.RoutedClientV3
-	serverDone    chan error
-	service       *configpoc.ServiceV2
+	t              *testing.T
+	area           *os.Root
+	budget         configpoc.BudgetV2
+	auth           *adminauth.Manager
+	binding        adminauth.SessionBinding
+	legacy, local  configpoc.Revision
+	engines        []*configpoc.SimEngine
+	pools          configpoc.RuntimePoolsV2
+	access         recoveryreserve.ReaderAccessV2
+	reader         *configpoc.RoutedSelectionReaderV2
+	fullReader     *configpoc.RoutedSelectionReaderV2
+	fence          *routedIntegrityFenceV3
+	session        *RoutedSessionV3
+	integrity      *RoutedRemoteIntegrityV3
+	identity       networkexecutor.OwnedNamespaceIdentity
+	kernel         *routedTestKernel
+	network        *routedTestNetwork
+	authority      *RoutedAuthority
+	source         *RoutedStoreSourceV3
+	remote         *RoutedRemoteAuthority
+	corruptConfirm atomic.Bool
+	client         *firewallipc.RoutedClientV3
+	serverDone     chan error
+	service        *configpoc.ServiceV2
 }
 
 // Explicit TEST-ONLY offline conversion after every private writer is closed.
@@ -222,17 +228,24 @@ func newRoutedIPCFixtureWithPolicyV3(t *testing.T, readerPolicy configpoc.Select
 	}
 	readerOptions := configpoc.SelectionReaderOptionsV2{Access: f.access, Identity: f.identity, Admission: readPools[0], Plan: readPools[1], Emergency: readPools[2], Budget: configpoc.SelectionReadBudgetV2{Entries: 20000, Objects: 16000, Edges: 200000, IOCalls: 2000000, Bytes: 256 << 20, ActiveBytes: 16 << 20, Depth: 128}}
 	if readerPolicy == configpoc.SelectionActionAuthorityV2 {
-		// Test-only opt-in: establish initial full integrity with all private
-		// writers closed. This does not implement a runtime corruption latch or
-		// ongoing inspection scheduling and must not enable an appliance factory.
-		fullReader, e := configpoc.NewRoutedSelectionReaderV2(f.area, readerOptions)
-		if e != nil {
-			t.Fatal(e)
+		f.fullReader, err = configpoc.NewRoutedSelectionReaderV2(f.area, readerOptions)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if _, e = fullReader.Observe(context.Background()); e != nil {
-			t.Fatal("initial full integrity", e)
+		// This in-process transport fixture has logical role IDs, not three OS UIDs.
+		// The private marker is genuinely owned/preallocated by its actual test UID.
+		private := routedCoordinatorRoot(t)
+		uid, gid := uint32(os.Geteuid()), uint32(os.Getegid())
+		if err := prepareRoutedIntegrityFenceV3(private, uid, gid); err != nil {
+			t.Fatal(err)
 		}
+		f.fence, err = openRoutedIntegrityFenceV3(private, uid, gid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.fence.Close() })
 	}
+
 	readerOptions.Policy = readerPolicy
 	f.reader, err = configpoc.NewRoutedSelectionReaderV2(f.area, readerOptions)
 	if err != nil {
@@ -265,6 +278,7 @@ func newRoutedIPCFixtureWithPolicyV3(t *testing.T, readerPolicy configpoc.Select
 
 func (f *routedIPCFixtureV3) newAuthority() {
 	f.t.Helper()
+	f.session = nil
 	options := routedactivation.Options{Legacy: f.legacy}
 	for _, link := range f.network.snapshot.Links {
 		options.ObservedBindings = append(options.ObservedBindings, networkplan.Binding{Name: link.Name, HardwareAddress: link.MAC})
@@ -277,19 +291,38 @@ func (f *routedIPCFixtureV3) newAuthority() {
 }
 func (f *routedIPCFixtureV3) connect() {
 	f.t.Helper()
-	session, err := NewRoutedSessionV3(f.authority, routedIPCObservedSourceV3{f.source, f.t})
-	if err != nil {
-		f.t.Fatal(err)
+	var err error
+	if f.session == nil {
+		source := routedIPCObservedSourceV3{RoutedStoreSourceV3: f.source, t: f.t, fixture: f}
+		if f.fullReader != nil {
+			f.session, err = NewRoutedIntegritySessionV3(f.authority, source, f.fullReader, f.fence)
+		} else {
+			f.session, err = NewRoutedSessionV3(f.authority, source)
+		}
+		if err != nil {
+			f.t.Fatal(err)
+		}
 	}
+	session := f.session
 	a, b := routedUnixPairV3(f.t)
 	uid, gid, pid := uint32(os.Geteuid()), uint32(os.Getegid()), int32(os.Getpid())
 	f.serverDone = make(chan error, 1)
 	go func() {
 		f.serverDone <- session.ServeInheritedRoutedV3(context.Background(), b, uid, gid, pid, f.identity.RunID)
 	}()
-	f.client, err = ConnectInheritedRoutedV3(context.Background(), a, uid, gid, pid, f.identity.RunID, f.identity.Namespace)
+	connect := ConnectInheritedRoutedV3
+	if f.fullReader != nil {
+		connect = ConnectInheritedRoutedIntegrityV3
+	}
+	f.client, err = connect(context.Background(), a, uid, gid, pid, f.identity.RunID, f.identity.Namespace)
 	if err != nil {
 		f.t.Fatal("handshake", err)
+	}
+	if f.fullReader != nil {
+		f.integrity, err = NewRoutedRemoteIntegrityV3(f.client)
+		if err != nil {
+			f.t.Fatal(err)
+		}
 	}
 	f.remote, err = NewRoutedRemoteAuthority(f.client, f.identity)
 	if err != nil {
@@ -309,13 +342,24 @@ func (f *routedIPCFixtureV3) open() {
 		f.t.Fatal("writer opened before handshake")
 	}
 	var err error
-	f.service, err = configpoc.OpenRuntimeServiceV2(context.Background(), f.area, f.budget, f.auth, []configpoc.Engine{f.engines[0]}, []configpoc.Engine{f.engines[1]}, configpoc.RuntimeOptionsV2{SharedReader: &f.access, Pools: f.pools, GuardDeadlines: true, Routed: f.remote, RoutedIdentity: f.identity, BootID: f.identity.BootID})
+	options := configpoc.RuntimeOptionsV2{SharedReader: &f.access, Pools: f.pools, GuardDeadlines: true, Routed: f.remote, RoutedIdentity: f.identity, BootID: f.identity.BootID}
+	if f.integrity != nil {
+		options.Integrity = f.integrity
+	}
+	f.service, err = configpoc.OpenRuntimeServiceV2(context.Background(), f.area, f.budget, f.auth, []configpoc.Engine{f.engines[0]}, []configpoc.Engine{f.engines[1]}, options)
 	if err != nil {
 		f.t.Fatal("shared writer", err)
 	}
 }
 func (f *routedIPCFixtureV3) run(request configpoc.OperationRequestV2) configpoc.ResultV2 {
 	f.t.Helper()
+	if f.integrity != nil && request.Kind != configpoc.OpConfirm {
+		// Explicit trusted maintenance between quiescent workflow steps. Periodic
+		// scheduling/threshold behavior has its own tests; no scan runs in a lease.
+		if err := f.service.InspectRuntimeV1(context.Background()); err != nil {
+			f.t.Fatal("quiescent full inspection", err)
+		}
+	}
 	status, err := f.service.Status(f.binding)
 	if err != nil {
 		f.t.Fatal(err)
@@ -343,7 +387,8 @@ func (f *routedIPCFixtureV3) run(request configpoc.OperationRequestV2) configpoc
 
 type routedIPCObservedSourceV3 struct {
 	*RoutedStoreSourceV3
-	t *testing.T
+	t       *testing.T
+	fixture *routedIPCFixtureV3
 }
 
 func (s routedIPCObservedSourceV3) PrepareView(ctx context.Context) (RoutedPreparationViewV3, error) {
@@ -354,6 +399,12 @@ func (s routedIPCObservedSourceV3) PrepareView(ctx context.Context) (RoutedPrepa
 }
 
 func (s routedIPCObservedSourceV3) Resolve(ctx context.Context, ref firewallipc.RoutedReferenceV3, purpose string) (configpoc.RoutedSelectedPlanV1, error) {
+	if purpose == "confirm" && s.fixture != nil && s.fixture.corruptConfirm.CompareAndSwap(true, false) {
+		if err := s.fixture.fence.MarkBlocked(); err != nil {
+			return configpoc.RoutedSelectedPlanV1{}, err
+		}
+		return s.RoutedStoreSourceV3.ResolveFencedContinuationV1(ctx, ref, purpose)
+	}
 	start := time.Now()
 	value, err := s.RoutedStoreSourceV3.Resolve(ctx, ref, purpose)
 	s.t.Log("helper Resolve", purpose, time.Since(start), err)
@@ -361,11 +412,19 @@ func (s routedIPCObservedSourceV3) Resolve(ctx context.Context, ref firewallipc.
 }
 
 func TestRoutedIPCV3SharedStoreLifecycle(t *testing.T) {
-	testRoutedIPCV3SharedStoreLifecycle(t, configpoc.SelectionFullHistoryV2)
-}
-
-func TestRoutedIPCV3ActionReaderSharedStoreLifecycle(t *testing.T) {
 	testRoutedIPCV3SharedStoreLifecycle(t, configpoc.SelectionActionAuthorityV2)
+}
+func TestRoutedIPCV3DefaultFullReaderStartup(t *testing.T) {
+	f := newRoutedIPCFixtureWithPolicyV3(t, configpoc.SelectionFullHistoryV2)
+	if f.fullReader != nil || f.integrity != nil {
+		t.Fatal("default full-reader profile changed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	view, err := f.reader.PrepareCurrentView(ctx)
+	if err != nil || view.Startup.Firewall.Hash != f.legacy.Hash || len(view.Startup.Firewall.Config.Rules) != 2 {
+		t.Fatal("default full startup", err)
+	}
 }
 
 func testRoutedIPCV3SharedStoreLifecycle(t *testing.T, readerPolicy configpoc.SelectionReaderPolicyV2) {
