@@ -34,6 +34,7 @@ type RoutedSessionV3 struct {
 	authority  configpoc.RoutedAuthorityV1
 	source     RoutedSelectionSourceV3
 	epoch      uint64
+	integrity  *routedIntegrityGateV3
 }
 
 func NewRoutedSessionV3(authority configpoc.RoutedAuthorityV1, source RoutedSelectionSourceV3) (*RoutedSessionV3, error) {
@@ -117,7 +118,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		return ErrUnavailable
 	}
 	hello, e := firewallipc.DecodeRoutedHelloV3(data, false)
-	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace {
+	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) == 4) {
 		return ErrIdentity
 	}
 	hello.Run = runtimeRun
@@ -135,7 +136,11 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 			return ErrIdentity
 		}
 		last = request.Sequence
-		call, cancel := context.WithTimeout(ctx, 3*time.Second)
+		timeout := 3 * time.Second
+		if command.Verb == "inspect" {
+			timeout = configpoc.IntegrityInspectionDeadlineV1
+		}
+		call, cancel := context.WithTimeout(ctx, timeout)
 		payload, operationErr := s.dispatch(call, command)
 		cancel()
 		reply := firewallipc.RoutedReplyV3{ProtocolVersion: firewallipc.RoutedProtocolV3, Run: runtimeRun, Sequence: last, Namespace: identity.Namespace, Domain: "routed", Verb: command.Verb}
@@ -155,6 +160,19 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 
 func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedCommandV3) (any, error) {
 	switch c.Verb {
+	case "inspect":
+		if s.integrity == nil {
+			return nil, ErrIdentity
+		}
+		if c.Integrity.Mode == "attach" {
+			result, err := s.integrity.attach(ctx, c.Integrity.Selection)
+			return firewallipc.RoutedIntegrityResultV3{Mode: "attach", Result: result}, err
+		}
+		if c.Integrity.Mode == "check" {
+			result, err := s.integrity.inspect(ctx, c.Integrity.Selection, s.authority)
+			return firewallipc.RoutedIntegrityResultV3{Mode: "check", Result: result}, err
+		}
+		return nil, ErrIdentity
 	case "observe":
 		receipt, revision, e := s.authority.Observe(ctx)
 		return firewallipc.RoutedObservedV3{Receipt: firewallipc.RoutedReceiptV3{Phase: receipt.Phase, ID: receipt.ID, Previous: receipt.Previous, Target: receipt.Target, Deadline: receipt.Deadline}, Revision: revision}, e
@@ -190,7 +208,13 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 	if purpose == "match" {
 		purpose += "_" + c.Side
 	}
-	plan, e := s.source.Resolve(ctx, c.Reference, purpose)
+	var plan configpoc.RoutedSelectedPlanV1
+	var e error
+	if s.integrity != nil {
+		plan, e = s.integrity.resolve(ctx, s.source, c.Reference, purpose)
+	} else {
+		plan, e = s.source.Resolve(ctx, c.Reference, purpose)
+	}
 	if e != nil {
 		return nil, e
 	}

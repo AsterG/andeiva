@@ -22,6 +22,7 @@ type RoutedReaderRootV3 struct {
 	Profile recoveryreserve.ProfileV2
 }
 type RoutedHelperOptionsV3 struct {
+	IntegrityRoot              *os.Root // Explicit trusted resource; nil preserves full-reader profile.
 	Store                      *os.Root
 	Access                     recoveryreserve.ReaderAccessV2
 	Admission, Plan, Emergency RoutedReaderRootV3
@@ -38,6 +39,7 @@ type RoutedHelperRuntimeV3 struct {
 	metadata   Metadata
 	identities Identities
 	closed     bool
+	fence      *routedIntegrityFenceV3
 }
 
 func routedHelperReadinessV3(m Metadata, ids Identities, o RoutedHelperOptionsV3) error {
@@ -144,7 +146,20 @@ func assembleRoutedHelperV3(ctx context.Context, m Metadata, ids Identities, o R
 			return nil, err
 		}
 	}
-	reader, e := configpoc.NewRoutedSelectionReaderV2(o.Store, configpoc.SelectionReaderOptionsV2{Access: o.Access, Identity: o.Authority.Identity(), Admission: result.pools[0], Plan: result.pools[1], Emergency: result.pools[2], Budget: o.Budget})
+	readerOptions := configpoc.SelectionReaderOptionsV2{Access: o.Access, Identity: o.Authority.Identity(), Admission: result.pools[0], Plan: result.pools[1], Emergency: result.pools[2], Budget: o.Budget}
+	full, e := configpoc.NewRoutedSelectionReaderV2(o.Store, readerOptions)
+	if e != nil {
+		return nil, e
+	}
+	reader := full
+	if o.IntegrityRoot != nil {
+		result.fence, e = openRoutedIntegrityFenceV3(o.IntegrityRoot, ids.HelperUID, ids.IPCGID)
+		if e != nil {
+			return nil, e
+		}
+		readerOptions.Policy = configpoc.SelectionActionAuthorityV2
+		reader, e = configpoc.NewRoutedSelectionReaderV2(o.Store, readerOptions)
+	}
 	if e != nil {
 		return nil, e
 	}
@@ -152,7 +167,11 @@ func assembleRoutedHelperV3(ctx context.Context, m Metadata, ids Identities, o R
 	if e != nil {
 		return nil, e
 	}
-	result.session, e = NewRoutedSessionV3(o.Authority, source)
+	if result.fence != nil {
+		result.session, e = NewRoutedIntegritySessionV3(o.Authority, source, full, result.fence)
+	} else {
+		result.session, e = NewRoutedSessionV3(o.Authority, source)
+	}
 	if e != nil {
 		return nil, e
 	}
@@ -197,6 +216,9 @@ func (r *RoutedHelperRuntimeV3) Close() error {
 	}
 	r.closed = true
 	var failures []error
+	if r.fence != nil {
+		failures = append(failures, r.fence.Close())
+	}
 	for _, pool := range r.pools {
 		if pool != nil {
 			failures = append(failures, pool.Close())

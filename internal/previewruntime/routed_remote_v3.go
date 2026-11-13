@@ -86,3 +86,46 @@ func (a *RoutedRemoteAuthority) Bootstrap(ctx context.Context, p configpoc.Route
 }
 
 var _ configpoc.RoutedAuthorityV1 = (*RoutedRemoteAuthority)(nil)
+
+// RoutedRemoteIntegrityV3 uses the explicitly negotiated control capability.
+// Transport failure closes this controller; it never reports an incomplete
+// inspection as successful qualification.
+type RoutedRemoteIntegrityV3 struct{ client *firewallipc.RoutedClientV3 }
+
+func NewRoutedRemoteIntegrityV3(client *firewallipc.RoutedClientV3) (*RoutedRemoteIntegrityV3, error) {
+	if client == nil || !client.IntegrityEnabled() {
+		return nil, ErrIdentity
+	}
+	return &RoutedRemoteIntegrityV3{client: client}, nil
+}
+func (r *RoutedRemoteIntegrityV3) Attach(ctx context.Context, expected configpoc.SelectionReferenceV2) error {
+	result, err := r.client.Call(ctx, "inspect", firewallipc.RoutedIntegrityV3{Mode: "attach", Selection: expected})
+	if err != nil {
+		return err
+	}
+	if result.Integrity.Selection != expected || result.Integrity.State != configpoc.IntegrityCompleteV1 {
+		return configpoc.ErrRecovery
+	}
+	return nil
+}
+func (r *RoutedRemoteIntegrityV3) Inspect(ctx context.Context, expected configpoc.SelectionReferenceV2) (configpoc.IntegrityResultV1, error) {
+	result, err := r.client.Call(ctx, "inspect", firewallipc.RoutedIntegrityV3{Mode: "check", Selection: expected})
+	if err != nil {
+		_ = r.client.Close()
+		return configpoc.IntegrityResultV1{}, err
+	}
+	if result.Integrity.State == configpoc.IntegrityFencedV1 {
+		_ = r.client.Close()
+	}
+	return result.Integrity, err
+}
+
+var _ configpoc.RuntimeIntegrityV1 = (*RoutedRemoteIntegrityV3)(nil)
+
+func (r *RoutedRemoteIntegrityV3) IntegrityPublicationAllowedV1() bool {
+	return r != nil && r.client.IntegrityPublicationAllowedV1()
+}
+
+func (r *RoutedRemoteIntegrityV3) IntegrityClosingAllowedV1() bool {
+	return r != nil && r.client.IntegrityClosingAllowedV1()
+}

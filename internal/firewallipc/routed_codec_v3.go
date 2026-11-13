@@ -9,6 +9,7 @@ import (
 )
 
 const RoutedProtocolV3 = 3
+const RoutedIntegrityCapabilityV3 = "routed_integrity_gate.v1"
 
 // A preparation contains three independently bounded artifacts. The additional
 // envelope allowance is fixed; it is not negotiated by an administrative caller.
@@ -50,7 +51,7 @@ func DecodeRoutedHelloV3(data []byte, reply bool) (RoutedHelloV3, error) {
 	if reply {
 		required = append(required, "run", "epoch")
 	}
-	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || len(h.RequiredFeatures) != 3 || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
+	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || (len(h.RequiredFeatures) != 3 && len(h.RequiredFeatures) != 4) || (len(h.RequiredFeatures) == 4 && h.RequiredFeatures[3] != RoutedIntegrityCapabilityV3) || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
 		return RoutedHelloV3{}, ErrChannel
 	}
 	return h, nil
@@ -73,7 +74,38 @@ type RoutedSelectedV3 struct {
 	Reference RoutedReferenceV3 `json:"reference"`
 	Side      string            `json:"side,omitempty"`
 }
+type RoutedIntegrityResultV3 struct {
+	Mode   string                      `json:"mode"`
+	Result configpoc.IntegrityResultV1 `json:"result"`
+}
+
+type RoutedIntegrityV3 struct {
+	Mode      string                         `json:"mode"`
+	Selection configpoc.SelectionReferenceV2 `json:"selection"`
+}
+
+func ValidRoutedSelectionV3(r configpoc.SelectionReferenceV2) bool {
+	if !hashV2(r.Selection) || !hashV2(r.State) || (r.Previous != "" && !hashV2(r.Previous)) || !leaseV2.MatchString(r.Lineage) || r.Sequence == 0 || r.Generation == 0 {
+		return false
+	}
+	if r.Mode == "prepare" {
+		return r.WorkHash == ""
+	}
+	return (r.Mode == "intent" || r.Mode == "pending" || r.Mode == "active") && hashV2(r.WorkHash)
+}
+func ValidRoutedIntegrityResultV3(r configpoc.IntegrityResultV1) bool {
+	switch r.State {
+	case configpoc.IntegrityCompleteV1:
+		return ValidRoutedSelectionV3(r.Selection)
+	case configpoc.IntegrityCancelledV1, configpoc.IntegrityStaleV1, configpoc.IntegrityUnavailableV1, configpoc.IntegrityFencedV1:
+		return r.Selection == (configpoc.SelectionReferenceV2{}) || ValidRoutedSelectionV3(r.Selection)
+	default:
+		return false
+	}
+}
+
 type RoutedCommandV3 struct {
+	Integrity RoutedIntegrityV3
 	Verb      string
 	Target    configpoc.RoutedActivationBundleV1
 	Reference RoutedReferenceV3
@@ -105,6 +137,12 @@ func DecodeRoutedRequestV3(data []byte, run string, namespace, last uint64) (Rou
 	}
 	c.Verb = r.Verb
 	switch r.Verb {
+	case "inspect":
+		var p RoutedIntegrityV3
+		if exactRoutedV3(r.Payload, &p, []string{"mode", "selection"}) != nil || (p.Mode != "attach" && p.Mode != "check") || !ValidRoutedSelectionV3(p.Selection) {
+			return r, RoutedCommandV3{}, ErrChannel
+		}
+		c.Integrity = p
 	case "observe":
 		var empty struct{}
 		if exactRoutedV3(r.Payload, &empty, nil) != nil {
@@ -168,6 +206,7 @@ type RoutedPreparedV3 struct {
 	Preparation configpoc.RoutedPreparationV1 `json:"preparation"`
 }
 type RoutedResultV3 struct {
+	Integrity   configpoc.IntegrityResultV1
 	Observed    RoutedObservedV3
 	Preparation configpoc.RoutedPreparationV1
 }
@@ -186,6 +225,13 @@ func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, R
 		return reply, result, nil
 	}
 	switch reply.Verb {
+	case "inspect":
+		var value RoutedIntegrityResultV3
+		var expected RoutedIntegrityV3
+		if exactRoutedV3(request.Payload, &expected, []string{"mode", "selection"}) != nil || (expected.Mode != "attach" && expected.Mode != "check") || !ValidRoutedSelectionV3(expected.Selection) || exactRoutedV3(reply.Payload, &value, []string{"mode", "result"}) != nil || value.Mode != expected.Mode || !ValidRoutedIntegrityResultV3(value.Result) || (value.Result.State == configpoc.IntegrityCompleteV1 && value.Result.Selection != expected.Selection) {
+			return reply, result, ErrChannel
+		}
+		result.Integrity = value.Result
 	case "observe":
 		var value RoutedObservedV3
 		if exactRoutedV3(reply.Payload, &value, []string{"receipt", "revision"}) != nil || !validRoutedReceiptV3(value.Receipt) || value.Revision != "" && !hashV2(value.Revision) {

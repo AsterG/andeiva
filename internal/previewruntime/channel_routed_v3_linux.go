@@ -29,3 +29,13 @@ func (s *RoutedSessionV3) ServeInheritedRoutedV3(ctx context.Context, c *net.Uni
 	}
 	return s.ServeRoutedV3(ctx, c, runtimeRun)
 }
+
+func ConnectInheritedRoutedIntegrityV3(ctx context.Context, c *net.UnixConn, uid, gid uint32, pid int32, runtimeRun string, namespace uint64) (*firewallipc.RoutedClientV3, error) {
+	if inheritedPeerV2(c, uid, gid, pid) != nil {
+		if c != nil {
+			_ = c.Close()
+		}
+		return nil, ErrIdentity
+	}
+	return firewallipc.ConnectRoutedIntegrityV3(ctx, c, runtimeRun, namespace)
+}

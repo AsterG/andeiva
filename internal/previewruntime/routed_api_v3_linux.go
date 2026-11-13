@@ -17,10 +17,11 @@ import (
 )
 
 type RoutedOperationsRuntimeV3 struct {
-	Handler http.Handler
-	Service *configpoc.ServiceV2
-	routed  *firewallipc.RoutedClientV3
-	legacy  *firewallipc.ClientV2
+	Handler            http.Handler
+	Service            *configpoc.ServiceV2
+	routed             *firewallipc.RoutedClientV3
+	legacy             *firewallipc.ClientV2
+	integrityScheduler *routedIntegritySchedulerV3
 }
 
 // Close releases only this management writer and its channels. Namespace,
@@ -29,6 +30,9 @@ type RoutedOperationsRuntimeV3 struct {
 func (r *RoutedOperationsRuntimeV3) Close() error {
 	if r == nil {
 		return nil
+	}
+	if r.integrityScheduler != nil {
+		r.integrityScheduler.Close()
 	}
 	var se, re, le error
 	if r.Service != nil {
@@ -49,6 +53,15 @@ func (r *RoutedOperationsRuntimeV3) Close() error {
 // independent pool/root handles and local engines remain caller-owned.
 // This factory does not activate a listener, provision storage or enable a unit.
 func OpenRoutedOperationsRuntimeV3(ctx context.Context, m Metadata, ids Identities, routed, legacy *net.UnixConn, routedPID, legacyPID int32, o OperationsRuntimeOptionsV2) (*RoutedOperationsRuntimeV3, error) {
+	return openRoutedOperationsModeV3(ctx, m, ids, routed, legacy, routedPID, legacyPID, o, false)
+}
+
+// OpenRoutedIntegrityOperationsRuntimeV3 requires the negotiated private control gate.
+// It never falls back to the legacy full-reader helper profile.
+func OpenRoutedIntegrityOperationsRuntimeV3(ctx context.Context, m Metadata, ids Identities, routed, legacy *net.UnixConn, routedPID, legacyPID int32, o OperationsRuntimeOptionsV2) (*RoutedOperationsRuntimeV3, error) {
+	return openRoutedOperationsModeV3(ctx, m, ids, routed, legacy, routedPID, legacyPID, o, true)
+}
+func openRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identities, routed, legacy *net.UnixConn, routedPID, legacyPID int32, o OperationsRuntimeOptionsV2, integrity bool) (*RoutedOperationsRuntimeV3, error) {
 	fail := func() (*RoutedOperationsRuntimeV3, error) {
 		if routed != nil {
 			_ = routed.Close()
@@ -62,18 +75,25 @@ func OpenRoutedOperationsRuntimeV3(ctx context.Context, m Metadata, ids Identiti
 		return fail()
 	}
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}
-	if o.Store == nil || o.Auth == nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.BootID != m.BootID || !o.Runtime.GuardDeadlines || o.Runtime.SharedReader == nil || o.Runtime.SharedReader.OwnerUID != ids.APIUID || o.Runtime.SharedReader.CheckDirectory(o.Store) != nil || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
+	if o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.BootID != m.BootID || !o.Runtime.GuardDeadlines || o.Runtime.SharedReader == nil || o.Runtime.SharedReader.OwnerUID != ids.APIUID || o.Runtime.SharedReader.CheckDirectory(o.Store) != nil || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
 		return fail()
 	}
 	host, e := namespaceID("/proc/self/ns/net")
 	if e != nil || host != m.HostNamespace {
 		return fail()
 	}
-	return connectRoutedOperationsV3(ctx, m, ids, routed, legacy, routedPID, legacyPID, identity, o)
+	return connectRoutedOperationsModeV3(ctx, m, ids, routed, legacy, routedPID, legacyPID, identity, o, integrity)
 }
 
 func connectRoutedOperationsV3(ctx context.Context, m Metadata, ids Identities, routed, legacy *net.UnixConn, routedPID, legacyPID int32, identity networkexecutor.OwnedNamespaceIdentity, o OperationsRuntimeOptionsV2) (*RoutedOperationsRuntimeV3, error) {
-	client, e := ConnectInheritedRoutedV3(ctx, routed, ids.HelperUID, ids.IPCGID, routedPID, m.RunID, m.GatewayNamespace)
+	return connectRoutedOperationsModeV3(ctx, m, ids, routed, legacy, routedPID, legacyPID, identity, o, false)
+}
+func connectRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identities, routed, legacy *net.UnixConn, routedPID, legacyPID int32, identity networkexecutor.OwnedNamespaceIdentity, o OperationsRuntimeOptionsV2, integrity bool) (*RoutedOperationsRuntimeV3, error) {
+	connect := ConnectInheritedRoutedV3
+	if integrity {
+		connect = ConnectInheritedRoutedIntegrityV3
+	}
+	client, e := connect(ctx, routed, ids.HelperUID, ids.IPCGID, routedPID, m.RunID, m.GatewayNamespace)
 	if e != nil {
 		if legacy != nil {
 			_ = legacy.Close()
@@ -101,7 +121,7 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 			}
 		}
 	}()
-	if ctx == nil || client == nil || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
+	if ctx == nil || client == nil || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
 		return nil, ErrIdentity
 	}
 	authority, e := NewRoutedRemoteAuthority(client, identity)
@@ -120,6 +140,12 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 		return nil, e
 	}
 	runtimeOptions := o.Runtime
+	if client.IntegrityEnabled() {
+		runtimeOptions.Integrity, e = NewRoutedRemoteIntegrityV3(client)
+		if e != nil {
+			return nil, e
+		}
+	}
 	runtimeOptions.Routed, runtimeOptions.RoutedIdentity = authority, identity
 	service, e := configpoc.OpenRuntimeServiceV2(ctx, o.Store, o.Budget, o.Auth, []configpoc.Engine{guard}, o.Local, runtimeOptions)
 	if e != nil {
@@ -129,7 +155,11 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 	if e != nil {
 		return nil, errors.Join(e, service.Close())
 	}
-	return &RoutedOperationsRuntimeV3{Handler: handler, Service: service, routed: client, legacy: legacy}, nil
+	result = &RoutedOperationsRuntimeV3{Handler: handler, Service: service, routed: client, legacy: legacy}
+	if client.IntegrityEnabled() {
+		result.integrityScheduler = startRoutedIntegritySchedulerV3(service)
+	}
+	return result, nil
 }
 
 // Duplicated descriptors do not constitute two independently framed channels.
