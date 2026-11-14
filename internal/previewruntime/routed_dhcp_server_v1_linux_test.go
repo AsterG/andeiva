@@ -53,6 +53,91 @@ func TestRoutedDHCPServerRefusesUnassembledRoleV1(t *testing.T) {
 	}
 }
 
+func TestRoutedDHCPServerStockConfigTargetV1(t *testing.T) {
+	stock := unix.Stat_t{Mode: unix.S_IFDIR | 0750, Uid: 62020, Gid: 62021}
+	for _, tt := range []struct {
+		name string
+		stat unix.Stat_t
+		want bool
+	}{
+		{"stock", stock, true},
+		{"root", unix.Stat_t{Mode: unix.S_IFDIR | 0755}, true},
+		{"foreign owner", unix.Stat_t{Mode: stock.Mode, Uid: 62022, Gid: stock.Gid}, false},
+		{"foreign group", unix.Stat_t{Mode: stock.Mode, Uid: stock.Uid, Gid: 62022}, false},
+		{"group writable", unix.Stat_t{Mode: unix.S_IFDIR | 0770, Uid: stock.Uid, Gid: stock.Gid}, false},
+		{"world writable root", unix.Stat_t{Mode: unix.S_IFDIR | 0757}, false},
+		{"stock wrong mode", unix.Stat_t{Mode: unix.S_IFDIR | 0755, Uid: stock.Uid, Gid: stock.Gid}, false},
+		{"special mode", unix.Stat_t{Mode: unix.S_IFDIR | 02750, Uid: stock.Uid, Gid: stock.Gid}, false},
+		{"symlink", unix.Stat_t{Mode: unix.S_IFLNK | 0750, Uid: stock.Uid, Gid: stock.Gid}, false},
+		{"file", unix.Stat_t{Mode: unix.S_IFREG | 0750, Uid: stock.Uid, Gid: stock.Gid}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := routedDHCPServerConfigTargetStatV1(tt.stat, stock.Uid, stock.Gid); got != tt.want {
+				t.Fatalf("accepted=%v want=%v", got, tt.want)
+			}
+		})
+	}
+	if routedDHCPServerConfigTargetStatV1(stock, 0, stock.Gid) || routedDHCPServerConfigTargetStatV1(stock, stock.Uid, 0) {
+		t.Fatal("missing account accepted")
+	}
+}
+
+func TestRoutedDHCPServerPinnedConfigTargetV1(t *testing.T) {
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	if uid == 0 || gid == 0 {
+		t.Skip("unprivileged stock-owner fixture")
+	}
+	base := t.TempDir()
+	parent, err := os.Open(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	path := filepath.Join(base, "kea")
+	if file, err := routedDHCPServerOpenConfigTargetV1(parent, uid, gid); err != ErrIdentity || file != nil {
+		t.Fatal("missing target accepted", err)
+	}
+	if err := os.Symlink(base, path); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := routedDHCPServerOpenConfigTargetV1(parent, uid, gid); err != ErrIdentity || file != nil {
+		t.Fatal("symlink target accepted", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := routedDHCPServerOpenConfigTargetV1(parent, uid, gid); err != ErrIdentity || file != nil {
+		t.Fatal("wrong mode accepted", err)
+	}
+	if err := os.Chmod(path, 0750); err != nil {
+		t.Fatal(err)
+	}
+	file, err := routedDHCPServerOpenConfigTargetV1(parent, uid, gid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	before, err := file.Stat()
+	flags, flagErr := unix.FcntlInt(file.Fd(), unix.F_GETFD, 0)
+	if err != nil || flagErr != nil || flags&unix.FD_CLOEXEC == 0 {
+		t.Fatal("target not sealed", err, flagErr)
+	}
+	if err := os.Rename(path, filepath.Join(base, "retained")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	after, err := file.Stat()
+	replacement, other := os.Stat(path)
+	if err != nil || other != nil || !os.SameFile(before, after) || os.SameFile(after, replacement) {
+		t.Fatal("target FD followed replacement", err, other)
+	}
+}
+
 func routedDHCPServerTestCommandV1(t *testing.T, mode string) *exec.Cmd {
 	t.Helper()
 	exe, err := os.Executable()

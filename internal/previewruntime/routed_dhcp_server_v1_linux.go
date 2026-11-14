@@ -284,18 +284,23 @@ func routedDHCPServerMountsV1(o RoutedDHCPServerResourcesV1, uid, gid uint32) er
 	if uid == 0 || gid == 0 || uid >= 1<<31 || gid >= 1<<31 {
 		return ErrIdentity
 	}
-	for _, path := range []string{"/etc", "/etc/kea", "/var", "/var/lib", "/run"} {
+	for _, path := range []string{"/etc", "/var", "/var/lib", "/run"} {
 		var st unix.Stat_t
 		if unix.Lstat(path, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR || st.Mode&0022 != 0 || st.Uid != 0 {
 			return ErrIdentity
 		}
 	}
+	configTarget, err := routedDHCPServerConfigTargetV1(uid, gid)
+	if err != nil {
+		return err
+	}
+	defer configTarget.Close()
 	if unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, "") != nil {
 		return ErrUnavailable
 	}
 	// Same bounded scratch profile as the existing isolated DHCP owner; the
 	// persistent directory is a bind, never tmpfs or a configuration snapshot.
-	for _, path := range []string{"/run", "/var/lib", "/etc/kea"} {
+	for _, path := range []string{"/run", "/var/lib", fmt.Sprintf("/proc/self/fd/%d", configTarget.Fd())} {
 		if unix.Mount("tmpfs", path, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, fmt.Sprintf("mode=0750,gid=%d,size=4m,nr_inodes=128", gid)) != nil {
 			return ErrUnavailable
 		}
@@ -322,6 +327,48 @@ func routedDHCPServerMountsV1(o RoutedDHCPServerResourcesV1, uid, gid uint32) er
 		return ErrUnavailable
 	}
 	return routedDHCPServerBindV1(o.Configuration, routedDHCPServerConfigV1, true)
+}
+
+// The stock Debian package owns /etc/kea as _kea:_kea 0750. Its contents are
+// never inputs: replace this pinned mount target with private tmpfs. Opening
+// relative to protected /etc prevents a service-owned child from selecting a
+// different parent; NOFOLLOW rejects a substituted symlink.
+func routedDHCPServerConfigTargetV1(uid, gid uint32) (*os.File, error) {
+	fd, err := unix.Open("/etc", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrIdentity
+	}
+	parent := os.NewFile(uintptr(fd), "kea-config-parent")
+	defer parent.Close()
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) != nil || st.Uid != 0 || st.Mode&unix.S_IFMT != unix.S_IFDIR || st.Mode&0022 != 0 || !fenceNoACLV3(parent, true) {
+		return nil, ErrIdentity
+	}
+	return routedDHCPServerOpenConfigTargetV1(parent, uid, gid)
+}
+
+func routedDHCPServerOpenConfigTargetV1(parent *os.File, uid, gid uint32) (*os.File, error) {
+	if parent == nil || uid == 0 || gid == 0 || uid >= 1<<31 || gid >= 1<<31 {
+		return nil, ErrIdentity
+	}
+	fd, err := unix.Openat(int(parent.Fd()), "kea", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrIdentity
+	}
+	file := os.NewFile(uintptr(fd), "kea-config-mount-target")
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) != nil || !routedDHCPServerConfigTargetStatV1(st, uid, gid) || !fenceNoACLV3(file, true) {
+		_ = file.Close()
+		return nil, ErrIdentity
+	}
+	return file, nil
+}
+
+func routedDHCPServerConfigTargetStatV1(st unix.Stat_t, uid, gid uint32) bool {
+	if uid == 0 || gid == 0 || uid >= 1<<31 || gid >= 1<<31 || st.Mode&unix.S_IFMT != unix.S_IFDIR || st.Mode&07022 != 0 {
+		return false
+	}
+	return st.Uid == 0 || st.Uid == uid && st.Gid == gid && st.Mode&07777 == 0750
 }
 
 // Mount targets above are already private tmpfs. Open the new directory by FD

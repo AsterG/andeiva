@@ -62,3 +62,5 @@ y contratos compartidos permanecen intactos.
 Montar tmpfs privado en `/run` antes de crear este destino. El test conserva su FD de directorio antes de que el componente vuelva a superponer `/run`.
 
 En el fixture veth, los peers permanecen UP sólo para proporcionar el carrier requerido por Kea. Antes de la observación preparada, sus namespaces no tienen procesos, direcciones de endpoint ni clientes. Después se inicia únicamente el cliente revisado. Este aislamiento no constituye un gate RAW del producto.
+
+El destino stock `/etc/kea` puede ser `_kea:_kea` con modo exacto0750. Se abre desde `/etc` validado y propiedad root, sin symlinks, y se conserva mediante FD para superponer el tmpfs privado. Su contenido original nunca aporta configuración. Los demás padres siguen siendo root; se rechazan propietarios desconocidos, grupo stock distinto, escritura para grupo/otros y ACL.
