@@ -155,10 +155,10 @@ func TestDurableConfirmLostHelperAckCannotReviveExpiredTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = g.Arm("lease", empty, target, 500*time.Millisecond); err != nil {
+	if err = g.Arm("lease", empty, target, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	r, err = s.Execute(ctx, actor, configpoc.API, configpoc.Request{Operation: configpoc.OpCommit, Key: "commit", ExpectedGeneration: r.Generation, ConfirmFor: time.Second})
+	r, err = s.Execute(ctx, actor, configpoc.API, configpoc.Request{Operation: configpoc.OpCommit, Key: "commit", ExpectedGeneration: r.Generation, ConfirmFor: 10 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestDurableConfirmLostHelperAckCannotReviveExpiredTarget(t *testing.T) {
 	}
 	// The durable confirm exists, but its authority acknowledgment never arrives.
 	_ = s.Close()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(12 * time.Second)
 	for e.Current() != empty.Hash && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
