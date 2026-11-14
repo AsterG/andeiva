@@ -87,9 +87,7 @@ func (c *RoutedDHCPControllerV3) scheduleV4(selected bool) {
 			if ctx.Err() != nil {
 				return
 			}
-			call, stop := context.WithTimeout(ctx, 3*time.Second)
-			_ = c.Reconcile(call)
-			stop()
+			c.reconcileScheduledV4(ctx)
 			select {
 			case <-ctx.Done():
 				return
@@ -97,6 +95,21 @@ func (c *RoutedDHCPControllerV3) scheduleV4(selected bool) {
 			}
 		}
 	}()
+}
+
+func (c *RoutedDHCPControllerV3) reconcileScheduledV4(ctx context.Context) {
+	// Inspection owns the same lane. Skip a busy tick so lock contention
+	// cannot consume the reconciliation's existing deadline.
+	if !c.mu.TryLock() {
+		return
+	}
+	defer c.mu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
+	call, stop := context.WithTimeout(ctx, 3*time.Second)
+	defer stop()
+	_ = c.reconcileLocked(call)
 }
 
 func (c *RoutedDHCPControllerV3) closeSchedulerV4() {
@@ -133,6 +146,11 @@ func (c *RoutedDHCPControllerV3) Reconcile(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.reconcileLocked(ctx)
+}
+
+// Caller holds c.mu and supplies the original bounded operation context.
+func (c *RoutedDHCPControllerV3) reconcileLocked(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ErrUnavailable
 	}
