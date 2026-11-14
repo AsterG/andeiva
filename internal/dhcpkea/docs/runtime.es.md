@@ -42,7 +42,7 @@ real llena cancela y completa Wait/reap sin leer stdout bloqueado.
 
 Entrada nativa: `go test -c -o server-native.test ./internal/previewruntime`, test
 `TestNativeRoutedDHCPServerV1`; variable `ANDEIVA_DHCP_SERVER_NATIVE_V1=serve|corrupt`.
-Sólo Debian13 aislado, nunca WSL/CI. FD3/4/5 fijan NET/MNT/PID del host; `/run/andeiva-kea-fixture`
+Sólo Debian 13 aislado, nunca WSL/CI. FD3/4/5 fijan NET/MNT/PID del host; `/run/andeiva-kea-fixture`
 privado root0700 contiene `leases` de `_kea`0700. Cada ejecución usa montajes y proc
 privados dentro del cgroup agrupado fijo. LAN: `lan0`198.18.1.1/24, concesión única
 198.18.1.100, duración120, T1/T2 60/105, subnetID17, sin DNS/NTP.
@@ -66,3 +66,6 @@ En el fixture veth, los peers permanecen UP sólo para proporcionar el carrier r
 El destino stock `/etc/kea` puede ser `_kea:_kea` con modo exacto0750. Se abre desde `/etc` validado y propiedad root, sin symlinks, y se conserva mediante FD para superponer el tmpfs privado. Su contenido original nunca aporta configuración. Los demás padres siguen siendo root; se rechazan propietarios desconocidos, grupo stock distinto, escritura para grupo/otros y ACL.
 
 Serving recibe `KEA_LOCKFILE_DIR=/run/lock/kea`; LFC recibe `KEA_LOCKFILE_DIR=/run/kea`. Kea añade `logger_lockfile`. Estas rutas privadas fijas corresponden a cada perfil AppArmor stock: LFC no tiene permiso de bloqueo en la ruta de serving. No se acepta entorno del caller ni cambios del perfil host.
+
+
+Una evaluación separada en Debian 13 aislado completó dos ciclos BOUND/RENEW, reinicio sobre el mismo directorio de leases, rechazo de fila corrupta sin reescribir el original y 20 s sin concesión en una interfaz no configurada. Las invariantes de red/montajes del host se conservaron y se verificó la parada del administrador de servicios. El fixture completo consumió 0,594196 s de CPU y 28.086.272 bytes de memoria máxima; no es un benchmark sostenido del appliance. No acredita integración seleccionada, LFC periódico después de una hora, migración general de leases ni unidades permanentes.

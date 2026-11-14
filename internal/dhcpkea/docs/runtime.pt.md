@@ -42,7 +42,7 @@ pipe real cheio cancela e conclui Wait/reap sem ler stdout bloqueado.
 
 Entrada nativa: `go test -c -o server-native.test ./internal/previewruntime`, teste
 `TestNativeRoutedDHCPServerV1`; variável `ANDEIVA_DHCP_SERVER_NATIVE_V1=serve|corrupt`.
-Somente Debian13 isolado, nunca WSL/CI. FD3/4/5 fixam NET/MNT/PID do host; `/run/andeiva-kea-fixture`
+Somente Debian 13 isolado, nunca WSL/CI. FD3/4/5 fixam NET/MNT/PID do host; `/run/andeiva-kea-fixture`
 privado root0700 contém `leases` de `_kea`0700. Cada execução usa montagens e proc
 privados no cgroup agrupado fixo. LAN: `lan0`198.18.1.1/24, concessão única
 198.18.1.100, duração120, T1/T2 60/105, subnetID17, sem DNS/NTP.
@@ -66,3 +66,6 @@ No fixture veth, os peers permanecem UP apenas para fornecer o carrier exigido p
 O destino stock `/etc/kea` pode ser `_kea:_kea` com modo exato0750. É aberto a partir de `/etc` validado e pertencente a root, sem symlinks, e conservado por FD para sobrepor o tmpfs privado. Seu conteúdo original nunca fornece configuração. Os demais pais continuam pertencendo a root; proprietários desconhecidos, grupo stock diferente, escrita para grupo/outros e ACL são rejeitados.
 
 Serving recebe `KEA_LOCKFILE_DIR=/run/lock/kea`; LFC recebe `KEA_LOCKFILE_DIR=/run/kea`. Kea acrescenta `logger_lockfile`. Esses caminhos privados fixos correspondem a cada perfil AppArmor stock: LFC não tem permissão de bloqueio no caminho de serving. Não se aceita ambiente do caller nem alterações no perfil host.
+
+
+Uma avaliação separada em Debian 13 isolado concluiu dois ciclos BOUND/RENEW, reinicialização no mesmo diretório de leases, rejeição de linha corrompida sem reescrever o original e 20 s sem concessão em interface não configurada. As invariantes de rede/montagens do host foram preservadas e a parada pelo gerenciador de serviços foi verificada. O fixture completo consumiu 0,594196 s de CPU e 28.086.272 bytes de memória máxima; não é um benchmark sustentado do appliance. Não qualifica integração selecionada, LFC periódico após uma hora, migração geral de leases ou unidades permanentes.
