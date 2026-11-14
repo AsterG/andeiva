@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — configuration recovery test reliability
+
+- Give the lost-helper-ack recovery test a bounded confirmation window that remains valid under the full race suite load.
+
 ## Unreleased — LAN DHCP configuration editor
 
 - Edit validated LAN scopes, pools, reservations and client options through the shared configuration draft and transaction workflow.
