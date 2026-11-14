@@ -32,7 +32,7 @@ func VerifyObservation(data []byte, expected Artifact) (Observation, error) {
 	if len(data) == 0 || len(data) > MaxObservation || !nftengine.UniqueJSONFields(data) {
 		return Observation{}, ErrObservation
 	}
-	fresh, err := CompileWithNeighbors(expected.Revision.Config, expected.Neighbors)
+	fresh, err := CompileForNetwork(expected.Revision.Config, expected.Neighbors, expected.Network)
 	if err != nil || !equalJSON(fresh, expected) {
 		return Observation{}, ErrObservation
 	}
