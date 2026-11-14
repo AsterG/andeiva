@@ -17,7 +17,7 @@ import (
 
 const (
 	EngineVersion    = "2.6.3"
-	LeaseFile        = "/var/lib/andeiva/dhcp-server/leases4.csv"
+	LeaseFile        = "/var/lib/kea/kea-leases4.csv"
 	MaxArtifactBytes = 1 << 20
 )
 
