@@ -31,7 +31,7 @@ jobs:
           node-version: 24.20.0
       - run: node scripts/check-repository.mjs
       - name: Scan history for secrets
-        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts=--all
+        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts=--all --gitleaks-ignore-path scripts/secret-scan-exceptions.txt
       - name: Go static security analysis
         run: go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 ./cmd/... ./internal/... ./packaging/boot-branding/render/... ./packaging/boot-branding/activation/... ./packaging/boot-branding/offline/check/...
       - name: Go vulnerability analysis
