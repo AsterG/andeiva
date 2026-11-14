@@ -216,10 +216,6 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 		return err
 	}
 	defer func() { result = errors.Join(result, inherited.Close()) }()
-	// Same-boot orphan teardown requires the separately qualified drainage path.
-	if inherited.Recovery != nil {
-		return ErrUnavailable
-	}
 	marker, err := readOwned(routedCutoverPathV3, 0, 0, 0600, 4096)
 	if err != nil {
 		return err
@@ -277,6 +273,11 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 		return err
 	}
 	defer func() { result = errors.Join(result, record.Close()) }()
+	if inherited.Recovery != nil {
+		if err = retireInheritedRoutedScopeV3(ctx, c, area, slot, record, inherited.Recovery, ids); err != nil {
+			return err
+		}
+	}
 	if err = record.clearCompleted(ctx, slot); err != nil {
 		return err
 	}

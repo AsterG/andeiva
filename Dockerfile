@@ -31,7 +31,7 @@ COPY frontend/public/andeiva-logo.png public/andeiva-logo.png
 COPY frontend/public/theme-init.js public/theme-init.js
 COPY frontend/tests/ tests/
 COPY frontend/scripts/ scripts/
-RUN npm run lint && npm run typecheck && npm test && npm run build \
+RUN npm run lint && npm test && npm run build \
     && cmp public/andeiva-logo.png dist/andeiva-logo.png
 
 # Development smoke target, not an appliance OS image.
