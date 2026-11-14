@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — bounded DHCP socket observations
+
+- Add read-only Linux IPv4 UDP creation metadata capture with bounded, integrity-checked netlink dumps; policy integration remains separate.
+
 ## Unreleased — SSH revocation test synchronization
 
 - Verify revocation after command input starts without assuming an already-denied SSH channel remains writable.
