@@ -252,7 +252,7 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 	out.NetworkInventory = routedInventoryProviderV3(c.Metadata)
 	out.Authority = authority
 	if selector != nil {
-		out.DHCPJobs = &routedDHCPJobAssemblyV4{network: selector, listeners: listeners, target: c.Gateway, host: c.Host, client: c.dhcpJobs}
+		out.DHCPJobs = &routedDHCPJobAssemblyV4{network: selector, listeners: listeners, packetProfile: qualifiedRoutedDHCPPacketProfileV1(), target: c.Gateway, host: c.Host, client: c.dhcpJobs}
 	}
 	out.Compatibility, err = NewRoutedReadbackSessionV3(c.Metadata.RunID, c.Metadata.GatewayNamespace, authority)
 	if err != nil {

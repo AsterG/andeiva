@@ -29,9 +29,11 @@ type routedDHCPJobV4 struct {
 	Work      configpoc.RoutedWorkReferenceV1 `json:"work"`
 }
 type routedDHCPJobReplyV4 struct {
-	Job         routedDHCPJobV4              `json:"job"`
-	Unavailable bool                         `json:"unavailable"`
-	Binding     *RoutedDHCPDeferredBindingV4 `json:"binding,omitempty"`
+	Job                   routedDHCPJobV4                    `json:"job"`
+	Unavailable           bool                               `json:"unavailable"`
+	Binding               *RoutedDHCPDeferredBindingV4       `json:"binding,omitempty"`
+	ServiceCgroupVersion  *int                               `json:"service_cgroup_version,omitempty"`
+	ServiceCgroupIdentity *RoutedDHCPServiceCgroupIdentityV1 `json:"service_cgroup_identity,omitempty"`
 }
 type routedDHCPJobPeerV4 struct {
 	pid      int
@@ -86,7 +88,7 @@ func routedDHCPJobPairV4() (*net.UnixConn, *os.File, error) {
 }
 
 func routedDHCPJobSendV4(c *net.UnixConn, value any, files []*os.File) error {
-	if c == nil || len(files) > 3 {
+	if c == nil || len(files) > 4 {
 		return ErrIdentity
 	}
 	raw, err := json.Marshal(value)
@@ -151,7 +153,7 @@ func routedDHCPJobReceiveV4(c *net.UnixConn, peer routedDHCPJobPeerV4, out any) 
 			parseErr = ErrIdentity
 		}
 	}
-	if err != nil || parseErr != nil || !credentials || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n == 0 || n > routedDHCPJobFrameV4 || len(files) > 3 || routedPrivateDecodeV4(raw[:n], out) != nil {
+	if err != nil || parseErr != nil || !credentials || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n == 0 || n > routedDHCPJobFrameV4 || len(files) > 4 || routedPrivateDecodeV4(raw[:n], out) != nil {
 		return files, ErrIdentity
 	}
 	return files, nil
@@ -159,6 +161,7 @@ func routedDHCPJobReceiveV4(c *net.UnixConn, peer routedDHCPJobPeerV4, out any) 
 
 type routedDHCPJobOwnerV4 interface {
 	TakeReaderFiles() (RoutedDHCPDeferredFilesV4, RoutedDHCPDeferredBindingV4, error)
+	RetainedServicePin() (*os.File, RoutedDHCPServiceCgroupIdentityV1, error)
 	Activate(context.Context) error
 	Close() error
 	Done() <-chan struct{}
@@ -213,13 +216,24 @@ func (b *routedDHCPJobBrokerV4) dispatch(ctx context.Context, q routedDHCPJobV4)
 			_ = f.Close()
 			return reply, nil, errors.Join(ErrIdentity, owner.Close())
 		}
+		service, id, e := owner.RetainedServicePin()
+		if e != nil || service == nil || !routedDHCPServiceBootstrapValidV1(1, id) {
+			_ = f.Close()
+			if service != nil {
+				_ = service.Close()
+			}
+			return reply, nil, errors.Join(ErrIdentity, owner.Close())
+		}
 		after, e := b.preflight(ctx, q.Work)
 		if e != nil || after.Reference != source.Reference || after.Work != source.Work || after.Resolution != source.Resolution || after.Bundle.Composite.Hash != source.Bundle.Composite.Hash {
 			_ = f.Close()
+			_ = service.Close()
 			return reply, nil, errors.Join(ErrIdentity, owner.Close())
 		}
 		reply.Binding = &binding
-		return reply, []*os.File{f.Request, f.Reply, f.ProducerPIDFD}, nil
+		version := routedDHCPServiceCgroupVersionV1
+		reply.ServiceCgroupVersion, reply.ServiceCgroupIdentity = &version, &id
+		return reply, []*os.File{f.Request, f.Reply, f.ProducerPIDFD, service}, nil
 	case "activate":
 		if b.owner == nil || b.active || b.work != q.Work || b.desired != desired.Hash {
 			return reply, nil, ErrIdentity
@@ -334,13 +348,16 @@ func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work config
 	files, err := routedDHCPJobReceiveV4(c.conn, c.peer, &out)
 	want := 0
 	if op == "prepare" {
-		want = 3
+		want = 4
 	}
-	if err != nil || ctx.Err() != nil || out.Job != q || out.Unavailable || len(files) != want || (out.Binding != nil) != (op == "prepare") {
+	if err != nil || ctx.Err() != nil || out.Job != q || out.Unavailable || len(files) != want || (out.Binding != nil) != (op == "prepare") || (out.ServiceCgroupVersion != nil) != (op == "prepare") || (out.ServiceCgroupIdentity != nil) != (op == "prepare") {
 		return fail(files)
 	}
-	if op == "prepare" && (!routedDHCPDeferredBindingValidV4(*out.Binding) || adoptRoutedDHCPJobPipesV4(files, c.peer) != nil) {
-		return fail(files)
+	if op == "prepare" {
+		id, e := routedDHCPServiceDirectoryV1(files[3])
+		if !routedDHCPDeferredBindingValidV4(*out.Binding) || !routedDHCPServiceBootstrapValidV1(*out.ServiceCgroupVersion, *out.ServiceCgroupIdentity) || e != nil || id != *out.ServiceCgroupIdentity || adoptRoutedDHCPJobPipesV4(files[:3], c.peer) != nil {
+			return fail(files)
+		}
 	}
 	return out, files, nil
 }

@@ -34,7 +34,7 @@ func transferredJobPipesV4(t *testing.T) (*jobOwnerFixtureV4, []*os.File) {
 	client := &routedDHCPJobClientV4{conn: helper, metadata: m, peer: peer}
 	t.Cleanup(func() { _ = client.Close(); cancel(); <-done })
 	_, files, err := client.call(ctx, "prepare", work)
-	if err != nil || len(files) != 3 {
+	if err != nil || len(files) != 4 {
 		t.Fatal("SCM client prepare", err)
 	}
 	t.Cleanup(func() {
@@ -214,7 +214,13 @@ func TestRoutedDHCPJobsV4RejectsInvalidTransferredPipeWithoutLeak(t *testing.T) 
 			o := newJobOwnerFixtureV4(t)
 			m, work, _ := jobSourceFixtureV4(t, o.binding)
 			root, helper, peer := jobChannelFixtureV4(t)
-			files := []*os.File{o.files.Request, o.files.Reply, o.files.ProducerPIDFD}
+			service, id, e := o.RetainedServicePin()
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer service.Close()
+			version := 1
+			files := []*os.File{o.files.Request, o.files.Reply, o.files.ProducerPIDFD, service}
 			if kind == "type" {
 				f, err := os.CreateTemp(t.TempDir(), "not-a-pipe")
 				if err != nil {
@@ -249,7 +255,7 @@ func TestRoutedDHCPJobsV4RejectsInvalidTransferredPipeWithoutLeak(t *testing.T) 
 				if kind == "binding" {
 					binding.Version = 3
 				}
-				sent <- routedDHCPJobSendV4(root, routedDHCPJobReplyV4{Job: request, Binding: &binding}, files)
+				sent <- routedDHCPJobSendV4(root, routedDHCPJobReplyV4{Job: request, Binding: &binding, ServiceCgroupVersion: &version, ServiceCgroupIdentity: &id}, files)
 			}()
 			client := &routedDHCPJobClientV4{conn: helper, metadata: m, peer: peer}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
