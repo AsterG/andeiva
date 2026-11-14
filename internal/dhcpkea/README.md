@@ -83,14 +83,14 @@ One Linux/WSL development run: race 1.091 s; small compile 9,991 ns/op,
 4,593 B/op; dense two-scope compile 768,860 ns/op, 450,129 B/op. Three dense scopes
 produce 100,885 bytes from 49,321 input bytes; four exceed the input bound and
 are rejected. These are compiler measurements, not appliance/server benchmarks.
-No Docker/EKS runtime is introduced. Native packet/lifecycle/resource tests and
-independent review remain pending.
+No Docker/EKS runtime is introduced. Native packet/lifecycle/resource tests remain pending. The pure compiler was
+independently reviewed; that review does not qualify service execution.
 
 Lease caching options are omitted: Kea 2.6.3 requires explicit configuration to
 enable caching. Its parser rejects a configured zero threshold. A regression
 checks that neither `cache-threshold` nor `cache-max-age` is emitted. This default
-is not a lease durability guarantee; native parsing must be repeated after the
-initial syntax and semantic rejections. See the engine's
+is not a lease durability guarantee; the resulting fixture passed Kea 2.6.3 native parsing with the stock AppArmor
+profile retained. Parsing does not start or qualify a DHCP service. See the engine's
 [lease caching documentation](https://kea.readthedocs.io/en/kea-2.6.3/arm/dhcp4-srv.html#lease-caching),
 `BaseNetworkParser::parseCacheParams` and `AllocEngine::setLeaseReusable`.
 
