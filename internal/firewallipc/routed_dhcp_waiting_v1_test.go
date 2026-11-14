@@ -11,16 +11,22 @@ import (
 )
 
 func TestRoutedDHCPWaitingV1CodecRejectsOtherMeanings(t *testing.T) {
+	testRoutedDHCPPendingCodecV1(t, ErrRoutedDHCPWaitingV1)
+}
+func TestRoutedDHCPNoLeaseV1CodecRejectsOtherMeanings(t *testing.T) {
+	testRoutedDHCPPendingCodecV1(t, ErrRoutedDHCPNoLeaseV1)
+}
+func testRoutedDHCPPendingCodecV1(t *testing.T, pending error) {
 	for _, kind := range []string{"valid", "wrong-verb", "unknown-version", "grant-payload", "replay"} {
 		t.Run(kind, func(t *testing.T) {
 			q := RoutedRequestV3{RoutedProtocolV3, strings.Repeat("a", 32), 7, 22, "routed", "dhcp_begin", json.RawMessage(`{}`)}
 			if kind == "wrong-verb" {
 				q.Verb = "dhcp_current"
 			}
-			r := RoutedReplyV3{RoutedProtocolV3, q.Run, q.Sequence, q.Namespace, "routed", q.Verb, "ANDEIVA_ROUTED_DHCP_WAITING_V1", json.RawMessage(`{}`)}
+			r := RoutedReplyV3{RoutedProtocolV3, q.Run, q.Sequence, q.Namespace, "routed", q.Verb, pending.Error(), json.RawMessage(`{}`)}
 			switch kind {
 			case "unknown-version":
-				r.Error = "ANDEIVA_ROUTED_DHCP_WAITING_V2"
+				r.Error = strings.TrimSuffix(pending.Error(), "1") + "2"
 			case "grant-payload":
 				r.Payload = json.RawMessage(`{"epoch":"1"}`)
 			case "replay":
@@ -39,6 +45,12 @@ func TestRoutedDHCPWaitingV1CodecRejectsOtherMeanings(t *testing.T) {
 }
 
 func TestRoutedDHCPWaitingV1ClientPreservesOnlyQualifiedFlags(t *testing.T) {
+	testRoutedDHCPPendingClientV1(t, ErrRoutedDHCPWaitingV1)
+}
+func TestRoutedDHCPNoLeaseV1ClientPreservesOnlyQualifiedFlags(t *testing.T) {
+	testRoutedDHCPPendingClientV1(t, ErrRoutedDHCPNoLeaseV1)
+}
+func testRoutedDHCPPendingClientV1(t *testing.T, pending error) {
 	for _, kind := range []string{"qualified", "unqualified", "recovery", "cancel"} {
 		t.Run(kind, func(t *testing.T) {
 			a, b := net.Pipe()
@@ -65,7 +77,7 @@ func TestRoutedDHCPWaitingV1ClientPreservesOnlyQualifiedFlags(t *testing.T) {
 				if err != nil {
 					return
 				}
-				code := "ANDEIVA_ROUTED_DHCP_WAITING_V1"
+				code := pending.Error()
 				if kind == "recovery" {
 					code = "ANDEIVA_CONFIG_RECOVERY_REQUIRED"
 				}
@@ -91,10 +103,10 @@ func TestRoutedDHCPWaitingV1ClientPreservesOnlyQualifiedFlags(t *testing.T) {
 				t.Fatal("wrong integrity transition", kind, err)
 			}
 			if kind == "qualified" || kind == "unqualified" {
-				if err != ErrRoutedDHCPWaitingV1 {
+				if err != pending {
 					t.Fatal("missing typed waiting", err)
 				}
-			} else if err == ErrRoutedDHCPWaitingV1 {
+			} else if err == pending {
 				t.Fatal("failure became waiting")
 			}
 			<-done

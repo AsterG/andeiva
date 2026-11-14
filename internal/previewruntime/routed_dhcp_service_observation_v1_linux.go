@@ -125,22 +125,33 @@ func (s *routedDHCPServiceObservationV1) validate(ctx context.Context, live bool
 	return nil
 }
 
-func (s *routedDHCPServiceObservationV1) fact(ctx context.Context) (RoutedDHCPOwnerFactV3, bool, error) {
+type routedDHCPServicePhaseV1 struct {
+	initialWaiting bool
+	noLeaseEpoch   uint64
+}
+
+func (p routedDHCPServicePhaseV1) withoutLease() bool { return p.initialWaiting || p.noLeaseEpoch > 0 }
+
+func (s *routedDHCPServiceObservationV1) fact(ctx context.Context) (RoutedDHCPOwnerFactV3, routedDHCPServicePhaseV1, error) {
+	empty := routedDHCPServicePhaseV1{}
 	if s == nil || !s.activated || s.validate(ctx, true) != nil {
-		return RoutedDHCPOwnerFactV3{}, false, ErrUnavailable
+		return RoutedDHCPOwnerFactV3{}, empty, ErrUnavailable
 	}
 	f, err := s.current(ctx)
-	if err == errRoutedDHCPInitialWaitingV1 && ctx.Err() == nil && s.validate(ctx, true) == nil {
-		return RoutedDHCPOwnerFactV3{}, true, nil
+	if err == errRoutedDHCPInitialWaitingV1 && f == (RoutedDHCPOwnerFactV3{}) && ctx.Err() == nil && s.validate(ctx, true) == nil {
+		return RoutedDHCPOwnerFactV3{}, routedDHCPServicePhaseV1{initialWaiting: true}, nil
+	}
+	if epoch, noLease := routedDHCPNoLeaseEpochV1(err); noLease && f == (RoutedDHCPOwnerFactV3{}) && ctx.Err() == nil && s.validate(ctx, true) == nil {
+		return RoutedDHCPOwnerFactV3{}, routedDHCPServicePhaseV1{noLeaseEpoch: epoch}, nil
 	}
 	if err != nil || s.validate(ctx, true) != nil {
-		return RoutedDHCPOwnerFactV3{}, false, ErrUnavailable
+		return RoutedDHCPOwnerFactV3{}, empty, ErrUnavailable
 	}
 	now, e := routedDHCPOwnerBootNowV3()
 	if e != nil || !validRoutedDHCPServiceFactV1(f, s.binding, s.wan, now) || ctx.Err() != nil {
-		return RoutedDHCPOwnerFactV3{}, false, ErrUnavailable
+		return RoutedDHCPOwnerFactV3{}, empty, ErrUnavailable
 	}
-	return f, false, nil
+	return f, empty, nil
 }
 
 func validRoutedDHCPServiceFactV1(f RoutedDHCPOwnerFactV3, b RoutedDHCPDeferredBindingV4, wan networkplan.Binding, now int64) bool {

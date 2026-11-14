@@ -367,7 +367,7 @@ func nativeDHCPJobsCloseTraceV4(logs *nativeLogV3, closeRuntime func() error) (s
 	}
 	knownClass := func(v string) bool {
 		switch v {
-		case "ok", "deadline", "cancelled", "channel", "initial_waiting_v1", "recovery", "conflict", "storage", "lease_unavailable", "observation", "uncertain", "scope", "other":
+		case "ok", "deadline", "cancelled", "channel", "initial_waiting_v1", "no_lease_v1", "recovery", "conflict", "storage", "lease_unavailable", "observation", "uncertain", "scope", "other":
 			return true
 		}
 		return false
@@ -731,6 +731,8 @@ func (d *nativeDHCPJobsWaitTraceV4) emit(now time.Time, sample nativeDHCPJobsWai
 		sample.Error = "channel"
 	case errors.Is(err, firewallipc.ErrRoutedDHCPWaitingV1):
 		sample.Error = "initial_waiting_v1"
+	case errors.Is(err, firewallipc.ErrRoutedDHCPNoLeaseV1):
+		sample.Error = "no_lease_v1"
 	case errors.Is(err, configpoc.ErrConflict), errors.Is(err, recoveryreserve.ErrConflict):
 		sample.Error = "conflict"
 	case errors.Is(err, configpoc.ErrStorage), errors.Is(err, recoveryreserve.ErrUnavailable):
@@ -968,6 +970,7 @@ func TestRoutedDHCPJobsV4NativeWaitTraceFailureClasses(t *testing.T) {
 		code string
 	}{
 		{firewallipc.ErrRoutedDHCPWaitingV1, "initial_waiting_v1"},
+		{firewallipc.ErrRoutedDHCPNoLeaseV1, "no_lease_v1"},
 		{firewallipc.ErrChannel, "channel"},
 		{configpoc.ErrConflict, "conflict"},
 		{configpoc.ErrStorage, "storage"},
