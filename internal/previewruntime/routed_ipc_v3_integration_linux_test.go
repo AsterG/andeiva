@@ -357,9 +357,10 @@ func (f *routedIPCFixtureV3) run(request configpoc.OperationRequestV2) configpoc
 	f.t.Helper()
 	before, beforeErr := f.service.Status(f.binding)
 	f.t.Log("before operation", request.Kind, "pending", before.Confirmation != nil, "recovery", before.RecoveryRequired, "status error", beforeErr)
-	if f.integrity != nil && request.Kind != configpoc.OpConfirm {
-		// Explicit trusted maintenance between quiescent workflow steps. Periodic
-		// scheduling/threshold behavior has its own tests; no scan runs in a lease.
+	if f.integrity != nil && request.Kind != configpoc.OpConfirm && !f.service.RuntimeIntegrityReadyV1() {
+		// Refresh only when the real publication gate requires qualification.
+		// Open/reopen already performs full G1; threshold behavior has separate
+		// tests, and no inspection runs during an existing confirmation lease.
 		started := time.Now()
 		if err := f.service.InspectRuntimeV1(context.Background()); err != nil {
 			f.t.Fatal("quiescent full inspection", request.Kind, time.Since(started), err)
