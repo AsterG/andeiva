@@ -225,6 +225,12 @@ func dhcpRuntimeFixtureV3(t *testing.T) (*RoutedDHCPRuntimeV3, *dhcpRuntimeKerne
 		return k, nil
 	}
 	r.fenced = func() bool { return false }
+	r.baseline = func(context.Context) error {
+		if k.target || k.forward || k.gate {
+			return configpoc.ErrRecovery
+		}
+		return nil
+	}
 	r.openLease = func(context.Context) (routedDHCPLeaseV3, error) { return dhcpRuntimeLeaseV3{k}, nil }
 	r.recoverLease = func(_ context.Context, s networkexecutor.LeaseSelectedSnapshotV3) (routedDHCPLeaseV3, error) {
 		k.events = append(k.events, "recover-lease")
