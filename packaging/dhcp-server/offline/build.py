@@ -23,6 +23,12 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def manifest_paths(root):
+    # The verifier compares serialized POSIX names, not pathlib components.
+    return sorted((path for path in root.rglob('*') if path.is_file()),
+                  key=lambda path: path.relative_to(root).as_posix())
+
+
 def checked(path, expected, size=None):
     assert path.is_file() and not path.is_symlink(), str(path)
     assert path.stat().st_size <= 256 * 1024 * 1024
@@ -181,7 +187,7 @@ def main():
                     else Path(subprocess.check_output(['go', 'env', 'GOMODCACHE'], env=env, text=True).strip()) / 'golang.org/x/sys@v0.49.0/LICENSE',
                     out / 'licenses/X-SYS-LICENSE')
     entries = []
-    for path in sorted(out.rglob('*')):
+    for path in manifest_paths(out):
         if path.is_file():
             path.chmod(0o755 if path == out / 'bin/check' else 0o644)
             entries.append(digest(path) + '  ' + path.relative_to(out).as_posix() + '\n')

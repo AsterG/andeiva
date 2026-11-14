@@ -33,5 +33,24 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(result[0]['Checksums-Sha256'], '\naaa 12 a.tar')
 
 
+class ManifestOrderTests(unittest.TestCase):
+    def test_shared_file_and_directory_prefix_uses_wire_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'provenance/binary').mkdir(parents=True)
+            (root / 'provenance/binary/InRelease').write_text('signed metadata')
+            (root / 'provenance.json').write_text('{}')
+            (root / 'NOTICE').write_text('notice')
+            names = [path.relative_to(root).as_posix() for path in builder.manifest_paths(root)]
+            self.assertEqual(names, ['NOTICE', 'provenance.json', 'provenance/binary/InRelease'])
+
+    def test_empty_directories_are_not_manifest_records(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'empty').mkdir()
+            self.assertEqual(builder.manifest_paths(root), [])
+
+
+
 if __name__ == '__main__':
     unittest.main()
