@@ -931,7 +931,9 @@ func (e *Engine) MatchOwned(ctx context.Context, reference string) error {
 	if e == nil || ctx == nil {
 		return ErrState
 	}
-	e.mu.Lock()
+	if err := e.lockObservation(ctx); err != nil {
+		return err
+	}
 	defer e.mu.Unlock()
 	if e.fenced || !e.selected || ctx.Err() != nil {
 		return ErrState
@@ -966,7 +968,14 @@ func (e *Engine) Current() string {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	owned, err := e.observeOwnedLocked(ctx)
-	if err != nil || !e.selected {
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	return e.currentForOwnedLocked(owned)
+}
+
+func (e *Engine) currentForOwnedLocked(owned string) string {
+	if !e.selected {
 		return ""
 	}
 	if owned == e.plan.TargetOwned {
@@ -976,6 +985,43 @@ func (e *Engine) Current() string {
 		return e.previous.Composite.Hash
 	}
 	return ""
+}
+
+// ObserveCurrentOwned derives both identities from one complete fresh physical
+// observation under the same selected-plan lock. Nothing is cached for reuse.
+func (e *Engine) ObserveCurrentOwned(ctx context.Context) (string, string, error) {
+	if e == nil || ctx == nil {
+		return "", "", ErrState
+	}
+	if err := e.lockObservation(ctx); err != nil {
+		return "", "", err
+	}
+	defer e.mu.Unlock()
+	owned, err := e.observeOwnedLocked(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if ctx.Err() != nil {
+		return "", "", ctx.Err()
+	}
+	return e.currentForOwnedLocked(owned), owned, nil
+}
+
+func (e *Engine) lockObservation(ctx context.Context) error {
+	for !e.mu.TryLock() {
+		timer := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if ctx.Err() != nil {
+		e.mu.Unlock()
+		return ctx.Err()
+	}
+	return nil
 }
 
 func (e *Engine) RestoreOwned(ctx context.Context, digest string) error {
