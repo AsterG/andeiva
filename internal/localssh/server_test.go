@@ -534,7 +534,7 @@ func TestBorrowedSessionFailures(t *testing.T) {
 	}
 }
 
-func TestRevocationAfterInputWait(t *testing.T) {
+func TestRevokedSSHSessionCannotReachBackend(t *testing.T) {
 	h := newHarness(t, "admin", nil, nil)
 	client := h.client(t)
 	session, err := client.NewSession()
@@ -554,14 +554,67 @@ func TestRevocationAfterInputWait(t *testing.T) {
 	if err = h.auth.Revoke("operator"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = io.WriteString(input, `{"generation":7,"target":"`+strings.Repeat("a", 64)+`","lease":"proof"}`); err != nil {
+	if _, err = io.WriteString(input, `{"generation":7,"target":"`+strings.Repeat("a", 64)+`","lease":"proof"}`); err != nil && !errors.Is(err, io.EOF) {
 		t.Fatal(err)
 	}
-	if err = input.Close(); err != nil {
+	if err = input.Close(); err != nil && !errors.Is(err, io.EOF) {
 		t.Fatal(err)
 	}
 	if err = session.Wait(); err == nil || h.backend.count() != 0 {
 		t.Fatalf("revoked session invoked backend: %s %v", output.Bytes(), err)
+	}
+}
+
+// Signal the actual input read after the first authorization has succeeded.
+type revocationInputReader struct {
+	io.Reader
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (r *revocationInputReader) Read(p []byte) (int, error) {
+	r.once.Do(func() { close(r.entered) })
+	return r.Reader.Read(p)
+}
+
+func TestRevocationAfterInputWait(t *testing.T) {
+	h := newHarness(t, "admin", nil, nil)
+	_, token, err := h.auth.Login("operator", h.credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, writer := io.Pipe()
+	defer func() { _ = reader.Close(); _ = writer.Close() }()
+	entered := make(chan struct{})
+	done := make(chan error, 1)
+	caller := localadmin.Context{Principal: configpoc.Principal{ID: "operator", Role: configpoc.RoleAdmin}}
+	go func() {
+		_, err := h.server.dispatch(context.Background(), &revocationInputReader{Reader: reader, entered: entered}, caller, token, "proof")
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatalf("dispatch ended before input read: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("dispatch did not enter input read")
+	}
+	if err := h.auth.Revoke("operator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(writer, `{"generation":7,"target":"`+strings.Repeat("a", 64)+`","lease":"proof"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, adminauth.ErrDenied) || h.backend.count() != 0 {
+			t.Fatalf("revocation after input read was not enforced: calls=%d error=%v", h.backend.count(), err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dispatch did not finish after input close")
 	}
 }
 
