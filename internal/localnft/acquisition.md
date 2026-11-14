@@ -2,6 +2,8 @@
 
 Development implementation under ADR-063; integrated renewal qualification is pending.
 
+Readback accepts equivalent numeric IP-family representations. The IPv4 guard remains mandatory for this UDP-only rule: transport ports do not imply an IP family. Only a typed IP payload can make the corresponding family guard redundant.
+
 The routed engine derives one control rule from the exact canonical selected network when its WAN uses DHCP: IPv4 packets arriving on that WAN, UDP source port 67 and destination port 68. It is part of the owned `andeiva_local` INPUT table and its complete readback. Static WAN and absent routed network have no acquisition rule. The input chain retains its drop policy; other interfaces, address families, protocols and ports receive no permission from this rule.
 
 Acquisition may recover without an existing lease. This rule therefore has no connection-tracking, address or lease-expiry predicate. The maintained client validates DHCP transactions; a DHCP router is not presumed to be the DHCP server. The rule grants neither administrative access nor forwarding. Selected lease/R2 identity, epoch, original deadline and forwarding recovery are unchanged. Existing service provenance, socket inventory and process-drain checks still apply.

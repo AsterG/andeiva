@@ -2,6 +2,8 @@
 
 Implementação de desenvolvimento sob ADR-063; a validação integrada da renovação está pendente.
 
+A leitura aceita representações numéricas equivalentes da família IP. Esta regra baseada em UDP exige manter IPv4: portas não implicam uma família IP. Somente um payload IP tipado permite omitir a condição de família redundante correspondente.
+
 O motor roteado deriva uma regra da rede selecionada canônica quando sua WAN usa DHCP: IPv4 recebido nessa WAN, UDP da porta 67 para a porta 68. A regra integra a tabela INPUT própria `andeiva_local` e sua leitura completa. WAN estática e rede roteada ausente não possuem essa regra. A política INPUT continua drop; outras interfaces, famílias, protocolos e portas não recebem autorização dessa regra.
 
 A aquisição pode recuperar-se sem concessão vigente. Portanto, não exige estado conntrack, endereço IP nem prazo de concessão. O cliente mantido valida as transações DHCP; o roteador anunciado não é presumido como servidor DHCP. Não concede acesso administrativo nem forwarding. Identidade, época, prazo original e recuperação da concessão/R2 permanecem, assim como procedência do serviço, inventário de sockets e drenagem de processos.

@@ -45,10 +45,10 @@ func TestAcquisitionSelectedWANRuleAndCompleteReadback(t *testing.T) {
 	if _, err = VerifyObservation(observed(t, objects), a); err != nil {
 		t.Fatal(err)
 	}
-	for name, replacement := range map[string]any{"lan": "lan0", "ipv6": "ipv6", "tcp": "tcp", "source_port": 66, "destination_port": 69} {
+	for name, replacement := range map[string]any{"lan": "lan0", "ipv6": "ipv6", "ipv6_numeric": 10, "unknown_family": 0, "tcp": "tcp", "source_port": 66, "destination_port": 69} {
 		t.Run(name, func(t *testing.T) {
 			x := listing(t, a)
-			i := map[string]int{"lan": 1, "ipv6": 0, "tcp": 2, "source_port": 3, "destination_port": 4}[name]
+			i := map[string]int{"lan": 1, "ipv6": 0, "ipv6_numeric": 0, "unknown_family": 0, "tcp": 2, "source_port": 3, "destination_port": 4}[name]
 			x[3]["rule"].(object)["expr"].([]any)[i].(map[string]any)["match"].(map[string]any)["right"] = replacement
 			if _, e := VerifyObservation(observed(t, x), a); e == nil {
 				t.Fatal("foreign admission accepted")
@@ -112,5 +112,36 @@ func TestAcquisitionStaticAbsentAndUntrustedRevision(t *testing.T) {
 	copy.Network.Hash = old + "00"
 	if _, err = VerifyObservation(observed(t, listing(t, a)), copy); err == nil {
 		t.Fatal("tampered expected network accepted")
+	}
+}
+
+func TestAcquisitionNumericFamilyReadback(t *testing.T) {
+	c, n := acquisitionFixture(t)
+	a, err := CompileForNetwork(c, nil, &n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects := listing(t, a)
+	expr := objects[3]["rule"].(object)["expr"].([]any)
+	// NFPROTO_IPV4=2 in numeric nft output; the UDP payload permits nft to
+	// remove the redundant l4proto guard, but does not imply an IP family.
+	expr[0].(object)["match"].(object)["right"] = 2
+	objects[3]["rule"].(object)["expr"] = append(expr[:2], expr[3:]...)
+	if _, err = VerifyObservation(observed(t, objects), a); err != nil {
+		t.Fatal("numeric IPv4 readback rejected", err)
+	}
+}
+
+func TestAcquisitionCannotOmitFamilyGuard(t *testing.T) {
+	c, n := acquisitionFixture(t)
+	a, err := CompileForNetwork(c, nil, &n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects := listing(t, a)
+	expr := objects[3]["rule"].(object)["expr"].([]any)
+	objects[3]["rule"].(object)["expr"] = expr[1:]
+	if _, err = VerifyObservation(observed(t, objects), a); err == nil {
+		t.Fatal("UDP alone does not imply IPv4; missing family admitted IPv6")
 	}
 }
