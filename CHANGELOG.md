@@ -3,6 +3,9 @@
 ## Unreleased — DHCP acquisition service lifetime
 
 - Launch the DHCP producer in an exclusive retained cgroup before exec, validate its bootstrap identity and distinguish process drainage from socket cleanup.
+## Unreleased — bounded DHCP socket observations
+
+- Add read-only Linux IPv4 UDP creation metadata capture with bounded, integrity-checked netlink dumps; policy integration remains separate.
 
 ## Unreleased — SSH revocation test synchronization
 
