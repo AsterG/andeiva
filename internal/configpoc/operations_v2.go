@@ -192,6 +192,9 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 	if err != nil || len(data) > 8192 {
 		return v2Operation{}, errV2Invalid
 	}
+	if configHasDHCPServerV1(request.Config) && !s.dhcpServerSupported {
+		return v2Operation{}, ErrDenied
+	}
 	if err := s.reserveBeforeAdmissionV2(); err != nil {
 		return v2Operation{}, err
 	}
@@ -258,6 +261,9 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 	op := v2Operation{ID: id, Namespace: namespace, Subject: subject, Lineage: s.state.Lineage, Domain: ns.Domain, Sequence: s.state.HighWater + 1, Expected: expected, Request: clone(request), State: "accepted", Accepted: now.UTC(), ExecuteBefore: deadline}
 	op.Fingerprint = v2OperationFingerprint(op)
 	st := clone(s.state)
+	if configHasDHCPServerV1(request.Config) {
+		addFeatureV2(&st, v1RoutedDHCPServerFeature)
+	}
 	st.HighWater++
 	st.Clock = now.UTC()
 	st.Namespaces[i].Open = append(st.Namespaces[i].Open, id)
@@ -289,6 +295,13 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 }
 
 func (s *v2Store) putOperation(st *v2State, op v2Operation) error {
+	if configHasDHCPServerV1(op.Request.Config) {
+		if !s.dhcpServerSupported {
+			return ErrDenied
+		}
+		st.RequiredFeatures = append([]string(nil), st.RequiredFeatures...)
+		addFeatureV2(st, v1RoutedDHCPServerFeature)
+	}
 	hash, err := s.object(op)
 	if err != nil {
 		return err
@@ -352,6 +365,9 @@ func (s *v2Store) lookupRetained(subject, id string) (v2Operation, error) {
 }
 
 func (s *v2Store) validOperation(op v2Operation) bool {
+	if configHasDHCPServerV1(op.Request.Config) && !hasFeatureV2(s.state, v1RoutedDHCPServerFeature) {
+		return false
+	}
 	if op.Sequence == 0 || op.Sequence > s.state.HighWater || op.Lineage != s.state.Lineage || op.Expected == 0 || !v2RequestValid(op.Domain, op.Request) || op.Fingerprint != v2OperationFingerprint(op) || !op.ExecuteBefore.After(op.Accepted) || op.ExecuteBefore.Sub(op.Accepted) > 900*time.Second {
 		return false
 	}
