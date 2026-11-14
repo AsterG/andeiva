@@ -31,15 +31,44 @@ Only an exact matching completed receipt and empty manager store permit clearing
 the manifest. No step treats pathname absence or FD release as synchronous RCU
 namespace destruction. Failure leaves evidence and prevents a false receipt.
 
-**Crash recovery is still blocked.** Inherited recovery anchors are validated but
-rejected before new creation. No `ENODEV`, missing path, replacement cgroup or
-manifest alone authorizes orphan cleanup. The separately observed native old
-cgroup events behavior has not been promoted to cleanup authority. Retained FDs
-provide no OS-reboot, suspend or power-loss guarantee.
+The experimental same-boot consumer now binds inherited anchors to exact CURRENT
+selected work through the private capless preflight reader. Root holds the
+existing `checkpoint.lock` throughout. Full G1/R2 chooses DHCP, Boot, Pending or
+Active work; historical matches, corruption, unsupported ordinary intents and
+missing selected scope are refused. No initial scope is fabricated before L2.
+
+The live-cgroup path requires a nondelegated invocation, no children and either
+zero members in a distinct old group or Root alone in a reused group. The new
+deactivation path requires ENODEV with zero bytes on the authenticated original
+events FD, distinct old/current cgroup inodes on the same device, and distinct
+actual invocations. Exact selected work under the original lock, all seven
+anchors, current BootID/host namespace, current nondelegated unit and Root-only
+drainage are revalidated before success. ENOENT, partial reads, changed identity
+or any failed proof still refuse. Independent review and native retirement
+qualification are pending; the prior native attempt stopped at the former
+ENODEV rejection with seven FDs retained. No OS-reboot, suspend or power-loss
+recovery is added here.
+
+After selected proof and drainage, fixed commands close IPv4/IPv6 forwarding,
+verify it, and remove only recognized private MACVLAN children in the retained
+nonhost namespace. The selected tuple is rechecked before detach and before
+releasing the store. A dedicated locked thread enters the retained private mount
+namespace, verifies the exact gateway pin, detaches it, checks the original
+underlay and unlinks that file; its filesystem context never returns to Go's
+thread pool. Runtime cleanup accepts only exact metadata, the anchored netns
+directory, empty api directory and the two typed IPC socket names. Root uses its
+existing CAP_CHOWN only on the proven IPC directory after drainage. Unknown or
+changed entries block cleanup; no recursive delete or additional capability is
+introduced. Store removal, local-pin closure and another lock check precede the
+retirement receipt. That receipt does not claim address rollback or lease renewal.
+
+A partial detach/chown/removal can leave a state requiring operator inspection;
+unknown ownership and absent anchors are not silently treated as idempotent
+success. Same-boot crash retirement is not yet natively qualified.
 
 Focused tests use explicit manager doubles and real Unix descriptor transfers
 for barriers; they do not qualify native systemd storage or privileged teardown.
-Native store/normal-close/partial-failure/SIGKILL qualification and resource
+Native normal-close/partial-failure/SIGKILL qualification and resource
 measurements remain pending. No host or appliance was activated.
 
 ```sh
@@ -54,7 +83,7 @@ bash packaging/preview/tests/api-lifetime-unit-graph.sh
 [notification barriers and FDPOLL](https://www.freedesktop.org/software/systemd/man/257/sd_notify.html),
 [manager readback](https://github.com/systemd/systemd/blob/v257/src/analyze/analyze-fdstore.c).
 
-## Native store qualification (opt-in, not yet executed)
+## Native store qualification (opt-in)
 
 `TestRoutedScopeRecoveryV3NativeStore` must run directly as MainPID of a transient
 `andeiva-preview-grouped.service` on an isolated Debian 13 client where the
@@ -90,4 +119,8 @@ systemd-run --unit=andeiva-preview-grouped.service --wait --pipe \
   -test.run=^TestRoutedScopeRecoveryV3NativeStore$ -test.v -test.timeout=30s
 ```
 
-Creation-time capture now also verifies the system manager reports this Root process as MainPID, the fixed cgroup and Delegate=no. The manifest records its InvocationID; delegated or group/other-writable cgroup controls are refused. The old events parser distinguishes live populated state from ENODEV on the exact original FD, but neither observation is wired to teardown authority. Crash retirement still requires an authenticated full G1/R2 reader and the existing writer publication lock; no current selected proof is manufactured from the manifest.
+Creation-time capture now also verifies the system manager reports this Root process as MainPID, the fixed cgroup and Delegate=no. The manifest records its InvocationID; delegated or group/other-writable cgroup controls are refused.
+
+The preceding seven-anchor Store/Drop fixture passed on Debian 13 in 0.11s, with
+external host invariants unchanged. CPU/RAM figures were unavailable. This
+qualifies neither the new crash-retirement consumer nor its partial-failure paths.

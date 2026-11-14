@@ -189,7 +189,6 @@ jobs:
       - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
   design-system:
-    needs: source
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -224,7 +223,6 @@ jobs:
           retention-days: 7
 
   linux-build:
-    needs: source
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
@@ -288,7 +286,6 @@ jobs:
           retention-days: 7
 
   containers:
-    needs: source
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

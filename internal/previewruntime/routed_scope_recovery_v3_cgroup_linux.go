@@ -27,7 +27,7 @@ func parseScopeRecoveryUnitV3(raw []byte, self int) (scopeRecoveryUnitV3, error)
 	if self <= 1 || len(raw) == 0 || len(raw) > 4096 {
 		return out, ErrIdentity
 	}
-	expected := map[string]string{"MainPID": strconv.Itoa(self), "ControlGroup": routedSupervisorCgroupV3, "Delegate": "no"}
+	expected := map[string]string{"MainPID": strconv.Itoa(self), "ControlGroup": routedSupervisorCgroupV3, "Delegate": "no", "PrivateMounts": "yes"}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n") {
 		k, v, ok := strings.Cut(line, "=")
@@ -47,7 +47,7 @@ func parseScopeRecoveryUnitV3(raw []byte, self int) (scopeRecoveryUnitV3, error)
 			return out, ErrIdentity
 		}
 	}
-	if len(seen) != 4 {
+	if len(seen) != 5 {
 		return out, ErrIdentity
 	}
 	out.mainPID = self
@@ -59,8 +59,10 @@ func readScopeRecoveryUnitV3(ctx context.Context) (scopeRecoveryUnitV3, error) {
 	}
 	call, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(call, "/usr/bin/systemctl", "--no-pager", "show", "--property=MainPID", "--property=ControlGroup", "--property=Delegate", "--property=InvocationID", "andeiva-preview-grouped.service")
-	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C", "SYSTEMD_COLORS=0"}
+	cmd := exec.CommandContext(call, "/usr/bin/systemctl", "--no-pager", "show", "--property=MainPID", "--property=ControlGroup", "--property=Delegate", "--property=PrivateMounts", "--property=InvocationID", "andeiva-preview-grouped.service")
+	// This fixed read-only query targets the live manager even in a private
+	// RootDirectory. Its reply must still match this process and invocation.
+	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C", "SYSTEMD_COLORS=0", "SYSTEMD_OFFLINE=0"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	cmd.WaitDelay = 200 * time.Millisecond
 	var output scopeRecoveryOutputV3

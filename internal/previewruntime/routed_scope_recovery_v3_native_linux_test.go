@@ -30,7 +30,7 @@ func scopeStoreNativeUnitV3(ctx context.Context) error {
 	call, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(call, "/usr/bin/systemctl", "--no-pager", "show", "--property=MainPID", "--property=ControlGroup", "--property=NotifyAccess", "--property=FileDescriptorStoreMax", "--property=FileDescriptorStorePreserve", "--property=PrivateMounts", "--property=KillMode", "--property=Transient", "--property=InvocationID", "andeiva-preview-grouped.service")
-	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C", "SYSTEMD_COLORS=0"}
+	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C", "SYSTEMD_COLORS=0", "SYSTEMD_OFFLINE=0"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	cmd.WaitDelay = 200 * time.Millisecond
 	var output scopeRecoveryOutputV3
