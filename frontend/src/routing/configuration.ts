@@ -1,6 +1,8 @@
 import { ApiError, configurationRequest } from '../firewall/api.js';
 import type { PortRange, Rule } from '../firewall/model.js';
 import { canonicalIPv4 } from '../firewall/model.js';
+import { validateDHCP } from './dhcp.js';
+import type { DHCPConfig } from './dhcp.js';
 import { interfaceAddress } from './networkPlan.js';
 
 export type NetworkInterfacePlan = {
@@ -18,11 +20,11 @@ export type RoutedRule = {
   protocol: 'tcp' | 'udp'; source_ports: PortRange; destination_ports: PortRange;
 };
 export type RoutedPolicy = {
-  schema_version: 1; lab_only: true; require_identification: false; require_inspection: false;
+  lab_only: true; require_identification: false; require_inspection: false;
   network: { hash: string; config: NetworkPlan }; rules: RoutedRule[]; nat: { id: string; path: RoutedPath; source: string }[];
-};
+} & ({ schema_version: 1; dhcp_server?: never } | { schema_version: 2; dhcp_server: DHCPConfig });
 export type RoutedConfig = { schema_version: 6; default_action: 'deny'; rules: []; routed: RoutedPolicy };
-type WireRoutedConfig = Omit<RoutedConfig, 'routed'> & { routed: Omit<RoutedPolicy, 'rules' | 'nat'> & { rules: RoutedRule[] | null; nat: RoutedPolicy['nat'] | null } };
+type WireRoutedConfig = Omit<RoutedConfig, 'routed'> & { routed: Omit<RoutedPolicy, 'rules' | 'nat' | 'schema_version' | 'dhcp_server'> & ({ schema_version: 1; dhcp_server?: never } | { schema_version: 2; dhcp_server: DHCPConfig }) & { rules: RoutedRule[] | null; nat: RoutedPolicy['nat'] | null } };
 export type RetainedConfig = { schema_version: 4; default_action: 'deny'; rules: Rule[] };
 type Revision = { hash: string; config: WireRoutedConfig | RetainedConfig };
 type Composite = { hash: string; config: { schema_version: 7; domains: { firewall: { config_schema: number; revision: string }; local_services: { config_schema: 3; revision: string }; network: { config_schema: 1; revision: string } | null } } };
@@ -92,8 +94,12 @@ function revision(value: unknown): Revision {
   if (!hash(entry.hash) || config.schema_version !== 4 && config.schema_version !== 6 || config.default_action !== 'deny' || !Array.isArray(config.rules) || config.rules.length > 128) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
   if (config.schema_version === 6) {
     const routed = object(config.routed), network = object(routed.network), plan = object(network.config);
-    if (config.rules.length || routed.schema_version !== 1 || routed.lab_only !== true || routed.require_identification !== false || routed.require_inspection !== false || !hash(network.hash) || plan.schema_version !== 1 || plan.ipv6_forwarding !== 'deny' || !Array.isArray(plan.interfaces) || plan.interfaces.length < 2 || plan.interfaces.length > 32 || !Array.isArray(plan.zones) || plan.zones.length > 32 || !(routed.rules === null || Array.isArray(routed.rules) && routed.rules.length <= 128) || !(routed.nat === null || Array.isArray(routed.nat) && routed.nat.length <= 32)) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+    if (config.rules.length || (routed.schema_version !== 1 && routed.schema_version !== 2) || routed.lab_only !== true || routed.require_identification !== false || routed.require_inspection !== false || !hash(network.hash) || plan.schema_version !== 1 || plan.ipv6_forwarding !== 'deny' || !Array.isArray(plan.interfaces) || plan.interfaces.length < 2 || plan.interfaces.length > 32 || !Array.isArray(plan.zones) || plan.zones.length > 32 || !(routed.rules === null || Array.isArray(routed.rules) && routed.rules.length <= 128) || !(routed.nat === null || Array.isArray(routed.nat) && routed.nat.length <= 32)) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
     validatePolicy(plan, routed);
+    if (routed.schema_version === 1 && routed.dhcp_server !== undefined || routed.schema_version === 2 && !routed.dhcp_server) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
+    if (routed.schema_version === 2) {
+      try { validateDHCP(routed.dhcp_server, plan as NetworkPlan); } catch { throw new ApiError('ANDEIVA_RESPONSE_INVALID'); }
+    }
   } else {
     if (config.routed !== undefined || config.local_services !== undefined) throw new ApiError('ANDEIVA_RESPONSE_INVALID');
     const ids = new Set<string>();

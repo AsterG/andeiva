@@ -3,6 +3,7 @@
 ## Unreleased — DHCP acquisition service lifetime
 
 - Launch the DHCP producer in an exclusive retained cgroup before exec, validate its bootstrap identity and distinguish process drainage from socket cleanup.
+
 ## Unreleased — packet socket inventory
 
 - Add bounded AF_PACKET inventory alongside UDP observations, reusing the read-only netlink transport without claiming cgroup or descriptor-holder attribution.
@@ -10,6 +11,18 @@
 ## Unreleased — bounded DHCP socket observations
 
 - Add read-only Linux IPv4 UDP creation metadata capture with bounded, integrity-checked netlink dumps; policy integration remains separate.
+
+## Unreleased — LAN DHCP configuration editor
+
+- Edit validated LAN scopes, pools, reservations and client options through the shared configuration draft and transaction workflow.
+- Preserve disabled settings and invalidate editors after configuration context or permissions change.
+- Distinguish declared settings from independently verified service and lease state.
+
+## Unreleased — isolated maintained DHCP server component
+
+- Run a fixed Debian Kea DHCPv4 component with private mounts, dedicated credentials, stock AppArmor profiles and bounded startup validation.
+- Preserve operational leases across service restarts and reject malformed lease rows through the maintained reader.
+- Keep selected-runtime activation and administrative integration disabled pending separate lifecycle qualification.
 
 ## Unreleased — SSH revocation test synchronization
 

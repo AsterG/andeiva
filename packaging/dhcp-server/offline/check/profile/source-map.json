@@ -1,0 +1,262 @@
+[
+  {
+    "source_package": "cyrus-sasl2",
+    "source_version": "2.1.28+dfsg1-9",
+    "delta_binaries": [
+      "libsasl2-2",
+      "libsasl2-modules-db"
+    ],
+    "sources_index": "state/lists/deb.debian.org_debian_dists_trixie_main_source_Sources",
+    "files": [
+      {
+        "path": "downloads/cyrus-sasl2/cyrus-sasl2_2.1.28+dfsg1-9.debian.tar.xz",
+        "bytes": 99180,
+        "sha256": "8215afa01ee2907da0a650bfa6b9cf0fae12f2611a098eedd853b5e71adf6623",
+        "url": "https://deb.debian.org/debian/pool/main/c/cyrus-sasl2/cyrus-sasl2_2.1.28+dfsg1-9.debian.tar.xz"
+      },
+      {
+        "path": "downloads/cyrus-sasl2/cyrus-sasl2_2.1.28+dfsg1-9.dsc",
+        "bytes": 3306,
+        "sha256": "179cda376ee9f9a54098f902174299dd183ae78c703f72b86bd4c3297db4c153",
+        "url": "https://deb.debian.org/debian/pool/main/c/cyrus-sasl2/cyrus-sasl2_2.1.28+dfsg1-9.dsc"
+      },
+      {
+        "path": "downloads/cyrus-sasl2/cyrus-sasl2_2.1.28+dfsg1.orig.tar.xz",
+        "bytes": 794540,
+        "sha256": "e796a5d85d1a85e1b433d43504e467f9075c7ebc0b45730a3996cf11b1deada4",
+        "url": "https://deb.debian.org/debian/pool/main/c/cyrus-sasl2/cyrus-sasl2_2.1.28+dfsg1.orig.tar.xz"
+      }
+    ],
+    "copyright": {
+      "path": "copyright/cyrus-sasl2.copyright",
+      "sha256": "ddb128a81d3a140ef5b3574ae000a1a50d0cb9a2ec59917121a155f91b670166",
+      "bytes": 24643,
+      "archive": "downloads/cyrus-sasl2/cyrus-sasl2_2.1.28+dfsg1-9.debian.tar.xz",
+      "member": "debian/copyright"
+    }
+  },
+  {
+    "source_package": "isc-kea",
+    "source_version": "2.6.3-1+deb13u1",
+    "delta_binaries": [
+      "kea-common",
+      "kea-dhcp4-server"
+    ],
+    "sources_index": "state/lists/deb.debian.org_debian_dists_trixie_main_source_Sources",
+    "files": [
+      {
+        "path": "downloads/isc-kea/isc-kea_2.6.3-1+deb13u1.debian.tar.xz",
+        "bytes": 57524,
+        "sha256": "02b389ccbd9782d78dc3c563e60e384a8ab2d9d8522da390e7525d597075f711",
+        "url": "https://deb.debian.org/debian/pool/main/i/isc-kea/isc-kea_2.6.3-1+deb13u1.debian.tar.xz"
+      },
+      {
+        "path": "downloads/isc-kea/isc-kea_2.6.3-1+deb13u1.dsc",
+        "bytes": 3145,
+        "sha256": "61a5d3d1ec172237d7433321e2c29470491cb5c03eaed46d28c330d66bfdc09a",
+        "url": "https://deb.debian.org/debian/pool/main/i/isc-kea/isc-kea_2.6.3-1+deb13u1.dsc"
+      },
+      {
+        "path": "downloads/isc-kea/isc-kea_2.6.3.orig.tar.gz",
+        "bytes": 10498882,
+        "sha256": "00241a5955ffd3d215a2c098c4527f9d7f4b203188b276f9a36250dd3d9dd612",
+        "url": "https://deb.debian.org/debian/pool/main/i/isc-kea/isc-kea_2.6.3.orig.tar.gz"
+      },
+      {
+        "path": "downloads/isc-kea/isc-kea_2.6.3.orig.tar.gz.asc",
+        "bytes": 833,
+        "sha256": "f6946770faeaeb055dced609bf29a949542236921b6780e1a07a56d66b461883",
+        "url": "https://deb.debian.org/debian/pool/main/i/isc-kea/isc-kea_2.6.3.orig.tar.gz.asc"
+      }
+    ],
+    "copyright": {
+      "path": "copyright/isc-kea.copyright",
+      "sha256": "e45bc3ac1aadddac2eeff2111e17d28760bfafc404ecfc8494bd61b165c49364",
+      "bytes": 21092,
+      "archive": "downloads/isc-kea/isc-kea_2.6.3-1+deb13u1.debian.tar.xz",
+      "member": "debian/copyright"
+    }
+  },
+  {
+    "source_package": "log4cplus",
+    "source_version": "2.0.8-1.1",
+    "delta_binaries": [
+      "liblog4cplus-2.0.5t64"
+    ],
+    "sources_index": "state/lists/deb.debian.org_debian_dists_trixie_main_source_Sources",
+    "files": [
+      {
+        "path": "downloads/log4cplus/log4cplus_2.0.8-1.1.debian.tar.xz",
+        "bytes": 13220,
+        "sha256": "10fbd8b3b57c57d899ffe6cd5e4d6be90848b682ce3e9b918b128b0209fe1cf3",
+        "url": "https://deb.debian.org/debian/pool/main/l/log4cplus/log4cplus_2.0.8-1.1.debian.tar.xz"
+      },
+      {
+        "path": "downloads/log4cplus/log4cplus_2.0.8-1.1.dsc",
+        "bytes": 2390,
+        "sha256": "e722754bdc601ee0f18ca87fab55d40494856e9a53bd2e6bf1bcd30497ce0921",
+        "url": "https://deb.debian.org/debian/pool/main/l/log4cplus/log4cplus_2.0.8-1.1.dsc"
+      },
+      {
+        "path": "downloads/log4cplus/log4cplus_2.0.8.orig.tar.xz",
+        "bytes": 932772,
+        "sha256": "f5949e713cf8635fc554384ab99b04716e3430f28eed6dd7d71ad03d959b91a0",
+        "url": "https://deb.debian.org/debian/pool/main/l/log4cplus/log4cplus_2.0.8.orig.tar.xz"
+      },
+      {
+        "path": "downloads/log4cplus/log4cplus_2.0.8.orig.tar.xz.asc",
+        "bytes": 273,
+        "sha256": "d5b23665da0987d2cae52b56a0927e7bfc1130bbf0ab1ab1a4cc5af4a01d1611",
+        "url": "https://deb.debian.org/debian/pool/main/l/log4cplus/log4cplus_2.0.8.orig.tar.xz.asc"
+      }
+    ],
+    "copyright": {
+      "path": "copyright/log4cplus.copyright",
+      "sha256": "542bb066a5418f857c794dcf2079b044df717a0b37763bae0510f245b5fffd0c",
+      "bytes": 21022,
+      "archive": "downloads/log4cplus/log4cplus_2.0.8-1.1.debian.tar.xz",
+      "member": "debian/copyright"
+    }
+  },
+  {
+    "source_package": "mariadb",
+    "source_version": "1:11.8.6-0+deb13u1",
+    "delta_binaries": [
+      "libmariadb3",
+      "mariadb-common"
+    ],
+    "sources_index": "state/lists/deb.debian.org_debian_dists_trixie_main_source_Sources",
+    "files": [
+      {
+        "path": "downloads/mariadb/mariadb_11.8.6-0+deb13u1.debian.tar.xz",
+        "bytes": 290320,
+        "sha256": "84da78759f1de6452e19cbc24eaa3855ed352fc9306eb12fa9c8f30832d1613b",
+        "url": "https://deb.debian.org/debian/pool/main/m/mariadb/mariadb_11.8.6-0+deb13u1.debian.tar.xz"
+      },
+      {
+        "path": "downloads/mariadb/mariadb_11.8.6-0+deb13u1.dsc",
+        "bytes": 5677,
+        "sha256": "c38d7ec65b2f6cf3d7b5edc21f0732d749b75507837219832a0e8dca89cf9556",
+        "url": "https://deb.debian.org/debian/pool/main/m/mariadb/mariadb_11.8.6-0+deb13u1.dsc"
+      },
+      {
+        "path": "downloads/mariadb/mariadb_11.8.6.orig.tar.gz",
+        "bytes": 120887651,
+        "sha256": "b126581a8ca89376d2a3ce63fee97c114c3e15315345e769b9d00c51e1b7d619",
+        "url": "https://deb.debian.org/debian/pool/main/m/mariadb/mariadb_11.8.6.orig.tar.gz"
+      },
+      {
+        "path": "downloads/mariadb/mariadb_11.8.6.orig.tar.gz.asc",
+        "bytes": 833,
+        "sha256": "83fdc365789ef5f4b2974468061896971c10c605b0e41e1888a90f4e5342008a",
+        "url": "https://deb.debian.org/debian/pool/main/m/mariadb/mariadb_11.8.6.orig.tar.gz.asc"
+      }
+    ],
+    "copyright": {
+      "path": "copyright/mariadb.copyright",
+      "sha256": "622b401d8d7fa65042d00c9f7f261e9994f80c70633c121f2f6f694987237aa9",
+      "bytes": 35900,
+      "archive": "downloads/mariadb/mariadb_11.8.6-0+deb13u1.debian.tar.xz",
+      "member": "debian/copyright"
+    }
+  },
+  {
+    "source_package": "mysql-defaults",
+    "source_version": "1.1.1",
+    "delta_binaries": [
+      "mysql-common"
+    ],
+    "sources_index": "state/lists/deb.debian.org_debian_dists_trixie_main_source_Sources",
+    "files": [
+      {
+        "path": "downloads/mysql-defaults/mysql-defaults_1.1.1.dsc",
+        "bytes": 2202,
+        "sha256": "4fd91907a56a2251e2e0dc0faa37c52299a2ae8d68e457cd250ac29d160090f1",
+        "url": "https://deb.debian.org/debian/pool/main/m/mysql-defaults/mysql-defaults_1.1.1.dsc"
+      },
+      {
+        "path": "downloads/mysql-defaults/mysql-defaults_1.1.1.tar.xz",
+        "bytes": 7460,
+        "sha256": "054d8da3bfd3419081a7ccb795ad614c235e8aa06674c5588cb88973467c1cdc",
+        "url": "https://deb.debian.org/debian/pool/main/m/mysql-defaults/mysql-defaults_1.1.1.tar.xz"
+      }
+    ],
+    "copyright": {
+      "path": "copyright/mysql-defaults.copyright",
+      "sha256": "8a1956f3a3b5083d777fcd17e0a56b0cdad556e379eacd3837ce9fc76ddd0179",
+      "bytes": 1754,
+      "archive": "downloads/mysql-defaults/mysql-defaults_1.1.1.tar.xz",
+      "member": "mysql/debian/copyright"
+    }
+  },
+  {
+    "source_package": "openldap",
+    "source_version": "2.6.10+dfsg-1",
+    "delta_binaries": [
+      "libldap2"
+    ],
+    "sources_index": "state/lists/deb.debian.org_debian_dists_trixie_main_source_Sources",
+    "files": [
+      {
+        "path": "downloads/openldap/openldap_2.6.10+dfsg-1.debian.tar.xz",
+        "bytes": 170112,
+        "sha256": "2dc95ade5655d67c9043e45b5601734fdb7f668267682d087b595a80de24a500",
+        "url": "https://deb.debian.org/debian/pool/main/o/openldap/openldap_2.6.10+dfsg-1.debian.tar.xz"
+      },
+      {
+        "path": "downloads/openldap/openldap_2.6.10+dfsg-1.dsc",
+        "bytes": 3285,
+        "sha256": "05cdd431ef995904f094f4464ca78d5d3b2abdbe4eefacd72446ff8443a2ffac",
+        "url": "https://deb.debian.org/debian/pool/main/o/openldap/openldap_2.6.10+dfsg-1.dsc"
+      },
+      {
+        "path": "downloads/openldap/openldap_2.6.10+dfsg.orig.tar.xz",
+        "bytes": 3754560,
+        "sha256": "e871102bda1e42155fd4d6be4825a297e1c593cb0907b84fc7dde888dc847877",
+        "url": "https://deb.debian.org/debian/pool/main/o/openldap/openldap_2.6.10+dfsg.orig.tar.xz"
+      }
+    ],
+    "copyright": {
+      "path": "copyright/openldap.copyright",
+      "sha256": "2656a8ac4f2fda614be8fe6fd7f649665a6ca3abcf19f6ac125e2ff165b60939",
+      "bytes": 62859,
+      "archive": "downloads/openldap/openldap_2.6.10+dfsg-1.debian.tar.xz",
+      "member": "debian/copyright"
+    }
+  },
+  {
+    "source_package": "postgresql-17",
+    "source_version": "17.12-0+deb13u1",
+    "delta_binaries": [
+      "libpq5"
+    ],
+    "sources_index": "state/lists/deb.debian.org_debian-security_dists_trixie-security_main_source_Sources",
+    "files": [
+      {
+        "path": "downloads/postgresql-17/postgresql-17_17.12-0+deb13u1.debian.tar.xz",
+        "bytes": 35996,
+        "sha256": "2e02b8b27ec24abf8ee8ed3395703b02708bdf35284b65b254e84bc27351b5b6",
+        "url": "https://deb.debian.org/debian-security/pool/updates/main/p/postgresql-17/postgresql-17_17.12-0+deb13u1.debian.tar.xz"
+      },
+      {
+        "path": "downloads/postgresql-17/postgresql-17_17.12-0+deb13u1.dsc",
+        "bytes": 4522,
+        "sha256": "e406fdcde8e58a616e65b84237ca1f1d92605ad4c3fc5a5264815439b8fc1611",
+        "url": "https://deb.debian.org/debian-security/pool/updates/main/p/postgresql-17/postgresql-17_17.12-0+deb13u1.dsc"
+      },
+      {
+        "path": "downloads/postgresql-17/postgresql-17_17.12.orig.tar.bz2",
+        "bytes": 22292547,
+        "sha256": "9cf136a703d8ee2f83465c43be4e9e8e7930c82b0bfba13be7e2537be769ac55",
+        "url": "https://deb.debian.org/debian-security/pool/updates/main/p/postgresql-17/postgresql-17_17.12.orig.tar.bz2"
+      }
+    ],
+    "copyright": {
+      "path": "copyright/postgresql-17.copyright",
+      "sha256": "afcc052a946b4117667527211b4ca303f07044f5585222f4c8f577e0764b2123",
+      "bytes": 12934,
+      "archive": "downloads/postgresql-17/postgresql-17_17.12-0+deb13u1.debian.tar.xz",
+      "member": "debian/copyright"
+    }
+  }
+]

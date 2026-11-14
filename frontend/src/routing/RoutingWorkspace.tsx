@@ -14,6 +14,7 @@ import type { ProductInfoState } from '../firewall/productInfo.js';
 import { admitOperation, closeOperationNamespace, executeOperation, operationID, queryOperation, readCurrent } from './configuration.js';
 import type { ConfigurationCurrent, ConfigurationOperation, OperationRequest, RoutedConfig, RoutedPath, RetainedConfig } from './configuration.js';
 import { RetainedRules } from './RetainedRules.js';
+import { DHCPSettings } from './DHCPSettings.js';
 import { NetworkEditor } from './NetworkEditor.js';
 import { ConfigurationAudit } from './ConfigurationAudit.js';
 import { NetworkInterfaces } from './NetworkInterfaces.js';
@@ -46,12 +47,13 @@ export function RoutingWorkspace({ locale, session, page, product, onProductRefr
   const [last, setLast] = useState<ConfigurationOperation | null>(null), [uncertainID, setUncertainID] = useState(() => retainedOperation(session.username));
   const [review, setReview] = useState<OperationRequest | null>(null), [seconds, setSeconds] = useState('60');
   const [networkEditor, setNetworkEditor] = useState(false), [editor, setEditor] = useState<{ index: number | null; from: string; to: string } | null>(null);
+  const [dhcpEditing, setDHCPEditing] = useState(false);
   const [natEditor, setNATEditor] = useState(false), [search, setSearch] = useState(''), [dragged, setDragged] = useState<number | null>(null), [announcement, setAnnouncement] = useState('');
   const gate = useRef(false), mounted = useRef(true), dirtyRef = useRef(false);
   const keyboardDrag = useRef<{ from: number; to: number } | null>(null);
   const dragContext = useRef<{ rules: RoutedConfig['routed']['rules']; generation: string } | null>(null);
   const admin = session.role === 'admin';
-  const editing = !!retainedEditor || !!editor || networkEditor || natEditor;
+  const editing = !!retainedEditor || !!editor || networkEditor || natEditor || dhcpEditing;
   const stale = dirty && draftBase !== current?.global.generation;
   const candidateStale = !!current?.snapshot.candidate && (current.snapshot.candidate.base !== current.snapshot.running.hash || current.routed.candidate_group?.base !== current.global.running_revision);
   const writable = admin && !!current && !busy && !current.snapshot.recovery_required && !uncertainID && !stale;
@@ -176,7 +178,7 @@ export function RoutingWorkspace({ locale, session, page, product, onProductRefr
     {error && <Notice title={copy.error} live>{copy.errorHint} <code>{error}</code></Notice>}
     {candidateStale && <Notice title={copy.candidate} live>{copy.candidateStale}</Notice>}
     {uncertainID && <Notice title={copy.uncertain} live><code>{uncertainID}</code> <Button variant="secondary" disabled={busy} onClick={() => void query()}>{copy.query}</Button>{admin && last?.id === uncertainID && last.state === 'accepted' && <Button variant="secondary" disabled={busy || editing} onClick={() => void resumeAccepted()}>{copy.resume}</Button>}</Notice>}
-    <div className="ds-actions"><Button variant="secondary" disabled={busy || !!editor || networkEditor || natEditor} onClick={() => setRefresh((value) => value + 1)}>{copy.refresh}</Button>{!admin && <StatusBadge tone="info">{copy.readonly}</StatusBadge>}</div>
+    <div className="ds-actions"><Button variant="secondary" disabled={busy || editing} onClick={() => { if (!busy && !editing) setRefresh((value) => value + 1); }}>{copy.refresh}</Button>{!admin && <StatusBadge tone="info">{copy.readonly}</StatusBadge>}</div>
     {!current ? <Notice title={busy ? copy.checking : copy.error}>{copy.errorHint}</Notice> : <>
       <Surface title={copy.state} className={`console-transaction-bar${dirty || current.snapshot.candidate || current.snapshot.pending ? ' console-transaction-bar--pending' : ''}`}>
         <div className="console-transaction-summary"><StatusBadge tone={current.snapshot.recovery_required ? 'error' : dirty || current.snapshot.pending || current.snapshot.candidate ? 'warning' : 'info'}>{current.snapshot.recovery_required ? copy.recovery : dirty ? copy.localDraft : current.snapshot.pending ? copy.pending : current.snapshot.candidate ? copy.candidate : copy.running}</StatusBadge><span>{current.global.running_revision === current.global.startup_revision ? copy.saved : copy.unsaved}</span>{verified && <StatusBadge tone="success">{common.verified}</StatusBadge>}</div>
@@ -196,7 +198,7 @@ export function RoutingWorkspace({ locale, session, page, product, onProductRefr
         <details><summary>{copy.details}</summary><dl className="fw-review"><dt>{copy.running}</dt><dd><code className="fw-hash">{current.global.running_revision}</code></dd><dt>{copy.startup}</dt><dd><code className="fw-hash">{current.global.startup_revision}</code></dd><dt>{copy.candidate}</dt><dd><code className="fw-hash">{current.routed.candidate?.hash ?? '—'}</code></dd></dl></details>
       </Surface>
       {page === 'audit' ? <ConfigurationAudit locale={locale} admin={admin} onFailure={onFailure} /> : page === 'system' ? <SystemInfoView locale={locale} state={product} refresh={onProductRefresh} /> : page === 'network' ? <>
-        <Surface title={copy.network} description={copy.editHint}><div className="ds-actions">{admin && <Button disabled={!editable || editing || !inventory} onClick={() => setNetworkEditor(true)}>{copy.editNetwork}</Button>}</div>{draft && <DataTable caption={copy.network}><thead><tr><th>{copy.name}</th><th>{copy.path}</th><th>{copy.address}</th><th>{copy.gateway}</th></tr></thead><tbody>{draft.routed.network.config.interfaces.map((iface) => <tr key={iface.id}><th scope="row">{iface.binding.name}</th><td>{iface.role.toUpperCase()} · {iface.zone}</td><td>{iface.ipv4.address ?? '—'}</td><td>{iface.ipv4.gateway ?? '—'}</td></tr>)}</tbody></DataTable>}</Surface><NetworkInterfaces locale={locale} />
+        <Surface title={copy.network} description={copy.editHint}><div className="ds-actions">{admin && <Button disabled={!editable || editing || !inventory} onClick={() => setNetworkEditor(true)}>{copy.editNetwork}</Button>}</div>{draft && <DataTable caption={copy.network}><thead><tr><th>{copy.name}</th><th>{copy.path}</th><th>{copy.address}</th><th>{copy.gateway}</th></tr></thead><tbody>{draft.routed.network.config.interfaces.map((iface) => <tr key={iface.id}><th scope="row">{iface.binding.name}</th><td>{iface.role.toUpperCase()} · {iface.zone}</td><td>{iface.ipv4.address ?? '—'}</td><td>{iface.ipv4.gateway ?? '—'}</td></tr>)}</tbody></DataTable>}</Surface><DHCPSettings locale={locale} current={draft} context={current} admin={admin} editable={editable} editing={editing} onEditing={setDHCPEditing} onChange={edit} /><NetworkInterfaces locale={locale} />
       </> : page === 'nat' ? <Surface title={copy.nat} description={copy.natHint}>
         {admin && <Button disabled={!editable || editing || !draft || draft.routed.nat.length >= 32} onClick={() => setNATEditor(true)}>{copy.addNAT}</Button>}
         <DataTable caption={copy.nat}><thead><tr><th>{copy.name}</th><th>{copy.source}</th><th>{copy.path}</th><th>{common.actions}</th></tr></thead><tbody>{draft?.routed.nat.map((rule, index) => <tr key={rule.id}><th scope="row">{rule.id}</th><td>{rule.source}</td><td>{rule.path.from_interface} → {rule.path.to_interface}</td><td>{admin && <Button variant="secondary" disabled={!editable || editing} onClick={() => edit({ ...draft, routed: { ...draft.routed, nat: draft.routed.nat.filter((_, position) => position !== index) } })}>{copy.remove}</Button>}</td></tr>)}</tbody></DataTable>
