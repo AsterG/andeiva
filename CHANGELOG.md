@@ -6,6 +6,12 @@
 - Preserve disabled settings and invalidate editors after configuration context or permissions change.
 - Distinguish declared settings from independently verified service and lease state.
 
+## Unreleased — isolated maintained DHCP server component
+
+- Run a fixed Debian Kea DHCPv4 component with private mounts, dedicated credentials, stock AppArmor profiles and bounded startup validation.
+- Preserve operational leases across service restarts and reject malformed lease rows through the maintained reader.
+- Keep selected-runtime activation and administrative integration disabled pending separate lifecycle qualification.
+
 ## Unreleased — SSH revocation test synchronization
 
 - Verify revocation after command input starts without assuming an already-denied SSH channel remains writable.

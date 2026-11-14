@@ -1,5 +1,8 @@
 # Compilador DHCP para Kea 2.6.3
 
+[Componente confinado experimental](runtime.pt.md), sem ativação de produção;
+seus testes nativos de pacotes/reinício são separados do compilador.
+
 Somente compilação determinística; não cria processos, listeners, arquivos de
 concessões, unidades, API, armazenamento ou mudanças de rede. Habilitação exige
 qualificação nativa.
@@ -29,7 +32,7 @@ credenciais DB, opções arbitrárias, caminhos/executáveis do caller ou DHCP4o
 Não gera nftables nem permissão forwarding/NAT. Isolamento RAW, identificação,
 política local e tráfego desconhecido continuam requisitos do runtime.
 
-Solicita memfile persistente em `/var/lib/andeiva/dhcp-server/leases4.csv`, limpeza
+Solicita memfile persistente em `/var/lib/kea/kea-leases4.csv`, limpeza
 horária. **Nunca restaurar esse estado de uma revisão de configuração**. Ownership,
 LFC confinado, quotas, reinício, migração, disco cheio e perda de energia exigem
 testes reais. `max-row-errors=1` ainda omite uma linha corrupta no Kea 2.6.3 antes
@@ -54,7 +57,7 @@ GOOS=windows GOARCH=amd64 go build ./internal/dhcpkea
 Fixture sintética `../testdata/kea-2.6.3.json` comparada byte a byte. Root pode
 validar com Kea 2.6.3 verificado e `-t` em laboratório isolado; sem prova de execução
 ou persistência. Medição Linux/WSL: race 1,091 s; pequeno 9.991 ns/op / 4.593 B;
-denso dois escopos 768.860 ns/op / 450.129 B. Três escopos densos:49.321 B → 100.897 B;
+denso dois escopos 768.860 ns/op / 450.129 B. Três escopos densos:49.321 B → 100.885 B;
 quatro excedem entrada e são recusados. Não é benchmark appliance nem runtime
 Docker/EKS novo. Revisão independente e testes nativos pendentes.
 
