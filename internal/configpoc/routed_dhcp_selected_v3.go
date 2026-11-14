@@ -163,7 +163,9 @@ func (r *RoutedSelectionReaderV2) ResolveDHCPCurrentV3(ctx context.Context, expe
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	v, err := r.read(ctx)
+	// This path resolves additional Work dependencies before its single final
+	// validation. No candidate or proof escapes before that validation.
+	v, err := r.readCandidateWithGateV2(ctx, nil)
 	if err != nil {
 		return RoutedDHCPSelectedV3{}, err
 	}
