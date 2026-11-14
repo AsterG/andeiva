@@ -14,7 +14,7 @@ import tarfile
 
 HERE = Path(__file__).resolve().parent
 PROFILE = HERE / 'check/profile'
-KEY_SHA = '506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017'
+KEY_SHA = '506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017'  # gitleaks:allow -- Public Debian archive keyring checksum, not a credential.
 BASE_SHA = 'fcd42bb5cb63f7bfc4326a92541247872206d60a192fdff65ca14eb83ed408b9'
 
 
