@@ -8,7 +8,7 @@ descendant-drain primitives. [Español](docs/runtime.es.md) · [Português](docs
 Trusted Root assembly must enter a dedicated process into the owned gateway and
 a different mount namespace before calling it. It supplies actual host/gateway
 namespace FDs, a readonly compiled-config FD (root:`_kea`, exactly 0440), a dedicated
-`_kea` lease-directory FD, storage/serving-log byte budgets, and a bounded context. Live LAN
+`_kea` lease-directory FD, a storage byte budget, and a bounded context. Live LAN
 addresses must match the compiler bindings. Both IPv4 and IPv6 forwarding must
 already be zero. This does **not** block DHCP RAW sockets: keep laboratory clients
 isolated until the explicit native process/socket observation. Product activation
@@ -61,10 +61,12 @@ to release private mounts: the dedicated role must exit, and Root must verify
 whole-cgroup drainage. Errors preserve original files. No readiness or packet
 permission is returned by this component.
 
-`ServingLogBytes` is an explicit trusted per-run budget. Output is passed to
-stdout only within that bound; overflow/write failure cancels the component.
-Root must also bound the external journal's rate and retention. The native fixture
-uses 1 MiB for its 120-second maximum run; this is not a production sizing claim.
+Serving stdout/stderr are the fixed inherited `*os.File` descriptors directly.
+There is no Go passthrough copier, queue or internal serving-log quota: journal
+backpressure must not prevent Wait/reap after cancellation. Root must bound the
+external unit/journal's rate, retention and storage. LFC diagnostic capture stays
+bounded in RAM and never forwards to an external writer. The real-full-pipe
+negative cancels and reaps without reading the blocked stdout pipe.
 
 ## Native entry for Root's reviewed fixture
 

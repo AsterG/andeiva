@@ -150,7 +150,7 @@ func TestNativeRoutedDHCPServerV1(t *testing.T) {
 	if _, err = rand.Read(nonce[:]); err != nil {
 		t.Fatal(err)
 	}
-	o := RoutedDHCPServerResourcesV1{Metadata: Metadata{SchemaVersion: 2, RunID: hex.EncodeToString(nonce[:]), BootID: bootID, HostNamespace: ids[0], GatewayNamespace: ns}, Gateway: gw, Host: pins[0], HostMount: pins[1], Configuration: config, Leases: leaseDir, Config: c, Bindings: b, LeaseBudgetBytes: 4 << 20, ServingLogBytes: 1 << 20}
+	o := RoutedDHCPServerResourcesV1{Metadata: Metadata{SchemaVersion: 2, RunID: hex.EncodeToString(nonce[:]), BootID: bootID, HostNamespace: ids[0], GatewayNamespace: ns}, Gateway: gw, Host: pins[0], HostMount: pins[1], Configuration: config, Leases: leaseDir, Config: c, Bindings: b, LeaseBudgetBytes: 4 << 20}
 	sig, cancelSignal := signal.NotifyContext(context.Background(), unix.SIGTERM)
 	defer cancelSignal()
 	ctx, cancel := context.WithTimeout(sig, 120*time.Second)

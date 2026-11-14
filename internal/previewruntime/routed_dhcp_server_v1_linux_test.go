@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -30,6 +31,9 @@ func TestRoutedDHCPServerCommandV1(t *testing.T) {
 		}
 		if !reflect.DeepEqual(cmd.Args, want) || cmd.Path != want[0] || len(cmd.ExtraFiles) != 0 || cmd.SysProcAttr.Pdeathsig != unix.SIGKILL || !reflect.DeepEqual(cmd.Env, []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}) {
 			t.Fatal("engine launch boundary changed", cmd.Args)
+		}
+		if !check && (cmd.Stdout != os.Stdout || cmd.Stderr != os.Stderr) {
+			t.Fatal("serving output must be direct fixed files")
 		}
 	}
 }
@@ -71,6 +75,17 @@ func TestRoutedDHCPServerChildV1(t *testing.T) {
 		defer stop()
 		_, _ = os.Stdout.Write([]byte("ready\n"))
 		<-ctx.Done()
+	case "blocked-output":
+		if err := unix.SetNonblock(1, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := unix.Write(2, []byte("writing\n")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := unix.Write(1, []byte("blocked")); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = unix.Write(2, []byte("completed\n"))
 	case "umask":
 		unix.Umask(0077)
 		uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
@@ -188,16 +203,82 @@ func TestRoutedDHCPServerCancellationV1(t *testing.T) {
 	}
 }
 
-func TestRoutedDHCPServerOutputBoundV1(t *testing.T) {
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
-	var output bytes.Buffer
-	b := &routedDHCPServerOutputV1{writer: &output, remaining: 3, stop: stop}
-	if n, err := b.Write([]byte("abc")); n != 3 || err != nil {
-		t.Fatal(n, err)
+func TestRoutedDHCPServerBlockedOutputCancellationV1(t *testing.T) {
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n, err := b.Write([]byte("d")); n != 0 || err == nil || !b.failed() || ctx.Err() == nil || output.String() != "abc" {
-		t.Fatal("log limit did not stop component")
+	defer outR.Close()
+	defer outW.Close()
+	outFD := int(outW.Fd())
+	capacity, err := unix.FcntlInt(uintptr(outFD), unix.F_GETPIPE_SZ, 0)
+	if err != nil || capacity <= 0 {
+		t.Fatal("pipe capacity", err)
+	}
+	if err = unix.SetNonblock(outFD, true); err != nil {
+		t.Fatal(err)
+	}
+	filled := 0
+	for {
+		n, e := unix.Write(outFD, make([]byte, 4096))
+		if n > 0 {
+			filled += n
+		}
+		if errors.Is(e, unix.EAGAIN) {
+			break
+		}
+		if e != nil || n == 0 {
+			t.Fatal("fill output pipe", e)
+		}
+	}
+	if filled != capacity {
+		t.Fatal("pipe not full", filled, capacity)
+	}
+	if err = unix.SetNonblock(outFD, false); err != nil {
+		t.Fatal(err)
+	}
+	controlR, controlW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controlR.Close()
+	defer controlW.Close()
+	cmd := routedDHCPServerTestCommandV1(t, "blocked-output")
+	cmd.Stdout, cmd.Stderr = outW, controlW // Files, no exec-owned output copier.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- routedDHCPServerWaitV1(ctx, cmd, false) }()
+	if err = controlR.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	ready := make([]byte, 8)
+	if _, err = io.ReadFull(controlR, ready); err != nil || string(ready) != "writing\n" {
+		t.Fatal("child write attempt", err)
+	}
+	if err = controlR.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = controlR.Read(make([]byte, 1)); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatal("child unexpectedly completed blocked write", err)
+	}
+	cancel()
+	select {
+	case err = <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("Wait blocked on undrained stdout")
+	}
+	if cmd.ProcessState == nil || !cmd.ProcessState.Sys().(syscall.WaitStatus).Signaled() {
+		t.Fatal("blocked child not killed and reaped")
+	}
+	// Do not read stdout, even after cancellation: its original full buffer
+	// remains intact, proving completion did not depend on draining the sink.
+	remaining, err := unix.IoctlGetInt(int(outR.Fd()), unix.TIOCINQ)
+	if err != nil || remaining != filled {
+		t.Fatal("stdout was drained", remaining, filled, err)
 	}
 }
 

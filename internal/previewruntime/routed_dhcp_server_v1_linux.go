@@ -41,9 +41,6 @@ type RoutedDHCPServerResourcesV1 struct {
 	// Trusted storage-plan budget for existing lease/LFC files, not a request
 	// option. This preflight bound does not enforce ongoing filesystem quotas.
 	LeaseBudgetBytes int64
-	// Root's per-run diagnostic budget. Exhaustion stops the component; the
-	// external journal still needs its own retention/rate limits.
-	ServingLogBytes int64
 }
 
 // Run is an opt-in component, not a production dispatch or readiness API. The
@@ -57,7 +54,7 @@ func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResou
 	if _, ok := ctx.Deadline(); !ok {
 		return ErrIdentity
 	}
-	if o.LeaseBudgetBytes <= 0 || o.LeaseBudgetBytes > (math.MaxInt64-dhcpkea.MaxArtifactBytes)/2 || o.ServingLogBytes <= 0 {
+	if o.LeaseBudgetBytes <= 0 || o.LeaseBudgetBytes > (math.MaxInt64-dhcpkea.MaxArtifactBytes)/2 {
 		return ErrIdentity
 	}
 	uid, gid, err := routedDHCPServerAccountV1()
@@ -121,14 +118,7 @@ func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResou
 	if err = routedDHCPServerBindV1(o.Leases, "/var/lib/kea", false); err != nil {
 		return err
 	}
-	serving, cancel := context.WithCancel(ctx)
-	defer cancel()
-	output := &routedDHCPServerOutputV1{writer: os.Stdout, remaining: o.ServingLogBytes, stop: cancel}
-	err = routedDHCPServerExecV1(serving, uid, gid, false, output)
-	if output.failed() {
-		return ErrUnavailable
-	}
-	return err
+	return routedDHCPServerExecV1(ctx, uid, gid, nil)
 }
 
 func routedDHCPServerAccountV1() (uint32, uint32, error) {
@@ -393,12 +383,20 @@ func routedDHCPServerCommandV1(uid, gid uint32, check bool) *exec.Cmd {
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	cmd.WaitDelay = time.Second
+	if !check {
+		// Direct inherited files: no Go copier may block Wait on journal
+		// backpressure. The Root unit owns external rate/retention bounds.
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	}
 	return cmd
 }
 
-func routedDHCPServerExecV1(ctx context.Context, uid, gid uint32, check bool, output io.Writer) error {
+func routedDHCPServerExecV1(ctx context.Context, uid, gid uint32, log *routedDHCPServerLogV1) error {
+	check := log != nil
 	cmd := routedDHCPServerCommandV1(uid, gid, check)
-	cmd.Stdout, cmd.Stderr = output, output
+	if check {
+		cmd.Stdout, cmd.Stderr = log, log
+	}
 	// No ExtraFiles: host namespace, lease and config FDs must remain CLOEXEC.
 	return routedDHCPServerWaitV1(ctx, cmd, check)
 }
@@ -473,40 +471,6 @@ func routedDHCPServerWaitV1(ctx context.Context, cmd *exec.Cmd, check bool) erro
 		return ctx.Err()
 	}
 }
-
-type routedDHCPServerOutputV1 struct {
-	mu        sync.Mutex
-	writer    io.Writer
-	remaining int64
-	stop      context.CancelFunc
-	bad       bool
-}
-
-func (b *routedDHCPServerOutputV1) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	if b.bad || int64(len(p)) > b.remaining {
-		b.bad = true
-		b.mu.Unlock()
-		b.stop()
-		return 0, ErrUnavailable
-	}
-	b.remaining -= int64(len(p))
-	b.mu.Unlock()
-	// Never hold the state lock across the external journal's write. WaitDelay
-	// may report a blocked output copier; failure reporting must still return.
-	n, err := b.writer.Write(p)
-	if err != nil || n != len(p) {
-		b.mu.Lock()
-		b.bad = true
-		b.mu.Unlock()
-		b.stop()
-		if err == nil {
-			err = io.ErrShortWrite
-		}
-	}
-	return n, err
-}
-func (b *routedDHCPServerOutputV1) failed() bool { b.mu.Lock(); defer b.mu.Unlock(); return b.bad }
 
 // Bounded private capture; no lease data or engine diagnostics enter public
 // errors. LFC exit zero alone is insufficient (see its LFC_TERMINATE message).

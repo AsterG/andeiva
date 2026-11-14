@@ -159,7 +159,7 @@ func routedDHCPServerCheckCopyV1(ctx context.Context, source *os.File, budget in
 	}
 	before := h.Sum(nil)
 	log := &routedDHCPServerLogV1{}
-	err = routedDHCPServerExecV1(ctx, uid, gid, true, log)
+	err = routedDHCPServerExecV1(ctx, uid, gid, log)
 	if log.rowFailure() {
 		return nil, errRoutedDHCPServerLeaseRowV1
 	}

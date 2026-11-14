@@ -35,9 +35,10 @@ Cancelación: SIGTERM, luego SIGKILL tras el presupuesto existente de cinco segu
 Wait y drenaje de descendientes. El rol dedicado debe salir para liberar montajes;
 Root verifica después el cgroup completo. Se conservan los leases.
 
-`ServingLogBytes` limita los bytes de salida por ejecución y cancela al excederlos
-o fallar la escritura. Root limita también tasa/retención del journal externo.
-La fixture usa 1 MiB/120 s; no es dimensionamiento productivo.
+Stdout/stderr del servidor son los `*os.File` heredados directamente, sin copier,
+cola ni cuota interna. Root acota tasa, retención y almacenamiento del journal/unidad
+externos. La captura LFC sigue acotada en RAM sin otro writer. La negativa con pipe
+real llena cancela y completa Wait/reap sin leer stdout bloqueado.
 
 Entrada nativa: `go test -c -o server-native.test ./internal/previewruntime`, test
 `TestNativeRoutedDHCPServerV1`; variable `ANDEIVA_DHCP_SERVER_NATIVE_V1=serve|corrupt`.
