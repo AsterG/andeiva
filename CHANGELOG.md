@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — packet socket inventory
+
+- Add bounded AF_PACKET inventory alongside UDP observations, reusing the read-only netlink transport without claiming cgroup or descriptor-holder attribution.
+
 ## Unreleased — bounded DHCP socket observations
 
 - Add read-only Linux IPv4 UDP creation metadata capture with bounded, integrity-checked netlink dumps; policy integration remains separate.
