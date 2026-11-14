@@ -76,8 +76,9 @@ type RoutedSelectedV3 struct {
 	Side      string            `json:"side,omitempty"`
 }
 type RoutedIntegrityResultV3 struct {
-	Mode   string                      `json:"mode"`
-	Result configpoc.IntegrityResultV1 `json:"result"`
+	Mode         string                      `json:"mode"`
+	Result       configpoc.IntegrityResultV1 `json:"result"`
+	DHCPSelected bool                        `json:"dhcp_selected,omitempty"`
 }
 
 type RoutedIntegrityV3 struct {
@@ -192,7 +193,7 @@ func DecodeRoutedRequestV3(data []byte, run string, namespace, last uint64) (Rou
 }
 
 func routedErrorV3(code string) bool {
-	return code == "" || code == "ANDEIVA_ADMIN_HELPER_UNAVAILABLE" || code == "ANDEIVA_CONFIG_RECOVERY_REQUIRED" || code == "ANDEIVA_CONFIG_CONFLICT"
+	return code == "" || code == "ANDEIVA_ADMIN_HELPER_UNAVAILABLE" || code == "ANDEIVA_CONFIG_RECOVERY_REQUIRED" || code == "ANDEIVA_CONFIG_CONFLICT" || code == ErrRoutedDHCPWaitingV1.Error()
 }
 
 type RoutedReplyV3 struct {
@@ -220,13 +221,14 @@ type RoutedPreparedV3 struct {
 	Preparation configpoc.RoutedPreparationV1 `json:"preparation"`
 }
 type RoutedResultV3 struct {
-	FreshScope  configpoc.RoutedFreshScopeEvidenceV3
-	RebootScope configpoc.RoutedRebootScopeEvidenceV4
-	DHCP        RoutedDHCPGrantV3
-	Inventory   networkinventory.Snapshot
-	Integrity   configpoc.IntegrityResultV1
-	Observed    RoutedObservedV3
-	Preparation configpoc.RoutedPreparationV1
+	DHCPSelected bool
+	FreshScope   configpoc.RoutedFreshScopeEvidenceV3
+	RebootScope  configpoc.RoutedRebootScopeEvidenceV4
+	DHCP         RoutedDHCPGrantV3
+	Inventory    networkinventory.Snapshot
+	Integrity    configpoc.IntegrityResultV1
+	Observed     RoutedObservedV3
+	Preparation  configpoc.RoutedPreparationV1
 }
 
 func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, RoutedResultV3, error) {
@@ -237,7 +239,7 @@ func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, R
 	}
 	if reply.Error != "" {
 		var empty struct{}
-		if exactRoutedV3(reply.Payload, &empty, nil) != nil {
+		if exactRoutedV3(reply.Payload, &empty, nil) != nil || reply.Error == ErrRoutedDHCPWaitingV1.Error() && reply.Verb != "dhcp_begin" {
 			return reply, result, ErrChannel
 		}
 		return reply, result, nil
@@ -271,10 +273,11 @@ func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, R
 	case "inspect":
 		var value RoutedIntegrityResultV3
 		var expected RoutedIntegrityV3
-		if exactRoutedV3(request.Payload, &expected, []string{"mode", "selection"}) != nil || (expected.Mode != "attach" && expected.Mode != "check") || !ValidRoutedSelectionV3(expected.Selection) || exactRoutedV3(reply.Payload, &value, []string{"mode", "result"}) != nil || value.Mode != expected.Mode || !ValidRoutedIntegrityResultV3(value.Result) || (value.Result.State == configpoc.IntegrityCompleteV1 && value.Result.Selection != expected.Selection) {
+		if exactRoutedV3(request.Payload, &expected, []string{"mode", "selection"}) != nil || (expected.Mode != "attach" && expected.Mode != "check") || !ValidRoutedSelectionV3(expected.Selection) || exactRoutedV3(reply.Payload, &value, []string{"mode", "result"}, "dhcp_selected") != nil || value.Mode != expected.Mode || !ValidRoutedIntegrityResultV3(value.Result) || (value.Result.State == configpoc.IntegrityCompleteV1 && value.Result.Selection != expected.Selection) || value.DHCPSelected && (expected.Mode != "check" || value.Result.State != configpoc.IntegrityCompleteV1) {
 			return reply, result, ErrChannel
 		}
 		result.Integrity = value.Result
+		result.DHCPSelected = value.DHCPSelected
 	case "observe":
 		var value RoutedObservedV3
 		if exactRoutedV3(reply.Payload, &value, []string{"receipt", "revision"}) != nil || !validRoutedReceiptV3(value.Receipt) || value.Revision != "" && !hashV2(value.Revision) {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"math"
 	"os"
@@ -23,14 +24,17 @@ import (
 )
 
 type routedDHCPOwnerBootstrapV3 struct {
-	Version            int                  `json:"version"`
-	ParentPID          int                  `json:"parent_pid"`
-	ParentStartTicks   uint64               `json:"parent_start_ticks"`
-	Metadata           Metadata             `json:"metadata"`
-	Desired            networkplan.Revision `json:"desired"`
-	Incarnation        string               `json:"incarnation"`
-	MountNamespace     uint64               `json:"mount_namespace"`
-	HostMountNamespace uint64               `json:"host_mount_namespace"`
+	Version              int                  `json:"version"`
+	ParentPID            int                  `json:"parent_pid"`
+	ParentStartTicks     uint64               `json:"parent_start_ticks"`
+	Metadata             Metadata             `json:"metadata"`
+	Desired              networkplan.Revision `json:"desired"`
+	Incarnation          string               `json:"incarnation"`
+	MountNamespace       uint64               `json:"mount_namespace"`
+	HostMountNamespace   uint64               `json:"host_mount_namespace"`
+	ServiceCgroupVersion int                  `json:"service_cgroup_version"`
+	ServiceCgroupDevice  uint64               `json:"service_cgroup_device"`
+	ServiceCgroupInode   uint64               `json:"service_cgroup_inode"`
 }
 type routedDHCPOwnerReadyV3 struct {
 	Version         int    `json:"version"`
@@ -58,6 +62,7 @@ type RoutedDHCPOwnerV3 struct {
 	acquisitionFD          *os.File
 	producerFD             *os.File
 	activated              bool
+	service                *routedDHCPServiceCgroupV1
 }
 
 // Start launches only the current trusted executable's fixed DHCP role. The
@@ -113,6 +118,23 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 		return nil, ErrUnavailable
 	}
 	incarnation := hex.EncodeToString(nonce[:])
+	service, err := newRoutedDHCPServiceCgroupV1(ctx, incarnation)
+	if err != nil {
+		return nil, err
+	}
+	serviceTransferred := false
+	defer func() {
+		if !serviceTransferred {
+			cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			result = errors.Join(result, service.drain(cleanup))
+		}
+	}()
+	serviceRead, serviceID, err := service.readonly()
+	if err != nil {
+		return nil, err
+	}
+	defer serviceRead.Close()
 	var pipes []*os.File
 	defer func() {
 		for _, f := range pipes {
@@ -151,11 +173,11 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 		role = RoutedDHCPDeferredOwnerRoleV4
 	}
 	cmd := exec.Command("/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", self, role) // #nosec G204 -- Two fixed profile roles, current root-trusted executable, inherited namespace FD; no caller path or shell.
-	cmd.ExtraFiles = []*os.File{o.Gateway, o.Host, hostMount, bootR, eventW, queryR, replyW, controlR}
+	cmd.ExtraFiles = []*os.File{o.Gateway, o.Host, hostMount, bootR, eventW, queryR, replyW, controlR, serviceRead}
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
-	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWNS, Pdeathsig: syscall.SIGKILL}
-	s := &RoutedDHCPOwnerV3{cmd: cmd, control: controlW, events: eventR, scanner: routedDHCPOwnerScannerV3(eventR), done: make(chan struct{}), profile: profile}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWNS, Pdeathsig: syscall.SIGKILL, UseCgroupFD: true, CgroupFD: int(service.directory.Fd())}
+	s := &RoutedDHCPOwnerV3{cmd: cmd, control: controlW, events: eventR, scanner: routedDHCPOwnerScannerV3(eventR), done: make(chan struct{}), profile: profile, service: service}
 	started := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
@@ -212,7 +234,7 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 	if bootW.SetWriteDeadline(deadline) != nil || eventR.SetReadDeadline(deadline) != nil {
 		return nil, ErrUnavailable
 	}
-	b := routedDHCPOwnerBootstrapV3{profile, os.Getpid(), parentStart, o.Metadata, desired, incarnation, mountID, hostMountID}
+	b := routedDHCPOwnerBootstrapV3{Version: profile, ParentPID: os.Getpid(), ParentStartTicks: parentStart, Metadata: o.Metadata, Desired: desired, Incarnation: incarnation, MountNamespace: mountID, HostMountNamespace: hostMountID, ServiceCgroupVersion: routedDHCPServiceCgroupVersionV1, ServiceCgroupDevice: serviceID.Device, ServiceCgroupInode: serviceID.Inode}
 	if routedDHCPOwnerWriteV3(bootW, b) != nil {
 		return nil, ErrUnavailable
 	}
@@ -270,6 +292,7 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 	// Successful startup transfers precisely these four pipe endpoints to s.
 	pipes = []*os.File{bootR, bootW, eventW, queryR, replyW, controlR}
 	failed = false
+	serviceTransferred = true
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -278,6 +301,21 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 		}
 	}()
 	return s, nil
+}
+
+// RetainedServicePin gives the trusted supervisor an independent readonly pin.
+// The caller owns it across Close until complete socket readback proves absence;
+// this method does not grant listener ownership or transfer a write control FD.
+func (s *RoutedDHCPOwnerV3) RetainedServicePin() (*os.File, RoutedDHCPServiceCgroupIdentityV1, error) {
+	if s == nil {
+		return nil, RoutedDHCPServiceCgroupIdentityV1{}, ErrIdentity
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.service == nil {
+		return nil, RoutedDHCPServiceCgroupIdentityV1{}, ErrUnavailable
+	}
+	return s.service.readonly()
 }
 
 func (s *RoutedDHCPOwnerV3) TakeReaderFiles() (RoutedDHCPOwnerFilesV3, RoutedDHCPOwnerBindingV3, error) {
@@ -338,5 +376,8 @@ func (s *RoutedDHCPOwnerV3) Close() error {
 		s.closeErr = ErrUnavailable
 		_ = s.cmd.Process.Kill()
 	}
+	cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	s.closeErr = errors.Join(s.closeErr, s.service.drain(cleanup))
 	return s.closeErr
 }

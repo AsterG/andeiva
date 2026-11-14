@@ -3,6 +3,7 @@ package previewruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 
@@ -11,6 +12,10 @@ import (
 )
 
 const RoutedDHCPDeferredOwnerRoleV4 = "--andeiva-routed-dhcp-owner-deferred-v4"
+
+// Only a correlated initial-wait frame from a live confirmed acquisition may
+// produce this sentinel. Generic unavailability must never be promoted to it.
+var errRoutedDHCPInitialWaitingV1 = errors.New("initial DHCP acquisition pending v1")
 
 // This profile identifies the trusted producer, not its future dhcpcd child.
 // Root authenticates the binding and inherited descriptors before helper boot.
@@ -76,12 +81,13 @@ func (a RoutedDHCPAcquisitionIdentityV4) valid(producer int64) bool {
 }
 
 type routedDHCPDeferredReplyV4 struct {
-	Version     int                              `json:"version"`
-	Incarnation string                           `json:"incarnation"`
-	Sequence    uint64                           `json:"sequence"`
-	Unavailable bool                             `json:"unavailable,omitempty"`
-	Acquisition *RoutedDHCPAcquisitionIdentityV4 `json:"acquisition,omitempty"`
-	Lease       *routedDHCPOwnerLeaseV3          `json:"lease,omitempty"`
+	Version        int                              `json:"version"`
+	Incarnation    string                           `json:"incarnation"`
+	Sequence       uint64                           `json:"sequence"`
+	Unavailable    bool                             `json:"unavailable,omitempty"`
+	WaitingVersion *int                             `json:"waiting_version,omitempty"`
+	Acquisition    *RoutedDHCPAcquisitionIdentityV4 `json:"acquisition,omitempty"`
+	Lease          *routedDHCPOwnerLeaseV3          `json:"lease,omitempty"`
 }
 type routedDHCPDeferredControlV4 struct {
 	Version     int                              `json:"version"`
@@ -121,11 +127,20 @@ func newRoutedDHCPDeferredReaderV4(files RoutedDHCPDeferredFilesV4, b RoutedDHCP
 	}
 	r := &RoutedDHCPOwnerReaderV3{gate: make(chan struct{}, 1), files: files.transport(), scanner: routedDHCPOwnerScannerV3(files.Reply), profile: 4, incarnation: b.Owner.Incarnation, alive: alive, now: now}
 	var acquisition RoutedDHCPAcquisitionIdentityV4
+	initial := true
 	r.decode = func(raw []byte, q routedDHCPOwnerRequestV3) (*routedDHCPOwnerLeaseV3, bool, error) {
 		var reply routedDHCPDeferredReplyV4
 		if routedDHCPOwnerDecodeV3(raw, &reply) != nil || q.Version != 4 || reply.Version != 4 || reply.Incarnation != q.Incarnation || reply.Sequence != q.Sequence {
 			return nil, false, ErrIdentity
 		}
+		if reply.WaitingVersion != nil {
+			if *reply.WaitingVersion != 1 || !initial || reply.Unavailable || reply.Lease != nil || reply.Acquisition == nil || !reply.Acquisition.valid(int64(b.Owner.PID)) || acquisition != (RoutedDHCPAcquisitionIdentityV4{}) && acquisition != *reply.Acquisition {
+				return nil, false, ErrIdentity
+			}
+			acquisition = *reply.Acquisition
+			return nil, false, errRoutedDHCPInitialWaitingV1
+		}
+		initial = false
 		if reply.Unavailable {
 			if reply.Lease != nil || reply.Acquisition != nil {
 				return nil, false, ErrIdentity

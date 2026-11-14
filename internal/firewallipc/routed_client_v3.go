@@ -32,7 +32,10 @@ type RoutedClientV3 struct {
 	rebootScope         bool
 	publicationAllowed  atomic.Bool
 	closingAllowed      atomic.Bool
+	dhcpSelected        atomic.Bool // Scheduling hint only, never an effect grant.
 }
+
+func (c *RoutedClientV3) DHCPSelectedV4() bool { return c != nil && c.dhcpSelected.Load() }
 
 func ConnectRoutedV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64) (*RoutedClientV3, error) {
 	return connectRoutedV3(parent, conn, runtimeRun, namespace, false)
@@ -107,6 +110,7 @@ func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser
 	}
 }
 func (c *RoutedClientV3) closeLocked() {
+	c.dhcpSelected.Store(false)
 	c.publicationAllowed.Store(false)
 	c.closingAllowed.Store(false)
 	c.dead = true
@@ -127,8 +131,12 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	initialWaiting := false
+	diagnosticStarted := RoutedDHCPDiagnosticStartV1(verb)
+	diagnosticContextErr := parent.Err()
 	defer func() {
-		if callErr != nil && routedEffectVerbV3(verb) {
+		RecordRoutedDHCPDiagnosticV1("client", verb, diagnosticStarted, callErr, diagnosticContextErr)
+		if callErr != nil && routedEffectVerbV3(verb) && !initialWaiting {
 			c.publicationAllowed.Store(false)
 			c.closingAllowed.Store(false)
 		}
@@ -151,6 +159,7 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	}
 	if verb == "inspect" && command.Integrity.Mode == "check" {
 		c.publicationAllowed.Store(false)
+		c.dhcpSelected.Store(false)
 	}
 	c.sequence = request.Sequence
 	timeout := 3 * time.Second
@@ -159,6 +168,7 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	defer func() { diagnosticContextErr = ctx.Err() }()
 	type outcome struct {
 		reply  RoutedReplyV3
 		result RoutedResultV3
@@ -188,12 +198,24 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 				return RoutedResultV3{}, ErrChannel
 			}
 			if verb == "inspect" && command.Integrity.Mode == "check" && out.result.Integrity.State == configpoc.IntegrityCompleteV1 && out.result.Integrity.Selection == command.Integrity.Selection {
+				if out.result.DHCPSelected && !c.dhcp {
+					c.closeLocked()
+					return RoutedResultV3{}, ErrChannel
+				}
+				c.dhcpSelected.Store(out.result.DHCPSelected)
 				c.publicationAllowed.Store(true)
 			}
 			if verb == "inspect" && out.result.Integrity.State == configpoc.IntegrityCompleteV1 && out.result.Integrity.Selection == command.Integrity.Selection {
 				c.closingAllowed.Store(true)
 			}
 			return out.result, nil
+		case "ANDEIVA_ROUTED_DHCP_WAITING_V1":
+			if verb != "dhcp_begin" || ctx.Err() != nil {
+				c.closeLocked()
+				return RoutedResultV3{}, ErrChannel
+			}
+			initialWaiting = true
+			return RoutedResultV3{}, ErrRoutedDHCPWaitingV1
 		case "ANDEIVA_CONFIG_RECOVERY_REQUIRED":
 			return RoutedResultV3{}, configpoc.ErrRecovery
 		case "ANDEIVA_CONFIG_CONFLICT":

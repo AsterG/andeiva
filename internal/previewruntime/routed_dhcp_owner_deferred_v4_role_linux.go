@@ -51,6 +51,9 @@ func (s *routedDHCPDeferredStateV4) current() (routedDHCPOwnerLeaseV3, RoutedDHC
 		return routedDHCPOwnerLeaseV3{}, id, true, ErrIdentity
 	}
 	if err != nil {
+		if err == errRoutedDHCPInitialWaitingV1 {
+			return routedDHCPOwnerLeaseV3{}, a.identity, false, err
+		}
 		return routedDHCPOwnerLeaseV3{}, id, false, ErrUnavailable
 	}
 	return l, a.identity, false, nil
@@ -250,6 +253,10 @@ func serveRoutedDHCPDeferredCurrentV4(ctx context.Context, request, reply *os.Fi
 			return ErrUnavailable
 		}
 		r := routedDHCPDeferredReplyV4{Version: 4, Incarnation: incarnation, Sequence: sequence, Unavailable: err != nil}
+		if err == errRoutedDHCPInitialWaitingV1 {
+			version := 1
+			r.Unavailable, r.WaitingVersion, r.Acquisition = false, &version, &id
+		}
 		if err == nil {
 			r.Lease = &l
 			r.Acquisition = &id

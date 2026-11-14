@@ -23,6 +23,7 @@ type RoutedReaderRootV3 struct {
 	Profile recoveryreserve.ProfileV2
 }
 type RoutedHelperOptionsV3 struct {
+	DHCPJobs                   *routedDHCPJobAssemblyV4
 	RebootScope                *RoutedRebootScopeOptionsV4
 	FreshScope                 *RoutedFreshScopeOptionsV3
 	DHCP                       *RoutedDHCPRuntimeOptionsV3
@@ -47,9 +48,13 @@ type RoutedHelperRuntimeV3 struct {
 	fence      *routedIntegrityFenceV3
 	dhcpDone   chan struct{}
 	dhcpClose  func() error
+	jobs       *routedDHCPJobsHelperV4
 }
 
 func routedHelperReadinessV3(m Metadata, ids Identities, o RoutedHelperOptionsV3) error {
+	if o.DHCPJobs != nil && (o.DHCP != nil || o.IntegrityRoot == nil || o.NetworkInventory == nil) {
+		return ErrIdentity
+	}
 	if o.FreshScope != nil && o.RebootScope != nil || (o.DHCP != nil || o.FreshScope != nil || o.RebootScope != nil) && (o.IntegrityRoot == nil || o.NetworkInventory == nil) {
 		return ErrIdentity
 	}
@@ -206,6 +211,13 @@ func assembleRoutedHelperV3(ctx context.Context, m Metadata, ids Identities, o R
 		result.dhcpDone = make(chan struct{})
 		go func() { defer close(result.dhcpDone); result.session.dhcp.Run(lifetime) }()
 	}
+	if o.DHCPJobs != nil {
+		result.jobs, e = newRoutedDHCPJobsHelperV4(lifetime, *o.DHCPJobs, full, o.Authority, result.session.integrity, o.Access.ReaderGID)
+		if e != nil {
+			return nil, e
+		}
+		result.session.dhcpJobs = result.jobs
+	}
 	return result, nil
 }
 
@@ -258,6 +270,9 @@ func (r *RoutedHelperRuntimeV3) Close() error {
 	}
 	if r.dhcpClose != nil {
 		failures = append(failures, r.dhcpClose())
+	}
+	if r.jobs != nil {
+		failures = append(failures, r.jobs.Close())
 	}
 	if r.fence != nil {
 		failures = append(failures, r.fence.Close())
