@@ -204,7 +204,7 @@ func assembleRoutedHelperV3(ctx context.Context, m Metadata, ids Identities, o R
 		}
 	}
 	if o.DHCP != nil {
-		result.session.dhcp, result.dhcpClose, e = assembleRoutedDHCPRuntimeV3(lifetime, *o.DHCP, o.Authority.Identity(), o.Access.ReaderGID, full, o.Authority, result.session.integrity)
+		result.session.dhcp, result.dhcpClose, e = assembleRoutedDHCPRuntimeV3(lifetime, *o.DHCP, o.Authority.Identity(), o.Access.ReaderGID, reader, o.Authority, result.session.integrity)
 		if e != nil {
 			return nil, e
 		}

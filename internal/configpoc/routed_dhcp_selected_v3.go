@@ -36,7 +36,8 @@ func routedDHCPTerminalV3(d *v3RoutedDHCPState) bool {
 }
 
 // RoutedDHCPSelectedV3 has no exported authority fields. Only the selected
-// reader can issue it after checking G1, physical R2 bindings and final selector.
+// reader can issue it after checking active authority, physical R2 bindings and
+// final selector. An action reader relies on its runtime's separate full-G1 gate.
 type RoutedDHCPSelectedV3 struct {
 	work  v3RoutedDHCPWork
 	ref   SelectionReferenceV2
