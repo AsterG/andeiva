@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — DHCP acquisition service lifetime
+
+- Launch the DHCP producer in an exclusive retained cgroup before exec, validate its bootstrap identity and distinguish process drainage from socket cleanup.
+
 ## Unreleased — SSH revocation test synchronization
 
 - Verify revocation after command input starts without assuming an already-denied SSH channel remains writable.
