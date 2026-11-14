@@ -102,20 +102,18 @@ func TestDisabledHasNoArtifact(t *testing.T) {
 	}
 }
 
-func TestCacheThresholdFloatingPointToken(t *testing.T) {
+func TestLeaseCachingUsesUnconfiguredEngineDefault(t *testing.T) {
 	c, b := fixture()
 	a, err := Compile(c, b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var wire struct {
-		DHCP4 map[string]json.RawMessage `json:"Dhcp4"`
-	}
-	if err := json.Unmarshal(a.JSON, &wire); err != nil {
-		t.Fatal(err)
-	}
-	if got := string(wire.DHCP4["cache-threshold"]); got != "0.0" {
-		t.Fatalf("Kea requires floating-point token 0.0, got %q", got)
+	// Neither option may be emitted at any configuration level. Kea 2.6.3
+	// requires explicit configuration to enable lease caching.
+	for _, key := range []string{`"cache-threshold"`, `"cache-max-age"`} {
+		if bytes.Contains(a.JSON, []byte(key)) {
+			t.Fatalf("unexpected lease caching override %s", key)
+		}
 	}
 }
 

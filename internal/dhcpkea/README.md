@@ -77,14 +77,18 @@ persistence. The compiler does not invoke that executable.
 
 One Linux/WSL development run: race 1.091 s; small compile 9,991 ns/op,
 4,593 B/op; dense two-scope compile 768,860 ns/op, 450,129 B/op. Three dense scopes
-produce 100,919 bytes from 49,321 input bytes; four exceed the input bound and
+produce 100,897 bytes from 49,321 input bytes; four exceed the input bound and
 are rejected. These are compiler measurements, not appliance/server benchmarks.
 No Docker/EKS runtime is introduced. Native packet/lifecycle/resource tests and
 independent review remain pending.
 
-The engine grammar requires `cache-threshold` as the floating-point token `0.0`.
-A wire-format regression protects this representation; native parsing must be
-repeated after the initial integer-token rejection.
+Lease caching options are omitted: Kea 2.6.3 requires explicit configuration to
+enable caching. Its parser rejects a configured zero threshold. A regression
+checks that neither `cache-threshold` nor `cache-max-age` is emitted. This default
+is not a lease durability guarantee; native parsing must be repeated after the
+initial syntax and semantic rejections. See the engine's
+[lease caching documentation](https://kea.readthedocs.io/en/kea-2.6.3/arm/dhcp4-srv.html#lease-caching),
+`BaseNetworkParser::parseCacheParams` and `AllocEngine::setLeaseReusable`.
 
 Engine references: [DHCPv4 configuration](https://kea.readthedocs.io/en/kea-2.6.3/arm/dhcp4-srv.html)
 and [classification](https://kea.readthedocs.io/en/kea-2.6.3/arm/classify.html).
