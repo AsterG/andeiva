@@ -138,39 +138,12 @@ func routedDHCPOwnerCgroupV3() error {
 	if err != nil || string(raw) != "0::"+routedSupervisorCgroupV3+"\n" {
 		return ErrIdentity
 	}
-	root, err := os.OpenRoot("/sys/fs/cgroup" + routedSupervisorCgroupV3)
-	if err != nil {
-		return ErrIdentity
-	}
-	defer root.Close()
-	dir, err := root.Open(".")
+	dir, err := routedDHCPServiceParentV1()
 	if err != nil {
 		return ErrIdentity
 	}
 	defer dir.Close()
-	var st unix.Stat_t
-	var fs unix.Statfs_t
-	if unix.Fstat(int(dir.Fd()), &st) != nil || st.Uid != 0 || st.Mode&0022 != 0 || unix.Fstatfs(int(dir.Fd()), &fs) != nil || fs.Type != unix.CGROUP2_SUPER_MAGIC {
-		return ErrIdentity
-	}
-	entries, err := dir.ReadDir(257)
-	if err != nil && err != io.EOF || len(entries) > 256 {
-		return ErrIdentity
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			return ErrIdentity
-		}
-	}
-	kind, err := root.ReadFile("cgroup.type")
-	if err != nil || string(kind) != "domain\n" {
-		return ErrIdentity
-	}
-	subtree, err := root.ReadFile("cgroup.subtree_control")
-	if err != nil || len(subtree) > 4096 || strings.TrimSpace(string(subtree)) != "" {
-		return ErrIdentity
-	}
-	return nil
+	return routedDHCPServiceTreeV1(dir, "", RoutedDHCPServiceCgroupIdentityV1{})
 }
 
 func NewRoutedDHCPOwnerReaderV3(files RoutedDHCPOwnerFilesV3, binding RoutedDHCPOwnerBindingV3) (*RoutedDHCPOwnerReaderV3, error) {
