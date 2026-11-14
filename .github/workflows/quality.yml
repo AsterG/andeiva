@@ -62,6 +62,13 @@ jobs:
       # The complete package suite exceeds Go's default ten-minute aggregate
       # budget. This does not alter RPC or persisted transaction deadlines.
       - run: go test -race -timeout=20m ./cmd/... ./internal/...
+      - name: Native diagnostic tag contracts without privileged operations
+        run: |
+          go test -race -tags=andeiva_native_dhcp_diagnostics -count=1 -timeout=2m ./internal/dhcpclient -run '^TestNativeDiagnostic'
+          go test -tags=andeiva_native_dhcp_diagnostics ./internal/previewruntime -list '^TestNativeDHCPDiagnostic' > "${RUNNER_TEMP}/andeiva-native-diagnostic-tests.txt"
+          grep -Fxq TestNativeDHCPDiagnosticRegistryLifetime "${RUNNER_TEMP}/andeiva-native-diagnostic-tests.txt"
+          grep -Fxq TestNativeDHCPDiagnosticReaderRejectsUnsafeFiles "${RUNNER_TEMP}/andeiva-native-diagnostic-tests.txt"
+          go test -race -tags=andeiva_native_dhcp_diagnostics -count=1 -timeout=2m ./internal/previewruntime -run '^TestNativeDHCPDiagnostic'
       - name: DHCP laboratory guard without privileged network operations
         run: |
           bash -n scripts/dhcp-native-isolated.sh

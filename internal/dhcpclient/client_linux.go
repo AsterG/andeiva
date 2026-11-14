@@ -65,6 +65,7 @@ type Client struct {
 	lastReason           string
 	exitCode             int
 	stopOnce             sync.Once
+	diagnostic           *clientDiagnostic
 }
 
 func bootNow() (int64, error) {
@@ -129,6 +130,15 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 			return nil, err
 		}
 	}
+	diagnostic, err := openClientDiagnostic()
+	if err != nil {
+		return nil, ErrScope
+	}
+	defer func() {
+		if failed {
+			diagnostic.close()
+		}
+	}()
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -139,12 +149,12 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		_ = w.Close()
 		return nil, err
 	}
-	c := &Client{lock: lock, output: r, done: make(chan struct{}), iface: scope.Interface, lastGrant: now, initialWaiting: true}
+	c := &Client{lock: lock, output: r, done: make(chan struct{}), iface: scope.Interface, lastGrant: now, initialWaiting: true, diagnostic: diagnostic}
 	cmd := exec.Command("/usr/sbin/dhcpcd", "-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath, scope.Interface) // #nosec G204 -- Fixed engine, hook and config; allowlisted interface bound to pinned namespaces; no shell.
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout = w
 	// No raw lease/options or engine diagnostics escape through public output.
-	cmd.Stderr = io.Discard
+	cmd.Stderr = diagnostic.stderr()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	c.cmd = cmd
 	started := make(chan error, 1)
@@ -160,6 +170,7 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 			return
 		}
 		c.pid = cmd.Process.Pid
+		c.diagnostic.event("started", "", 0)
 		started <- nil
 		// Keep the leader unreaped while signalling its owned process group;
 		// otherwise a recycled numeric PID could identify an unrelated group.
@@ -187,6 +198,8 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 			c.exitCode = cmd.ProcessState.ExitCode()
 		}
 		c.mu.Unlock()
+		c.diagnostic.event("owner_exit", "", c.exitCode)
+		c.diagnostic.close()
 		_ = r.Close()
 		close(c.done)
 	}()
@@ -224,6 +237,7 @@ func (c *Client) readEvents() {
 			_ = c.cmd.Process.Kill()
 			return
 		}
+		c.diagnostic.leaseEvent(e)
 	}
 	c.failAt("event_channel_closed")
 	_ = c.cmd.Process.Kill()
@@ -250,6 +264,7 @@ func (c *Client) failAt(stage string) {
 	c.lease = Lease{}
 	if c.failure == "" {
 		c.failure = stage
+		c.diagnostic.event(stage, c.lastReason, 0)
 	}
 }
 

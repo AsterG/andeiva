@@ -29,6 +29,7 @@ import (
 	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
+	"github.com/AsterG/andeiva/internal/recoveryreserve"
 	"github.com/AsterG/andeiva/internal/routednft"
 	"golang.org/x/sys/unix"
 )
@@ -220,11 +221,22 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 	}
 	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs)
 	defer stopServer()
+	stopDiagnostic := nativeDHCPJobsCollectV4(t, ctx, metadata)
+	defer stopDiagnostic()
 	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{DHCPJobs: true, Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
 	if e != nil {
 		t.Fatalf("native DHCP launch failed: %v\n%s", e, logs.String())
 	}
-	defer supervisor.Close()
+	defer func() {
+		trace, closeErr := nativeDHCPJobsCloseTraceV4(&logs, supervisor.Close)
+		if trace != "" {
+			t.Log(trace)
+		}
+		if closeErr != nil {
+			t.Error("native supervisor close failed")
+		}
+	}()
+	defer stopDiagnostic() // Collect before supervisor teardown on failure.
 	helper, api := supervisor.PIDs()
 	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata, &logs)
 	bound := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "bound")
@@ -248,6 +260,7 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 	}
 	nativeDHCPJobsWaitReportV4(t, ctx, &logs, "rollback-fenced")
 	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], restarted.Grant.Snapshot)
+	stopDiagnostic()
 	if e = supervisor.Close(); e != nil {
 		t.Fatal("grouped close", e)
 	}
@@ -330,6 +343,71 @@ func nativeDHCPJobsWaitReportV4(t *testing.T, ctx context.Context, logs *nativeL
 		case <-ticker.C:
 		}
 	}
+}
+
+// The failure report precedes deferred teardown. Capture only new, bounded
+// fixed-schema diagnostics after the existing graceful close has finished.
+func nativeDHCPJobsCloseTraceV4(logs *nativeLogV3, closeRuntime func() error) (string, error) {
+	before := len(logs.String())
+	err := closeRuntime()
+	after := logs.String()
+	if before > len(after) {
+		return "", err
+	}
+	type record struct {
+		Side      string `json:"side,omitempty"`
+		Verb      string `json:"verb,omitempty"`
+		Stage     string `json:"stage,omitempty"`
+		BootNS    int64  `json:"boot_ns,omitempty"`
+		ElapsedMS int64  `json:"elapsed_ms,omitempty"`
+		Error     string `json:"error,omitempty"`
+		Context   string `json:"context,omitempty"`
+		Truncated bool   `json:"truncated,omitempty"`
+		Dropped   uint64 `json:"dropped,omitempty"`
+	}
+	knownClass := func(v string) bool {
+		switch v {
+		case "ok", "deadline", "cancelled", "channel", "initial_waiting_v1", "recovery", "conflict", "storage", "lease_unavailable", "observation", "uncertain", "scope", "other":
+			return true
+		}
+		return false
+	}
+	var output strings.Builder
+	var count, omitted int
+	for _, line := range strings.Split(after[before:], "\n") {
+		raw, ok := strings.CutPrefix(line, "ANDEIVA_NATIVE_DHCP_RPC ")
+		if !ok || len(line)+1 > 512 {
+			continue
+		}
+		var r record
+		if firewallipc.Decode([]byte(raw), &r) != nil || r.BootNS < 0 || r.ElapsedMS < 0 {
+			continue
+		}
+		if r.Truncated {
+			if r.Side != "" || r.Verb != "" || r.Stage != "" || r.Error != "" || r.Context != "" || r.Dropped == 0 {
+				continue
+			}
+		} else if !knownClass(r.Error) || !knownClass(r.Context) {
+			continue
+		} else if r.Side == "helper_stage" {
+			if r.Verb != "" || !firewallipc.KnownRoutedDHCPFailureStageV1(r.Stage) {
+				continue
+			}
+		} else if (r.Side != "helper" && r.Side != "client") || !firewallipc.RoutedDHCPVerbV3(r.Verb) || r.Stage != "" {
+			continue
+		}
+		if count == 63 {
+			omitted++
+			continue
+		}
+		output.WriteString(line)
+		output.WriteByte('\n')
+		count++
+	}
+	if omitted != 0 {
+		fmt.Fprintf(&output, "ANDEIVA_NATIVE_DHCP_RPC {\"truncated\":true,\"dropped\":%d}\n", omitted)
+	}
+	return output.String(), err
 }
 
 func nativeDHCPJobsKernelV4(t *testing.T, ctx context.Context, gateway *os.File, snapshot networkexecutor.LeaseSelectedSnapshotV3) {
@@ -552,29 +630,137 @@ func nativeDHCPJobsLeaseV4(parent context.Context, r *RoutedOperationsRuntimeV3,
 	defer cancel()
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	trace := nativeDHCPJobsWaitTraceV4{start: time.Now(), output: os.Stderr}
 	var last error
+	var attempt uint64
 	for {
+		attempt++
+		sample := nativeDHCPJobsWaitSampleV4{Stage: "reconcile", AfterEpoch: after, Attempt: attempt}
+		started := time.Now()
 		last = r.DHCP.Reconcile(ctx)
+		sample.ReconcileMS = time.Since(started).Milliseconds()
+		// Post-call progress only: another scheduler iteration may have run.
+		// Never block reconciliation or read the selected store for diagnostics.
+		if r.DHCP.mu.TryLock() {
+			epoch, work := r.DHCP.grant.Epoch, r.DHCP.work != ""
+			sample.ControllerEpoch, sample.ControllerWork = &epoch, &work
+			r.DHCP.mu.Unlock()
+		}
+		sample.IntegrityReady = r.Service.RuntimeIntegrityReadyV1()
+		sample.SelectedHint = r.routed.DHCPSelectedV4()
 		if last == nil {
 			r.DHCP.mu.Lock()
+			started = time.Now()
 			grant, e := r.DHCP.remote.Current(ctx)
+			sample.CurrentMS = time.Since(started).Milliseconds()
+			sample.Stage, sample.Epoch = "current", grant.Epoch
 			work := r.DHCP.work
+			workPresent := work != ""
+			sample.Work = &workPresent
 			if e == nil && work != "" && grant.Epoch > after && reflect.DeepEqual(grant, r.DHCP.grant) {
+				started = time.Now()
 				_, e = r.routed.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: work})
+				sample.Stage, sample.LiveMS = "live", time.Since(started).Milliseconds()
 				if e == nil {
 					r.DHCP.mu.Unlock()
+					if err := trace.emit(time.Now(), sample, nil, true); err != nil {
+						return configpoc.RoutedDHCPGrantV3{}, err
+					}
 					return grant, nil
 				}
+			} else if e == nil {
+				sample.Stage = "waiting_epoch_or_selected_work"
+				e = ErrUnavailable
 			}
 			r.DHCP.mu.Unlock()
 			last = e
 		}
+		if err := trace.emit(time.Now(), sample, errors.Join(last, ctx.Err()), ctx.Err() != nil); err != nil {
+			return configpoc.RoutedDHCPGrantV3{}, err
+		}
 		select {
 		case <-ctx.Done():
+			if err := trace.emit(time.Now(), sample, errors.Join(ctx.Err(), last), true); err != nil {
+				return configpoc.RoutedDHCPGrantV3{}, err
+			}
 			return configpoc.RoutedDHCPGrantV3{}, errors.Join(ctx.Err(), last)
 		case <-ticker.C:
 		}
 	}
+}
+
+type nativeDHCPJobsWaitSampleV4 struct {
+	Stage           string  `json:"stage"`
+	Error           string  `json:"error"`
+	Attempt         uint64  `json:"attempt"`
+	ElapsedMS       int64   `json:"elapsed_ms"`
+	ReconcileMS     int64   `json:"reconcile_ms"`
+	CurrentMS       int64   `json:"current_ms"`
+	LiveMS          int64   `json:"live_ms"`
+	AfterEpoch      uint64  `json:"after_epoch"`
+	Epoch           uint64  `json:"epoch"`
+	Work            *bool   `json:"work,omitempty"`
+	IntegrityReady  bool    `json:"integrity_ready"`
+	SelectedHint    bool    `json:"selected_hint"`
+	Final           bool    `json:"final"`
+	ControllerEpoch *uint64 `json:"controller_epoch,omitempty"`
+	ControllerWork  *bool   `json:"controller_work,omitempty"`
+}
+
+// Test-only, bounded measurements of existing calls. No additional RPC, packet,
+// owner operation or selection read is issued to produce this diagnostic.
+type nativeDHCPJobsWaitTraceV4 struct {
+	start, last time.Time
+	output      io.Writer
+	reports     int
+	final       bool
+	lastClass   string
+}
+
+func (d *nativeDHCPJobsWaitTraceV4) emit(now time.Time, sample nativeDHCPJobsWaitSampleV4, err error, final bool) error {
+	if d.final {
+		return nil
+	}
+	sample.Error = "ok"
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		sample.Error = "deadline"
+	case errors.Is(err, context.Canceled):
+		sample.Error = "cancelled"
+	case errors.Is(err, firewallipc.ErrChannel):
+		sample.Error = "channel"
+	case errors.Is(err, firewallipc.ErrRoutedDHCPWaitingV1):
+		sample.Error = "initial_waiting_v1"
+	case errors.Is(err, configpoc.ErrConflict), errors.Is(err, recoveryreserve.ErrConflict):
+		sample.Error = "conflict"
+	case errors.Is(err, configpoc.ErrStorage), errors.Is(err, recoveryreserve.ErrUnavailable):
+		sample.Error = "storage"
+	case errors.Is(err, recoveryreserve.ErrFull), err != nil && err.Error() == "ANDEIVA_OPERATION_LIMITED":
+		sample.Error = "limited"
+	case errors.Is(err, ErrIdentity):
+		sample.Error = "identity"
+	case errors.Is(err, configpoc.ErrRecovery):
+		sample.Error = "recovery"
+	case errors.Is(err, ErrUnavailable):
+		sample.Error = "unavailable"
+	case err != nil:
+		sample.Error = "other"
+	}
+	// Capture the first new failure class even inside the periodic interval;
+	// retain the same absolute 23 samples plus one final record bound.
+	if !final && (d.reports >= 23 || sample.Error == d.lastClass && !d.last.IsZero() && now.Sub(d.last) < 5*time.Second) {
+		return nil
+	}
+	sample.ElapsedMS, sample.Final = now.Sub(d.start).Milliseconds(), final
+	data, e := json.Marshal(sample)
+	if e != nil {
+		return e
+	}
+	_, e = fmt.Fprintf(d.output, "ANDEIVA_NATIVE_DHCP_WAIT %s\n", data)
+	d.last, d.final = now, final
+	d.lastClass = sample.Error
+	d.reports++
+	return e
 }
 
 type nativeDHCPJobsSocketV4 struct {
@@ -739,5 +925,96 @@ func TestRoutedDHCPJobsV4NativeSocketAdoption(t *testing.T) {
 	}
 	if found, err := nativeDHCPJobsSocketPresentV4(os.Getpid(), got); err != nil || found {
 		t.Fatal("closed endpoint confused with another live socket", err)
+	}
+}
+
+func TestRoutedDHCPJobsV4NativeWaitTraceBounded(t *testing.T) {
+	var output bytes.Buffer
+	start := time.Unix(100, 0)
+	d := nativeDHCPJobsWaitTraceV4{start: start, output: &output}
+	sample := nativeDHCPJobsWaitSampleV4{Stage: "reconcile", ReconcileMS: 2300, Attempt: 1}
+	if err := d.emit(start, sample, ErrUnavailable, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.emit(start.Add(time.Second), sample, ErrUnavailable, false); err != nil || d.reports != 1 {
+		t.Fatal("trace ignored rate bound", err)
+	}
+	for i := 1; i <= 100; i++ {
+		sample.Attempt = uint64(i + 1)
+		if err := d.emit(start.Add(time.Duration(i)*5*time.Second), sample, errors.New("must not appear in output"), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d.reports != 23 || strings.Contains(output.String(), "must not appear") {
+		t.Fatal("unbounded or unsanitized trace")
+	}
+	if err := d.emit(start.Add(501*time.Second), sample, context.DeadlineExceeded, true); err != nil || d.reports != 24 {
+		t.Fatal("missing final trace after report cap", err)
+	}
+	if err := d.emit(start.Add(502*time.Second), sample, nil, true); err != nil || d.reports != 24 {
+		t.Fatal("duplicate final trace", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	var final nativeDHCPJobsWaitSampleV4
+	raw, ok := strings.CutPrefix(lines[len(lines)-1], "ANDEIVA_NATIVE_DHCP_WAIT ")
+	if !ok || json.Unmarshal([]byte(raw), &final) != nil || !final.Final || final.Error != "deadline" || final.ElapsedMS != 501000 || final.ReconcileMS != 2300 || final.Attempt != 101 || final.Work != nil {
+		t.Fatal("incorrect final measurement", final)
+	}
+}
+
+func TestRoutedDHCPJobsV4NativeWaitTraceFailureClasses(t *testing.T) {
+	cases := []struct {
+		err  error
+		code string
+	}{
+		{firewallipc.ErrRoutedDHCPWaitingV1, "initial_waiting_v1"},
+		{firewallipc.ErrChannel, "channel"},
+		{configpoc.ErrConflict, "conflict"},
+		{configpoc.ErrStorage, "storage"},
+		{errors.New("ANDEIVA_OPERATION_LIMITED"), "limited"},
+		{recoveryreserve.ErrFull, "limited"},
+		{configpoc.ErrRecovery, "recovery"},
+		{errors.New("private underlying detail"), "other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			var output bytes.Buffer
+			start := time.Unix(100, 0)
+			d := nativeDHCPJobsWaitTraceV4{start: start, output: &output}
+			if err := d.emit(start, nativeDHCPJobsWaitSampleV4{}, nil, false); err != nil {
+				t.Fatal(err)
+			}
+			epoch := uint64(7)
+			work := true
+			sample := nativeDHCPJobsWaitSampleV4{Stage: "reconcile", ControllerEpoch: &epoch, ControllerWork: &work}
+			if err := d.emit(start.Add(time.Millisecond), sample, errors.Join(tc.err), false); err != nil {
+				t.Fatal(err)
+			}
+			if d.reports != 2 {
+				t.Fatal("first new failure suppressed by interval")
+			}
+			lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+			raw, ok := strings.CutPrefix(lines[1], "ANDEIVA_NATIVE_DHCP_WAIT ")
+			var got nativeDHCPJobsWaitSampleV4
+			if !ok || json.Unmarshal([]byte(raw), &got) != nil || got.Error != tc.code || got.ControllerEpoch == nil || *got.ControllerEpoch != 7 || got.ControllerWork == nil || !*got.ControllerWork || strings.Contains(output.String(), "private underlying") {
+				t.Fatal("invalid failure classification", got)
+			}
+		})
+	}
+	// Class churn cannot exceed the existing absolute record cap.
+	var output bytes.Buffer
+	start := time.Unix(100, 0)
+	d := nativeDHCPJobsWaitTraceV4{start: start, output: &output}
+	for i := 0; i < 100; i++ {
+		err := firewallipc.ErrChannel
+		if i%2 == 0 {
+			err = firewallipc.ErrRoutedDHCPWaitingV1
+		}
+		if e := d.emit(start.Add(time.Duration(i)*time.Millisecond), nativeDHCPJobsWaitSampleV4{}, err, false); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if d.reports != 23 {
+		t.Fatal("failure churn bypassed report bound", d.reports)
 	}
 }

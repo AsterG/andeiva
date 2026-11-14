@@ -132,7 +132,10 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	initialWaiting := false
+	diagnosticStarted := RoutedDHCPDiagnosticStartV1(verb)
+	diagnosticContextErr := parent.Err()
 	defer func() {
+		RecordRoutedDHCPDiagnosticV1("client", verb, diagnosticStarted, callErr, diagnosticContextErr)
 		if callErr != nil && routedEffectVerbV3(verb) && !initialWaiting {
 			c.publicationAllowed.Store(false)
 			c.closingAllowed.Store(false)
@@ -165,6 +168,7 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	defer func() { diagnosticContextErr = ctx.Err() }()
 	type outcome struct {
 		reply  RoutedReplyV3
 		result RoutedResultV3
