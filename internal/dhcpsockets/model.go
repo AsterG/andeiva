@@ -75,10 +75,14 @@ func decodeSocket(raw []byte) (Socket, error) {
 
 // consume validates each netlink envelope before decoding a bounded dump.
 func consume(raw []byte, seq, port uint32) ([]Socket, bool, error) {
+	return consumeRecords(raw, seq, port, decodeSocket)
+}
+
+func consumeRecords[T any](raw []byte, seq, port uint32, decode func([]byte) (T, error)) ([]T, bool, error) {
 	if len(raw) == 0 || len(raw) > maxDatagram {
 		return nil, false, ErrObservation
 	}
-	var result []Socket
+	var result []T
 	done := false
 	for len(raw) > 0 {
 		if len(raw) < 16 || done {
@@ -103,7 +107,7 @@ func consume(raw []byte, seq, port uint32) ([]Socket, bool, error) {
 			if flags&2 == 0 {
 				return nil, false, ErrObservation
 			}
-			s, err := decodeSocket(raw[16:n])
+			s, err := decode(raw[16:n])
 			if err != nil {
 				return nil, false, err
 			}
