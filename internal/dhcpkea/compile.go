@@ -17,7 +17,7 @@ import (
 
 const (
 	EngineVersion    = "2.6.3"
-	LeaseFile        = "/var/lib/andeiva/dhcp-server/leases4.csv"
+	LeaseFile        = "/var/lib/kea/kea-leases4.csv"
 	MaxArtifactBytes = 1 << 20
 )
 
@@ -150,7 +150,7 @@ func number(s string) uint64 {
 	return uint64(b[0])<<24 | uint64(b[1])<<16 | uint64(b[2])<<8 | uint64(b[3])
 }
 func address(n uint64) string {
-	return netip.AddrFrom4([4]byte{byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}).String()
+	return netip.AddrFrom4([4]byte{byte((n >> 24) & 0xff), byte((n >> 16) & 0xff), byte((n >> 8) & 0xff), byte(n & 0xff)}).String()
 }
 
 // Split intervals at excluded/reserved addresses without enumerating a subnet.

@@ -1,0 +1,49 @@
+# Componente de servidor confinado
+
+Experimental y desactivado por defecto. Sin API, dispatcher productivo ni nueva
+base de configuración. Reutiliza controles del supervisor existente. Root debe
+proporcionar un proceso dedicado dentro del gateway y un namespace de montajes
+privado, FDs auténticos, configuración compilada RO, directorio persistente de
+`_kea`, presupuesto de almacenamiento y contexto acotado.
+
+Los tmpfs privados cubren `/run`, `/var/lib` y `/etc/kea` antes de crear directorios.
+La configuración aparece RO en `/etc/kea/kea-dhcp4.conf`; el directorio persistente
+se monta en `/var/lib/kea`. La ruta fija es `/var/lib/kea/kea-leases4.csv`. No se
+modifica AppArmor ni se restauran leases desde revisiones administrativas.
+El servidor recibe únicamente NET_RAW/BIND_SERVICE; el validador `kea-lfc` no
+recibe capacidades. Ambos usan `_kea`, perfiles stock y argumentos fijos.
+
+Se rechazan archivos desconocidos, enlaces, ACLs, permisos/propietarios incorrectos,
+PID de LFC y exceso del presupuesto. Root debe excluir otros escritores y mantener
+enmascarado el servicio stock. El flock no reemplaza esa propiedad exclusiva ni
+una cuota de disco. Todos los FDs heredados quedan CLOEXEC antes de ejecutar.
+
+Kea `-T` fuerza `persist=false`: no valida historial memfile. `kea-lfc -4 -d`
+comprueba copias privadas de cada archivo permitido; se exigen exit0, estadísticas
+únicas de lectura/escritura sin errores, terminación y ausencia de advertencias,
+errores o truncamiento. El resultado nunca reemplaza originales. Hashes verifican
+que lo inspeccionado no cambió; no son autenticación. No se promete inmunidad
+frente a corrupción semántica arbitraria o Root comprometido.
+
+Cancelación: SIGTERM, luego SIGKILL tras el presupuesto existente de cinco segundos,
+Wait y drenaje de descendientes. El rol dedicado debe salir para liberar montajes;
+Root verifica después el cgroup completo. Se conservan los leases.
+
+Entrada nativa: `go test -c -o server-native.test ./internal/previewruntime`, test
+`TestNativeRoutedDHCPServerV1`; variable `ANDEIVA_DHCP_SERVER_NATIVE_V1=serve|corrupt`.
+Sólo Debian13 aislado, nunca WSL/CI. FD3/4/5 fijan NET/MNT/PID del host; `/fixture`
+privado root0700 contiene `leases` de `_kea`0700. Cada ejecución usa montajes y proc
+privados dentro del cgroup agrupado fijo. LAN: `lan0`198.18.1.1/24, concesión única
+198.18.1.100, duración120, T1/T2 60/105, subnetID17, sin DNS/NTP.
+
+Root mantiene clientes aislados hasta `prepared.json` con observación real de
+proceso/caps/NNP/AppArmor/namespace/socket RAW; esto no autoriza política. Reutiliza
+el cliente dhcpcd revisado para BOUND/RENEW, interfaz no habilitada, parada SIGTERM,
+reinicio con el mismo directorio y rechazo de fila corrupta preservando bytes.
+Archiva el marcador anterior antes del reinicio. El timeout120s sin SIGTERM falla.
+Forwarding0 no bloquea por sí mismo DHCP RAW; no se inventa ese gate.
+
+Pruebas locales no acreditan DORA, persistencia, transición LFC de AppArmor ni
+rendimiento productivo. Mediciones nativas y revisión independiente pendientes.
+Comandos locales y procedimiento completo: [English](../runtime.md). Docker/EKS
+y contratos compartidos permanecen intactos.

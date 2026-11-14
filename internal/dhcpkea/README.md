@@ -5,6 +5,10 @@ unit, API, configuration store or network change is created. The engine profile
 requires native qualification before enablement. [Español](docs/es.md) ·
 [Português](docs/pt.md).
 
+The separate [confined component](runtime.md) is experimental and not wired to
+production activation. Its native packet/restart gates remain separate from
+compiler validation.
+
 `Compile(dhcpserver.Config, []Binding)` reuses schema 1 validation. Assembly must
 provide exactly one binding per retained scope: selected static LAN address,
 kernel interface name and stable `SubnetID`. Bindings are operational inputs,
@@ -36,7 +40,7 @@ or DHCP4-over-DHCP6 setting is generated. The compiler creates no nftables rule;
 RAW isolation, mandatory resource identification, local policy and unknown-traffic
 handling remain runtime requirements. There is no forwarding/NAT permission.
 
-Operational memfile data uses only `/var/lib/andeiva/dhcp-server/leases4.csv`, with
+Operational memfile data uses only `/var/lib/kea/kea-leases4.csv`, with
 persistence requested and hourly lease-file cleanup. It must never be restored
 from a configuration revision during rollback. The caller must provision owned
 storage, confine the engine/LFC helper, preserve lease ownership and enforce
@@ -77,7 +81,7 @@ persistence. The compiler does not invoke that executable.
 
 One Linux/WSL development run: race 1.091 s; small compile 9,991 ns/op,
 4,593 B/op; dense two-scope compile 768,860 ns/op, 450,129 B/op. Three dense scopes
-produce 100,897 bytes from 49,321 input bytes; four exceed the input bound and
+produce 100,885 bytes from 49,321 input bytes; four exceed the input bound and
 are rejected. These are compiler measurements, not appliance/server benchmarks.
 No Docker/EKS runtime is introduced. Native packet/lifecycle/resource tests and
 independent review remain pending.
