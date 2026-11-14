@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — SSH revocation test synchronization
+
+- Verify revocation after command input starts without assuming an already-denied SSH channel remains writable.
+
 ## Unreleased — DHCPv4 server configuration contract
 
 - Add bounded validation for LAN scopes, address pools, exclusions, MAC reservations and gateway/DNS/NTP/lease options.
