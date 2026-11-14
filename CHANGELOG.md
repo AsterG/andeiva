@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — LAN DHCP configuration editor
+
+- Edit validated LAN scopes, pools, reservations and client options through the shared configuration draft and transaction workflow.
+- Preserve disabled settings and invalidate editors after configuration context or permissions change.
+- Distinguish declared settings from independently verified service and lease state.
+
 ## Unreleased — SSH revocation test synchronization
 
 - Verify revocation after command input starts without assuming an already-denied SSH channel remains writable.
