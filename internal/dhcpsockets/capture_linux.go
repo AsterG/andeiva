@@ -16,6 +16,10 @@ func CaptureIPv4UDP(ctx context.Context) ([]Socket, error) {
 	if ctx == nil || ctx.Err() != nil {
 		return nil, ErrObservation
 	}
+	deadline := time.Now().Add(time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
 	fd, e := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW|unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK, unix.NETLINK_SOCK_DIAG)
 	if e != nil {
 		return nil, ErrObservation
@@ -44,10 +48,6 @@ func CaptureIPv4UDP(ctx context.Context) ([]Socket, error) {
 	} // INET_DIAG_NOCOOKIE
 	if unix.Sendto(fd, q, 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}) != nil {
 		return nil, ErrObservation
-	}
-	deadline := time.Now().Add(time.Second)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
 	}
 	buf := make([]byte, maxDatagram)
 	var result []Socket
@@ -82,14 +82,19 @@ func CaptureIPv4UDP(ctx context.Context) ([]Socket, error) {
 			return nil, ErrObservation
 		}
 		if done {
-			if ctx.Err() != nil {
-				return nil, ErrObservation
-			}
-			if err := uniqueSockets(result); err != nil {
-				return nil, err
-			}
-			return result, nil
+			return finishCapture(ctx, deadline, result)
 		}
 	}
 	return nil, ErrObservation
+}
+
+// Completion rechecks the original budget after decoding and identity validation.
+func finishCapture(ctx context.Context, deadline time.Time, rows []Socket) ([]Socket, error) {
+	if err := uniqueSockets(rows); err != nil {
+		return nil, err
+	}
+	if ctx == nil || ctx.Err() != nil || !time.Now().Before(deadline) {
+		return nil, ErrObservation
+	}
+	return rows, nil
 }

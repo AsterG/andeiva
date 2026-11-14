@@ -64,3 +64,15 @@ func TestCaptureRejectsInvalidContext(t *testing.T) {
 		}
 	}
 }
+
+func TestCompletedDumpCannotOutliveOriginalBudget(t *testing.T) {
+	row, _ := decodeSocket(socketMessage())
+	rows, err := finishCapture(context.Background(), time.Now().Add(-time.Nanosecond), []Socket{row})
+	if err == nil || rows != nil {
+		t.Fatal("late completion published rows", rows, err)
+	}
+	rows, err = finishCapture(context.Background(), time.Now().Add(time.Second), []Socket{row})
+	if err != nil || len(rows) != 1 {
+		t.Fatal("valid completion refused", rows, err)
+	}
+}
