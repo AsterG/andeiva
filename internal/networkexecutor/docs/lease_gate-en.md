@@ -141,3 +141,16 @@ and peak memory 29,634,560 bytes; the client scenario took 12.66 seconds. These
 are fixture observations, not appliance capacity or cutoff-latency guarantees.
 Real DHCP recovery, selected durable work, suspend safety and Internet/SNAT
 acceptance remain separate requirements.
+
+### Terminal retirement after renewal
+
+A changed lease still closes the old forwarding token and permanently fences
+that gate instance. Complete readback can prove physical closure without making
+the instance usable again. Retirement also requires forwarding disabled, the
+original L3 baseline and the exact durable withdrawn-work snapshot. Failed
+resource release retains recovery references and prevents reconstruction.
+
+A replacement recovers the archived sequence before admitting a strictly newer
+selected grant; it never recreates the previous token or extends its deadline.
+This source change does not establish native renewal recovery, post-withdrawal
+reacquisition or a resource benchmark. Those validations remain pending.

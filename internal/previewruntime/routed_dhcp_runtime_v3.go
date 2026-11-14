@@ -30,6 +30,7 @@ type routedDHCPGateV3 interface {
 	RecoverClosedSelectedV3(context.Context, networkexecutor.LeaseSelectedSnapshotV3) error
 	RecoverWithdrawnSelectedV3(context.Context, networkexecutor.LeaseSelectedSnapshotV3) error
 	VerifyClosedSelectedV3(context.Context) error
+	DisposeWithdrawnSelectedV3(context.Context, networkexecutor.LeaseSelectedSnapshotV3) error
 	Close(context.Context) error
 	Stage(context.Context) error
 	Open(context.Context) error
@@ -254,12 +255,22 @@ func (r *RoutedDHCPRuntimeV3) apply(ctx context.Context, work string) error {
 }
 
 func (r *RoutedDHCPRuntimeV3) retire(ctx context.Context) error {
-	if !r.withdrawn || r.lease == nil || r.reader.VerifyDHCPReleasedV3(ctx) != nil || r.verifyClosed(ctx, r.grant.Snapshot.Hash, networkexecutor.LeaseSelectedBaselineV3) != nil {
+	if r.failed || !r.withdrawn || r.lease == nil || r.gate == nil {
+		return configpoc.ErrRecovery
+	}
+	last, err := r.reader.LastWithdrawnDHCPV3(ctx)
+	if err != nil || last == nil || !reflect.DeepEqual(*last, r.grant.Snapshot) || r.verifyClosed(ctx, r.grant.Snapshot.Hash, networkexecutor.LeaseSelectedBaselineV3) != nil {
 		return configpoc.ErrRecovery
 	}
 	if err := r.releaseLease(ctx); err != nil {
+		r.failed = true
 		return err
 	}
+	if err := r.gate.DisposeWithdrawnSelectedV3(ctx, *last); err != nil {
+		r.failed = true
+		return err
+	}
+	r.gate = nil
 	r.lease, r.work, r.grant, r.withdrawn = nil, "", configpoc.RoutedDHCPGrantV3{}, false
 	return nil
 }

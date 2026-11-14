@@ -135,3 +135,17 @@ e mounts do host permaneceram iguais. O cgroup consumiu 0,881 segundos de CPU e
 São observações do ensaio, não garantias de capacidade ou latência de corte.
 Recuperação DHCP real, seleção durável, suspensão e Internet/SNAT exigem
 validações independentes.
+
+### Retirada terminal após renovação
+
+Uma mudança de concessão fecha a permissão anterior de encaminhamento e bloqueia
+essa instância permanentemente. A leitura completa pode provar o fechamento
+físico sem reabilitá-la. A retirada também exige encaminhamento desativado, o
+estado L3 original e o snapshot exato do trabalho retirado e persistido. Se a
+liberação de recursos falhar, as referências de recuperação são preservadas e
+a reconstrução fica impedida.
+
+A nova instância recupera a sequência arquivada antes de admitir uma concessão
+selecionada posterior; nunca recria a permissão anterior nem amplia seu prazo.
+Esta mudança de código não comprova recuperação nativa de renovação,
+reaquisição após retirar L3 ou desempenho. Essas validações seguem pendentes.

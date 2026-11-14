@@ -43,6 +43,7 @@ type dhcpRuntimeReaderV3 struct {
 	denied bool
 	events *[]string
 	after  func()
+	last   *networkexecutor.LeaseSelectedSnapshotV3
 }
 
 func (x *dhcpRuntimeReaderV3) Resolve(_ context.Context, hash string) (routedDHCPWorkV3, error) {
@@ -63,7 +64,7 @@ func (x *dhcpRuntimeReaderV3) VerifyDHCPReleasedV3(context.Context) error {
 	return nil
 }
 func (x *dhcpRuntimeReaderV3) LastWithdrawnDHCPV3(ctx context.Context) (*networkexecutor.LeaseSelectedSnapshotV3, error) {
-	return nil, x.VerifyDHCPReleasedV3(ctx)
+	return x.last, x.VerifyDHCPReleasedV3(ctx)
 }
 
 type dhcpRuntimeKernelV3 struct {
@@ -75,6 +76,8 @@ type dhcpRuntimeKernelV3 struct {
 	fact                  *RoutedDHCPOwnerFactV3
 	snapshot              networkexecutor.LeaseSelectedSnapshotV3
 	failOpen              bool
+	failDispose           bool
+	disposed              bool
 }
 
 func (k *dhcpRuntimeKernelV3) Initialize(context.Context) error {
@@ -93,6 +96,14 @@ func (k *dhcpRuntimeKernelV3) VerifyClosedSelectedV3(context.Context) error {
 	if k.gate || k.forward {
 		return configpoc.ErrRecovery
 	}
+	return nil
+}
+func (k *dhcpRuntimeKernelV3) DisposeWithdrawnSelectedV3(ctx context.Context, s networkexecutor.LeaseSelectedSnapshotV3) error {
+	k.events = append(k.events, "dispose-gate")
+	if k.failDispose || k.disposed || !reflect.DeepEqual(s, k.snapshot) || k.VerifyClosedSelectedV3(ctx) != nil {
+		return configpoc.ErrRecovery
+	}
+	k.disposed = true
 	return nil
 }
 func (k *dhcpRuntimeKernelV3) Close(context.Context) error {
@@ -262,6 +273,7 @@ func TestRoutedDHCPRuntimeV3SelectedLifecycleAndClosureOrder(t *testing.T) {
 		t.Fatal("released before selected archive")
 	}
 	reader.work = nil
+	reader.last = &g.Snapshot
 	if r.retire(ctx) != nil || r.lease != nil || r.work != "" {
 		t.Fatal("terminal release")
 	}
