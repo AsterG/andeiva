@@ -104,11 +104,14 @@ func TestNativeRoutedDHCPServerV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := fixture.OpenFile("config.json", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	config, err := fixture.OpenFile("config.json", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err == nil {
 		_, err = config.Write(a.JSON)
 		if err == nil {
-			err = config.Chmod(0644)
+			err = config.Chown(0, int(gid))
+		}
+		if err == nil {
+			err = config.Chmod(0440)
 		}
 		if err == nil {
 			err = config.Sync()
@@ -123,7 +126,7 @@ func TestNativeRoutedDHCPServerV1(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer config.Close()
-	if err = routedDHCPServerConfigFileV1(config, a.JSON); err != nil {
+	if err = routedDHCPServerConfigFileV1(config, a.JSON, gid); err != nil {
 		t.Fatal(err)
 	}
 	gw, err := os.Open("/proc/self/ns/net")
@@ -147,7 +150,7 @@ func TestNativeRoutedDHCPServerV1(t *testing.T) {
 	if _, err = rand.Read(nonce[:]); err != nil {
 		t.Fatal(err)
 	}
-	o := RoutedDHCPServerResourcesV1{Metadata: Metadata{SchemaVersion: 2, RunID: hex.EncodeToString(nonce[:]), BootID: bootID, HostNamespace: ids[0], GatewayNamespace: ns}, Gateway: gw, Host: pins[0], HostMount: pins[1], Configuration: config, Leases: leaseDir, Config: c, Bindings: b, LeaseBudgetBytes: 4 << 20}
+	o := RoutedDHCPServerResourcesV1{Metadata: Metadata{SchemaVersion: 2, RunID: hex.EncodeToString(nonce[:]), BootID: bootID, HostNamespace: ids[0], GatewayNamespace: ns}, Gateway: gw, Host: pins[0], HostMount: pins[1], Configuration: config, Leases: leaseDir, Config: c, Bindings: b, LeaseBudgetBytes: 4 << 20, ServingLogBytes: 1 << 20}
 	sig, cancelSignal := signal.NotifyContext(context.Background(), unix.SIGTERM)
 	defer cancelSignal()
 	ctx, cancel := context.WithTimeout(sig, 120*time.Second)

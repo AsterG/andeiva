@@ -13,6 +13,12 @@ modifica AppArmor ni se restauran leases desde revisiones administrativas.
 El servidor recibe únicamente NET_RAW/BIND_SERVICE; el validador `kea-lfc` no
 recibe capacidades. Ambos usan `_kea`, perfiles stock y argumentos fijos.
 
+Configuración exacta root:`_kea` 0440, nunca legible por todos. Padres privados
+0750 root:`_kea`; directorios del motor 0700. El modo de `/run/lock` se aplica y
+verifica mediante FD tras crear 0700, conservando recorrido del grupo con umask 077.
+El pidfd se obtiene atómicamente con `SysProcAttr.PidFD` antes de Wait; no se busca
+un PID que ya pudo reutilizarse. Sin soporte kernel se aborta antes de reap.
+
 Se rechazan archivos desconocidos, enlaces, ACLs, permisos/propietarios incorrectos,
 PID de LFC y exceso del presupuesto. Root debe excluir otros escritores y mantener
 enmascarado el servicio stock. El flock no reemplaza esa propiedad exclusiva ni
@@ -28,6 +34,10 @@ frente a corrupción semántica arbitraria o Root comprometido.
 Cancelación: SIGTERM, luego SIGKILL tras el presupuesto existente de cinco segundos,
 Wait y drenaje de descendientes. El rol dedicado debe salir para liberar montajes;
 Root verifica después el cgroup completo. Se conservan los leases.
+
+`ServingLogBytes` limita los bytes de salida por ejecución y cancela al excederlos
+o fallar la escritura. Root limita también tasa/retención del journal externo.
+La fixture usa 1 MiB/120 s; no es dimensionamiento productivo.
 
 Entrada nativa: `go test -c -o server-native.test ./internal/previewruntime`, test
 `TestNativeRoutedDHCPServerV1`; variable `ANDEIVA_DHCP_SERVER_NATIVE_V1=serve|corrupt`.

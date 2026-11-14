@@ -41,6 +41,9 @@ type RoutedDHCPServerResourcesV1 struct {
 	// Trusted storage-plan budget for existing lease/LFC files, not a request
 	// option. This preflight bound does not enforce ongoing filesystem quotas.
 	LeaseBudgetBytes int64
+	// Root's per-run diagnostic budget. Exhaustion stops the component; the
+	// external journal still needs its own retention/rate limits.
+	ServingLogBytes int64
 }
 
 // Run is an opt-in component, not a production dispatch or readiness API. The
@@ -54,7 +57,7 @@ func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResou
 	if _, ok := ctx.Deadline(); !ok {
 		return ErrIdentity
 	}
-	if o.LeaseBudgetBytes <= 0 || o.LeaseBudgetBytes > (math.MaxInt64-dhcpkea.MaxArtifactBytes)/2 {
+	if o.LeaseBudgetBytes <= 0 || o.LeaseBudgetBytes > (math.MaxInt64-dhcpkea.MaxArtifactBytes)/2 || o.ServingLogBytes <= 0 {
 		return ErrIdentity
 	}
 	uid, gid, err := routedDHCPServerAccountV1()
@@ -68,7 +71,7 @@ func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResou
 	if err = routedDHCPServerScopeV1(o); err != nil {
 		return fmt.Errorf("dhcp server isolated scope: %w", err)
 	}
-	if err = routedDHCPServerConfigFileV1(o.Configuration, a.JSON); err != nil {
+	if err = routedDHCPServerConfigFileV1(o.Configuration, a.JSON, gid); err != nil {
 		return fmt.Errorf("dhcp server compiled configuration: %w", err)
 	}
 	if err = routedDHCPServerLeasesV1(o.Leases, uid, gid, o.LeaseBudgetBytes); err != nil {
@@ -118,7 +121,14 @@ func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResou
 	if err = routedDHCPServerBindV1(o.Leases, "/var/lib/kea", false); err != nil {
 		return err
 	}
-	return routedDHCPServerExecV1(ctx, uid, gid, false, os.Stdout)
+	serving, cancel := context.WithCancel(ctx)
+	defer cancel()
+	output := &routedDHCPServerOutputV1{writer: os.Stdout, remaining: o.ServingLogBytes, stop: cancel}
+	err = routedDHCPServerExecV1(serving, uid, gid, false, output)
+	if output.failed() {
+		return ErrUnavailable
+	}
+	return err
 }
 
 func routedDHCPServerAccountV1() (uint32, uint32, error) {
@@ -194,13 +204,13 @@ func routedDHCPServerScopeV1(o RoutedDHCPServerResourcesV1) error {
 	return nil
 }
 
-func routedDHCPServerConfigFileV1(f *os.File, expected []byte) error {
-	if f == nil {
+func routedDHCPServerConfigFileV1(f *os.File, expected []byte, gid uint32) error {
+	if f == nil || gid == 0 {
 		return ErrIdentity
 	}
 	var st unix.Stat_t
 	flags, err := unix.FcntlInt(f.Fd(), unix.F_GETFL, 0)
-	if err != nil || flags&unix.O_ACCMODE != unix.O_RDONLY || unix.Fstat(int(f.Fd()), &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Uid != 0 || st.Gid != 0 || st.Mode&07777 != 0444 && st.Mode&07777 != 0644 || st.Nlink != 1 || st.Size != int64(len(expected)) || !fenceNoACLV3(f, false) {
+	if err != nil || flags&unix.O_ACCMODE != unix.O_RDONLY || unix.Fstat(int(f.Fd()), &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Uid != 0 || st.Gid != gid || st.Mode&07777 != 0440 || st.Nlink != 1 || st.Size != int64(len(expected)) || !fenceNoACLV3(f, false) {
 		return ErrIdentity
 	}
 	actual := make([]byte, len(expected))
@@ -296,24 +306,25 @@ func routedDHCPServerMountsV1(o RoutedDHCPServerResourcesV1, uid, gid uint32) er
 	// Same bounded scratch profile as the existing isolated DHCP owner; the
 	// persistent directory is a bind, never tmpfs or a configuration snapshot.
 	for _, path := range []string{"/run", "/var/lib", "/etc/kea"} {
-		if unix.Mount("tmpfs", path, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "mode=0755,size=4m,nr_inodes=128") != nil {
+		if unix.Mount("tmpfs", path, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, fmt.Sprintf("mode=0750,gid=%d,size=4m,nr_inodes=128", gid)) != nil {
 			return ErrUnavailable
 		}
 	}
 	// Packages installed without autostart need not have created /var/lib/kea.
 	// Make the destination only after hiding /var/lib with private tmpfs.
-	if os.Mkdir("/var/lib/kea", 0700) != nil || os.Chown("/var/lib/kea", int(uid), int(gid)) != nil {
-		return ErrUnavailable
-	}
-	for _, path := range []string{"/run/kea", "/run/lock", "/run/lock/kea"} {
-		if os.Mkdir(path, 0755) != nil {
+	for _, dir := range []struct {
+		path string
+		uid  uint32
+		mode os.FileMode
+	}{
+		{"/var/lib/kea", uid, 0700}, {"/run/kea", uid, 0700}, {"/run/lock", 0, 0750}, {"/run/lock/kea", uid, 0700},
+	} {
+		if routedDHCPServerDirectoryV1(dir.path, dir.uid, gid, dir.mode) != nil {
 			return ErrUnavailable
 		}
-		if path != "/run/lock" && os.Chown(path, int(uid), int(gid)) != nil {
-			return ErrUnavailable
-		}
 	}
-	file, err := os.OpenFile(routedDHCPServerConfigV1, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0444)
+	// Root-only placeholder; the readonly bind supplies the checked 0440 inode.
+	file, err := os.OpenFile(routedDHCPServerConfigV1, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0000)
 	if err != nil {
 		return ErrUnavailable
 	}
@@ -321,6 +332,32 @@ func routedDHCPServerMountsV1(o RoutedDHCPServerResourcesV1, uid, gid uint32) er
 		return ErrUnavailable
 	}
 	return routedDHCPServerBindV1(o.Configuration, routedDHCPServerConfigV1, true)
+}
+
+// Mount targets above are already private tmpfs. Open the new directory by FD
+// before changing ownership/mode; explicit chmod avoids umask removing _kea's
+// traversal permission on the Root-owned /run/lock parent.
+func routedDHCPServerDirectoryV1(path string, uid, gid uint32, mode os.FileMode) error {
+	if uid >= 1<<31 || gid == 0 || gid >= 1<<31 || mode != 0700 && mode != 0750 {
+		return ErrIdentity
+	}
+	if os.Mkdir(path, 0700) != nil {
+		return ErrUnavailable
+	}
+	fd, err := unix.Open(path, unix.O_DIRECTORY|unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return ErrUnavailable
+	}
+	file := os.NewFile(uintptr(fd), "kea-private-directory")
+	defer file.Close()
+	if file.Chown(int(uid), int(gid)) != nil || file.Chmod(mode) != nil {
+		return ErrUnavailable
+	}
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) != nil || st.Mode != unix.S_IFDIR|uint32(mode) || st.Uid != uid || st.Gid != gid || !fenceNoACLV3(file, true) {
+		return ErrIdentity
+	}
+	return nil
 }
 
 func routedDHCPServerBindV1(file *os.File, path string, readonly bool) error {
@@ -363,26 +400,60 @@ func routedDHCPServerExecV1(ctx context.Context, uid, gid uint32, check bool, ou
 	cmd := routedDHCPServerCommandV1(uid, gid, check)
 	cmd.Stdout, cmd.Stderr = output, output
 	// No ExtraFiles: host namespace, lease and config FDs must remain CLOEXEC.
+	return routedDHCPServerWaitV1(ctx, cmd, check)
+}
+
+func routedDHCPServerStartV1(cmd *exec.Cmd) (int, <-chan error, error) {
+	fd := -1
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	}
+	cmd.SysProcAttr.PidFD = &fd
 	started := make(chan error, 1)
 	done := make(chan error, 1)
+	reap := make(chan struct{})
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		err := cmd.Start()
 		started <- err
+		<-reap
 		if err == nil {
 			err = cmd.Wait()
 		}
 		done <- err
 	}()
 	if err := <-started; err != nil {
+		close(reap)
+		return -1, nil, ErrUnavailable
+	}
+	var flags int
+	var err error
+	if fd >= 0 {
+		flags, err = unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+	}
+	if fd < 0 || err != nil || flags&unix.FD_CLOEXEC == 0 {
+		// Wait is blocked, so this PID cannot be recycled even on a kernel that
+		// did not return a pidfd. No later numeric-PID signalling is used.
+		_ = cmd.Process.Kill()
+		close(reap)
+		<-done
+		if fd >= 0 {
+			_ = unix.Close(fd)
+		}
+		return -1, nil, ErrUnavailable
+	}
+	close(reap)
+	return fd, done, nil
+}
+
+func routedDHCPServerWaitV1(ctx context.Context, cmd *exec.Cmd, check bool) error {
+	if ctx == nil || ctx.Err() != nil {
 		return ErrUnavailable
 	}
-	fd, err := unix.PidfdOpen(cmd.Process.Pid, 0)
+	fd, done, err := routedDHCPServerStartV1(cmd)
 	if err != nil {
-		_ = cmd.Process.Kill()
-		<-done
-		return ErrUnavailable
+		return err
 	}
 	defer unix.Close(fd)
 	select {
@@ -402,6 +473,40 @@ func routedDHCPServerExecV1(ctx context.Context, uid, gid uint32, check bool, ou
 		return ctx.Err()
 	}
 }
+
+type routedDHCPServerOutputV1 struct {
+	mu        sync.Mutex
+	writer    io.Writer
+	remaining int64
+	stop      context.CancelFunc
+	bad       bool
+}
+
+func (b *routedDHCPServerOutputV1) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	if b.bad || int64(len(p)) > b.remaining {
+		b.bad = true
+		b.mu.Unlock()
+		b.stop()
+		return 0, ErrUnavailable
+	}
+	b.remaining -= int64(len(p))
+	b.mu.Unlock()
+	// Never hold the state lock across the external journal's write. WaitDelay
+	// may report a blocked output copier; failure reporting must still return.
+	n, err := b.writer.Write(p)
+	if err != nil || n != len(p) {
+		b.mu.Lock()
+		b.bad = true
+		b.mu.Unlock()
+		b.stop()
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+	}
+	return n, err
+}
+func (b *routedDHCPServerOutputV1) failed() bool { b.mu.Lock(); defer b.mu.Unlock(); return b.bad }
 
 // Bounded private capture; no lease data or engine diagnostics enter public
 // errors. LFC exit zero alone is insufficient (see its LFC_TERMINATE message).

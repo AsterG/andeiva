@@ -7,8 +7,8 @@ descendant-drain primitives. [Español](docs/runtime.es.md) · [Português](docs
 
 Trusted Root assembly must enter a dedicated process into the owned gateway and
 a different mount namespace before calling it. It supplies actual host/gateway
-namespace FDs, a root-owned readonly compiled-config FD, a dedicated `_kea`
-lease-directory FD, a storage-plan byte budget, and a bounded context. Live LAN
+namespace FDs, a readonly compiled-config FD (root:`_kea`, exactly 0440), a dedicated
+`_kea` lease-directory FD, storage/serving-log byte budgets, and a bounded context. Live LAN
 addresses must match the compiler bindings. Both IPv4 and IPv6 forwarding must
 already be zero. This does **not** block DHCP RAW sockets: keep laboratory clients
 isolated until the explicit native process/socket observation. Product activation
@@ -22,13 +22,21 @@ profiles. It never creates missing directories in the host filesystem. The
 compiler lease path is `/var/lib/kea/kea-leases4.csv`; an administrative revision
 must never restore or overwrite operational leases.
 
+The Root-owned `/run/lock` parent is `_kea` group 0750; engine directories are
+0700. Ownership and exact modes are applied and verified through directory FDs,
+so umask 077 cannot silently remove group traversal. Overlay parents use 0750
+and `_kea` group. The config mount placeholder is 0000; its readonly bind supplies
+the verified root:`_kea` 0440 source inode, never a world-readable configuration.
+
 The fixed `setpriv` command launches `/usr/sbin/kea-dhcp4` as the existing `_kea`
 account, no supplementary groups, only NET_RAW/BIND_SERVICE, no-new-privileges,
 and the stock `kea-dhcp4` AppArmor profile. The standalone validation child uses
 `kea-lfc`, its stock profile and zero capabilities. No arbitrary path, shell,
 hook, control socket or environment override is accepted. All inherited FDs
 are sealed before exec. Spawn/Wait retain the same OS thread; setpriv reapplies
-SIGKILL parent death after dropping credentials. Outer KillMode=control-group
+SIGKILL parent death after dropping credentials. `SysProcAttr.PidFD` pins the child
+atomically at creation, before Wait can reap it; no post-reap PidfdOpen lookup is
+used. Missing kernel pidfd support aborts while reap is still blocked. Outer KillMode=control-group
 drainage remains necessary, including LFC descendants after role death.
 
 Lease files must be regular, single-link, owner `_kea`, mode 0600 without ACLs,
@@ -52,6 +60,11 @@ budget, waits and drains descendants. Returning from the component is not enough
 to release private mounts: the dedicated role must exit, and Root must verify
 whole-cgroup drainage. Errors preserve original files. No readiness or packet
 permission is returned by this component.
+
+`ServingLogBytes` is an explicit trusted per-run budget. Output is passed to
+stdout only within that bound; overflow/write failure cancels the component.
+Root must also bound the external journal's rate and retention. The native fixture
+uses 1 MiB for its 120-second maximum run; this is not a production sizing claim.
 
 ## Native entry for Root's reviewed fixture
 
