@@ -92,7 +92,7 @@ func routedDHCPOwnerPrivateMountsV3() error {
 	return nil
 }
 
-// Run is a root-only dispatch entry, not a user command. FDs 3..10 belong to
+// Run is a root-only dispatch entry, not a user command. FDs 3..11 belong to
 // this separate role, not to the helper's integrity/retirement descriptor map.
 func RunRoutedDHCPOwnerRoleV3(parent context.Context) (result error) {
 	return runRoutedDHCPOwnerProfileV3(parent, 3)
@@ -104,7 +104,7 @@ func runRoutedDHCPOwnerProfileV3(parent context.Context, profile int) (result er
 	if parent == nil || parent.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return ErrIdentity
 	}
-	var files [8]*os.File
+	var files [9]*os.File
 	defer func() {
 		for _, f := range files {
 			if f != nil {
@@ -112,7 +112,14 @@ func runRoutedDHCPOwnerProfileV3(parent context.Context, profile int) (result er
 			}
 		}
 	}()
-	for i := range files {
+	// Validate the ninth descriptor before pipe initialization can allocate a
+	// poll descriptor into a missing inherited slot.
+	files[8] = os.NewFile(11, "dhcp-service-cgroup")
+	if _, e := routedDHCPServiceDirectoryV1(files[8]); e != nil {
+		return e
+	}
+	unix.CloseOnExec(11)
+	for i := range 8 {
 		fd := i + 3
 		if fd >= 6 && unix.SetNonblock(fd, true) != nil {
 			return ErrIdentity
@@ -139,7 +146,7 @@ func runRoutedDHCPOwnerProfileV3(parent context.Context, profile int) (result er
 	_ = files[3].Close()
 	start, _, err := routedDHCPOwnerProcessV3(b.ParentPID)
 	status, statusErr := routedDHCPOwnerReadV3("/proc/"+strconv.Itoa(b.ParentPID)+"/status", 65536)
-	if err != nil || start != b.ParentStartTicks || statusErr != nil || !rootRoutedParentStatusV3(status, b.ParentPID) || routedDHCPOwnerCgroupV3() != nil {
+	if err != nil || start != b.ParentStartTicks || statusErr != nil || !rootRoutedParentStatusV3(status, b.ParentPID) || validateRoutedDHCPServiceRoleV1(files[8], b.Incarnation, b.ServiceCgroupVersion, RoutedDHCPServiceCgroupIdentityV1{b.ServiceCgroupDevice, b.ServiceCgroupInode}) != nil {
 		return ErrIdentity
 	}
 	if unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0) != nil || b.ParentPID != os.Getppid() {
@@ -178,7 +185,7 @@ func runRoutedDHCPOwnerProfileV3(parent context.Context, profile int) (result er
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	if profile == 4 {
-		return runRoutedDHCPDeferredRoleV4(ctx, b, files, dhcpclient.Scope{HostNetwork: files[1], HostMount: files[2], Interface: wan.Name, Index: iface.Index, HardwareAddress: wan.HardwareAddress})
+		return runRoutedDHCPDeferredRoleV4(ctx, b, [8]*os.File(files[:8]), dhcpclient.Scope{HostNetwork: files[1], HostMount: files[2], Interface: wan.Name, Index: iface.Index, HardwareAddress: wan.HardwareAddress})
 	}
 	client, err := dhcpclient.StartIsolated(ctx, dhcpclient.Scope{HostNetwork: files[1], HostMount: files[2], Interface: wan.Name, Index: iface.Index, HardwareAddress: wan.HardwareAddress})
 	if err != nil {

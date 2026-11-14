@@ -4,6 +4,7 @@ package previewruntime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"time"
 
@@ -62,6 +63,13 @@ func (s *RoutedDHCPDeferredOwnerV4) Close() error {
 		return nil
 	}
 	return s.owner.Close()
+}
+
+func (s *RoutedDHCPDeferredOwnerV4) RetainedServicePin() (*os.File, RoutedDHCPServiceCgroupIdentityV1, error) {
+	if s == nil || s.owner == nil {
+		return nil, RoutedDHCPServiceCgroupIdentityV1{}, ErrIdentity
+	}
+	return s.owner.RetainedServicePin()
 }
 
 // Activate is root-only and one-shot. The supervisor MUST first prove selected
@@ -170,5 +178,8 @@ func (o *RoutedDHCPOwnerV3) closeDeferredLockedV4() error {
 	case <-time.After(5 * time.Second):
 		_ = o.failDeferredLockedV4()
 	}
+	cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	o.closeErr = errors.Join(o.closeErr, o.service.drain(cleanup))
 	return o.closeErr
 }
