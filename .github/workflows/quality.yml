@@ -39,6 +39,20 @@ jobs:
           go test -race ./internal/configpoc -count=1 -timeout=3m \
             -run '^TestReserveCompensationActualPriorReaderRefusal$' \
             -reclaim-old-reader="${RUNNER_TEMP}/andeiva-prior-compensation-reader.test"
+      - name: Check out the actual pre-DHCP configuration reader
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 374298596d9b256ba6761502aa60753887858624
+          path: .tmp/prior-dhcp-reader
+          persist-credentials: false
+      - name: Compile the unchanged pre-DHCP reader
+        working-directory: .tmp/prior-dhcp-reader
+        run: go test -c -o "${RUNNER_TEMP}/andeiva-prior-dhcp-reader.test" ./internal/configpoc
+      - name: Verify durable DHCP feature refusal with the actual prior reader
+        run: |
+          go test -race ./internal/configpoc -count=1 -timeout=3m \
+            -run '^TestDHCPServer' \
+            -reclaim-old-reader="${RUNNER_TEMP}/andeiva-prior-dhcp-reader.test"
 
   source:
     runs-on: ubuntu-24.04
