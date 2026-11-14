@@ -44,7 +44,7 @@ func TestPacketIdentityAndMissingAttribution(t *testing.T) {
 		})
 	}
 }
-func TestPacketUnboundAndUnexpectedProtocolsStayVisible(t *testing.T) {
+func TestPacketUnboundAndAllProtocolEndpointsStayVisible(t *testing.T) {
 	b := packetMessage()
 	clear(b[20:24])
 	binary.NativeEndian.PutUint16(b[2:4], 3)
@@ -72,5 +72,15 @@ func TestPacketDumpValidatesEnvelopeAndDuplicates(t *testing.T) {
 	}
 	if uniquePackets([]PacketSocket{rows[0], rows[0]}) == nil {
 		t.Fatal("duplicate packet identity accepted")
+	}
+}
+
+func TestPacketRawAllProtocolProfileRemainsVisible(t *testing.T) {
+	b := packetMessage()
+	b[1] = 3
+	binary.NativeEndian.PutUint16(b[2:4], 3)
+	s, err := decodePacket(b)
+	if err != nil || s.Type != 3 || s.Protocol != 3 || s.Interface != 3 {
+		t.Fatal("RAW/ETH_P_ALL observation changed", s, err)
 	}
 }
