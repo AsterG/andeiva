@@ -20,13 +20,14 @@ import (
 type nativeDHCPDiagnosticCaptureV4 struct {
 	root       *os.Root
 	pin        *os.File
+	servicePin *os.File
 	data       []byte
 	err        error
 	stop, done chan struct{}
 }
 
 func pinNativeDHCPDiagnosticV4(owner *RoutedDHCPOwnerV3, m Metadata) (*nativeDHCPDiagnosticCaptureV4, error) {
-	if owner == nil || os.Getuid() != 0 || os.Geteuid() != 0 || routedDHCPOwnerCgroupV3() != nil {
+	if owner == nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return nil, ErrIdentity
 	}
 	owner.mu.Lock()
@@ -35,6 +36,21 @@ func pinNativeDHCPDiagnosticV4(owner *RoutedDHCPOwnerV3, m Metadata) (*nativeDHC
 	if owner.closed || owner.profile != 4 || !routedDHCPDeferredBindingValidV4(b) || b.Owner.RunID != m.RunID || b.Owner.BootID != m.BootID || b.Owner.Namespace != m.GatewayNamespace || !routedDHCPOwnerNamespaceV3(owner.mount, unix.CLONE_NEWNS, b.MountNamespace) || !routedDHCPOwnerPIDFDAliveV3(owner.producerFD, int(b.Owner.PID)) {
 		return nil, ErrIdentity
 	}
+	name, nameErr := routedDHCPServiceNameV1(b.Owner.Incarnation)
+	current, currentErr := routedDHCPOwnerReadV3("/proc/self/cgroup", 4096)
+	if nameErr != nil || currentErr != nil || string(current) != "0::"+routedSupervisorCgroupV3+"\n" || owner.service == nil || owner.service.name != name {
+		return nil, ErrIdentity
+	}
+	servicePin, identity, err := owner.service.readonly()
+	if err != nil {
+		return nil, err
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			_ = servicePin.Close()
+		}
+	}()
 	pid := int(b.Owner.PID)
 	pin, start, err := routedDHCPOwnerPinV3(pid, os.Getpid(), b.Owner.Namespace, b.MountNamespace)
 	if err != nil {
@@ -45,7 +61,7 @@ func pinNativeDHCPDiagnosticV4(owner *RoutedDHCPOwnerV3, m Metadata) (*nativeDHC
 		return fail()
 	}
 	group, err := routedDHCPOwnerReadV3(fmt.Sprintf("/proc/%d/cgroup", pid), 4096)
-	if err != nil || string(group) != "0::"+routedSupervisorCgroupV3+"\n" {
+	if err != nil || !nativeDHCPDiagnosticGroupV4(group, b.Owner.Incarnation) {
 		return fail()
 	}
 	// The PID comes only from the authenticated root-owned constructor handle.
@@ -56,11 +72,19 @@ func pinNativeDHCPDiagnosticV4(owner *RoutedDHCPOwnerV3, m Metadata) (*nativeDHC
 	}
 	end, parent, err := routedDHCPOwnerProcessV3(pid)
 	mount, mountErr := namespaceID(fmt.Sprintf("/proc/%d/ns/mnt", pid))
-	if err != nil || mountErr != nil || mount != b.MountNamespace || end != start || parent != os.Getpid() || !routedDHCPOwnerPIDFDAliveV3(pin, pid) {
+	finalGroup, groupErr := routedDHCPOwnerReadV3(fmt.Sprintf("/proc/%d/cgroup", pid), 4096)
+	finalIdentity, identityErr := routedDHCPServiceDirectoryV1(servicePin)
+	if err != nil || mountErr != nil || mount != b.MountNamespace || end != start || parent != os.Getpid() || !routedDHCPOwnerPIDFDAliveV3(pin, pid) || groupErr != nil || !nativeDHCPDiagnosticGroupV4(finalGroup, b.Owner.Incarnation) || identityErr != nil || finalIdentity != identity || owner.service.verify() != nil {
 		_ = root.Close()
 		return fail()
 	}
-	return &nativeDHCPDiagnosticCaptureV4{root: root, pin: pin, stop: make(chan struct{}), done: make(chan struct{})}, nil
+	transferred = true
+	return &nativeDHCPDiagnosticCaptureV4{root: root, pin: pin, servicePin: servicePin, stop: make(chan struct{}), done: make(chan struct{})}, nil
+}
+
+func nativeDHCPDiagnosticGroupV4(raw []byte, incarnation string) bool {
+	name, err := routedDHCPServiceNameV1(incarnation)
+	return err == nil && string(raw) == "0::"+routedSupervisorCgroupV3+"/"+name+"\n"
 }
 
 func readNativeDHCPDiagnosticV4(root *os.Root, uid uint32) ([]byte, error) {
@@ -149,6 +173,7 @@ func nativeDHCPJobsCollectV4(t *testing.T, ctx context.Context, m Metadata) func
 				<-capture.done
 				_ = capture.root.Close()
 				_ = capture.pin.Close()
+				_ = capture.servicePin.Close()
 				if capture.err != nil {
 					failure = capture.err
 				}
@@ -162,6 +187,27 @@ func nativeDHCPJobsCollectV4(t *testing.T, ctx context.Context, m Metadata) func
 				t.Errorf("native diagnostic unavailable: %v", failure)
 			}
 		})
+	}
+}
+
+func TestNativeDHCPDiagnosticExactServiceMembership(t *testing.T) {
+	nonce := strings.Repeat("a", 32)
+	exact := "0::" + routedSupervisorCgroupV3 + "/dhcp-" + nonce + "\n"
+	if !nativeDHCPDiagnosticGroupV4([]byte(exact), nonce) {
+		t.Fatal("exact incarnation rejected")
+	}
+	for _, raw := range []string{
+		"0::" + routedSupervisorCgroupV3 + "\n",
+		"0::" + routedSupervisorCgroupV3 + "/dhcp-" + strings.Repeat("b", 32) + "\n",
+		strings.TrimSuffix(exact, "\n") + "/nested\n",
+		strings.Replace(exact, "/dhcp-", "/other-", 1), exact + exact,
+	} {
+		if nativeDHCPDiagnosticGroupV4([]byte(raw), nonce) {
+			t.Fatal("foreign or nested membership accepted")
+		}
+	}
+	if nativeDHCPDiagnosticGroupV4([]byte(exact), "../invalid") {
+		t.Fatal("noncanonical incarnation accepted")
 	}
 }
 
