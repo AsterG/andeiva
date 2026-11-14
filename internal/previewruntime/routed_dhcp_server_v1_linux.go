@@ -419,15 +419,18 @@ func routedDHCPServerBindV1(file *os.File, path string, readonly bool) error {
 func routedDHCPServerCommandV1(uid, gid uint32, check bool) *exec.Cmd {
 	caps := "-all,+net_bind_service,+net_raw"
 	profile := "kea-dhcp4"
+	lockDir := "/run/lock/kea"
 	engine := []string{"/usr/sbin/kea-dhcp4", "-c", routedDHCPServerConfigV1}
 	if check {
 		caps, profile = "-all", "kea-lfc"
+		// Debian's stock LFC profile permits file locking at this distinct path.
+		lockDir = "/run/kea"
 		engine = []string{"/usr/sbin/kea-lfc", "-4", "-d", "-p", dhcpkea.LeaseFile + ".pid", "-x", dhcpkea.LeaseFile + ".2", "-i", dhcpkea.LeaseFile + ".1", "-o", dhcpkea.LeaseFile + ".output", "-f", dhcpkea.LeaseFile + ".completed", "-c", routedDHCPServerConfigV1}
 	}
 	args := []string{"--reuid=" + strconv.FormatUint(uint64(uid), 10), "--regid=" + strconv.FormatUint(uint64(gid), 10), "--clear-groups", "--bounding-set=" + caps, "--inh-caps=" + caps, "--ambient-caps=" + caps, "--no-new-privs", "--pdeathsig=SIGKILL", "--apparmor-profile=" + profile, "--"}
 	args = append(args, engine...)
 	cmd := exec.Command("/usr/bin/setpriv", args...) // #nosec G204 -- Fixed binaries, options and path; numeric Root-validated dedicated account only.
-	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C", "KEA_LOCKFILE_DIR=/run/lock/kea"}
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C", "KEA_LOCKFILE_DIR=" + lockDir}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	cmd.WaitDelay = time.Second
 	if !check {

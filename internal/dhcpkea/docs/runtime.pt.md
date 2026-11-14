@@ -65,4 +65,4 @@ No fixture veth, os peers permanecem UP apenas para fornecer o carrier exigido p
 
 O destino stock `/etc/kea` pode ser `_kea:_kea` com modo exato0750. É aberto a partir de `/etc` validado e pertencente a root, sem symlinks, e conservado por FD para sobrepor o tmpfs privado. Seu conteúdo original nunca fornece configuração. Os demais pais continuam pertencendo a root; proprietários desconhecidos, grupo stock diferente, escrita para grupo/outros e ACL são rejeitados.
 
-Serving e LFC recebem a variável fixa `KEA_LOCKFILE_DIR=/run/lock/kea`. Kea acrescenta `logger_lockfile`; o diretório privado existente e a permissão AppArmor stock correspondem a esse caminho. Não se aceita ambiente do caller nem alterações no perfil host.
+Serving recebe `KEA_LOCKFILE_DIR=/run/lock/kea`; LFC recebe `KEA_LOCKFILE_DIR=/run/kea`. Kea acrescenta `logger_lockfile`. Esses caminhos privados fixos correspondem a cada perfil AppArmor stock: LFC não tem permissão de bloqueio no caminho de serving. Não se aceita ambiente do caller nem alterações no perfil host.

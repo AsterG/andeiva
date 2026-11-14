@@ -24,12 +24,14 @@ import (
 func TestRoutedDHCPServerCommandV1(t *testing.T) {
 	for _, check := range []bool{false, true} {
 		cmd := routedDHCPServerCommandV1(62020, 62021, check)
+		lockDir := "/run/lock/kea"
 		want := []string{"/usr/bin/setpriv", "--reuid=62020", "--regid=62021", "--clear-groups", "--bounding-set=-all,+net_bind_service,+net_raw", "--inh-caps=-all,+net_bind_service,+net_raw", "--ambient-caps=-all,+net_bind_service,+net_raw", "--no-new-privs", "--pdeathsig=SIGKILL", "--apparmor-profile=kea-dhcp4", "--", "/usr/sbin/kea-dhcp4", "-c", "/etc/kea/kea-dhcp4.conf"}
 		if check {
+			lockDir = "/run/kea"
 			want[4], want[5], want[6], want[9] = "--bounding-set=-all", "--inh-caps=-all", "--ambient-caps=-all", "--apparmor-profile=kea-lfc"
 			want = append(want[:11], "/usr/sbin/kea-lfc", "-4", "-d", "-p", "/var/lib/kea/kea-leases4.csv.pid", "-x", "/var/lib/kea/kea-leases4.csv.2", "-i", "/var/lib/kea/kea-leases4.csv.1", "-o", "/var/lib/kea/kea-leases4.csv.output", "-f", "/var/lib/kea/kea-leases4.csv.completed", "-c", "/etc/kea/kea-dhcp4.conf")
 		}
-		if !reflect.DeepEqual(cmd.Args, want) || cmd.Path != want[0] || len(cmd.ExtraFiles) != 0 || cmd.SysProcAttr.Pdeathsig != unix.SIGKILL || !reflect.DeepEqual(cmd.Env, []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C", "KEA_LOCKFILE_DIR=/run/lock/kea"}) {
+		if !reflect.DeepEqual(cmd.Args, want) || cmd.Path != want[0] || len(cmd.ExtraFiles) != 0 || cmd.SysProcAttr.Pdeathsig != unix.SIGKILL || !reflect.DeepEqual(cmd.Env, []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C", "KEA_LOCKFILE_DIR=" + lockDir}) {
 			t.Fatal("engine launch boundary changed", cmd.Args)
 		}
 		if !check && (cmd.Stdout != os.Stdout || cmd.Stderr != os.Stderr) {
