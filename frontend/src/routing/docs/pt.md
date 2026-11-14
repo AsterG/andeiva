@@ -68,3 +68,11 @@ Capturas revisadas em desktop e celular; nenhuma violação Axe no escopo verifi
 Não certifica acessibilidade completa nem execução DHCP nativa. Aumento gzip:
 JavaScript 4,91 kB; CSS 0,07 kB. CPU/RAM sustentados pendentes; sem dependências,
 sondagem periódica, processos novos ou alterações EKS/Helm.
+
+Durante a edição de um escopo ficam bloqueadas atualização, descarte e ações
+transacionais. Se o rascunho ou a resposta de configuração original mudar,
+o editor fecha antes de salvar. Também é invalidado ao perder permissões,
+bloquear gravações, sair de Rede ou encerrar a sessão. As edições já mantidas
+no rascunho compartilhado permanecem; o formulário não salvo não é transferido
+para outra geração ou posição do escopo. Os testes incluem 24 casos de
+invalidação e o fluxo completo de atualização, descarte, navegação e sessão.

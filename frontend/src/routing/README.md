@@ -97,3 +97,24 @@ Against baseline `804cb6a`, the production JavaScript bundle changed from
 runtime services, environment variables or infrastructure were added. Sustained
 browser CPU/RAM and native DHCP qualification remain pending. EKS/Helm and the
 appliance runtime are unchanged. Independent review remains a merge gate.
+
+### DHCP editor context guard
+
+Refresh and transaction/reset actions are blocked while a scope editor is open.
+The editor captures its exact draft and server snapshot. Replacing either,
+losing edit permission or leaving Network invalidates the open editor before it
+can save, independently of the button guards. Existing shared local edits remain
+intact; unsaved scope-form input is not rebased onto a new server generation or
+scope index. Logout unmounts the editor with the administrative workspace.
+
+The review fix passed lint/typecheck, 71 unit tests and Docker `check-web` including
+logo comparison. Browser coverage comprises 99 cases: 98 passed in the combined
+run; a test that sent Escape outside the modeless editor was corrected to focus
+its input, and all three workflow variants passed in the focused rerun. The 24
+context-invalidation cases cover reordered responses, snapshot/generation changes,
+draft reset, network replacement, permission loss, write blocking and logout.
+These component tests bundle their explicit fixture in memory with Vite; no test
+route or hook ships in the application. Light/Dark desktop/mobile screenshots
+were reviewed again. The final bundle is 467.85 kB / 139.88 kB gzip JavaScript;
+CSS remains 41.21 kB / 7.48 kB gzip. Reproduce with
+`npx playwright test dhcp-context.spec.ts dhcp-settings.spec.ts routing.spec.ts`.

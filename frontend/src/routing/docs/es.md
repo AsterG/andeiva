@@ -68,3 +68,11 @@ Capturas revisadas en escritorio y móvil; ninguna violación Axe en el alcance
 comprobado. No certifica accesibilidad completa ni ejecución DHCP nativa.
 Incremento gzip: JavaScript 4,91 kB; CSS 0,07 kB. CPU/RAM sostenidos pendientes;
 sin dependencias, sondeo periódico, procesos nuevos ni cambios EKS/Helm.
+
+Durante la edición de un ámbito se bloquean actualizar, descartar y las acciones
+transaccionales. Si cambia el borrador o la respuesta de configuración de origen,
+se cierra el editor antes de guardar. También se invalida al perder permisos,
+bloquear escrituras, salir de Red o cerrar sesión. Las ediciones ya conservadas
+en el borrador compartido permanecen; el formulario sin guardar no se traslada
+a otra generación o posición del ámbito. Las pruebas incluyen 24 casos de
+invalidación y el flujo completo de actualización, descarte, navegación y sesión.

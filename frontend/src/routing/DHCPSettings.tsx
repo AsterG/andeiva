@@ -4,29 +4,39 @@ import { FloatingWindow } from '../design-system/FloatingWindow.js';
 import { floatingWindowMessages } from '../design-system/floatingWindowMessages.js';
 import { canonicalIPv4 } from '../firewall/model.js';
 import type { Locale } from '../messages.js';
-import type { RoutedConfig } from './configuration.js';
+import type { ConfigurationCurrent, RoutedConfig } from './configuration.js';
 import { editableDHCP, validateDHCP } from './dhcp.js';
 import type { DHCPConfig, DHCPScope } from './dhcp.js';
 import { dhcpMessages } from './dhcpMessages.js';
 
-export function DHCPSettings({ locale, current, admin, editable, editing, onEditing, onChange }: { locale: Locale; current: RoutedConfig | null; admin: boolean; editable: boolean; editing: boolean; onEditing: (value: boolean) => void; onChange: (config: RoutedConfig) => void }) {
+export function DHCPSettings({ locale, current, context, admin, editable, editing, onEditing, onChange }: { locale: Locale; current: RoutedConfig | null; context: ConfigurationCurrent; admin: boolean; editable: boolean; editing: boolean; onEditing: (value: boolean) => void; onChange: (config: RoutedConfig) => void }) {
   const copy = dhcpMessages[locale], prefix = useId();
-  const [editor, setEditor] = useState<{ index: number | null } | null>(null);
+  const [editor, setEditor] = useState<{ index: number | null; draft: RoutedConfig; context: ConfigurationCurrent } | null>(null);
+  // An index is meaningful only in the exact draft and server snapshot opened.
+  // Hide synchronously on replacement; the effect releases the workspace lock.
+  const editorValid = !!editor && editor.draft === current && editor.context === context && admin && editable;
+  useEffect(() => {
+    if (editor && !editorValid) { setEditor(null); onEditing(false); }
+  }, [editor, editorValid, onEditing]);
   useEffect(() => () => onEditing(false), [onEditing]);
   const config = editableDHCP(current?.routed.dhcp_server);
   const lans = current?.routed.network.config.interfaces.filter((iface) => iface.role === 'lan' && iface.ipv4.mode === 'static' && Number(iface.ipv4.address?.split('/')[1]) <= 30) ?? [];
   function change(value: DHCPConfig) {
-    if (!current || !editable) return;
+    if (!current || !editable || !admin) return;
     onChange({ ...current, routed: { ...current.routed, schema_version: 2, dhcp_server: value } });
   }
   function close() { setEditor(null); onEditing(false); }
+  function open(index: number | null) {
+    if (!current || !editable || !admin || editing) return;
+    setEditor({ index, draft: current, context }); onEditing(true);
+  }
   return <Surface title={copy.title} description={copy.hint}>
     <StatusBadge tone="info">{config.enabled ? copy.configured : copy.disabled}</StatusBadge>
     <p>{copy.retained}</p>
     {!lans.length && <p>{copy.noLAN}</p>}
-    {admin && <div className="ds-actions"><label className="fw-enabled-switch"><input type="checkbox" checked={config.enabled} disabled={!editable || editing || !config.scopes.length} onChange={(event) => change({ ...config, enabled: event.target.checked })} />{copy.enabled}</label><Button disabled={!editable || editing || !lans.length || config.scopes.length >= 32} onClick={() => { setEditor({ index: null }); onEditing(true); }}>{copy.addScope}</Button></div>}
-    {config.scopes.length ? <DataTable caption={copy.title}><thead><tr><th scope="col">{copy.scope}</th><th scope="col">{copy.binding}</th><th scope="col">{copy.subnet}</th><th scope="col">{copy.pools}</th><th scope="col">{copy.editScope}</th></tr></thead><tbody>{config.scopes.map((scope, index) => <tr key={scope.id}><th scope="row">{scope.id}</th><td>{scope.interface_id}</td><td>{scope.subnet}</td><td>{scope.pools.map((pool) => `${pool.first}–${pool.last}`).join(', ')}</td><td>{admin && <div className="ds-actions"><Button variant="secondary" disabled={!editable || editing} onClick={() => { setEditor({ index }); onEditing(true); }}>{copy.editScope}</Button><Button variant="secondary" disabled={!editable || editing} aria-label={`${copy.remove}: ${scope.id}`} onClick={() => change({ ...config, enabled: config.scopes.length > 1 && config.enabled, scopes: config.scopes.filter((_, i) => i !== index) })}>{copy.remove}</Button></div>}</td></tr>)}</tbody></DataTable> : <p>{copy.empty}</p>}
-    {editor && current && <ScopeEditor key={`${prefix}-${editor.index}`} locale={locale} current={current} config={config} index={editor.index} disabled={!editable} onClose={close} onSave={(next) => { change(next); close(); }} />}
+    {admin && <div className="ds-actions"><label className="fw-enabled-switch"><input type="checkbox" checked={config.enabled} disabled={!editable || editing || !config.scopes.length} onChange={(event) => change({ ...config, enabled: event.target.checked })} />{copy.enabled}</label><Button disabled={!editable || editing || !lans.length || config.scopes.length >= 32} onClick={() => open(null)}>{copy.addScope}</Button></div>}
+    {config.scopes.length ? <DataTable caption={copy.title}><thead><tr><th scope="col">{copy.scope}</th><th scope="col">{copy.binding}</th><th scope="col">{copy.subnet}</th><th scope="col">{copy.pools}</th><th scope="col">{copy.editScope}</th></tr></thead><tbody>{config.scopes.map((scope, index) => <tr key={scope.id}><th scope="row">{scope.id}</th><td>{scope.interface_id}</td><td>{scope.subnet}</td><td>{scope.pools.map((pool) => `${pool.first}–${pool.last}`).join(', ')}</td><td>{admin && <div className="ds-actions"><Button variant="secondary" disabled={!editable || editing} onClick={() => open(index)}>{copy.editScope}</Button><Button variant="secondary" disabled={!editable || editing} aria-label={`${copy.remove}: ${scope.id}`} onClick={() => change({ ...config, enabled: config.scopes.length > 1 && config.enabled, scopes: config.scopes.filter((_, i) => i !== index) })}>{copy.remove}</Button></div>}</td></tr>)}</tbody></DataTable> : <p>{copy.empty}</p>}
+    {editorValid && editor && <ScopeEditor key={`${prefix}-${editor.index}`} locale={locale} current={editor.draft} config={config} index={editor.index} disabled={!editable} onClose={close} onSave={(next) => { if (editorValid) change(next); close(); }} />}
   </Surface>;
 }
 
