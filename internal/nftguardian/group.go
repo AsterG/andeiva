@@ -324,7 +324,16 @@ func (g *Group) observedLocked() (State, string, error) {
 }
 
 type pairedGroupObserver interface {
-	ObserveCurrentOwned(context.Context) (string, string, error)
+	ObserveCurrentOwned(context.Context) (GroupObservationV1, error)
+}
+
+// GroupObservationV1 is trusted in-process evidence, never a request/wire DTO.
+// MatchingOwned contains at most two exact contextual references proved by the
+// SAME physical observation and immutable selected plan; no later matching I/O.
+type GroupObservationV1 struct {
+	Plan           configpoc.RoutedTransitionV1
+	Current, Owned string
+	MatchingOwned  [2]string
 }
 
 func (g *Group) observedContextLocked(ctx context.Context, requirePair bool) (State, string, error) {
@@ -336,11 +345,28 @@ func (g *Group) observedContextLocked(ctx context.Context, requirePair bool) (St
 		return State{}, "", ErrLease
 	}
 	var hash, owned string
+	var observation GroupObservationV1
 	if paired {
 		var err error
-		hash, owned, err = pair.ObserveCurrentOwned(ctx)
-		if err != nil || ctx.Err() != nil || !ownedDigest(owned) || hash != "" && !ownedDigest(hash) {
+		observation, err = pair.ObserveCurrentOwned(ctx)
+		hash, owned = observation.Current, observation.Owned
+		if err != nil || ctx.Err() != nil || !ownedDigest(owned) || hash != "" && !ownedDigest(hash) || observation.Plan != g.plan || observation.MatchingOwned[0] != owned {
 			return State{}, "", ErrLease
+		}
+		for i, ref := range observation.MatchingOwned {
+			if i == 1 && ref == "" {
+				continue
+			}
+			if !ownedDigest(ref) || i == 1 && ref == owned {
+				return State{}, "", ErrLease
+			}
+			if ref != g.plan.BeforeOwned && ref != g.plan.TargetOwned {
+				// Unselected bootstrap can observe its exact physical baseline,
+				// but cannot turn that reference into selected authority.
+				if g.state.Phase != "bootstrap" || g.plan != (configpoc.RoutedTransitionV1{}) || i != 0 {
+					return State{}, "", ErrLease
+				}
+			}
 		}
 	} else {
 		hash = g.engine.Current()
@@ -352,22 +378,7 @@ func (g *Group) observedContextLocked(ctx context.Context, requirePair bool) (St
 		if !ownedDigest(want) || ctx.Err() != nil {
 			return false
 		}
-		if owned == want {
-			return true
-		}
-		// Equal physical Before/Target payloads may have distinct contextual
-		// references. Never combine the old current with an unchecked later proof.
-		if want != g.plan.BeforeOwned && want != g.plan.TargetOwned {
-			return false
-		}
-		matcher, ok := g.engine.(interface {
-			MatchOwned(context.Context, string) error
-		})
-		if !ok || matcher.MatchOwned(ctx, want) != nil {
-			return false
-		}
-		afterHash, afterOwned, err := pair.ObserveCurrentOwned(ctx)
-		return err == nil && ctx.Err() == nil && afterHash == hash && afterOwned == owned
+		return want == observation.MatchingOwned[0] || want == observation.MatchingOwned[1]
 	}
 	if g.state.Phase == "idle" && g.state.ID == "" && g.recoveredOwned != "" {
 		if !match(g.recoveredOwned) || ctx.Err() != nil {

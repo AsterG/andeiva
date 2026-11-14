@@ -989,22 +989,40 @@ func (e *Engine) currentForOwnedLocked(owned string) string {
 
 // ObserveCurrentOwned derives both identities from one complete fresh physical
 // observation under the same selected-plan lock. Nothing is cached for reuse.
-func (e *Engine) ObserveCurrentOwned(ctx context.Context) (string, string, error) {
+func (e *Engine) ObserveCurrentOwned(ctx context.Context) (nftguardian.GroupObservationV1, error) {
 	if e == nil || ctx == nil {
-		return "", "", ErrState
+		return nftguardian.GroupObservationV1{}, ErrState
 	}
 	if err := e.lockObservation(ctx); err != nil {
-		return "", "", err
+		return nftguardian.GroupObservationV1{}, err
 	}
 	defer e.mu.Unlock()
 	owned, err := e.observeOwnedLocked(ctx)
 	if err != nil {
-		return "", "", err
+		return nftguardian.GroupObservationV1{}, err
+	}
+	out := nftguardian.GroupObservationV1{Plan: e.plan, Current: e.currentForOwnedLocked(owned), Owned: owned, MatchingOwned: [2]string{owned, ""}}
+	if e.selected && e.plan.BeforeOwned != e.plan.TargetOwned {
+		// Contextual envelopes may differ, but a second reference is admitted
+		// only for byte-identical canonical predicates under the SAME deps.
+		// No second physical read can introduce an ABA proof here.
+		before, beforeErr := OwnedBytes(e.prepared.Before)
+		target, targetErr := OwnedBytes(e.prepared.Target)
+		if beforeErr != nil || targetErr != nil {
+			return nftguardian.GroupObservationV1{}, ErrState
+		}
+		if bytes.Equal(before, target) {
+			if owned == e.plan.TargetOwned {
+				out.MatchingOwned[1] = e.plan.BeforeOwned
+			} else if owned == e.plan.BeforeOwned {
+				out.MatchingOwned[1] = e.plan.TargetOwned
+			}
+		}
 	}
 	if ctx.Err() != nil {
-		return "", "", ctx.Err()
+		return nftguardian.GroupObservationV1{}, ctx.Err()
 	}
-	return e.currentForOwnedLocked(owned), owned, nil
+	return out, nil
 }
 
 func (e *Engine) lockObservation(ctx context.Context) error {

@@ -18,13 +18,13 @@ func TestPairedObservationRealEnginePendingColdAndRecovered(t *testing.T) {
 			if err := g.RecoverIdle(ctx, f.plan); err != nil {
 				t.Fatal(err)
 			}
-			current, owned, err := e.ObserveCurrentOwned(ctx)
+			observation, err := e.ObserveCurrentOwned(ctx)
 			wantCurrent, wantOwned := "", f.plan.BeforeOwned
 			if target {
 				wantCurrent, wantOwned = f.target.Composite.Hash, f.plan.TargetOwned
 			}
-			if err != nil || current != wantCurrent || owned != wantOwned {
-				t.Fatal("wrong pair", current, owned, err)
+			if err != nil || observation.Current != wantCurrent || observation.Owned != wantOwned {
+				t.Fatal("wrong pair", observation, err)
 			}
 			state, hash, err := g.SnapshotObservedContext(ctx)
 			if err != nil || state.Phase != "idle" || hash != wantCurrent {
@@ -45,8 +45,8 @@ func TestPairedObservationRealEnginePendingColdAndRecovered(t *testing.T) {
 	if err := f.group.RecoverLease(f.plan, state); err != nil {
 		t.Fatal(err)
 	}
-	current, owned, err := f.engine.ObserveCurrentOwned(ctx)
-	if err != nil || current != "" || owned != f.plan.BeforeOwned {
+	observation, err := f.engine.ObserveCurrentOwned(ctx)
+	if err != nil || observation.Current != "" || observation.Owned != f.plan.BeforeOwned {
 		t.Fatal("cold restore", err)
 	}
 }
@@ -70,7 +70,7 @@ func TestPairedObservationFreshPhysicalStateAndLateCancellation(t *testing.T) {
 			if err := f.group.BootstrapStartup(context.Background(), f.plan, f.target, f.started); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := f.engine.ObserveCurrentOwned(context.Background()); err != nil {
+			if _, err := f.engine.ObserveCurrentOwned(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
@@ -86,9 +86,9 @@ func TestPairedObservationFreshPhysicalStateAndLateCancellation(t *testing.T) {
 				f.engine.listeners = cancellingPairedListeners{f.listeners, cancel}
 			}
 			writes := len(f.kernel.batches)
-			current, owned, err := f.engine.ObserveCurrentOwned(ctx)
-			if err == nil || current != "" || owned != "" || len(f.kernel.batches) != writes {
-				t.Fatal("cached authority or observation effects", fault, current, owned, err)
+			observation, err := f.engine.ObserveCurrentOwned(ctx)
+			if err == nil || observation.Current != "" || observation.Owned != "" || len(f.kernel.batches) != writes {
+				t.Fatal("cached authority or observation effects", fault, observation, err)
 			}
 			if fault != "cancel" && !f.engine.fenced {
 				t.Fatal("drift did not preserve fence")
@@ -104,7 +104,7 @@ func TestPairedObservationEngineLockCancellation(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		done := make(chan error, 2)
-		go func() { _, _, err := e.ObserveCurrentOwned(ctx); done <- err }()
+		go func() { _, err := e.ObserveCurrentOwned(ctx); done <- err }()
 		go func() { done <- e.MatchOwned(ctx, "unknown") }()
 		time.Sleep(time.Second)
 		synctest.Wait()
@@ -114,9 +114,42 @@ func TestPairedObservationEngineLockCancellation(t *testing.T) {
 			}
 		}
 		e.mu.Unlock()
-		if _, _, err := e.ObserveCurrentOwned(ctx); err == nil || !e.mu.TryLock() {
+		if _, err := e.ObserveCurrentOwned(ctx); err == nil || !e.mu.TryLock() {
 			t.Fatal("admission leaked lock")
 		}
 		e.mu.Unlock()
 	})
+}
+
+type countedPairedKernel struct {
+	Kernel
+	reads int
+}
+
+func (k *countedPairedKernel) Observe(ctx context.Context, table Table) ([]byte, bool, error) {
+	k.reads++
+	return k.Kernel.Observe(ctx, table)
+}
+
+func TestPairedObservationCanonicalAliasesShareOnePhysicalRead(t *testing.T) {
+	f := assembleFixture(t)
+	defer f.group.Close()
+	ctx := context.Background()
+	if err := f.group.BootstrapStartup(ctx, f.plan, f.target, f.started); err != nil {
+		t.Fatal(err)
+	}
+	k := &countedPairedKernel{Kernel: f.kernel}
+	f.engine.kernel = k
+	first, err := f.engine.ObserveCurrentOwned(ctx)
+	if err != nil || first.MatchingOwned != [2]string{f.plan.TargetOwned, ""} || k.reads != 3 {
+		t.Fatal("different predicates acquired alias", first, k.reads, err)
+	}
+	// A trusted resolver may produce identical canonical physical payloads with
+	// distinct contextual object envelopes. No second kernel sample is needed.
+	f.engine.prepared.Before = f.engine.prepared.Target
+	k.reads = 0
+	second, err := f.engine.ObserveCurrentOwned(ctx)
+	if err != nil || second.MatchingOwned != [2]string{f.plan.TargetOwned, f.plan.BeforeOwned} || second.Plan != f.plan || second.Current != f.target.Composite.Hash || k.reads != 3 {
+		t.Fatal("alias did not share the observation", second, k.reads, err)
+	}
 }

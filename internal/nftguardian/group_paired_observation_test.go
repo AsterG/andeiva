@@ -15,6 +15,8 @@ type pairedObservationEngine struct {
 	reads  int
 	match  func(context.Context, string) error
 	paired func(context.Context)
+	alias  string
+	change func(*GroupObservationV1)
 }
 
 func (e *pairedObservationEngine) Current() string {
@@ -27,15 +29,19 @@ func (e *pairedObservationEngine) ObserveOwned(ctx context.Context) (string, err
 	return e.groupTestEngine.ObserveOwned(ctx)
 }
 
-func (e *pairedObservationEngine) ObserveCurrentOwned(ctx context.Context) (string, string, error) {
+func (e *pairedObservationEngine) ObserveCurrentOwned(ctx context.Context) (GroupObservationV1, error) {
 	e.reads++
 	if e.paired != nil {
 		e.paired(ctx)
 	}
 	if err := ctx.Err(); err != nil {
-		return "", "", err
+		return GroupObservationV1{}, err
 	}
-	return e.hash, e.owned, nil
+	o := GroupObservationV1{Plan: e.plan, Current: e.hash, Owned: e.owned, MatchingOwned: [2]string{e.owned, e.alias}}
+	if e.change != nil {
+		e.change(&o)
+	}
+	return o, nil
 }
 
 func (e *pairedObservationEngine) MatchOwned(ctx context.Context, want string) error {
@@ -57,6 +63,8 @@ func TestGroupPairedObservationFourFreshPhases(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.target, g.recoveredOwned = target, owned
+	g.plan = groupPlan("four", strings.Repeat("b", 64), owned)
+	e.plan = g.plan
 	g.state = State{Phase: "idle"}
 	for phase := range 4 { // Stage, Open, pre-forwarding, post-forwarding.
 		state, current, err := g.SnapshotObserved()
@@ -69,38 +77,64 @@ func TestGroupPairedObservationFourFreshPhases(t *testing.T) {
 	}
 }
 
-func TestGroupPairedFallbackRejectsMutation(t *testing.T) {
-	for _, mutation := range []string{"none", "current", "owned", "cancel"} {
+func TestGroupPairedExactAliasesWithoutFallbackIO(t *testing.T) {
+	for _, mutation := range []string{"none", "plan", "foreign-alias", "duplicate", "cancel"} {
 		t.Run(mutation, func(t *testing.T) {
 			target := groupBundle(t, false)
 			before, after := strings.Repeat("a", 64), strings.Repeat("b", 64)
 			e := &pairedObservationEngine{groupTestEngine: groupTestEngine{hash: target.Composite.Hash, owned: after}}
 			g, _ := NewGroup(e)
 			g.plan = groupPlan("paired", before, after)
+			e.plan, e.alias = g.plan, before
 			g.target, g.recoveredOwned, g.state = target, before, State{Phase: "idle"}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			matched := 0
 			e.match = func(_ context.Context, want string) error {
 				matched++
-				if want != before {
-					t.Fatal("foreign contextual reference")
-				}
+				return ErrLease
+			}
+			e.change = func(o *GroupObservationV1) {
 				switch mutation {
-				case "current":
-					e.hash = strings.Repeat("c", 64)
-				case "owned":
-					e.owned = strings.Repeat("d", 64)
+				case "plan":
+					o.Plan.Operation = "changed"
+				case "foreign-alias":
+					o.MatchingOwned[1] = strings.Repeat("c", 64)
+				case "duplicate":
+					o.MatchingOwned[1] = after
 				case "cancel":
 					cancel()
 				}
-				return nil
 			}
 			_, _, err := g.SnapshotObservedContext(ctx)
-			if (err == nil) != (mutation == "none") || matched != 1 || e.reads != 2 {
+			if (err == nil) != (mutation == "none") || matched != 0 || e.reads != 1 {
 				t.Fatal("mixed observation admitted", mutation, err, matched, e.reads)
 			}
 		})
+	}
+}
+
+func TestGroupPairedRejectsABAContextualProof(t *testing.T) {
+	target := groupBundle(t, false)
+	before, after := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	e := &pairedObservationEngine{groupTestEngine: groupTestEngine{hash: target.Composite.Hash, owned: after}}
+	g, _ := NewGroup(e)
+	g.plan = groupPlan("aba", before, after)
+	e.plan = g.plan
+	g.target, g.recoveredOwned, g.state = target, before, State{Phase: "idle"}
+	e.match = func(_ context.Context, want string) error {
+		e.owned = before // A different physical state exists only during this call.
+		if want != before {
+			return ErrLease
+		}
+		return nil
+	}
+	e.paired = func(context.Context) { e.owned = after } // A -> B -> A.
+	if _, _, err := g.SnapshotObservedContext(context.Background()); err == nil {
+		t.Fatal("ABA mixed Target current with transient Before proof")
+	}
+	if e.reads != 1 {
+		t.Fatal("ABA triggered a second observation", e.reads)
 	}
 }
 
@@ -132,6 +166,8 @@ func TestGroupPairedContextCancellationAndCompatibility(t *testing.T) {
 	e := &pairedObservationEngine{groupTestEngine: groupTestEngine{hash: target.Composite.Hash, owned: strings.Repeat("a", 64)}}
 	g, _ := NewGroup(e)
 	g.target, g.recoveredOwned, g.state = target, e.owned, State{Phase: "idle"}
+	g.plan = groupPlan("cancel", strings.Repeat("b", 64), e.owned)
+	e.plan = g.plan
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	e.paired = func(got context.Context) {
@@ -152,6 +188,7 @@ func TestGroupPairedRejectsUnknownAndMalformedObservations(t *testing.T) {
 			e := &pairedObservationEngine{groupTestEngine: groupTestEngine{hash: target.Composite.Hash, owned: strings.Repeat("a", 64)}}
 			g, _ := NewGroup(e)
 			g.target, g.plan, g.state = target, groupPlan("pair", strings.Repeat("b", 64), e.owned), State{Phase: "idle"}
+			e.plan = g.plan
 			switch fault {
 			case "owned":
 				e.owned = "bad"

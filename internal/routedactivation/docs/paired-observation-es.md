@@ -4,8 +4,11 @@ El adaptador experimental obtiene la revisión actual y la referencia del estado
 controlado de una observación semántica completa bajo el mismo lock del motor.
 Las cuatro fases de verificación al abrir DHCP siguen siendo independientes.
 No se reutilizan resultados entre fases ni RPC. El camino común pasa de ocho
-a cuatro observaciones completas; el fallback contextual Before/Target puede
-necesitar más lecturas y vuelve a validar la pareja después de comprobarlo.
+a cuatro observaciones completas. Se devuelven como máximo dos referencias
+coincidentes de esa misma observación y del plan seleccionado exacto. Un alias
+Before/Target exige predicados físicos canónicos idénticos byte por byte bajo
+las mismas dependencias; de lo contrario se rechaza. No existe otra lectura
+de matching que pueda combinar estados A→B→A en una prueba falsa.
 
 La entrada RPC exige la interfaz opcional conjunta, propaga el contexto restante
 y permite cancelar la espera de los locks Group/Engine. Current legado conserva
