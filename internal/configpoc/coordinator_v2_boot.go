@@ -27,6 +27,9 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 }
 
 func validFeaturesV2(state v2State) bool {
+	if !validDHCPServerFeatureV1(state) {
+		return false
+	}
 	if !validRoutedDHCPShapeV3(state) || hasFeatureV2(state, v3RoutedDHCPFeature) && (!hasFeatureV2(state, v2RoutedFeature) || !hasFeatureV2(state, v2SharedReaderFeature) || state.RecoveryReserveVersion != 1) {
 		return false
 	}
@@ -35,7 +38,7 @@ func validFeaturesV2(state v2State) bool {
 	}
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v4RoutedRebootScopeFeature && feature != v3RoutedFreshScopeFeature && feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
+		if (feature != v1RoutedDHCPServerFeature && feature != v4RoutedRebootScopeFeature && feature != v3RoutedFreshScopeFeature && feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
 			return false
 		}
 		last = feature

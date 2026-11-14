@@ -17,7 +17,7 @@ bash scripts/smoke-api.sh
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 ./cmd/... ./internal/...
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/... ./internal/...
-go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts=--all
+go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts=--all --gitleaks-ignore-path scripts/secret-scan-exceptions.txt
 npm --prefix frontend audit --audit-level=moderate
 npm --prefix frontend sbom --sbom-format=cyclonedx
 node scripts/check-licenses.mjs

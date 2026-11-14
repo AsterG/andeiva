@@ -72,6 +72,13 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	c := &v2Coordinator{store: store, firewall: append([]Engine{}, firewall...), local: append([]Engine{}, local...), options: options}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	store.dhcpServerSupported = false
+	if support, ok := options.Routed.(RoutedDHCPServerSupportV1); ok {
+		store.dhcpServerSupported = support.SupportsDHCPServerV1()
+	}
+	if hasFeatureV2(store.state, v1RoutedDHCPServerFeature) && !store.dhcpServerSupported {
+		return nil, ErrRecovery
+	}
 	if options.Integrity != nil {
 		c.integrity.attached = options.integrityAttached
 		c.integrity.kick = make(chan struct{}, 1)

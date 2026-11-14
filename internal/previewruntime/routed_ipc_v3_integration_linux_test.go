@@ -344,20 +344,26 @@ func (f *routedIPCFixtureV3) open() {
 	var err error
 	options := configpoc.RuntimeOptionsV2{SharedReader: &f.access, Pools: f.pools, GuardDeadlines: true, Routed: &routedIPCConfirmHookV3{RoutedRemoteAuthority: f.remote, fixture: f}, RoutedIdentity: f.identity, BootID: f.identity.BootID}
 	if f.integrity != nil {
-		options.Integrity = f.integrity
+		options.Integrity = routedIPCObservedIntegrityV3{RoutedRemoteIntegrityV3: f.integrity, t: f.t}
 	}
+	started := time.Now()
 	f.service, err = configpoc.OpenRuntimeServiceV2(context.Background(), f.area, f.budget, f.auth, []configpoc.Engine{f.engines[0]}, []configpoc.Engine{f.engines[1]}, options)
+	f.t.Log("writer open", time.Since(started), err)
 	if err != nil {
 		f.t.Fatal("shared writer", err)
 	}
 }
 func (f *routedIPCFixtureV3) run(request configpoc.OperationRequestV2) configpoc.ResultV2 {
 	f.t.Helper()
-	if f.integrity != nil && request.Kind != configpoc.OpConfirm {
-		// Explicit trusted maintenance between quiescent workflow steps. Periodic
-		// scheduling/threshold behavior has its own tests; no scan runs in a lease.
+	before, beforeErr := f.service.Status(f.binding)
+	f.t.Log("before operation", request.Kind, "pending", before.Confirmation != nil, "recovery", before.RecoveryRequired, "status error", beforeErr)
+	if f.integrity != nil && request.Kind != configpoc.OpConfirm && !f.service.RuntimeIntegrityReadyV1() {
+		// Refresh only when the real publication gate requires qualification.
+		// Open/reopen already performs full G1; threshold behavior has separate
+		// tests, and no inspection runs during an existing confirmation lease.
+		started := time.Now()
 		if err := f.service.InspectRuntimeV1(context.Background()); err != nil {
-			f.t.Fatal("quiescent full inspection", err)
+			f.t.Fatal("quiescent full inspection", request.Kind, time.Since(started), err)
 		}
 	}
 	status, err := f.service.Status(f.binding)
@@ -382,7 +388,25 @@ func (f *routedIPCFixtureV3) run(request configpoc.OperationRequestV2) configpoc
 		}
 		f.t.Fatal(request.Kind, "execute", err)
 	}
+	if request.Kind == configpoc.OpConfirm {
+		if result.Operation.State != "final" || result.Operation.Outcome == nil || result.Operation.Outcome.Code != "applied" || result.Operation.Outcome.ErrorCode != "" || result.Current.Confirmation != nil || result.Current.RecoveryRequired {
+			f.t.Fatal("confirm did not finish without pending/recovery", result.Operation.State, result.Current.Confirmation != nil, result.Current.RecoveryRequired)
+		}
+		f.t.Log("confirm final applied; pending/recovery false")
+	}
 	return result
+}
+
+type routedIPCObservedIntegrityV3 struct {
+	*RoutedRemoteIntegrityV3
+	t *testing.T
+}
+
+func (i routedIPCObservedIntegrityV3) Inspect(ctx context.Context, expected configpoc.SelectionReferenceV2) (configpoc.IntegrityResultV1, error) {
+	started := time.Now()
+	result, err := i.RoutedRemoteIntegrityV3.Inspect(ctx, expected)
+	i.t.Log("integrity inspection", time.Since(started), "state", result.State, "selection matches", result.Selection == expected, "error", err, "context", ctx.Err())
+	return result, err
 }
 
 type routedIPCObservedSourceV3 struct {
