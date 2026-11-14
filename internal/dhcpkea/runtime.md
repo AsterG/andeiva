@@ -107,3 +107,5 @@ Mount a private tmpfs on `/run` before creating this mountpoint. The test retain
 For the veth fixture, peers are UP only to provide carrier required by Kea. Peer namespaces contain no processes, endpoint addresses or clients before the prepared observation. Start only the reviewed client afterwards. This physical isolation is not a product RAW-traffic gate.
 
 The stock `/etc/kea` mount target may be `_kea:_kea` with exact mode0750. It is opened relative to validated Root-owned `/etc`, without symlinks, and retained by FD for the private tmpfs overlay. Its original contents never supply configuration. Other mount parents remain Root-owned; unknown owners, stock-group mismatch, write permissions for group/others and ACLs are refused.
+
+Serving and LFC receive the fixed environment `KEA_LOCKFILE_DIR=/run/lock/kea`. Kea appends `logger_lockfile`; the existing private directory and stock AppArmor permission match that path. No caller environment or host profile changes are accepted.

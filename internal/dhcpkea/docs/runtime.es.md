@@ -64,3 +64,5 @@ Montar tmpfs privado en `/run` antes de crear este destino. El test conserva su 
 En el fixture veth, los peers permanecen UP sólo para proporcionar el carrier requerido por Kea. Antes de la observación preparada, sus namespaces no tienen procesos, direcciones de endpoint ni clientes. Después se inicia únicamente el cliente revisado. Este aislamiento no constituye un gate RAW del producto.
 
 El destino stock `/etc/kea` puede ser `_kea:_kea` con modo exacto0750. Se abre desde `/etc` validado y propiedad root, sin symlinks, y se conserva mediante FD para superponer el tmpfs privado. Su contenido original nunca aporta configuración. Los demás padres siguen siendo root; se rechazan propietarios desconocidos, grupo stock distinto, escritura para grupo/otros y ACL.
+
+Serving y LFC reciben la variable fija `KEA_LOCKFILE_DIR=/run/lock/kea`. Kea añade `logger_lockfile`; el directorio privado existente y el permiso AppArmor stock coinciden con esa ruta. No se acepta entorno del caller ni cambios del perfil host.

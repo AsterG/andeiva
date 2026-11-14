@@ -427,7 +427,7 @@ func routedDHCPServerCommandV1(uid, gid uint32, check bool) *exec.Cmd {
 	args := []string{"--reuid=" + strconv.FormatUint(uint64(uid), 10), "--regid=" + strconv.FormatUint(uint64(gid), 10), "--clear-groups", "--bounding-set=" + caps, "--inh-caps=" + caps, "--ambient-caps=" + caps, "--no-new-privs", "--pdeathsig=SIGKILL", "--apparmor-profile=" + profile, "--"}
 	args = append(args, engine...)
 	cmd := exec.Command("/usr/bin/setpriv", args...) // #nosec G204 -- Fixed binaries, options and path; numeric Root-validated dedicated account only.
-	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C", "KEA_LOCKFILE_DIR=/run/lock/kea"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	cmd.WaitDelay = time.Second
 	if !check {
