@@ -82,6 +82,8 @@ func Compile(config dhcpserver.Config, bindings []Binding) (Artifact, error) {
 		Subnets:              make([]subnet, 0, len(config.Scopes)),
 		Loggers:              []logger{{Name: "kea-dhcp4", Severity: "WARN", Outputs: []logOutput{{Output: "stdout"}}}},
 		StatisticSampleCount: 1,
+		// Kea's grammar requires a floating-point token, including for zero.
+		CacheThreshold: json.Number("0.0"),
 	}
 	for _, b := range bindings {
 		service.Interfaces.Names = append(service.Interfaces.Names, b.Name)

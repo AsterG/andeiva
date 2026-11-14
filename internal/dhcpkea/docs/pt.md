@@ -54,7 +54,7 @@ GOOS=windows GOARCH=amd64 go build ./internal/dhcpkea
 Fixture sintética `../testdata/kea-2.6.3.json` comparada byte a byte. Root pode
 validar com Kea 2.6.3 verificado e `-t` em laboratório isolado; sem prova de execução
 ou persistência. Medição Linux/WSL: race 1,091 s; pequeno 9.991 ns/op / 4.593 B;
-denso dois escopos 768.860 ns/op / 450.129 B. Três escopos densos:49.321 B → 100.917 B;
+denso dois escopos 768.860 ns/op / 450.129 B. Três escopos densos:49.321 B → 100.919 B;
 quatro excedem entrada e são recusados. Não é benchmark appliance nem runtime
 Docker/EKS novo. Revisão independente e testes nativos pendentes.
 

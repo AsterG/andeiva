@@ -1,5 +1,7 @@
 package dhcpkea
 
+import "encoding/json"
+
 // Private fixed engine schema. No raw JSON, executable, path, hook, relay,
 // database credentials or control-socket input is accepted from configuration.
 type document struct {
@@ -21,7 +23,7 @@ type server struct {
 	Queue                 queue         `json:"dhcp-queue-control"`
 	Classes               []clientClass `json:"client-classes"`
 	Sanity                sanity        `json:"sanity-checks"`
-	CacheThreshold        float64       `json:"cache-threshold"`
+	CacheThreshold        json.Number   `json:"cache-threshold"`
 	StatisticSampleCount  uint32        `json:"statistic-default-sample-count"`
 	Subnets               []subnet      `json:"subnet4"`
 	Loggers               []logger      `json:"loggers"`

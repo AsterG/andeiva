@@ -102,6 +102,23 @@ func TestDisabledHasNoArtifact(t *testing.T) {
 	}
 }
 
+func TestCacheThresholdFloatingPointToken(t *testing.T) {
+	c, b := fixture()
+	a, err := Compile(c, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		DHCP4 map[string]json.RawMessage `json:"Dhcp4"`
+	}
+	if err := json.Unmarshal(a.JSON, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(wire.DHCP4["cache-threshold"]); got != "0.0" {
+		t.Fatalf("Kea requires floating-point token 0.0, got %q", got)
+	}
+}
+
 func TestBindingAndConfigurationRefusals(t *testing.T) {
 	for name, mutate := range map[string]func(*dhcpserver.Config, *[]Binding){
 		"schema": func(c *dhcpserver.Config, _ *[]Binding) { c.SchemaVersion = 2 },
