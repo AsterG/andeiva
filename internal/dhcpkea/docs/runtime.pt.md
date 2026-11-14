@@ -42,7 +42,7 @@ pipe real cheio cancela e conclui Wait/reap sem ler stdout bloqueado.
 
 Entrada nativa: `go test -c -o server-native.test ./internal/previewruntime`, teste
 `TestNativeRoutedDHCPServerV1`; variável `ANDEIVA_DHCP_SERVER_NATIVE_V1=serve|corrupt`.
-Somente Debian13 isolado, nunca WSL/CI. FD3/4/5 fixam NET/MNT/PID do host; `/fixture`
+Somente Debian13 isolado, nunca WSL/CI. FD3/4/5 fixam NET/MNT/PID do host; `/run/andeiva-kea-fixture`
 privado root0700 contém `leases` de `_kea`0700. Cada execução usa montagens e proc
 privados no cgroup agrupado fixo. LAN: `lan0`198.18.1.1/24, concessão única
 198.18.1.100, duração120, T1/T2 60/105, subnetID17, sem DNS/NTP.
@@ -58,3 +58,7 @@ Testes locais não comprovam DORA, persistência, transição LFC do AppArmor ou
 desempenho de produção. Medições nativas e revisão independente pendentes.
 Comandos locais e procedimento completo: [English](../runtime.md). Docker/EKS
 e contratos compartilhados permanecem intactos.
+
+Montar tmpfs privado em `/run` antes de criar este destino. O teste conserva seu FD de diretório antes de o componente sobrepor `/run` novamente.
+
+No fixture veth, os peers permanecem UP apenas para fornecer o carrier exigido pelo Kea. Antes da observação preparada, seus namespaces não possuem processos, endereços de endpoint ou clientes. Depois inicia-se somente o cliente revisado. Esse isolamento não constitui um gate RAW do produto.

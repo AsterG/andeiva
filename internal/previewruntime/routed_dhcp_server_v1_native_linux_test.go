@@ -28,7 +28,7 @@ import (
 
 // Root's native harness supplies host NET/MNT/PID pins at FD3/4/5, enters
 // separate NET/MNT/PID namespaces, binds its private fixture directory at
-// /fixture, and keeps clients isolated until prepared.json is observed. No
+// /run/andeiva-kea-fixture, and keeps clients isolated until prepared.json is observed. No
 // privileged invocation in WSL or CI. This is not managed-product readiness.
 func TestNativeRoutedDHCPServerV1(t *testing.T) {
 	mode := os.Getenv("ANDEIVA_DHCP_SERVER_NATIVE_V1")
@@ -77,7 +77,7 @@ func TestNativeRoutedDHCPServerV1(t *testing.T) {
 	if err != nil || other != nil || !bytes.Contains(release, []byte("ID=debian\n")) || !bytes.Contains(release, []byte("VERSION_ID=\"13\"")) || bytes.Contains(bytes.ToLower(kernel), []byte("microsoft")) {
 		t.Fatal("Debian native only")
 	}
-	fixture, err := os.OpenRoot("/fixture")
+	fixture, err := os.OpenRoot("/run/andeiva-kea-fixture")
 	if err != nil {
 		t.Fatal(err)
 	}

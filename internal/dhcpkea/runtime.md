@@ -74,7 +74,7 @@ Build `go test -c -o server-native.test ./internal/previewruntime`. The test is
 `TestNativeRoutedDHCPServerV1`, opt-in `ANDEIVA_DHCP_SERVER_NATIVE_V1=serve` or
 `corrupt`. It rejects CI, WSL, non-Debian-13 and host NET/MNT/PID namespaces.
 FD3/4/5 are actual retained host NET/MNT/PID pins. The process must be in the
-existing fixed grouped cgroup. Root provides private `/fixture` (0:0:0700) with
+existing fixed grouped cgroup. Root provides private `/run/andeiva-kea-fixture` (0:0:0700) with
 `leases` (`_kea` ownership, 0700); config is created once and verified on reuse.
 Root supplies a private proc mount and a private mount namespace for every run.
 
@@ -101,3 +101,7 @@ Local checks: `go test -race ./internal/previewruntime -run '^TestRoutedDHCPServ
 Source semantics: Kea 2.6.3 `json_config_parser.cc`, `lease_file_loader.h`,
 `lfc_controller.cc` and `lfc_messages.mes`; Debian 13's
 [setpriv](https://manpages.debian.org/trixie/util-linux/setpriv.1.en.html).
+
+Mount a private tmpfs on `/run` before creating this mountpoint. The test retains its fixture directory FD before the component overlays `/run` again.
+
+For the veth fixture, peers are UP only to provide carrier required by Kea. Peer namespaces contain no processes, endpoint addresses or clients before the prepared observation. Start only the reviewed client afterwards. This physical isolation is not a product RAW-traffic gate.
