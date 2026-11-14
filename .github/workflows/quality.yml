@@ -59,6 +59,10 @@ jobs:
       - name: Verify inherited-descriptor fixture before the full suite
         run: go test ./internal/previewruntime -count=1 -run '^TestRoutedMigrationInspectV3ExtraDescriptors$'
       - run: bash scripts/check.sh
+      - name: Offline DHCP installer boundaries without privileged effects
+        run: |
+          python3 -m unittest discover -s packaging/dhcp-server/offline -p test_build.py
+          go test -race ./packaging/dhcp-server/offline/check
       # The complete package suite exceeds Go's default ten-minute aggregate
       # budget. This does not alter RPC or persisted transaction deadlines.
       - run: go test -race -timeout=20m ./cmd/... ./internal/...
