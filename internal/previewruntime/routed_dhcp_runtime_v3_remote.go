@@ -14,6 +14,11 @@ import (
 
 type routedDHCPRemoteV3 struct{ client *firewallipc.RoutedClientV3 }
 
+// One cooperative budget for the complete scheduled attempt. Individual RPCs
+// retain their three-second limits; this does not extend lease authority or
+// guarantee a bound on non-cancelable store I/O and shutdown.
+const routedDHCPReconciliationAttemptBudgetV4 = 30 * time.Second
+
 func (r *routedDHCPRemoteV3) Current(ctx context.Context) (configpoc.RoutedDHCPGrantV3, error) {
 	x, err := r.client.Call(ctx, "dhcp_current", firewallipc.RoutedDHCPRequestV3{})
 	return configpoc.RoutedDHCPGrantV3{Epoch: x.DHCP.Epoch, Snapshot: x.DHCP.Snapshot}, err
@@ -99,7 +104,7 @@ func (c *RoutedDHCPControllerV3) scheduleV4(selected bool) {
 
 func (c *RoutedDHCPControllerV3) reconcileScheduledV4(ctx context.Context) {
 	// Inspection owns the same lane. Skip a busy tick so lock contention
-	// cannot consume the reconciliation's existing deadline.
+	// cannot consume the reconciliation's attempt budget.
 	if !c.mu.TryLock() {
 		return
 	}
@@ -107,7 +112,7 @@ func (c *RoutedDHCPControllerV3) reconcileScheduledV4(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	call, stop := context.WithTimeout(ctx, 3*time.Second)
+	call, stop := context.WithTimeout(ctx, routedDHCPReconciliationAttemptBudgetV4)
 	defer stop()
 	_ = c.reconcileLocked(call)
 }
