@@ -5,6 +5,7 @@ package dhcpsockets
 import (
 	"context"
 	"encoding/binary"
+	"math"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -25,6 +26,9 @@ func CaptureIPv4UDP(ctx context.Context) ([]Socket, error) {
 		return nil, ErrObservation
 	}
 	defer unix.Close(fd)
+	if fd < 0 || fd > math.MaxInt32 {
+		return nil, ErrObservation
+	}
 	if unix.Bind(fd, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}) != nil {
 		return nil, ErrObservation
 	}
@@ -37,7 +41,7 @@ func CaptureIPv4UDP(ctx context.Context) ([]Socket, error) {
 		return nil, ErrObservation
 	}
 	q := make([]byte, 72)
-	binary.NativeEndian.PutUint32(q[:4], uint32(len(q)))
+	binary.NativeEndian.PutUint32(q[:4], 72)
 	binary.NativeEndian.PutUint16(q[4:6], diagMessage)
 	binary.NativeEndian.PutUint16(q[6:8], unix.NLM_F_REQUEST|unix.NLM_F_DUMP)
 	binary.NativeEndian.PutUint32(q[8:12], 1)
