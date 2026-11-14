@@ -167,7 +167,7 @@ func tables(owned OwnedV1) [3]TableStateV1 {
 
 func tableBytes(state TableStateV1) []byte { data, _ := json.Marshal(state); return data }
 
-func (e *Engine) tableMatches(ctx context.Context, table Table, state TableStateV1, deps DependenciesV1) bool {
+func (e *Engine) tableMatches(ctx context.Context, table Table, state TableStateV1, deps DependenciesV1, network *networkplan.Revision) bool {
 	data, exists, err := e.kernel.Observe(ctx, table)
 	if err != nil || len(data) > 512<<10 || exists != (state.Presence == Present) {
 		return false
@@ -188,7 +188,7 @@ func (e *Engine) tableMatches(ctx context.Context, table Table, state TableState
 		}
 		_, err = routednft.VerifyObservation(data, revision)
 	case LocalTable:
-		artifact, compileErr := localnft.CompileWithNeighbors(*state.Revision.Config.LocalServices, deps.Neighbors)
+		artifact, compileErr := localnft.CompileForNetwork(*state.Revision.Config.LocalServices, deps.Neighbors, network)
 		if compileErr != nil {
 			return false
 		}
@@ -233,8 +233,12 @@ func (e *Engine) matches(ctx context.Context, owned OwnedV1, deps DependenciesV1
 	} else if e.network.Verify(ctx) != nil {
 		return false
 	}
+	network, err := acquisitionNetwork(owned.RoutedFirewall, deps)
+	if err != nil {
+		return false
+	}
 	for table, state := range tables(owned) {
-		if !e.tableMatches(ctx, Table(table), state, deps) {
+		if !e.tableMatches(ctx, Table(table), state, deps, network) {
 			return false
 		}
 	}
@@ -649,7 +653,7 @@ func (e *Engine) remember(table int, state TableStateV1) bool {
 	return true
 }
 
-func compileTable(table Table, state TableStateV1, exists bool, deps DependenciesV1) ([]byte, error) {
+func compileTable(table Table, state TableStateV1, exists bool, deps DependenciesV1, network *networkplan.Revision) ([]byte, error) {
 	if state.Presence == Absent {
 		if !exists {
 			return nil, nil
@@ -685,7 +689,7 @@ func compileTable(table Table, state TableStateV1, exists bool, deps Dependencie
 		}
 		create, replace = a.Create, a.Batch
 	case LocalTable:
-		a, err := localnft.CompileWithNeighbors(*state.Revision.Config.LocalServices, deps.Neighbors)
+		a, err := localnft.CompileForNetwork(*state.Revision.Config.LocalServices, deps.Neighbors, network)
 		if err != nil {
 			return nil, err
 		}
@@ -700,15 +704,23 @@ func compileTable(table Table, state TableStateV1, exists bool, deps Dependencie
 }
 
 func (e *Engine) compileChange(actual, desired [3]TableStateV1, deps DependenciesV1) ([]byte, error) {
+	before, err := acquisitionNetwork(actual[RoutedTable], deps)
+	if err != nil {
+		return nil, err
+	}
+	after, err := acquisitionNetwork(desired[RoutedTable], deps)
+	if err != nil {
+		return nil, err
+	}
 	var combined struct {
 		Commands []json.RawMessage `json:"nftables"`
 	}
 	combined.Commands = []json.RawMessage{}
 	for table, target := range desired {
-		if bytes.Equal(tableBytes(actual[table]), tableBytes(target)) {
+		if bytes.Equal(tableBytes(actual[table]), tableBytes(target)) && (Table(table) != LocalTable || sameAcquisitionNetwork(before, after)) {
 			continue
 		}
-		batch, err := compileTable(Table(table), target, actual[table].Presence == Present, deps)
+		batch, err := compileTable(Table(table), target, actual[table].Presence == Present, deps, after)
 		if err != nil || len(batch) > MaxBatch {
 			return nil, ErrState
 		}
@@ -735,9 +747,20 @@ func (e *Engine) compileChange(actual, desired [3]TableStateV1, deps Dependencie
 func (e *Engine) knownTables(ctx context.Context) ([3]TableStateV1, error) {
 	var actual [3]TableStateV1
 	for table, candidates := range e.known {
+		// RoutedTable precedes LocalTable. Derive admission from the already
+		// verified known routed state, never from an observed comment alone.
+		var network *networkplan.Revision
+		if Table(table) == LocalTable {
+			var err error
+			network, err = acquisitionNetwork(actual[RoutedTable], e.prepared.Dependencies)
+			if err != nil {
+				e.fenced = true
+				return actual, err
+			}
+		}
 		found := false
 		for _, candidate := range candidates {
-			if e.tableMatches(ctx, Table(table), candidate, e.prepared.Dependencies) {
+			if e.tableMatches(ctx, Table(table), candidate, e.prepared.Dependencies, network) {
 				actual[table], found = candidate, true
 				break
 			}
@@ -782,8 +805,12 @@ func (e *Engine) applyTables(ctx context.Context, desired [3]TableStateV1) error
 	if e.kernel.Apply(ctx, batch) != nil {
 		return ErrState
 	}
+	network, err := acquisitionNetwork(desired[RoutedTable], e.prepared.Dependencies)
+	if err != nil {
+		return err
+	}
 	for table, target := range desired {
-		if !e.tableMatches(ctx, Table(table), target, e.prepared.Dependencies) {
+		if !e.tableMatches(ctx, Table(table), target, e.prepared.Dependencies, network) {
 			return ErrState
 		}
 	}

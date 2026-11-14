@@ -32,7 +32,7 @@ func VerifyObservation(data []byte, expected Artifact) (Observation, error) {
 	if len(data) == 0 || len(data) > MaxObservation || !nftengine.UniqueJSONFields(data) {
 		return Observation{}, ErrObservation
 	}
-	fresh, err := CompileWithNeighbors(expected.Revision.Config, expected.Neighbors)
+	fresh, err := CompileForNetwork(expected.Revision.Config, expected.Neighbors, expected.Network)
 	if err != nil || !equalJSON(fresh, expected) {
 		return Observation{}, ErrObservation
 	}
@@ -209,8 +209,22 @@ func sameObject(actual, expected object) bool {
 	if !ok {
 		return false
 	}
+	// Transport payloads (UDP/TCP) do not imply an IP family. Only an exact
+	// typed IP payload permits nft to elide the corresponding family guard.
+	impliedFamily := ""
+	for _, raw := range exprs {
+		comparison, _ := raw.(object)["match"].(object)
+		left, _ := comparison["left"].(object)
+		p, _ := left["payload"].(object)
+		switch p["protocol"] {
+		case "ip":
+			impliedFamily = "ipv4"
+		case "ip6", "icmpv6":
+			impliedFamily = "ipv6"
+		}
+	}
 	for mask := 0; mask < 4; mask++ {
-		for _, numeric := range []bool{false, true} {
+		for numeric := 0; numeric < 4; numeric++ {
 			for _, symbolicICMP := range []bool{false, true} {
 				variant := make([]any, 0, len(exprs))
 				for _, raw := range exprs {
@@ -220,10 +234,18 @@ func sameObject(actual, expected object) bool {
 						left, _ := comparison["left"].(object)
 						if meta, ok := left["meta"].(object); ok {
 							key, _ := meta["key"].(string)
-							if key == "nfproto" && mask&1 != 0 || key == "l4proto" && mask&2 != 0 {
+							if key == "nfproto" && mask&1 != 0 && comparison["right"] == impliedFamily || key == "l4proto" && mask&2 != 0 {
 								continue
 							}
-							if key == "l4proto" && numeric {
+							if key == "nfproto" && numeric&1 != 0 {
+								families := map[string]int{"ipv4": 2, "ipv6": 10}
+								if name, ok := comparison["right"].(string); ok {
+									if family, known := families[name]; known {
+										expr = match(left, family)
+									}
+								}
+							}
+							if key == "l4proto" && numeric&2 != 0 {
 								protocols := map[string]int{"tcp": 6, "udp": 17, "ipv6-icmp": 58}
 								if name, ok := comparison["right"].(string); ok {
 									expr = match(left, protocols[name])
