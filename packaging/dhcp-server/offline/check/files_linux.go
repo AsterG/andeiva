@@ -88,7 +88,10 @@ func fileHash(path string, limit int64) (string, int64, error) {
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
 func syncDir(path string) error {
-	f, e := os.Open(path)
+	if e := secure(path, true); e != nil {
+		return e
+	}
+	f, e := os.Open(path) // #nosec G703 G304 -- Internal directory paths; root ownership, ancestors and ACLs are checked above.
 	if e != nil {
 		return e
 	}
@@ -99,7 +102,7 @@ func create(path string, b []byte, mode os.FileMode) error {
 	if e := secure(filepath.Dir(path), true); e != nil {
 		return e
 	}
-	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) // #nosec G703 G304 -- Internal fixed-root paths and checked parent; exclusive creation cannot replace an existing entry.
 	if e != nil {
 		return e
 	}
@@ -140,9 +143,14 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 	return n, nil
 }
 func run(path string, args ...string) ([]byte, error) {
+	switch path {
+	case "/usr/bin/dpkg", "/usr/bin/systemctl", "/usr/sbin/update-rc.d":
+	default:
+		return nil, errProfile
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, args...)
+	cmd := exec.CommandContext(ctx, path, args...) // #nosec G204 -- Exact executable allowlist above; all arguments are internal constants, never shell commands.
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C", "LANG=C", "SYSTEMD_OFFLINE=0"}
 	cmd.WaitDelay = time.Second
 	out := &boundedOutput{}

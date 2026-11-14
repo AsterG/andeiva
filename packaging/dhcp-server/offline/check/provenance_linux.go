@@ -61,7 +61,7 @@ func authenticateRelease(path string) ([]byte, error) {
 	defer os.Remove(output)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "/usr/bin/sqv", "--keyring", "/usr/share/keyrings/debian-archive-keyring.pgp", "--output", output, "--cleartext", path)
+	cmd := exec.CommandContext(ctx, "/usr/bin/sqv", "--keyring", "/usr/share/keyrings/debian-archive-keyring.pgp", "--output", output, "--cleartext", path) // #nosec G702 G204 -- Fixed verifier/keyring/flags; input is an embedded profile path under the validated bundle ID, output is private MkdirTemp storage.
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LC_ALL=C"}
 	cmd.WaitDelay = time.Second
 	out := &boundedOutput{}

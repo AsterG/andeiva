@@ -39,7 +39,7 @@ func verifyBundle(id string) error {
 		expected[p[1]] = true
 	}
 	n := 0
-	e = filepath.WalkDir(dir, func(path string, d os.DirEntry, e error) error {
+	e = filepath.WalkDir(dir, func(path string, d os.DirEntry, e error) error { // #nosec G703 -- Fixed bundle root plus validated 64-hex ID; exact inventory and root-owned ancestors are verified.
 		if e != nil {
 			return e
 		}
@@ -266,7 +266,7 @@ func install(id, approval string) error {
 		return e
 	}
 	stage := filepath.Join(stateDir, id)
-	if e := os.Mkdir(stage, 0700); e != nil {
+	if e := os.Mkdir(stage, 0700); e != nil { // #nosec G703 -- Stage is a validated 64-hex ID under the checked fixed state root.
 		return e
 	}
 	if e := syncDir(stateDir); e != nil {
@@ -276,7 +276,7 @@ func install(id, approval string) error {
 		return e
 	}
 	for _, d := range []string{"empty", "archives", "lists", "lists/partial", "log"} {
-		if e := os.Mkdir(filepath.Join(stage, d), 0700); e != nil {
+		if e := os.Mkdir(filepath.Join(stage, d), 0700); e != nil { // #nosec G703 -- Only literal internal directory names are joined to the exclusively created stage.
 			return e
 		}
 	}
@@ -299,10 +299,10 @@ func install(id, approval string) error {
 	// Native APT owns its normal POSIX frontend/dpkg locks throughout this action.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "/usr/bin/apt-get", args...)
+	cmd := exec.CommandContext(ctx, "/usr/bin/apt-get", args...) // #nosec G702 -- Fixed APT executable/options and embedded archive names beneath the validated fixed-root stage; no shell.
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C", "LANG=C", "DEBIAN_FRONTEND=noninteractive", "APT_CONFIG=" + filepath.Join(stage, "apt.conf")}
 	cmd.WaitDelay = 3 * time.Second
-	logFile, e := os.OpenFile(filepath.Join(stage, "apt.log"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	logFile, e := os.OpenFile(filepath.Join(stage, "apt.log"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600) // #nosec G703 G304 -- Literal log name under the private exclusive stage; existing entries cannot be replaced.
 	if e != nil {
 		return e
 	}
@@ -418,7 +418,7 @@ func noServer() error {
 		}
 	}
 	for _, p := range []string{"/proc/net/udp", "/proc/net/udp6"} {
-		b, e := os.ReadFile(p)
+		b, e := os.ReadFile(p) // #nosec G304 -- The loop contains only the fixed kernel paths /proc/net/udp and /proc/net/udp6.
 		if e != nil {
 			return e
 		}
