@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 
+	"github.com/AsterG/andeiva/internal/dhcpserver"
 	"github.com/AsterG/andeiva/internal/networkplan"
 )
 
@@ -60,6 +61,7 @@ type Policy struct {
 	Network               networkplan.Revision `json:"network"`
 	Rules                 []Rule               `json:"rules"`
 	NAT                   []Masquerade         `json:"nat"`
+	DHCPServer            *dhcpserver.Config   `json:"dhcp_server,omitempty"`
 }
 type Revision struct {
 	Hash   string `json:"hash"`
@@ -78,7 +80,7 @@ func canonicalCIDR(value string) (string, bool) {
 }
 
 func Canonical(input Policy) (Revision, error) {
-	if input.SchemaVersion != 1 || !input.LabOnly || input.RequireIdentification || input.RequireInspection || len(input.Rules) > MaxRules || len(input.NAT) > 32 {
+	if (input.SchemaVersion != 1 && input.SchemaVersion != 2) || (input.SchemaVersion == 1 && input.DHCPServer != nil) || (input.SchemaVersion == 2 && input.DHCPServer == nil) || !input.LabOnly || input.RequireIdentification || input.RequireInspection || len(input.Rules) > MaxRules || len(input.NAT) > 32 {
 		return Revision{}, ErrPolicy
 	}
 	network, e := networkplan.Canonical(input.Network.Config)
@@ -87,6 +89,24 @@ func Canonical(input Policy) (Revision, error) {
 	}
 	p := input
 	p.Network = network
+	if input.DHCPServer != nil {
+		var bindings []dhcpserver.Binding
+		for _, iface := range network.Config.Interfaces {
+			if iface.Role != networkplan.LAN || iface.IPv4.Mode != "static" {
+				continue
+			}
+			address, err := netip.ParsePrefix(iface.IPv4.Address)
+			if err != nil {
+				return Revision{}, ErrPolicy
+			}
+			bindings = append(bindings, dhcpserver.Binding{InterfaceID: iface.ID, Role: string(iface.Role), Address: address})
+		}
+		canonical, err := dhcpserver.Canonical(*input.DHCPServer, bindings)
+		if err != nil {
+			return Revision{}, ErrPolicy
+		}
+		p.DHCPServer = &canonical
+	}
 	p.Rules = slices.Clone(input.Rules)
 	p.NAT = slices.Clone(input.NAT)
 	interfaces := map[string]networkplan.Interface{}

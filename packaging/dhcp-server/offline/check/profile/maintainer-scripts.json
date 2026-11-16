@@ -1,0 +1,116 @@
+{
+  "kea-common": {
+    "postinst": {
+      "sha256": "e19b2e36e9b891969f0d70bc1ae05d6d6f988e0516898c171f22655b92f8dbe6",
+      "bytes": 1950,
+      "content": "#!/bin/sh\n# postinst script for kea-common\n#\n# see: dh_installdeb(1)\n\nset -e\n\ncase \"$1\" in\n    configure)\n        addgroup --force-badname --system _kea >/dev/null || exit 1\n        adduser --force-badname --quiet --system --home /var/lib/kea \\\n           --shell /bin/false --no-create-home --disabled-password --disabled-login \\\n           --gecos \"Kea DHCP User\" --group _kea >/dev/null || exit 1\n\n        if ! dpkg-statoverride --list /etc/kea >/dev/null 2>&1; then\n            dpkg-statoverride --update --add _kea _kea 0750 /etc/kea\n        fi\n\n        # From version 2.2.0-2 we leave the handling of the /var/log/kea and\n        # /var/lib/kea directories to systemd (creation and ownership/permissions\n        # settings). When upgrading from kea-common (< 2.2.0-2) drop the now\n        # useless dpkg-statoverrides.\n        if [ \"$2\" != \"\" ] && dpkg --compare-versions \"$2\" lt \"2.2.0-2\"; then\n            for d in /var/log/kea /var/lib/kea; do\n                if dpkg-statoverride --list $d >/dev/null 2>&1; then\n                    dpkg-statoverride --remove $d\n                fi\n            done\n        fi\n    ;;\n\n    abort-upgrade|abort-remove|abort-deconfigure)\n    ;;\n\n    *)\n        echo \"postinst called with unknown argument \\`$1'\" >&2\n        exit 1\n    ;;\nesac\n\n# Automatically added by dh_apparmor/4.1.0-1\nif [ \"$1\" = \"configure\" ]; then\n    APP_PROFILE=\"/etc/apparmor.d/usr.sbin.kea-lfc\"\n    if [ -f \"$APP_PROFILE\" ]; then\n        # Add the local/ include\n        LOCAL_APP_PROFILE=\"/etc/apparmor.d/local/usr.sbin.kea-lfc\"\n\n        test -e \"$LOCAL_APP_PROFILE\" || {\n            mkdir -p `dirname \"$LOCAL_APP_PROFILE\"`\n            install --mode 644 /dev/null \"$LOCAL_APP_PROFILE\"\n        }\n\n        # Reload the profile, including any abstraction updates\n        if aa-enabled --quiet 2>/dev/null; then\n            apparmor_parser -r -T -W \"$APP_PROFILE\" || true\n        fi\n    fi\nfi\n# End automatically added section\n\n\nexit 0\n"
+    },
+    "postrm": {
+      "sha256": "029d2705e18afd5df5dea8ed9b6bda91c38e09996377c0c671ebea1007bf373c",
+      "bytes": 584,
+      "content": "#!/bin/sh\nset -e\n# Automatically added by dh_apparmor/4.1.0-1\nif [ \"$1\" = \"purge\" ] && ! [ -e \"/etc/apparmor.d/usr.sbin.kea-lfc\" ] ; then\n    rm -f \"/etc/apparmor.d/disable/usr.sbin.kea-lfc\" || true\n    rm -f \"/etc/apparmor.d/force-complain/usr.sbin.kea-lfc\" || true\n    rm -f \"/etc/apparmor.d/local/usr.sbin.kea-lfc\" || true\n    rm -f /var/cache/apparmor/*/\"usr.sbin.kea-lfc\" || true\n    rmdir /etc/apparmor.d/disable 2>/dev/null || true\n    rmdir /etc/apparmor.d/local   2>/dev/null || true\n    rmdir /etc/apparmor.d         2>/dev/null || true\nfi\n# End automatically added section\n"
+    },
+    "triggers": {
+      "sha256": "c67ab4558a59eb1e96d899a5bdbb153d6a2ab0e580f4acf5bfb1e4e6150ad2f4",
+      "bytes": 68,
+      "content": "# Triggers added by dh_makeshlibs/13.24.2\nactivate-noawait ldconfig\n"
+    }
+  },
+  "kea-dhcp4-server": {
+    "postinst": {
+      "sha256": "b15bda4df9e88b84ed72fc2b9358515a8444b785542cce23e9bcd9cc8b3198e6",
+      "bytes": 2523,
+      "content": "#!/bin/sh\nset -e\n# Automatically added by dh_apparmor/4.1.0-1\nif [ \"$1\" = \"configure\" ]; then\n    APP_PROFILE=\"/etc/apparmor.d/usr.sbin.kea-dhcp4\"\n    if [ -f \"$APP_PROFILE\" ]; then\n        # Add the local/ include\n        LOCAL_APP_PROFILE=\"/etc/apparmor.d/local/usr.sbin.kea-dhcp4\"\n\n        test -e \"$LOCAL_APP_PROFILE\" || {\n            mkdir -p `dirname \"$LOCAL_APP_PROFILE\"`\n            install --mode 644 /dev/null \"$LOCAL_APP_PROFILE\"\n        }\n\n        # Reload the profile, including any abstraction updates\n        if aa-enabled --quiet 2>/dev/null; then\n            apparmor_parser -r -T -W \"$APP_PROFILE\" || true\n        fi\n    fi\nfi\n# End automatically added section\n# Automatically added by dh_installinit/13.24.2\nif [ \"$1\" = \"configure\" ] || [ \"$1\" = \"abort-upgrade\" ] || [ \"$1\" = \"abort-deconfigure\" ] || [ \"$1\" = \"abort-remove\" ] ; then\n\tif [ -z \"$DPKG_ROOT\" ] && [ -x \"/etc/init.d/kea-dhcp4-server\" ]; then\n\t\tupdate-rc.d kea-dhcp4-server defaults >/dev/null\n\t\tif [ -n \"$2\" ]; then\n\t\t\t_dh_action=restart\n\t\telse\n\t\t\t_dh_action=start\n\t\tfi\n\t\tinvoke-rc.d --skip-systemd-native kea-dhcp4-server $_dh_action || exit 1\n\tfi\nfi\n# End automatically added section\n# Automatically added by dh_installsystemd/13.24.2\nif [ \"$1\" = \"configure\" ] || [ \"$1\" = \"abort-upgrade\" ] || [ \"$1\" = \"abort-deconfigure\" ] || [ \"$1\" = \"abort-remove\" ] ; then\n\t# The following line should be removed in trixie or trixie+1\n\tdeb-systemd-helper unmask 'kea-dhcp4-server.service' >/dev/null || true\n\n\t# was-enabled defaults to true, so new installations run enable.\n\tif deb-systemd-helper --quiet was-enabled 'kea-dhcp4-server.service'; then\n\t\t# Enables the unit on first installation, creates new\n\t\t# symlinks on upgrades if the unit file has changed.\n\t\tdeb-systemd-helper enable 'kea-dhcp4-server.service' >/dev/null || true\n\telse\n\t\t# Update the statefile to add new symlinks (if any), which need to be\n\t\t# cleaned up on purge. Also remove old symlinks.\n\t\tdeb-systemd-helper update-state 'kea-dhcp4-server.service' >/dev/null || true\n\tfi\nfi\n# End automatically added section\n# Automatically added by dh_installsystemd/13.24.2\nif [ \"$1\" = \"configure\" ] || [ \"$1\" = \"abort-upgrade\" ] || [ \"$1\" = \"abort-deconfigure\" ] || [ \"$1\" = \"abort-remove\" ] ; then\n\tif [ -d /run/systemd/system ]; then\n\t\tsystemctl --system daemon-reload >/dev/null || true\n\t\tif [ -n \"$2\" ]; then\n\t\t\t_dh_action=restart\n\t\telse\n\t\t\t_dh_action=start\n\t\tfi\n\t\tdeb-systemd-invoke $_dh_action 'kea-dhcp4-server.service' >/dev/null || true\n\tfi\nfi\n# End automatically added section\n"
+    },
+    "postrm": {
+      "sha256": "a9128f18c07ae62fa55d385566bf404620efae98fa9c25c5fe9405cbefd610d0",
+      "bytes": 1352,
+      "content": "#!/bin/sh\nset -e\n# Automatically added by dh_installinit/13.24.2\nif [ \"$1\" = \"remove\" ] && [ -x \"/etc/init.d/kea-dhcp4-server\" ] ; then\n\tchmod -x \"/etc/init.d/kea-dhcp4-server\" >/dev/null || true\nfi\nif [ -z \"$DPKG_ROOT\" ] && [ \"$1\" = \"purge\" ] ; then\n\tupdate-rc.d kea-dhcp4-server remove >/dev/null\nfi\n# End automatically added section\n# Automatically added by dh_installsystemd/13.24.2\nif [ \"$1\" = remove ] && [ -d /run/systemd/system ] ; then\n\tsystemctl --system daemon-reload >/dev/null || true\nfi\n# End automatically added section\n# Automatically added by dh_installsystemd/13.24.2\nif [ \"$1\" = \"purge\" ]; then\n\tif [ -x \"/usr/bin/deb-systemd-helper\" ]; then\n\t\tdeb-systemd-helper purge 'kea-dhcp4-server.service' >/dev/null || true\n\tfi\nfi\n# End automatically added section\n# Automatically added by dh_apparmor/4.1.0-1\nif [ \"$1\" = \"purge\" ] && ! [ -e \"/etc/apparmor.d/usr.sbin.kea-dhcp4\" ] ; then\n    rm -f \"/etc/apparmor.d/disable/usr.sbin.kea-dhcp4\" || true\n    rm -f \"/etc/apparmor.d/force-complain/usr.sbin.kea-dhcp4\" || true\n    rm -f \"/etc/apparmor.d/local/usr.sbin.kea-dhcp4\" || true\n    rm -f /var/cache/apparmor/*/\"usr.sbin.kea-dhcp4\" || true\n    rmdir /etc/apparmor.d/disable 2>/dev/null || true\n    rmdir /etc/apparmor.d/local   2>/dev/null || true\n    rmdir /etc/apparmor.d         2>/dev/null || true\nfi\n# End automatically added section\n"
+    },
+    "preinst": {
+      "sha256": "8f75fb6571e6b337bc52fb1391dfda492cac0f64f23cddf01d7ae1db3e604ca3",
+      "bytes": 249,
+      "content": "#!/bin/sh\nset -e\n# Automatically added by dh_installinit/13.24.2\nif [ \"$1\" = \"install\" ] && [ -n \"$2\" ] && [ -e \"/etc/init.d/kea-dhcp4-server\" ] ; then\n\tchmod +x \"/etc/init.d/kea-dhcp4-server\" >/dev/null || true\nfi\n# End automatically added section\n"
+    },
+    "prerm": {
+      "sha256": "6faa8ce11c3d1e2edb5902af9dae41c3de061e23b8b57feb28303d80baf7255f",
+      "bytes": 501,
+      "content": "#!/bin/sh\nset -e\n# Automatically added by dh_installsystemd/13.24.2\nif [ -z \"$DPKG_ROOT\" ] && [ \"$1\" = remove ] && [ -d /run/systemd/system ] ; then\n\tdeb-systemd-invoke stop 'kea-dhcp4-server.service' >/dev/null || true\nfi\n# End automatically added section\n# Automatically added by dh_installinit/13.24.2\nif [ -z \"$DPKG_ROOT\" ] && [ \"$1\" = remove ] && [ -x \"/etc/init.d/kea-dhcp4-server\" ] ; then\n\tinvoke-rc.d --skip-systemd-native kea-dhcp4-server stop || exit 1\nfi\n# End automatically added section\n"
+    }
+  },
+  "libldap2": {
+    "triggers": {
+      "sha256": "c67ab4558a59eb1e96d899a5bdbb153d6a2ab0e580f4acf5bfb1e4e6150ad2f4",
+      "bytes": 68,
+      "content": "# Triggers added by dh_makeshlibs/13.24.2\nactivate-noawait ldconfig\n"
+    }
+  },
+  "liblog4cplus-2.0.5t64": {
+    "triggers": {
+      "sha256": "c0e5984317d90a62bd6cd8ae3085701c41be739887d9a341762669f9da1d5f57",
+      "bytes": 66,
+      "content": "# Triggers added by dh_makeshlibs/13.23\nactivate-noawait ldconfig\n"
+    }
+  },
+  "libmariadb3": {
+    "triggers": {
+      "sha256": "c67ab4558a59eb1e96d899a5bdbb153d6a2ab0e580f4acf5bfb1e4e6150ad2f4",
+      "bytes": 68,
+      "content": "# Triggers added by dh_makeshlibs/13.24.2\nactivate-noawait ldconfig\n"
+    }
+  },
+  "libpq5": {
+    "triggers": {
+      "sha256": "c67ab4558a59eb1e96d899a5bdbb153d6a2ab0e580f4acf5bfb1e4e6150ad2f4",
+      "bytes": 68,
+      "content": "# Triggers added by dh_makeshlibs/13.24.2\nactivate-noawait ldconfig\n"
+    }
+  },
+  "libsasl2-2": {
+    "triggers": {
+      "sha256": "d375177f2ddeec375a8af756e66177c556566ad114898ad292bfd205b4fcdd74",
+      "bytes": 68,
+      "content": "# Triggers added by dh_makeshlibs/13.24.1\nactivate-noawait ldconfig\n"
+    }
+  },
+  "libsasl2-modules-db": {},
+  "mariadb-common": {
+    "postinst": {
+      "sha256": "7eae5ea24780e77cb87f642df312f558cd4d1e8674fa61052d9c93d0f8966dae",
+      "bytes": 1552,
+      "content": "#!/bin/sh\n\nset -e\n\ncase \"$1\" in\n  configure)\n    # New packaging paradigm for my.cnf handling among MySQL variants\n    # Used in Ubuntu since Dec-2014 and in Debian since Jul-2015\n    #\n    # If the new mysql-common package does not provide\n    # the update-alternatives facility, notify user about manual fall back\n    if [ -f /usr/share/mysql-common/configure-symlinks ]\n    then\n      /usr/share/mysql-common/configure-symlinks install mariadb \"/etc/mysql/mariadb.cnf\"\n    else\n      # As configure can be called many times, don't re-create the symlink\n      # if it is there already\n      if [ ! -L /etc/mysql/my.cnf ]\n      then\n        echo \"Notice: configure-symlinks trigger could not be called.\"\n        echo \"Please manually create symlinks by running: \"\n        echo \"  mv -f /etc/mysql/my.cnf /etc/mysql/my.cnf.old\"\n        echo \"  ln -sf mariadb.cnf /etc/mysql/my.cnf\"\n      fi\n    fi\n\n    # Note that MySQL in Debian runs the configure-symlinks from the\n    # mysql-server-x.x.postinst and postrm files, while the MySQL.com (and\n    # Percona.com) packaging triggers update-alternatives directly form the\n    # mysql-common (and percona-x-common) package using priority 200.\n    #\n    # Thus, we need to ensure here that mariadb.cnf indeed became the primary\n    # alternative and override with priority 500 if needed.\n    if ! update-alternatives --query my.cnf | grep --quiet \"Value: /etc/mysql/mariadb.cnf\"\n    then\n      update-alternatives --install /etc/mysql/my.cnf my.cnf \"/etc/mysql/mariadb.cnf\" 500 || true\n    fi\n    ;;\nesac\n\n\n"
+    },
+    "postrm": {
+      "sha256": "a962179bdb4514d34b8e8f3626af628308ad8df170c704006d55d023fc71b380",
+      "bytes": 363,
+      "content": "#!/bin/sh\n\nset -e\n\ncase \"$1\" in\n  remove|disappear)\n    # New packaging paradigm for my.cnf handling among MySQL variants\n    # Used in Ubuntu since Dec-2014 and in Debian since Jul-2015\n    if [ -f /usr/share/mysql-common/configure-symlinks ]\n    then\n      /usr/share/mysql-common/configure-symlinks remove mariadb \"/etc/mysql/mariadb.cnf\"\n    fi\n    ;;\nesac\n\n\n"
+    },
+    "preinst": {
+      "sha256": "de51cbafc2a0c6cce520b9fd71f763e07dd9f53023dfa536d1e5c0cfa756be5a",
+      "bytes": 574,
+      "content": "#!/bin/sh\nset -e\n\nif [ \"$1\" = \"install\" ] || [ \"$1\" = \"upgrade\" ]\nthen\n  if dpkg --compare-versions \"$2\" lt-nl \"10.0.20-3~\"\n  then\n    # revert fallback my.cnf symlink setup performed by mariadb-common\n    # from 10.0.17-1~exp2 up to 10.0.20-2\n    if [ -L /etc/mysql/my.cnf ] && [ -f /etc/mysql/my.cnf.old ]\n    then\n      if [ \"$(readlink /etc/mysql/my.cnf)\" = \"mariadb.cnf\" ]\n      then\n        echo \"Reverting my.cnf -> mariadb.cnf symlink setup by mariadb-common\"\n        rm /etc/mysql/my.cnf\n        mv /etc/mysql/my.cnf.old /etc/mysql/my.cnf\n      fi\n    fi\n  fi\nfi\n\n\n"
+    }
+  },
+  "mysql-common": {
+    "postinst": {
+      "sha256": "cda665218c80832dbf4b3889bd6ac693a4fe896a4edcbe61b3a411b6660c9798",
+      "bytes": 2235,
+      "content": "#!/bin/sh\nset -e\n\n# Automatically added by dh_installdeb/13.16\ndpkg-maintscript-helper rm_conffile /etc/mysql/conf.d/.keepme 5.6.22-1\\~ mysql-common -- \"$@\"\ndpkg-maintscript-helper rm_conffile /etc/mysql/my.cnf 5.6.22-1\\~ mysql-common -- \"$@\"\n# End automatically added section\n\n\n# This code needs to go after the debhelper snippets so that it runs after\n# dpkg-maintscript-helper rm_conffile on /etc/mysql/my.cnf. As a one off, if\n# my.cnf.dpkg-bak exists after this stage then we rename it to\n# /etc/mysql/my.cnf.migrated, add an explanatory note to the top and add it is\n# a high priority alternative so it gets used in favour of any other my.cnf\n# shipped by variants. The /etc/mysql/my.cnf.migrated file will not be owned by\n# any package (just like /etc/mysql/my.cnf.dpkg-bak would have been) but we\n# rename it since it will be in active use, the user may not expect a .dpkg-bak\n# file to be in use and we do not want to surprise the user.\n\nif [ \"$1\" = \"configure\" ] && [ -f /etc/mysql/my.cnf.fallback ]; then\n    # Low priority fallback for client use when no server is installed.\n    update-alternatives --install /etc/mysql/my.cnf my.cnf /etc/mysql/my.cnf.fallback 100\nfi\n\nif [ \"$1\" = \"configure\" -a -f /etc/mysql/my.cnf.dpkg-bak ] && dpkg --compare-versions \"$2\" le \"5.6.19-1~exp1ubuntu2~\"; then\n    echo \"Moving /etc/mysql/my.cnf.dpkg-bak to /etc/mysql/my.cnf.migrated\"\n    cat - /etc/mysql/my.cnf.dpkg-bak <<EOT > /etc/mysql/my.cnf.migrated\n# This file has been automatically moved from your previous\n# /etc/mysql/my.cnf, with just this comment added at the top, to maintain MySQL\n# operation using your previously customised configuration.\n\n# To switch to the new packaging configuration for automated management of\n# /etc/mysql/my.cnf across multiple variants:\n#\n# 1. Move your customisations from this file to /etc/mysql/conf.d/ and\n#    to /etc/mysql/<variant>.conf.d/ as appropriate.\n# 2. Run \"update-alternatives --remove my.cnf /etc/mysql/my.cnf.migrated\"\n# 3. Remove the file /etc/mysql/my.cnf.migrated\n\nEOT\n    rm /etc/mysql/my.cnf.dpkg-bak\n    echo \"Using your previous configuration through /etc/mysql/my.cnf.migrated\"\n    update-alternatives --install /etc/mysql/my.cnf my.cnf /etc/mysql/my.cnf.migrated 300\nfi\n"
+    },
+    "postrm": {
+      "sha256": "6c287cbabddb5c9ac465cb6982278e831ae1824919637af397c454c68ccb1819",
+      "bytes": 608,
+      "content": "#!/bin/sh\nset -e\n\nif [ \"$1\" = \"purge\" ]; then\n  update-alternatives --remove my.cnf /etc/mysql/my.cnf.migrated\n  rm -f /etc/mysql/my.cnf.migrated  # created by mysql-common from our obsolete conffile my.cnf\n  rm -f /etc/mysql/my.cnf.old       # created by mariadb-common from our obsolete conffile my.cnf\n  rmdir /etc/mysql 2>/dev/null || true\nfi\n\n# Automatically added by dh_installdeb/13.16\ndpkg-maintscript-helper rm_conffile /etc/mysql/conf.d/.keepme 5.6.22-1\\~ mysql-common -- \"$@\"\ndpkg-maintscript-helper rm_conffile /etc/mysql/my.cnf 5.6.22-1\\~ mysql-common -- \"$@\"\n# End automatically added section\n\n"
+    },
+    "preinst": {
+      "sha256": "b2875cd3a113ebba0ce41e9e0d98c8231ff4bee1986389bb9c3da99ad2a357ee",
+      "bytes": 1817,
+      "content": "#!/bin/sh\nset -e\n\nif [ \"$1\" = \"install\" ] || [ \"$1\" = \"upgrade\" ]; then\n    if dpkg --compare-versions \"$2\" lt-nl \"5.6.25-3~\" ; then\n\n        # revert fallback my.cnf symlink setup performed by mariadb-common\n        # from 10.0.17-1~exp2 upto 10.0.20-2\n        if [ -L /etc/mysql/my.cnf ] && [ -f /etc/mysql/my.cnf.old ]; then\n            if [ \"$(readlink /etc/mysql/my.cnf)\" = \"mariadb.cnf\" ]; then\n                echo \"Reverting my.cnf -> mariadb.cnf symlink setup by mariadb-common\"\n                rm /etc/mysql/my.cnf\n                mv /etc/mysql/my.cnf.old /etc/mysql/my.cnf\n            fi\n        fi\n\n        # recover from mysql-common 5.6.25-2 turning this symlinked\n        # mariadb.cnf into my.cnf.migrated\n        if [ -f /etc/mysql/my.cnf.migrated ]; then\n            if [ \"$(md5sum /etc/mysql/my.cnf.migrated | awk '{ print $1 }')\" = \"4720bbc1a03252fbb9eb83b55f0b6e10\" ]; then\n                # unmodified mariadb.cnf with the migration header prepended\n                # by mysql-common.postinst\n                echo \"Removing incorrect /etc/mysql/my.cnf.migrated that was actually mariadb.cnf\"\n                rm /etc/mysql/my.cnf.migrated\n                if [ -f /etc/mysql/my.cnf.old ]; then\n                    echo \"Renaming (possibly unmodified) /etc/mysql/my.cnf.old to /etc/mysql/my.cnf.migrated\"\n                    mv /etc/mysql/my.cnf.old /etc/mysql/my.cnf.migrated\n                else\n                    update-alternatives --remove my.cnf /etc/mysql/my.cnf.migrated\n                fi\n            fi\n        fi\n\n    fi\nfi\n\n# Automatically added by dh_installdeb/13.16\ndpkg-maintscript-helper rm_conffile /etc/mysql/conf.d/.keepme 5.6.22-1\\~ mysql-common -- \"$@\"\ndpkg-maintscript-helper rm_conffile /etc/mysql/my.cnf 5.6.22-1\\~ mysql-common -- \"$@\"\n# End automatically added section\n\n"
+    },
+    "prerm": {
+      "sha256": "f1e8a9c6df08ecfefbf440ea892e79ef6582b6f5d612e6c391499e05d398d1fb",
+      "bytes": 376,
+      "content": "#!/bin/sh\nset -e\n\nif [ \"$1\" = \"remove\" ]; then\n  update-alternatives --remove my.cnf /etc/mysql/my.cnf.fallback\nfi\n\n# Automatically added by dh_installdeb/13.16\ndpkg-maintscript-helper rm_conffile /etc/mysql/conf.d/.keepme 5.6.22-1\\~ mysql-common -- \"$@\"\ndpkg-maintscript-helper rm_conffile /etc/mysql/my.cnf 5.6.22-1\\~ mysql-common -- \"$@\"\n# End automatically added section\n\n"
+    }
+  }
+}

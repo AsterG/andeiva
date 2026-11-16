@@ -11,29 +11,30 @@ import (
 )
 
 type v2Store struct {
-	afterPublication func()
-	archiveObserver  func(v2ReserveArchiveRef) error
-	access           *recoveryreserve.ReaderAccessV2
-	readOnly         bool
-	recordReader     func(string, int64) ([]byte, error)
-	objectReader     func(string, any) error
-	preparingShared  bool
-	guardDeadlines   bool // Trusted opt-in assembly only; never persisted authority.
-	reserves         *v2ReserveManager
-	mu               sync.Mutex
-	root             *os.Root
-	lock             *os.File
-	state            v2State
-	selection        v2Selection
-	selector         v2Selector
-	budget           v2Budget
-	used             v2Budget
-	blocked          bool
-	hook             func(string) error
-	allowance        v2Budget
-	physical         v2PhysicalUsage
-	spaceProbe       func(*os.File) (storageSpace, error)
-	reclaim          *v2ReclaimSession
+	afterPublication    func()
+	archiveObserver     func(v2ReserveArchiveRef) error
+	access              *recoveryreserve.ReaderAccessV2
+	readOnly            bool
+	recordReader        func(string, int64) ([]byte, error)
+	objectReader        func(string, any) error
+	preparingShared     bool
+	dhcpServerSupported bool // Trusted routed authority capability; never wire input.
+	guardDeadlines      bool // Trusted opt-in assembly only; never persisted authority.
+	reserves            *v2ReserveManager
+	mu                  sync.Mutex
+	root                *os.Root
+	lock                *os.File
+	state               v2State
+	selection           v2Selection
+	selector            v2Selector
+	budget              v2Budget
+	used                v2Budget
+	blocked             bool
+	hook                func(string) error
+	allowance           v2Budget
+	physical            v2PhysicalUsage
+	spaceProbe          func(*os.File) (storageSpace, error)
+	reclaim             *v2ReclaimSession
 }
 
 // The caller owns the directory lifetime. No directory, legacy layout or engine
@@ -514,6 +515,16 @@ func v2ValidSelection(selection v2Selection) bool {
 }
 
 func (s *v2Store) publish(state v2State) (result error) {
+	// Every selected DHCP candidate/configuration carries the refusal feature,
+	// including paths that publish a Stage without going through admission.
+	if configurationHasDHCPServerV1(state.Configuration) {
+		if !s.dhcpServerSupported {
+			return ErrDenied
+		}
+		state.RequiredFeatures = append([]string(nil), state.RequiredFeatures...)
+		addFeatureV2(&state, v1RoutedDHCPServerFeature)
+	}
+
 	if s.readOnly || (!s.preparingShared && hasFeatureV2(state, v2SharedReaderFeature) != (s.access != nil)) || s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) || !s.preservesRoutedBootBoundaryStateV2(state) {
 		return errV2Unavailable
 	}

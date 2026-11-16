@@ -1,0 +1,4 @@
+.dhcp-collection { min-width: 0; border: 0; padding: 0; margin: var(--space-4) 0; }
+.dhcp-collection > button { margin-top: var(--space-3); }
+.dhcp-entry { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) auto; gap: var(--space-3); align-items: end; margin-top: var(--space-3); }
+@media (max-width: 48rem) { .dhcp-entry { grid-template-columns: minmax(0, 1fr); } .dhcp-entry > button { justify-self: start; } }

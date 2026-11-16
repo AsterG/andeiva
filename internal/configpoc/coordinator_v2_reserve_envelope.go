@@ -47,6 +47,7 @@ func reserveNormalizeEnvelopeScalarsV2(st *v2State) {
 	addFeatureV2(st, v2BootFeature)
 	addFeatureV2(st, v2LocalFeature)
 	addFeatureV2(st, v2ReserveCompensationFeature)
+	addFeatureV2(st, v1RoutedDHCPServerFeature)
 	if st.Configuration != nil {
 		cfg := *st.Configuration
 		cfg.AuditSequence = high

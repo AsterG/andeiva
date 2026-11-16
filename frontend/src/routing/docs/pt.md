@@ -37,3 +37,42 @@ exatos. Stage nunca substitui candidata existente. O servidor verifica o dono
 durável; controles não concedem permissão. Estas operações não alteram tráfego.
 Bases históricas permanecem visíveis; Validate e Commit ficam bloqueados até uma
 substituição explícita.
+# Configuração DHCP LAN
+
+A seção Rede permite editar escopos DHCP somente para LANs estáticas selecionadas.
+As alterações entram no mesmo rascunho local e usam Preparar, Validar, Aplicar
+com confirmação, Confirmar e Salvar. Desabilitar preserva todos os ajustes.
+A versão 1 da política inalterada mantém seus bytes; adicionar DHCP usa a
+versão 2 com `dhcp_server`. Não existe armazenamento nem API adicional.
+
+São validados intervalos, exclusões, reservas, DNS/NTP, domínio e concessão/T1/T2,
+mesmo com DHCP desabilitado. Alterar uma rede que invalide um escopo é rejeitado;
+atualize ou remova esse escopo primeiro. O servidor mantém a autoridade final.
+Habilitado na configuração não comprova serviço ativo nem concessões atribuídas.
+Erros do servidor aparecem sem inventar telemetria nem ativar WAN.
+
+Testes: `npm test`, `npm run build`,
+`npx playwright test dhcp-settings.spec.ts routing.spec.ts`. Os testes de navegador
+usam fixtures explícitos EN/ES/PT, Light/Dark e três tamanhos; não comprovam
+DHCP nativo. Reverter o frontend não autoriza converter dados v2 para v1.
+
+Para editar: Rede → Adicionar escopo, selecione a LAN estática, informe ID e
+intervalo utilizável, preencha opções e temporizadores e mantenha o rascunho local.
+Habilite pela caixa explícita e revise Preparar alterações. Validar e Aplicar
+podem rejeitar uma configuração sem suporte de execução. Confirme o acesso após
+aplicar antes de Salvar para reiniciar. Isso não comprova concessões DHCP.
+
+Validação 2026-11-14: lint/typecheck, 71 testes unitários e build Docker aprovados;
+72 testes de navegador DHCP/routing com fixtures, EN/ES/PT e Light/Dark aprovados.
+Capturas revisadas em desktop e celular; nenhuma violação Axe no escopo verificado.
+Não certifica acessibilidade completa nem execução DHCP nativa. Aumento gzip:
+JavaScript 4,91 kB; CSS 0,07 kB. CPU/RAM sustentados pendentes; sem dependências,
+sondagem periódica, processos novos ou alterações EKS/Helm.
+
+Durante a edição de um escopo ficam bloqueadas atualização, descarte e ações
+transacionais. Se o rascunho ou a resposta de configuração original mudar,
+o editor fecha antes de salvar. Também é invalidado ao perder permissões,
+bloquear gravações, sair de Rede ou encerrar a sessão. As edições já mantidas
+no rascunho compartilhado permanecem; o formulário não salvo não é transferido
+para outra geração ou posição do escopo. Os testes incluem 24 casos de
+invalidação e o fluxo completo de atualização, descarte, navegação e sessão.

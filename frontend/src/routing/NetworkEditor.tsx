@@ -6,6 +6,7 @@ import type { Locale } from '../messages.js';
 import type { NetworkInventory } from './inventory.js';
 import type { NetworkPlan, RoutedConfig } from './configuration.js';
 import { interfaceAddress, networkRevision } from './networkPlan.js';
+import { validateDHCP } from './dhcp.js';
 import { workspaceMessages } from './workspaceMessages.js';
 
 export function NetworkEditor({ locale, inventory, current, onSave, onClose }: { locale: Locale; inventory: NetworkInventory; current: RoutedConfig | null; onSave: (config: RoutedConfig) => void; onClose: () => void }) {
@@ -35,6 +36,7 @@ export function NetworkEditor({ locale, inventory, current, onSave, onClose }: {
         { id: wanID, binding: { name: observedWAN.name, hardware_address: observedWAN.hardware_address }, role: 'wan', zone: wanZone, ipv4: { mode: 'static', address: wanIP.trim(), gateway: gateway.trim() } },
         { id: lanID, binding: { name: observedLAN.name, hardware_address: observedLAN.hardware_address }, role: 'lan', zone: lanZone, ipv4: { mode: 'static', address: lanIP.trim() } },
       ], zones: [{ id: wanZone, kind: 'wan' }, { id: lanZone, kind: 'lan' }], default_route: { interface_id: wanID, metric: Number(metric) }, dns: previous?.dns ?? { mode: 'none', servers: [] } };
+      try { if (current?.routed.dhcp_server) validateDHCP(current.routed.dhcp_server, plan); } catch { setInvalid(true); return; }
       setBusy(true); setInvalid(false);
       void networkRevision(plan).then((network) => onSave({ schema_version: 6, default_action: 'deny', rules: [], routed: current ? { ...structuredClone(current.routed), network } : { schema_version: 1, lab_only: true, require_identification: false, require_inspection: false, network, rules: [], nat: [] } })).catch(() => { setBusy(false); setInvalid(true); });
     }}>

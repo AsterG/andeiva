@@ -1,0 +1,74 @@
+[
+  {
+    "source": "binary",
+    "filename": "deb.debian.org_debian-security_dists_trixie-security_InRelease",
+    "sha256": "45c9486e269272524f1003908915267c314f7c0c065781eaf8841e2eb561967a",
+    "bytes": 43409
+  },
+  {
+    "source": "binary",
+    "filename": "deb.debian.org_debian-security_dists_trixie-security_main_binary-amd64_Packages",
+    "sha256": "72e10aa74067de5ce1fb832a229acfe6d8895498e36a2bcce9e0a42e148a95b3",
+    "bytes": 2193208
+  },
+  {
+    "source": "binary",
+    "filename": "deb.debian.org_debian_dists_trixie-updates_InRelease",
+    "sha256": "f9e3adc67d9988ec79270cd4c572d312702530c41d30d29cc0b2b0c735dd02d2",
+    "bytes": 47340
+  },
+  {
+    "source": "binary",
+    "filename": "deb.debian.org_debian_dists_trixie-updates_main_binary-amd64_Packages",
+    "sha256": "7f1dd99bbd1a0416d39499892ec12ff38d80637029114d234c38972bba8ae041",
+    "bytes": 2351
+  },
+  {
+    "source": "binary",
+    "filename": "deb.debian.org_debian_dists_trixie_InRelease",
+    "sha256": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
+    "bytes": 140421
+  },
+  {
+    "source": "binary",
+    "filename": "deb.debian.org_debian_dists_trixie_main_binary-amd64_Packages",
+    "sha256": "4f2c68d67001d595fbd343f6dbad44468953a51c4d9dec3a4803249f6e295940",
+    "bytes": 56620099
+  },
+  {
+    "source": "source",
+    "filename": "deb.debian.org_debian-security_dists_trixie-security_InRelease",
+    "sha256": "b72db10993d56fc10352d5f0d34b10af5ffe76ab0e9b8542f293bc9f06f58dcb",
+    "bytes": 43409
+  },
+  {
+    "source": "source",
+    "filename": "deb.debian.org_debian-security_dists_trixie-security_main_source_Sources",
+    "sha256": "a7ff10a9aa74bf46d9e2028038de13274f379934c4fb9af694c08fa8fbb31547",
+    "bytes": 6992872
+  },
+  {
+    "source": "source",
+    "filename": "deb.debian.org_debian_dists_trixie-updates_InRelease",
+    "sha256": "0d2ea950eb7b0a5517ebc5be724ec91cb4bec2b1466215ae68cd340942156050",
+    "bytes": 47340
+  },
+  {
+    "source": "source",
+    "filename": "deb.debian.org_debian_dists_trixie-updates_main_source_Sources",
+    "sha256": "504287ab439701bb70188a6c3cadf2e96a14918d35dc589949fbfb14824bf310",
+    "bytes": 3163
+  },
+  {
+    "source": "source",
+    "filename": "deb.debian.org_debian_dists_trixie_InRelease",
+    "sha256": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
+    "bytes": 140421
+  },
+  {
+    "source": "source",
+    "filename": "deb.debian.org_debian_dists_trixie_main_source_Sources",
+    "sha256": "ae99131b13c7e61c53a52c33a2f9088a1bc5db15a664f5d90cc3753ad9b65606",
+    "bytes": 57389881
+  }
+]
