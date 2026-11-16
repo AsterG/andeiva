@@ -52,7 +52,7 @@ func DecodeRoutedHelloV3(data []byte, reply bool) (RoutedHelloV3, error) {
 	if reply {
 		required = append(required, "run", "epoch")
 	}
-	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || (len(h.RequiredFeatures) < 3 || len(h.RequiredFeatures) > 7) || (len(h.RequiredFeatures) >= 4 && h.RequiredFeatures[3] != RoutedIntegrityCapabilityV3) || (len(h.RequiredFeatures) >= 5 && h.RequiredFeatures[4] != RoutedInventoryCapabilityV3) || !validRoutedScopeCapabilitiesV3(h.RequiredFeatures) || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
+	if len(data) > RoutedFrameMaxV3 || exactRoutedV3(data, &h, required) != nil || h.ProtocolVersion != RoutedProtocolV3 || !runV2(h.RuntimeRun) || h.Namespace == 0 || h.Domain != "routed" || (len(h.RequiredFeatures) < 3 || len(h.RequiredFeatures) > 8) || (len(h.RequiredFeatures) >= 4 && h.RequiredFeatures[3] != RoutedIntegrityCapabilityV3) || (len(h.RequiredFeatures) >= 5 && h.RequiredFeatures[4] != RoutedInventoryCapabilityV3) || !validRoutedScopeCapabilitiesV3(h.RequiredFeatures) || h.RequiredFeatures[0] != "routed_selected.v1" || h.RequiredFeatures[1] != "reader_profile.v1" || h.RequiredFeatures[2] != "writer_fence.v1" || reply && (!runV2(h.Run) || h.Epoch == 0 || h.Epoch > 0xffffffff) {
 		return RoutedHelloV3{}, ErrChannel
 	}
 	return h, nil
