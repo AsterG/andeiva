@@ -28,6 +28,7 @@ type RoutedClientV3 struct {
 	integrity           bool
 	inventory           bool
 	dhcp                bool
+	dhcpRenewal         bool
 	freshScope          bool
 	rebootScope         bool
 	publicationAllowed  atomic.Bool
@@ -53,6 +54,9 @@ func connectRoutedFeaturesV3(parent context.Context, conn io.ReadWriteCloser, ru
 	return connectRoutedCapabilitiesV3(parent, conn, runtimeRun, namespace, integrity, inventory, false, false, false)
 }
 func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp, freshScope, rebootScope bool) (*RoutedClientV3, error) {
+	return connectRoutedCapabilitiesRenewalV4(parent, conn, runtimeRun, namespace, integrity, inventory, dhcp, freshScope, rebootScope, false)
+}
+func connectRoutedCapabilitiesRenewalV4(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp, freshScope, rebootScope, renewal bool) (*RoutedClientV3, error) {
 	if parent == nil || conn == nil {
 		if conn != nil {
 			_ = conn.Close()
@@ -74,6 +78,9 @@ func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser
 	}
 	if rebootScope {
 		h.RequiredFeatures = append(h.RequiredFeatures, RoutedRebootScopeCapabilityV4)
+	}
+	if renewal {
+		h.RequiredFeatures = append(h.RequiredFeatures, RoutedDHCPRenewalCapabilityV4)
 	}
 	data, _ := json.Marshal(h)
 	if _, e := DecodeRoutedHelloV3(data, false); e != nil || parent.Err() != nil {
@@ -103,7 +110,7 @@ func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser
 			_ = conn.Close()
 			return nil, ErrChannel
 		}
-		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory, dhcp: dhcp, freshScope: freshScope, rebootScope: rebootScope}, nil
+		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory, dhcp: dhcp, dhcpRenewal: renewal, freshScope: freshScope, rebootScope: rebootScope}, nil
 	case <-ctx.Done():
 		_ = conn.Close()
 		return nil, ErrChannel
@@ -141,7 +148,7 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 			c.closingAllowed.Store(false)
 		}
 	}()
-	if (verb == "reboot_scope" && !c.rebootScope) || (verb == "fresh_scope" && !c.freshScope) || (RoutedDHCPVerbV3(verb) && !c.dhcp) || (verb == "inventory" && !c.inventory) || (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
+	if (verb == "dhcp_renew" && !c.dhcpRenewal) || (verb == "reboot_scope" && !c.rebootScope) || (verb == "fresh_scope" && !c.freshScope) || (RoutedDHCPVerbV3(verb) && !c.dhcp) || (verb == "inventory" && !c.inventory) || (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
 		return RoutedResultV3{}, ErrChannel
 	}
 	p, e := json.Marshal(payload)
@@ -163,6 +170,9 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	}
 	c.sequence = request.Sequence
 	timeout := 3 * time.Second
+	if c.dhcpRenewal && RoutedDHCPMutationV3(verb) {
+		timeout = RoutedDHCPMutationDeadlineV4
+	}
 	if verb == "inspect" {
 		timeout = configpoc.IntegrityInspectionDeadlineV1
 	}
@@ -247,7 +257,7 @@ func (c *RoutedClientV3) IntegrityEnabled() bool { return c != nil && c.integrit
 
 func routedEffectVerbV3(verb string) bool {
 	switch verb {
-	case "arm", "apply", "confirm", "recover", "bootstrap", "resume", "dhcp_begin", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire":
+	case "arm", "apply", "confirm", "recover", "bootstrap", "resume", "dhcp_begin", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire", "dhcp_renew":
 		return true
 	default:
 		return false

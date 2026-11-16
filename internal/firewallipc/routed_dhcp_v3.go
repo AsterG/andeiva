@@ -5,11 +5,26 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 )
 
 const RoutedDHCPCapabilityV3 = "routed_dhcp_selected.v3"
+const RoutedDHCPRenewalCapabilityV4 = "routed_dhcp_same_effective.v4"
+
+// Only the explicitly negotiated renewal profile uses this multi-phase budget.
+// Legacy V3 peers retain their original three-second per-RPC limit.
+const RoutedDHCPMutationDeadlineV4 = 10 * time.Second
+
+func RoutedDHCPMutationV3(verb string) bool {
+	switch verb {
+	case "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire", "dhcp_renew":
+		return true
+	default:
+		return false
+	}
+}
 
 // This versioned error is a no-effect initial wait, never a grant or readiness.
 // Older peers reject the unknown code; no compatibility fallback is permitted.
@@ -34,7 +49,7 @@ type RoutedDHCPGrantV3 struct {
 
 func RoutedDHCPVerbV3(verb string) bool {
 	switch verb {
-	case "dhcp_begin", "dhcp_current", "dhcp_verify", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_live", "dhcp_retire":
+	case "dhcp_begin", "dhcp_current", "dhcp_verify", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_live", "dhcp_retire", "dhcp_renew":
 		return true
 	default:
 		return false
@@ -46,6 +61,8 @@ func decodeRoutedDHCPRequestV3(verb string, raw []byte) (RoutedDHCPRequestV3, er
 	var fields []string
 	switch verb {
 	case "dhcp_begin", "dhcp_current", "dhcp_retire":
+	case "dhcp_renew":
+		fields = []string{"work", "snapshot"}
 	case "dhcp_verify":
 		fields = []string{"snapshot", "state"}
 	case "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_live":
@@ -57,6 +74,10 @@ func decodeRoutedDHCPRequestV3(verb string, raw []byte) (RoutedDHCPRequestV3, er
 		return p, ErrChannel
 	}
 	switch verb {
+	case "dhcp_renew":
+		if !hashV2(p.Work) || !hashV2(p.Snapshot) {
+			return p, ErrChannel
+		}
 	case "dhcp_verify":
 		if !hashV2(p.Snapshot) || (p.State != networkexecutor.LeaseSelectedBaselineV3 && p.State != networkexecutor.LeaseSelectedTargetV3) {
 			return p, ErrChannel
@@ -71,7 +92,7 @@ func decodeRoutedDHCPRequestV3(verb string, raw []byte) (RoutedDHCPRequestV3, er
 
 func decodeRoutedDHCPReplyV3(verb string, raw []byte) (RoutedDHCPGrantV3, error) {
 	var g RoutedDHCPGrantV3
-	if verb == "dhcp_current" || verb == "dhcp_begin" {
+	if verb == "dhcp_current" || verb == "dhcp_begin" || verb == "dhcp_renew" {
 		if exactRoutedV3(raw, &g, []string{"epoch", "snapshot"}) != nil || g.Epoch == 0 {
 			return g, ErrChannel
 		}
@@ -92,3 +113,10 @@ func ConnectRoutedDHCPV3(ctx context.Context, conn io.ReadWriteCloser, run strin
 	return connectRoutedCapabilitiesV3(ctx, conn, run, ns, true, true, true, false, false)
 }
 func (c *RoutedClientV3) DHCPEnabled() bool { return c != nil && c.dhcp }
+
+// ConnectRoutedDHCPRenewalV4 opts into the operational same-effective profile.
+// Unknown peers fail the exact handshake; there is no legacy fallback.
+func ConnectRoutedDHCPRenewalV4(ctx context.Context, conn io.ReadWriteCloser, run string, ns uint64, freshScope, rebootScope bool) (*RoutedClientV3, error) {
+	return connectRoutedCapabilitiesRenewalV4(ctx, conn, run, ns, true, true, true, freshScope, rebootScope, true)
+}
+func (c *RoutedClientV3) DHCPRenewalEnabledV4() bool { return c != nil && c.dhcpRenewal }

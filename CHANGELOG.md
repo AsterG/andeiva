@@ -4,6 +4,10 @@
 
 - Add read-only refresh of an identical selected lease delta and closed-gate sequence preflight. Classified renewal closes stale authority without rehabilitating unrelated failures; runtime activation remains separate.
 
+## Unreleased — explicit DHCP renewal transport
+
+- Add an opt-in same-effective renewal capability and bounded mutation RPC budget while preserving legacy limits. Transport alone does not enable renewal or change lease authority.
+
 ## Unreleased — DHCP owner exit
 
 - Revoke acquisition and lease evidence on observed producer exit before waiting for stderr drainage. Reject late hooks and controls while preserving process-group termination and reaping.
