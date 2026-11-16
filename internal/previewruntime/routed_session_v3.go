@@ -161,9 +161,14 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		if diagnosticErr == errRoutedDHCPInitialWaitingV1 {
 			diagnosticErr = firewallipc.ErrRoutedDHCPWaitingV1
 		}
+		if _, noLease := routedDHCPNoLeaseEpochV1(diagnosticErr); noLease {
+			diagnosticErr = firewallipc.ErrRoutedDHCPNoLeaseV1
+		}
 		firewallipc.RecordRoutedDHCPDiagnosticV1("helper", command.Verb, diagnosticStarted, diagnosticErr, call.Err())
-		if operationErr == errRoutedDHCPInitialWaitingV1 && call.Err() != nil {
+		_, noLease := routedDHCPNoLeaseEpochV1(operationErr)
+		if (operationErr == errRoutedDHCPInitialWaitingV1 || noLease) && call.Err() != nil {
 			operationErr = configpoc.ErrRecovery
+			noLease = false
 		}
 		cancel()
 		reply := firewallipc.RoutedReplyV3{ProtocolVersion: firewallipc.RoutedProtocolV3, Run: runtimeRun, Sequence: last, Namespace: identity.Namespace, Domain: "routed", Verb: command.Verb}
@@ -174,6 +179,9 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 			}
 			if command.Verb == "dhcp_begin" && operationErr == errRoutedDHCPInitialWaitingV1 {
 				reply.Error = firewallipc.ErrRoutedDHCPWaitingV1.Error()
+			}
+			if command.Verb == "dhcp_begin" && noLease {
+				reply.Error = firewallipc.ErrRoutedDHCPNoLeaseV1.Error()
 			}
 			payload = struct{}{}
 		}

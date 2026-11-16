@@ -86,9 +86,25 @@ func routedDHCPOwnerPIDFDAliveV3(file *os.File, pid int) bool {
 	if !seen {
 		return false
 	}
-	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-	n, err := unix.Poll(poll, 0)
-	return err == nil && n == 0 && poll[0].Revents == 0
+	return routedDHCPOwnerPollAliveV3(int32(fd), unix.Poll) && file.Fd() == fd
+}
+
+func routedDHCPOwnerPollAliveV3(fd int32, poll func([]unix.PollFd, int) (int, error)) bool {
+	if fd < 0 {
+		return false
+	}
+	// Signals, including Go preemption, can interrupt poll on a live pidfd.
+	// Retry only that interruption, always without waiting. Exhaustion and
+	// every event/error still fail closed; EINTR itself never proves liveness.
+	for attempt := 0; attempt < 4; attempt++ {
+		events := []unix.PollFd{{Fd: fd, Events: unix.POLLIN}}
+		n, err := poll(events, 0)
+		if err == unix.EINTR {
+			continue
+		}
+		return err == nil && n == 0 && events[0].Revents == 0
+	}
+	return false
 }
 func routedDHCPOwnerPinV3(pid, parent int, netNS, mountNS uint64) (*os.File, uint64, error) {
 	if pid <= 1 || pid > math.MaxInt32 || parent <= 1 || netNS == 0 || mountNS == 0 {

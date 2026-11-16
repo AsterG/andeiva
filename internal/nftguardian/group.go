@@ -318,23 +318,81 @@ func (g *Group) restore() error {
 func (g *Group) expire() { g.expireLocked(g.restore) }
 
 func (g *Group) observedLocked() (State, string, error) {
-	if g.closed || g.engine == nil {
-		return State{}, "", ErrLease
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	hash := g.engine.Current()
+	return g.observedContextLocked(ctx, false)
+}
+
+type pairedGroupObserver interface {
+	ObserveCurrentOwned(context.Context) (GroupObservationV1, error)
+}
+
+// GroupObservationV1 is trusted in-process evidence, never a request/wire DTO.
+// MatchingOwned contains at most two exact contextual references proved by the
+// SAME physical observation and immutable selected plan; no later matching I/O.
+type GroupObservationV1 struct {
+	Plan           configpoc.RoutedTransitionV1
+	Current, Owned string
+	MatchingOwned  [2]string
+}
+
+func (g *Group) observedContextLocked(ctx context.Context, requirePair bool) (State, string, error) {
+	if ctx.Err() != nil || g.closed || g.engine == nil {
+		return State{}, "", ErrLease
+	}
+	pair, paired := g.engine.(pairedGroupObserver)
+	if requirePair && !paired {
+		return State{}, "", ErrLease
+	}
+	var hash, owned string
+	var observation GroupObservationV1
+	if paired {
+		var err error
+		observation, err = pair.ObserveCurrentOwned(ctx)
+		hash, owned = observation.Current, observation.Owned
+		if err != nil || ctx.Err() != nil || !ownedDigest(owned) || hash != "" && !ownedDigest(hash) || observation.Plan != g.plan || observation.MatchingOwned[0] != owned {
+			return State{}, "", ErrLease
+		}
+		for i, ref := range observation.MatchingOwned {
+			if i == 1 && ref == "" {
+				continue
+			}
+			if !ownedDigest(ref) || i == 1 && ref == owned {
+				return State{}, "", ErrLease
+			}
+			if ref != g.plan.BeforeOwned && ref != g.plan.TargetOwned {
+				// Unselected bootstrap can observe its exact physical baseline,
+				// but cannot turn that reference into selected authority.
+				if g.state.Phase != "bootstrap" || g.plan != (configpoc.RoutedTransitionV1{}) || i != 0 {
+					return State{}, "", ErrLease
+				}
+			}
+		}
+	} else {
+		hash = g.engine.Current()
+	}
+	match := func(want string) bool {
+		if !paired {
+			return g.ownedMatches(ctx, want)
+		}
+		if !ownedDigest(want) || ctx.Err() != nil {
+			return false
+		}
+		return want == observation.MatchingOwned[0] || want == observation.MatchingOwned[1]
+	}
 	if g.state.Phase == "idle" && g.state.ID == "" && g.recoveredOwned != "" {
-		if !g.ownedMatches(ctx, g.recoveredOwned) {
+		if !match(g.recoveredOwned) || ctx.Err() != nil {
 			return State{}, "", ErrLease
 		}
 		return g.snapshotLocked(hash, g.cold && hash == "")
 	}
-	before := g.cold && g.state.Phase != "pending" && hash == "" && g.ownedMatches(ctx, g.plan.BeforeOwned)
+	before := g.cold && g.state.Phase != "pending" && hash == "" && match(g.plan.BeforeOwned)
 	if g.state.Phase == "bootstrap" {
-		owned, err := g.engine.ObserveOwned(ctx)
-		if err != nil || !ownedDigest(owned) {
-			return State{}, "", ErrLease
+		if !paired {
+			observed, err := g.engine.ObserveOwned(ctx)
+			if err != nil || !ownedDigest(observed) {
+				return State{}, "", ErrLease
+			}
 		}
 	} else if hash != "" {
 		want := ""
@@ -345,11 +403,33 @@ func (g *Group) observedLocked() (State, string, error) {
 		} else if hash == g.previousHash() {
 			want = g.plan.BeforeOwned
 		}
-		if !g.ownedMatches(ctx, want) {
+		if !match(want) {
 			return State{}, "", ErrLease
 		}
 	}
+	if ctx.Err() != nil {
+		return State{}, "", ErrLease
+	}
 	return g.snapshotLocked(hash, before)
+}
+
+// SnapshotObservedContext requires a fresh paired observer; legacy Current has
+// no cancellation contract. The caller's remaining budget includes lock wait.
+func (g *Group) SnapshotObservedContext(ctx context.Context) (State, string, error) {
+	if g == nil || ctx == nil {
+		return State{}, "", ErrLease
+	}
+	for !g.mu.TryLock() {
+		timer := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return State{}, "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	defer g.mu.Unlock()
+	return g.observedContextLocked(ctx, true)
 }
 
 func (g *Group) SnapshotObserved() (State, string, error) {

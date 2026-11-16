@@ -326,7 +326,27 @@ const (
 	AcquisitionUnavailable AcquisitionState = iota
 	AcquisitionInitialWaiting
 	AcquisitionGranted
+	AcquisitionNoLease
 )
+
+// AcquisitionObservation separates service progress from a usable lease. The
+// epoch watermark and phase are captured under the same lock as the lease.
+type AcquisitionObservation struct {
+	State         AcquisitionState
+	ObservedEpoch uint64
+	Lease         Lease
+}
+
+func (c *Client) ObserveAcquisition() (AcquisitionObservation, error) {
+	if c == nil {
+		return AcquisitionObservation{}, ErrUnavailable
+	}
+	now, err := bootNow()
+	if err != nil {
+		return AcquisitionObservation{}, ErrUnavailable
+	}
+	return c.observationAt(now)
+}
 
 // AcquisitionSnapshot observes the lease and initial phase in one critical
 // section. Separate Current/phase reads could straddle BOUND and falsely fence.
@@ -342,20 +362,34 @@ func (c *Client) AcquisitionSnapshot() (Lease, AcquisitionState, error) {
 }
 
 func (c *Client) acquisitionAt(now int64) (Lease, AcquisitionState, error) {
+	o, err := c.observationAt(now)
+	if o.State == AcquisitionNoLease {
+		return Lease{}, AcquisitionUnavailable, ErrUnavailable
+	}
+	return o.Lease, o.State, err
+}
+
+func (c *Client) observationAt(now int64) (AcquisitionObservation, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.failed || now <= 0 {
-		return Lease{}, AcquisitionUnavailable, ErrUnavailable
+		return AcquisitionObservation{}, ErrUnavailable
 	}
 	if c.initialWaiting && c.epoch == 0 && c.lease.Epoch == 0 && c.lease.DeadlineBootNS == 0 {
-		return Lease{}, AcquisitionInitialWaiting, nil
+		return AcquisitionObservation{State: AcquisitionInitialWaiting}, nil
 	}
 	if c.lease.DeadlineBootNS <= now || c.lease.DeadlineBootNS == 0 {
-		return Lease{}, AcquisitionUnavailable, ErrUnavailable
+		if c.epoch > 0 {
+			switch c.lastReason {
+			case "BOUND", "RENEW", "REBIND", "REBOOT", "EXPIRE", "NAK", "NOCARRIER", "NOCARRIER_ROAMING", "RECONFIGURE", "PREINIT", "CARRIER":
+				return AcquisitionObservation{State: AcquisitionNoLease, ObservedEpoch: c.epoch}, nil
+			}
+		}
+		return AcquisitionObservation{}, ErrUnavailable
 	}
 	l := c.lease
 	l.Event.DNS = append([]string(nil), l.Event.DNS...)
-	return l, AcquisitionGranted, nil
+	return AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: c.epoch, Lease: l}, nil
 }
 
 // Renew requests a fresh renewal through dhcpcd 10.1.0's SIGUSR1 operation.

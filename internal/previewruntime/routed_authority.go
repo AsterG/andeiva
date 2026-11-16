@@ -165,7 +165,7 @@ func (a *RoutedAuthority) Observe(ctx context.Context) (configpoc.RoutedReceiptV
 	if ctx == nil || ctx.Err() != nil || a == nil || a.group == nil {
 		return configpoc.RoutedReceiptV1{}, "", configpoc.ErrRecovery
 	}
-	state, current, err := a.group.SnapshotObserved()
+	state, current, err := a.group.SnapshotObservedContext(ctx)
 	if ctx.Err() != nil {
 		return configpoc.RoutedReceiptV1{}, "", configpoc.ErrRecovery
 	}

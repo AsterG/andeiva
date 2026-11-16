@@ -35,6 +35,7 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 		return nil, nil, err
 	}
 	r := &RoutedDHCPRuntimeV3{identity: id, owner: o.Owner, current: o.Current, reader: routedDHCPSelectedReaderV3{reader}, forward: f}
+	r.baseline = o.LAN.Verify
 	r.ready = func() error {
 		integrity.mu.Lock()
 		defer integrity.mu.Unlock()

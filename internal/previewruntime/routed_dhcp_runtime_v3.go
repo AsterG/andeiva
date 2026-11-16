@@ -30,6 +30,7 @@ type routedDHCPGateV3 interface {
 	RecoverClosedSelectedV3(context.Context, networkexecutor.LeaseSelectedSnapshotV3) error
 	RecoverWithdrawnSelectedV3(context.Context, networkexecutor.LeaseSelectedSnapshotV3) error
 	VerifyClosedSelectedV3(context.Context) error
+	DisposeWithdrawnSelectedV3(context.Context, networkexecutor.LeaseSelectedSnapshotV3) error
 	Close(context.Context) error
 	Stage(context.Context) error
 	Open(context.Context) error
@@ -71,6 +72,7 @@ type RoutedDHCPRuntimeV3 struct {
 	reader                    routedDHCPReaderV3
 	policy                    func(context.Context, routedDHCPWorkV3) error
 	ready                     func() error
+	baseline                  func(context.Context) error
 	fenced                    func() bool
 	forward                   routedDHCPForwardingV3
 	buildGate                 func(context.Context, networkexecutor.LeaseGateAuthority) (routedDHCPGateV3, error)
@@ -174,9 +176,26 @@ func (r *RoutedDHCPRuntimeV3) begin(ctx context.Context) (configpoc.RoutedDHCPGr
 	if r.reader.VerifyDHCPReleasedV3(ctx) != nil {
 		return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
 	}
-	// Probe before any gate/forwarding/lease mutation. Only explicit initial
-	// waiting is retryable; an unavailable or changed owner remains recovery.
+	// Probe before any gate/forwarding/lease mutation. Only typed acquisition
+	// states are effect-free; generic unavailability remains recovery.
 	x, currentErr := r.current(ctx)
+	if epoch, noLease := routedDHCPNoLeaseEpochV1(currentErr); noLease {
+		if x != (RoutedDHCPOwnerFactV3{}) || r.lease != nil || r.work != "" || r.opened || r.withdrawn || r.baseline == nil || r.forward.VerifyClosed(ctx) != nil || (r.gate != nil && r.gate.VerifyClosedSelectedV3(ctx) != nil) || r.baseline(ctx) != nil || r.reader.VerifyDHCPReleasedV3(ctx) != nil || r.ready() != nil || ctx.Err() != nil {
+			return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
+		}
+		// A second atomic observation can already contain BOUND. Continue with
+		// that grant instead of mixing its phase with an earlier empty lease.
+		x, currentErr = r.current(ctx)
+		if after, stillNoLease := routedDHCPNoLeaseEpochV1(currentErr); stillNoLease {
+			if after < epoch || x != (RoutedDHCPOwnerFactV3{}) || r.ready() != nil || ctx.Err() != nil {
+				return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
+			}
+			return configpoc.RoutedDHCPGrantV3{}, currentErr
+		}
+		if currentErr != nil {
+			return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
+		}
+	}
 	if currentErr != nil {
 		if currentErr == errRoutedDHCPInitialWaitingV1 && x == (RoutedDHCPOwnerFactV3{}) && r.lease == nil && r.work == "" && !r.opened && !r.withdrawn && r.forward.VerifyClosed(ctx) == nil && (r.gate == nil || r.gate.VerifyClosedSelectedV3(ctx) == nil) && r.reader.VerifyDHCPReleasedV3(ctx) == nil && r.ready() == nil && ctx.Err() == nil {
 			return configpoc.RoutedDHCPGrantV3{}, errRoutedDHCPInitialWaitingV1
@@ -254,12 +273,22 @@ func (r *RoutedDHCPRuntimeV3) apply(ctx context.Context, work string) error {
 }
 
 func (r *RoutedDHCPRuntimeV3) retire(ctx context.Context) error {
-	if !r.withdrawn || r.lease == nil || r.reader.VerifyDHCPReleasedV3(ctx) != nil || r.verifyClosed(ctx, r.grant.Snapshot.Hash, networkexecutor.LeaseSelectedBaselineV3) != nil {
+	if r.failed || !r.withdrawn || r.lease == nil || r.gate == nil {
+		return configpoc.ErrRecovery
+	}
+	last, err := r.reader.LastWithdrawnDHCPV3(ctx)
+	if err != nil || last == nil || !reflect.DeepEqual(*last, r.grant.Snapshot) || r.verifyClosed(ctx, r.grant.Snapshot.Hash, networkexecutor.LeaseSelectedBaselineV3) != nil {
 		return configpoc.ErrRecovery
 	}
 	if err := r.releaseLease(ctx); err != nil {
+		r.failed = true
 		return err
 	}
+	if err := r.gate.DisposeWithdrawnSelectedV3(ctx, *last); err != nil {
+		r.failed = true
+		return err
+	}
+	r.gate = nil
 	r.lease, r.work, r.grant, r.withdrawn = nil, "", configpoc.RoutedDHCPGrantV3{}, false
 	return nil
 }

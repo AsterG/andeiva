@@ -104,7 +104,7 @@ func TestRoutedDHCPSchedulerV4SkipsBusyLaneBeforeDeadline(t *testing.T) {
 		t.Fatalf("busy controller sent %d requests", requestsWhileBusy)
 	}
 	// Wait for the actual reply, allowing scheduling jitter without changing
-	// the controller's three-second deadline.
+	// the individual RPC's three-second deadline.
 	select {
 	case <-peer.firstLiveSuccess:
 	case <-time.After(8 * time.Second):
@@ -136,7 +136,6 @@ func TestRoutedDHCPSchedulerV4PreservesThreeSecondDeadline(t *testing.T) {
 		requests      int32
 	}{
 		{"single_rpc", 4 * time.Second, 0, 1},
-		{"aggregate_two_rpcs", 2 * time.Second, 2 * time.Second, 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {

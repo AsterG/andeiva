@@ -131,12 +131,12 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	initialWaiting := false
+	noEffects := false
 	diagnosticStarted := RoutedDHCPDiagnosticStartV1(verb)
 	diagnosticContextErr := parent.Err()
 	defer func() {
 		RecordRoutedDHCPDiagnosticV1("client", verb, diagnosticStarted, callErr, diagnosticContextErr)
-		if callErr != nil && routedEffectVerbV3(verb) && !initialWaiting {
+		if callErr != nil && routedEffectVerbV3(verb) && !noEffects {
 			c.publicationAllowed.Store(false)
 			c.closingAllowed.Store(false)
 		}
@@ -209,12 +209,15 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 				c.closingAllowed.Store(true)
 			}
 			return out.result, nil
-		case "ANDEIVA_ROUTED_DHCP_WAITING_V1":
+		case "ANDEIVA_ROUTED_DHCP_WAITING_V1", "ANDEIVA_ROUTED_DHCP_NO_LEASE_V1":
 			if verb != "dhcp_begin" || ctx.Err() != nil {
 				c.closeLocked()
 				return RoutedResultV3{}, ErrChannel
 			}
-			initialWaiting = true
+			noEffects = true
+			if out.reply.Error == ErrRoutedDHCPNoLeaseV1.Error() {
+				return RoutedResultV3{}, ErrRoutedDHCPNoLeaseV1
+			}
 			return RoutedResultV3{}, ErrRoutedDHCPWaitingV1
 		case "ANDEIVA_CONFIG_RECOVERY_REQUIRED":
 			return RoutedResultV3{}, configpoc.ErrRecovery

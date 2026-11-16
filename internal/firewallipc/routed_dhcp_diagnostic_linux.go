@@ -60,6 +60,8 @@ func routedDHCPDiagnosticClassV1(err error) string {
 		return "channel"
 	case errors.Is(err, ErrRoutedDHCPWaitingV1):
 		return "initial_waiting_v1"
+	case errors.Is(err, ErrRoutedDHCPNoLeaseV1):
+		return "no_lease_v1"
 	case errors.Is(err, configpoc.ErrRecovery):
 		return "recovery"
 	case errors.Is(err, configpoc.ErrConflict):
@@ -128,7 +130,7 @@ func (d *routedDHCPDiagnosticRecorderV1) append(side, verb, stage string, starte
 	if d.closed {
 		return
 	}
-	failure := ctxErr != nil || err != nil && !errors.Is(err, ErrRoutedDHCPWaitingV1)
+	failure := ctxErr != nil || err != nil && !errors.Is(err, ErrRoutedDHCPWaitingV1) && !errors.Is(err, ErrRoutedDHCPNoLeaseV1)
 	index := d.count
 	if index == len(d.records) {
 		d.dropped.Add(1)

@@ -172,10 +172,11 @@ func routedDHCPOwnerEventV3(e dhcpclient.Event) bool {
 }
 
 type routedDHCPOwnerFactsV3 struct {
-	binding  RoutedDHCPOwnerBindingV3
-	last     routedDHCPOwnerLeaseV3
-	sequence uint64
-	active   bool
+	binding      RoutedDHCPOwnerBindingV3
+	last         routedDHCPOwnerLeaseV3
+	sequence     uint64
+	active       bool
+	revokedEpoch uint64
 }
 
 func (f *routedDHCPOwnerFactsV3) revoke() error {
@@ -197,7 +198,7 @@ func (f *routedDHCPOwnerFactsV3) accept(l routedDHCPOwnerLeaseV3, now int64) (Ro
 func (f *routedDHCPOwnerFactsV3) acceptBound(l routedDHCPOwnerLeaseV3, now int64, valid bool, owner networkexecutor.LeaseOwner, desired networkplan.Revision, acquisitionPID int) (RoutedDHCPOwnerFactV3, error) {
 	var empty RoutedDHCPOwnerFactV3
 	l.Event.DNS = append([]string(nil), l.Event.DNS...)
-	if !valid || !routedDHCPOwnerEventV3(l.Event) || now <= 0 || l.Epoch == 0 || l.Epoch < f.last.Epoch || l.Event.PID != acquisitionPID || l.Event.BootNS > now || l.DeadlineBootNS <= 0 || l.DeadlineBootNS > l.Event.BootNS && l.DeadlineBootNS-l.Event.BootNS > int64(l.Event.Seconds)*int64(time.Second) {
+	if !valid || !routedDHCPOwnerEventV3(l.Event) || now <= 0 || l.Epoch == 0 || l.Epoch <= f.revokedEpoch || l.Epoch < f.last.Epoch || l.Event.PID != acquisitionPID || l.Event.BootNS > now || l.DeadlineBootNS <= 0 || l.DeadlineBootNS > l.Event.BootNS && l.DeadlineBootNS-l.Event.BootNS > int64(l.Event.Seconds)*int64(time.Second) {
 		return empty, ErrIdentity
 	}
 	switch l.Event.Reason {
@@ -305,11 +306,24 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 		decode = decodeRoutedDHCPOwnerReplyV3
 	}
 	lease, unavailable, err := decode(r.scanner.Bytes(), q)
-	if err != nil && (r.profile != 4 || err != errRoutedDHCPInitialWaitingV1) || ctx.Err() != nil || !r.alive() {
+	epoch, noLease := routedDHCPNoLeaseEpochV1(err)
+	if err != nil && (r.profile != 4 || err != errRoutedDHCPInitialWaitingV1 && !noLease) || ctx.Err() != nil || !r.alive() {
 		r.closeLocked()
 		return empty, ErrUnavailable
 	}
 	if err == errRoutedDHCPInitialWaitingV1 {
+		return empty, err
+	}
+	if noLease {
+		if epoch < r.facts.last.Epoch || epoch < r.facts.revokedEpoch || r.facts.revoke() != ErrUnavailable {
+			r.closeLocked()
+			return empty, ErrUnavailable
+		}
+		r.facts.revokedEpoch = epoch
+		if ctx.Err() != nil || !r.alive() {
+			r.closeLocked()
+			return empty, ErrUnavailable
+		}
 		return empty, err
 	}
 	if unavailable {

@@ -15,6 +15,10 @@ const RoutedDHCPCapabilityV3 = "routed_dhcp_selected.v3"
 // Older peers reject the unknown code; no compatibility fallback is permitted.
 var ErrRoutedDHCPWaitingV1 = errors.New("ANDEIVA_ROUTED_DHCP_WAITING_V1")
 
+// A live acquisition service can temporarily lack a lease after revocation.
+// This pre-effect result is distinct from initial waiting and grants nothing.
+var ErrRoutedDHCPNoLeaseV1 = errors.New("ANDEIVA_ROUTED_DHCP_NO_LEASE_V1")
+
 // Requests carry correlation only. Neither owner identity, route, lease time,
 // epoch nor a serialized selected plan can be supplied by the controller.
 type RoutedDHCPRequestV3 struct {

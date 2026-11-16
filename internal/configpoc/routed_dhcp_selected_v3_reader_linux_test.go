@@ -4,6 +4,7 @@ package configpoc
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/AsterG/andeiva/internal/localpolicy"
@@ -70,7 +71,17 @@ func selectedDHCPReaderFixtureV3(t *testing.T) (*RoutedSelectionReaderV2, *v2Coo
 }
 
 func TestRoutedDHCPSelectedV3IndependentFullReaderAndRetirement(t *testing.T) {
+	testRoutedDHCPSelectedV3ReaderAndRetirement(t, SelectionFullHistoryV2)
+}
+
+func TestRoutedDHCPSelectedV3ActionReaderAndRetirement(t *testing.T) {
+	testRoutedDHCPSelectedV3ReaderAndRetirement(t, SelectionActionAuthorityV2)
+}
+
+func testRoutedDHCPSelectedV3ReaderAndRetirement(t *testing.T, policy SelectionReaderPolicyV2) {
+	t.Helper()
 	r, c, _, w, a := selectedDHCPReaderFixtureV3(t)
+	r.options.Policy = policy
 	snap := a.grant.Snapshot
 	var err error
 	ctx := context.Background()
@@ -85,6 +96,31 @@ func TestRoutedDHCPSelectedV3IndependentFullReaderAndRetirement(t *testing.T) {
 	if err != nil || selected.Phase() != "prepared" || selected.Epoch() != 1 || selected.Snapshot().Hash != snap.Hash || selected.Running() != c.store.state.Configuration.Running.Hash {
 		t.Fatal("independent prepared read", err)
 	}
+	if _, err := r.ResolveDHCPCurrentV3(ctx, strings.Repeat("f", 64)); err == nil {
+		t.Fatal("foreign work accepted")
+	}
+	originalIdentity := r.options.Identity
+	for _, kind := range []string{"namespace", "owner-uid", "run"} {
+		r.options.Identity = originalIdentity
+		switch kind {
+		case "namespace":
+			r.options.Identity.Namespace++
+		case "owner-uid":
+			r.options.Identity.UID++
+		case "run":
+			r.options.Identity.RunID = strings.Repeat("f", 32)
+		}
+		if _, err := r.ResolveDHCPCurrentV3(ctx, hash); err == nil {
+			t.Fatal("foreign selected identity", kind)
+		}
+	}
+	r.options.Identity = originalIdentity
+	originalPlan := r.options.Plan
+	r.options.Plan = r.options.Admission
+	if _, err := r.ResolveDHCPCurrentV3(ctx, hash); err == nil {
+		t.Fatal("substituted physical reserve accepted")
+	}
+	r.options.Plan = originalPlan
 	if r.VerifyDHCPReleasedV3(ctx) == nil {
 		t.Fatal("active work treated as retired")
 	}
@@ -114,6 +150,33 @@ func TestRoutedDHCPSelectedV3IndependentFullReaderAndRetirement(t *testing.T) {
 	if err != nil || last == nil || last.Hash != snap.Hash {
 		t.Fatal("selected terminal proof", err)
 	}
+	var terminal v3RoutedDHCPState
+	if err := c.store.readObject(c.store.state.RoutedDHCPLast, &terminal); err != nil {
+		t.Fatal(err)
+	}
+	archive, found, err := c.store.reserveArchiveBundleLookupV2(c.store.state.ReserveArchiveRoot, v2ReserveArchiveEntry{Claim: terminal.Bundle.Claims.Admission}, "claim")
+	if err != nil || !found {
+		t.Fatal("terminal archive fixture", found, err)
+	}
+	name, err := v2ObjectName(archive.FinalWork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.store.root.Rename(name, name+".withheld-test"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := c.store.root.Rename(name+".withheld-test", name); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := r.VerifyDHCPReleasedV3(ctx); err == nil {
+		t.Fatal("missing terminal FinalWork accepted as released")
+	}
+	if _, err := r.LastWithdrawnDHCPV3(ctx); err == nil {
+		t.Fatal("missing terminal FinalWork accepted as witness")
+	}
+
 }
 
 func TestRoutedDHCPSelectedV3PreparationHonorsIntegrityGate(t *testing.T) {

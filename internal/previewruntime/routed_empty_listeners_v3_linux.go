@@ -59,7 +59,7 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 	defer l.mu.Unlock()
 	s := l.service
 	var fact RoutedDHCPOwnerFactV3
-	waiting := false
+	phase := routedDHCPServicePhaseV1{}
 	if s != nil {
 		if s.validate(ctx, true) != nil {
 			return nil, ErrUnavailable
@@ -71,7 +71,7 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 	}
 	if active != nil {
 		var err error
-		fact, waiting, err = active.fact(ctx)
+		fact, phase, err = active.fact(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -86,7 +86,7 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 			if len(capture.tables) != 0 || len(capture.packet) != 0 {
 				return nil, ErrUnavailable
 			}
-		} else if matchRoutedDHCPSocketsV1(capture, active.identity, active.packet, fact, waiting) != nil {
+		} else if matchRoutedDHCPSocketsV1(capture, active.identity, active.packet, fact, phase.withoutLease()) != nil {
 			return nil, ErrUnavailable
 		}
 		if pass == 0 {
@@ -96,8 +96,8 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 		}
 	}
 	if active != nil {
-		after, afterWaiting, err := active.fact(ctx)
-		if err != nil || afterWaiting != waiting || after != fact {
+		after, afterPhase, err := active.fact(ctx)
+		if err != nil || afterPhase != phase || after != fact {
 			return nil, ErrUnavailable
 		}
 	}

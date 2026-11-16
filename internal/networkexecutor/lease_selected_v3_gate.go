@@ -87,11 +87,46 @@ func (g *LeaseGate) VerifyClosedSelectedV3(ctx context.Context) error {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.ready(ctx) != nil || !g.initialized || g.opened || g.closedForwarding() != nil {
+	return g.verifyTerminalClosedV3(ctx)
+}
+
+// Physical closure remains provable after an irreversible admission fence.
+// This does not consult current lease authority or rehabilitate the old gate.
+func (g *LeaseGate) verifyTerminalClosedV3(ctx context.Context) error {
+	if ctx == nil || ctx.Err() != nil || g.lifetime.Err() != nil || g.disposed || !g.initialized || g.opened || g.staged != (LeaseGateGrant{}) || g.closedForwarding() != nil {
 		return ErrLeaseGate
 	}
 	_, err := g.read(ctx, false, false)
+	if g.closedForwarding() != nil || ctx.Err() != nil || g.lifetime.Err() != nil {
+		return ErrLeaseGate
+	}
 	return err
+}
+
+// DisposeWithdrawnSelectedV3 releases only a physically closed instance. The
+// caller first authenticates this exact terminal snapshot in the selected store
+// and verifies the original L3 baseline. No consumed sequence is forgotten: the
+// replacement must recover from this archived snapshot before staging a grant.
+func (g *LeaseGate) DisposeWithdrawnSelectedV3(ctx context.Context, snapshot LeaseSelectedSnapshotV3) error {
+	if g == nil {
+		return ErrScope
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	s, err := CanonicalLeaseSelectedSnapshotV3(snapshot)
+	if err != nil || s.Identity != g.identity || s.Desired.Hash != g.opts.Desired.Hash || s.WAN != g.wan.Binding || s.Fact().Owner != g.opts.Owner || s.Sequence < g.seen {
+		return ErrScope
+	}
+	if err := g.verifyTerminalClosedV3(ctx); err != nil {
+		return err
+	}
+	// A failed resource release must never permit retrying this instance or
+	// reconstructing another one from an uncertain partial disposal.
+	g.disposed = true
+	if g.release != nil {
+		return g.release()
+	}
+	return nil
 }
 
 // RecoverWithdrawnSelectedV3 requires an independently authenticated archived
