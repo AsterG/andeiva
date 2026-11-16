@@ -23,6 +23,7 @@ func (g *LeaseGate) RecoverClosedSelectedV3(ctx context.Context, snapshot LeaseS
 	b, err := g.kernel.Observe(ctx)
 	if err != nil || leaseGateRecoveryReadV3(b, s.WAN.Name) != nil {
 		g.fenced = true
+		g.fenceReason = ErrLeaseGateFenceRecovery
 		return ErrLeaseGateUncertain
 	}
 	g.initialized = true

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — same-effective lease evidence
+
+- Add read-only refresh of an identical selected lease delta and closed-gate sequence preflight. Classified renewal closes stale authority without rehabilitating unrelated failures; runtime activation remains separate.
+
 ## Unreleased — configuration recovery test reliability
 
 - Give the lost-helper-ack recovery test a bounded confirmation window that remains valid under the full race suite load.
