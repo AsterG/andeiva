@@ -51,3 +51,10 @@ Isto não implementa adoção do ifupdown, rollback de interfaces principais,
 renovação de NAT, continuidade administrativa ou perfil de privilégios de
 produção. Uma falha é contida parando a unidade e seus descendentes; não remover
 regras, rotas ou arquivos de terceiros para fazer o teste passar.
+## Revogação ao terminar o produtor
+
+A saída do processo principal revoga imediatamente as evidências de concessão
+e aquisição, antes de aguardar a drenagem de stderr. Um descendente que retenha
+esse canal não prolonga a autoridade; eventos tardios e comandos não a recuperam.
+A terminação do grupo e a coleta do processo são preservadas. Isso não garante
+um prazo de encerramento se o leitor do fluxo ficar bloqueado.

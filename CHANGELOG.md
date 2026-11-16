@@ -4,6 +4,10 @@
 
 - Add read-only refresh of an identical selected lease delta and closed-gate sequence preflight. Classified renewal closes stale authority without rehabilitating unrelated failures; runtime activation remains separate.
 
+## Unreleased — DHCP owner exit
+
+- Revoke acquisition and lease evidence on observed producer exit before waiting for stderr drainage. Reject late hooks and controls while preserving process-group termination and reaping.
+
 ## Unreleased — configuration recovery test reliability
 
 - Give the lost-helper-ack recovery test a bounded confirmation window that remains valid under the full race suite load.
