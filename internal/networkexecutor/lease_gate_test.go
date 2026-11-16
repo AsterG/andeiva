@@ -287,7 +287,7 @@ func TestLeaseGateFreshSequencePreflightIsReadOnlyAndPreservesFences(t *testing.
 	}
 }
 
-func TestLeaseGateTransientFreshGrantCheckRemainsRetryableWhenReadbackIsClosed(t *testing.T) {
+func TestLeaseGateUnclassifiedAuthorityFailureRetainsLegacyFence(t *testing.T) {
 	g, k, a, _ := gateFixture(t)
 	if err := g.Stage(context.Background()); err != nil {
 		t.Fatal(err)
@@ -304,14 +304,14 @@ func TestLeaseGateTransientFreshGrantCheckRemainsRetryableWhenReadbackIsClosed(t
 	if err := g.Stage(context.Background()); err == nil {
 		t.Fatal("temporary authority failure staged a token")
 	}
-	if g.fenced || k.enabled || k.token != nil || k.stages != 1 {
-		t.Fatal("verified pre-mutation rejection fenced or left a token")
+	if !g.fenced || k.enabled || k.token != nil || k.stages != 1 {
+		t.Fatal("generic authority failure lost its legacy fence or left a token")
 	}
 	a.verify = nil
-	if err := g.Stage(context.Background()); err != nil {
-		t.Fatal("fresh revalidation could not stage after closed readback", err)
+	if err := g.Stage(context.Background()); err == nil {
+		t.Fatal("generic authority failure was rehabilitated")
 	}
-	if k.stages != 2 {
+	if k.stages != 1 {
 		t.Fatalf("stage count %d", k.stages)
 	}
 }
@@ -332,7 +332,7 @@ func TestLeaseGateRejectedGrantUsesLifetimeToProveClosure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.verify = func() error {
 		cancel()
-		return ErrLeaseUnavailable
+		return ErrLeaseGateRenewal
 	}
 	if err := g.Stage(ctx); err == nil {
 		t.Fatal("expired request context accepted a rejected grant")
@@ -349,7 +349,7 @@ func TestLeaseGateRejectedGrantUsesLifetimeToProveClosure(t *testing.T) {
 	}
 }
 
-func TestLeaseGateChangedGrantAfterStageAllowsOnlyNewerSequence(t *testing.T) {
+func TestLeaseGateUnclassifiedChangedGrantAfterStageRetainsLegacyFence(t *testing.T) {
 	g, k, a, _ := gateFixture(t)
 	changed := false
 	k.observe = func(b []byte) []byte {
@@ -363,14 +363,14 @@ func TestLeaseGateChangedGrantAfterStageAllowsOnlyNewerSequence(t *testing.T) {
 	if err := g.Stage(context.Background()); err == nil {
 		t.Fatal("grant change during staged-token readback was accepted")
 	}
-	if !changed || g.fenced || k.enabled || k.token != nil || g.seen != 1 {
+	if !changed || !g.fenced || k.enabled || k.token != nil || g.seen != 1 {
 		t.Fatal("staged grant was not retired with its sequence consumed")
 	}
 	k.observe = nil
-	if err := g.Stage(context.Background()); err != nil {
-		t.Fatal("strictly newer independently verified grant could not stage", err)
+	if err := g.Stage(context.Background()); err == nil {
+		t.Fatal("unclassified post-stage change was rehabilitated")
 	}
-	if g.seen != 2 || k.stages != 2 {
+	if g.seen != 1 || k.stages != 1 {
 		t.Fatalf("sequence reuse or unexpected stage count: seen=%d stages=%d", g.seen, k.stages)
 	}
 }

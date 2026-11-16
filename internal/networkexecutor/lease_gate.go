@@ -256,11 +256,12 @@ func (g *LeaseGate) fail(cause error) error {
 	return errors.Join(ErrLeaseGate, cause, g.closeUnder(ctx))
 }
 
-// rejectClosed handles a fresh-grant check that fails before staging any new
-// token. It permits a later, independently revalidated grant only after a
-// complete readback proves both sets closed. Once a new timeout mutation starts,
-// failures still use fail and permanently fence this gate instance.
+// Only trusted, explicitly classified same-effective renewal can retain the
+// closed gate for fresh evidence. All generic failures preserve legacy fencing.
 func (g *LeaseGate) rejectClosed(ctx context.Context, cause error) error {
+	if !errors.Is(cause, ErrLeaseGateRenewal) {
+		return g.fail(cause)
+	}
 	// A rejected grant may consume the request deadline. Proving closure is a
 	// safety action and must use the gate lifetime, not the failed RPC context.
 	cleanup, cancel := context.WithTimeout(g.lifetime, 3*time.Second)
@@ -317,10 +318,9 @@ func (g *LeaseGate) Stage(ctx context.Context) error {
 		return g.fail(errors.Join(applyErr, err))
 	}
 	if err := g.same(ctx, x); err != nil {
-		// The installed token was fully read back, but its owner grant changed
-		// during verification. Retire it and permit only a separately verified,
-		// strictly newer sequence if complete closure is proven. The consumed
-		// sequence remains in g.seen and can never be staged again.
+		// Unclassified changes preserve the legacy permanent fence. Only the
+		// trusted renewal classification permits a verified close and retry;
+		// the consumed sequence remains in g.seen in either case.
 		return g.rejectClosed(ctx, errors.Join(ErrLeaseGateChanged, err))
 	}
 	return nil

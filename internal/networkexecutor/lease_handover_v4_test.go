@@ -52,7 +52,7 @@ func TestSameEffectiveLeaseV4ExactScope(t *testing.T) {
 }
 
 func TestSameEffectiveLeaseV4RefreshNeverMutatesL3(t *testing.T) {
-	for _, failure := range []string{"", "replay", "expired", "revoked", "changed-during-read", "drift", "cancelled"} {
+	for _, failure := range []string{"", "replay", "expired", "revoked", "changed-during-read", "drift-during-final-owner", "drift", "cancelled"} {
 		t.Run(failure, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -91,6 +91,18 @@ func TestSameEffectiveLeaseV4RefreshNeverMutatesL3(t *testing.T) {
 						fact.Sequence++
 					}
 					return b, e
+				}
+			case "drift-during-final-owner":
+				calls := 0
+				current := l.current
+				l.current = func(c context.Context) (LeaseFact, error) {
+					calls++
+					if calls == 2 {
+						// External drift after the first physical snapshot. This is
+						// not an executor mutation and must not advance evidence.
+						k.state.Routes = nil
+					}
+					return current(c)
 				}
 			}
 			mutations, retained := k.mutations, l.fact

@@ -61,6 +61,12 @@ func (l *LeaseExecutor) RefreshSameEffectiveSelectedV4(ctx context.Context, prev
 	if err := l.sameFact(ctx, next.Fact()); err != nil {
 		return err
 	}
+	if err := l.observeExpected(ctx); err != nil {
+		return err
+	}
+	if err := l.sameFact(ctx, next.Fact()); err != nil {
+		return err
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
