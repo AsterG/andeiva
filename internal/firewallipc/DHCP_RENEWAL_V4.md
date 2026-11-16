@@ -5,6 +5,8 @@ addition to selected DHCP, inventory and integrity capabilities. Legacy clients
 cannot send `dhcp_renew`; the request contains only the selected Work and new
 snapshot hashes. The reply carries the authenticated grant or a recovery error.
 This transport does not itself validate effective L3 equality or activate renewal.
+The legacy helper explicitly rejects the new capability and renewal verb until
+the runtime supplies matching support; it cannot echo an unsupported agreement.
 
 Only this profile permits ten seconds for apply/open/withdraw/retire/renew RPCs.
 Legacy mutations and all ordinary reads retain three seconds. Shorter caller

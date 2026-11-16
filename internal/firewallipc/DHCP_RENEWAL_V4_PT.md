@@ -5,6 +5,8 @@ de DHCP selecionado, inventário e integridade. O cliente antigo não pode envia
 `dhcp_renew`; a requisição contém apenas hashes de Work e snapshot. A resposta
 contém a concessão autenticada ou erro de recuperação. O transporte não valida
 sozinho a igualdade L3 nem ativa a renovação.
+O helper antigo rejeita a nova capacidade e o novo verbo até dispor de suporte
+runtime equivalente; não confirma uma negociação que não possa cumprir.
 
 Somente esse perfil permite dez segundos em apply/open/withdraw/retire/renew.
 Clientes antigos e leituras mantêm três segundos; contextos menores e cancelamento

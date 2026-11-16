@@ -132,7 +132,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		return ErrUnavailable
 	}
 	hello, e := firewallipc.DecodeRoutedHelloV3(data, false)
-	if e != nil || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil || s.dhcpJobs != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
+	if e != nil || hello.HasCapability(firewallipc.RoutedDHCPRenewalCapabilityV4) || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil || s.dhcpJobs != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
 		return ErrIdentity
 	}
 	hello.Run = runtimeRun
@@ -146,7 +146,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 			return ErrUnavailable
 		}
 		request, command, e := firewallipc.DecodeRoutedRequestV3(data, runtimeRun, identity.Namespace, last)
-		if e != nil || request.Sequence>>32 != epoch || request.Sequence&0xffffffff == 0 {
+		if e != nil || command.Verb == "dhcp_renew" || request.Sequence>>32 != epoch || request.Sequence&0xffffffff == 0 {
 			return ErrIdentity
 		}
 		last = request.Sequence
