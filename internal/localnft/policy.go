@@ -9,6 +9,7 @@ import (
 	"net/netip"
 
 	"github.com/AsterG/andeiva/internal/localpolicy"
+	"github.com/AsterG/andeiva/internal/networkplan"
 )
 
 const (
@@ -45,6 +46,7 @@ type Artifact struct {
 	Rules      []localpolicy.EffectiveRule `json:"rules"`
 	Neighbors  []NeighborLink              `json:"neighbors"`
 	ControlIDs []string                    `json:"control_ids"`
+	Network    *networkplan.Revision       `json:"network,omitempty"`
 }
 
 // ValidateManaged limits deployed listeners to the two implemented engines.
@@ -106,6 +108,16 @@ func bounded(c localpolicy.Config) error {
 func Compile(c localpolicy.Config) (Artifact, error) { return CompileWithNeighbors(c, nil) }
 
 func CompileWithNeighbors(c localpolicy.Config, neighbors []NeighborLink) (Artifact, error) {
+	return CompileForNetwork(c, neighbors, nil)
+}
+
+// CompileForNetwork derives acquisition admission only from the trusted selected
+// network revision. It grants no lease, forwarding or administrative service.
+func CompileForNetwork(c localpolicy.Config, neighbors []NeighborLink, selected *networkplan.Revision) (Artifact, error) {
+	network, acquisition, err := acquisitionRule(selected)
+	if err != nil {
+		return Artifact{}, err
+	}
 	if err := bounded(c); err != nil {
 		return Artifact{}, err
 	}
@@ -122,6 +134,9 @@ func CompileWithNeighbors(c localpolicy.Config, neighbors []NeighborLink) (Artif
 		{"add": object{"chain": object{"family": "inet", "table": TableName, "name": "input", "type": "filter", "hook": "input", "prio": localpolicy.InputPriority, "policy": "drop"}}},
 	}
 	controls := neighborRules(pure.Revision.Config, links)
+	if acquisition != nil {
+		controls = append(controls, acquisition)
+	}
 	if len(controls) > MaxControlRules {
 		return Artifact{}, ErrPolicy
 	}
@@ -166,7 +181,7 @@ func CompileWithNeighbors(c localpolicy.Config, neighbors []NeighborLink) (Artif
 	if err != nil {
 		return Artifact{}, ErrPolicy
 	}
-	return Artifact{Revision: pure.Revision, Digest: hash(digestData), Create: create, Batch: batch, Rules: pure.Rules, Neighbors: links, ControlIDs: ids}, nil
+	return Artifact{Revision: pure.Revision, Digest: hash(digestData), Create: create, Batch: batch, Rules: pure.Rules, Neighbors: links, ControlIDs: ids, Network: network}, nil
 }
 
 func hash(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
