@@ -34,6 +34,7 @@ type routedDHCPDiagnosticRecorderV1 struct {
 	records [routedDHCPDiagnosticCapacityV1]routedDHCPDiagnosticRecordV1
 	count   int
 	closed  bool
+	failed  bool
 	dropped atomic.Uint64
 }
 
@@ -127,17 +128,28 @@ func (d *routedDHCPDiagnosticRecorderV1) append(side, verb, stage string, starte
 	if d.closed {
 		return
 	}
-	if d.count == len(d.records) {
+	failure := ctxErr != nil || err != nil && !errors.Is(err, ErrRoutedDHCPWaitingV1)
+	index := d.count
+	if index == len(d.records) {
 		d.dropped.Add(1)
-		return
+		if !failure || d.failed {
+			return
+		}
+		// Keep the first real failure even when successful polling filled the
+		// trace. Replacing one success/waiting record preserves the fixed bound;
+		// that displaced record is counted above, just like a dropped append.
+		index--
 	}
 	var now unix.Timespec
 	if unix.ClockGettime(unix.CLOCK_BOOTTIME, &now) != nil {
 		d.dropped.Add(1)
 		return
 	}
-	d.records[d.count] = routedDHCPDiagnosticRecordV1{Side: side, Verb: verb, Stage: stage, BootNS: now.Nano(), ElapsedMS: time.Since(started).Milliseconds(), Error: routedDHCPDiagnosticClassV1(err), Context: routedDHCPDiagnosticClassV1(ctxErr)}
-	d.count++
+	d.records[index] = routedDHCPDiagnosticRecordV1{Side: side, Verb: verb, Stage: stage, BootNS: now.Nano(), ElapsedMS: time.Since(started).Milliseconds(), Error: routedDHCPDiagnosticClassV1(err), Context: routedDHCPDiagnosticClassV1(ctxErr)}
+	d.failed = d.failed || failure
+	if index == d.count {
+		d.count++
+	}
 }
 
 // Flush is called only after the fixed native API/helper role returns. The

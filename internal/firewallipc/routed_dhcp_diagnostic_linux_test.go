@@ -138,3 +138,44 @@ func TestRoutedDHCPDiagnosticFlushFailure(t *testing.T) {
 		t.Fatal("lost trace silently accepted", err)
 	}
 }
+
+func TestRoutedDHCPDiagnosticRetainsFirstFailureAfterSaturation(t *testing.T) {
+	for _, stage := range []bool{false, true} {
+		d := &routedDHCPDiagnosticRecorderV1{}
+		for i := 0; i < routedDHCPDiagnosticCapacityV1; i++ {
+			d.record("helper", "dhcp_begin", time.Now(), ErrRoutedDHCPWaitingV1, nil)
+		}
+		d.record("helper", "dhcp_live", time.Now(), nil, nil)
+		if stage {
+			d.failure("policy_observe", ErrChannel, context.DeadlineExceeded)
+		} else {
+			d.record("helper", "dhcp_live", time.Now(), ErrChannel, context.DeadlineExceeded)
+		}
+		d.failure("close_gate", errors.New("later private failure"), nil)
+		d.record("helper", "dhcp_live", time.Now(), nil, nil)
+		if d.count != routedDHCPDiagnosticCapacityV1 || d.dropped.Load() != 4 {
+			t.Fatal("changed capacity or lost eviction accounting", d.count, d.dropped.Load())
+		}
+		last := d.records[d.count-1]
+		if last.Error != "channel" || last.Context != "deadline" || (stage && last.Stage != "policy_observe") || (!stage && last.Verb != "dhcp_live") {
+			t.Fatal("first real failure lost", last)
+		}
+		for _, r := range d.records[:d.count-1] {
+			if r.Error != "initial_waiting_v1" {
+				t.Fatal("earlier trace overwritten", r)
+			}
+		}
+	}
+}
+
+func TestRoutedDHCPDiagnosticDoesNotReplaceEarlierFailure(t *testing.T) {
+	d := &routedDHCPDiagnosticRecorderV1{}
+	d.failure("open_state", ErrChannel, nil)
+	for i := 1; i < routedDHCPDiagnosticCapacityV1; i++ {
+		d.record("helper", "dhcp_live", time.Now(), nil, nil)
+	}
+	d.failure("close_gate", context.Canceled, context.Canceled)
+	if d.records[0].Stage != "open_state" || d.records[d.count-1].Error != "ok" || d.dropped.Load() != 1 {
+		t.Fatal("later failure replaced original trace")
+	}
+}

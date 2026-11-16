@@ -4,6 +4,10 @@
 
 - Give the lost-helper-ack recovery test a bounded confirmation window that remains valid under the full race suite load.
 
+## Unreleased — DHCP service reconciliation
+
+- Reconcile DHCP acquisition sockets against a retained service identity and verify physical absence before releasing its resource pins.
+
 ## Unreleased — DHCP acquisition service lifetime
 
 - Launch the DHCP producer in an exclusive retained cgroup before exec, validate its bootstrap identity and distinguish process drainage from socket cleanup.

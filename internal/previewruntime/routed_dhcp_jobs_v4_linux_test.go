@@ -49,6 +49,22 @@ func (o *jobOwnerFixtureV4) Close() error {
 }
 func (o *jobOwnerFixtureV4) Done() <-chan struct{} { return o.done }
 
+// This is a real readonly cgroupfs descriptor used only to exercise the private
+// transport. Its root identity is not a service binding; helper assembly must
+// still reject it as the wrong incarnation/member.
+func (o *jobOwnerFixtureV4) RetainedServicePin() (*os.File, RoutedDHCPServiceCgroupIdentityV1, error) {
+	f, e := os.Open("/sys/fs/cgroup")
+	if e != nil {
+		return nil, RoutedDHCPServiceCgroupIdentityV1{}, e
+	}
+	id, e := routedDHCPServiceDirectoryV1(f)
+	if e != nil {
+		_ = f.Close()
+		return nil, id, e
+	}
+	return f, id, nil
+}
+
 func newJobOwnerFixtureV4(t *testing.T) *jobOwnerFixtureV4 {
 	t.Helper()
 	binding, _ := routedDeferredFixtureV4(t)
@@ -117,7 +133,7 @@ func TestRoutedDHCPJobsV4PrivatePrepareActivateStop(t *testing.T) {
 	go func() { done <- b.serve(ctx, r, m, peer) }()
 	client := &routedDHCPJobClientV4{conn: h, metadata: m, peer: peer}
 	reply, files, err := client.call(ctx, "prepare", work)
-	if err != nil || reply.Binding == nil || len(files) != 3 || o.active.Load() != 0 {
+	if err != nil || reply.Binding == nil || len(files) != 4 || reply.ServiceCgroupVersion == nil || *reply.ServiceCgroupVersion != 1 || reply.ServiceCgroupIdentity == nil || o.active.Load() != 0 {
 		t.Fatal("standby capability", err, len(files))
 	}
 	for _, f := range files {
@@ -331,7 +347,7 @@ func TestRoutedDHCPJobsV4TruncatedRightsCloseEveryInstalledDescriptor(t *testing
 		t.Fatal(err)
 	}
 	// Peek the same queued datagram with exactly the production ancillary size,
-	// proving MSG_CTRUNC rather than merely testing the ordinary >3-FD rejection.
+	// proving MSG_CTRUNC rather than merely testing the ordinary >4-FD rejection.
 	raw, err := r.SyscallConn()
 	if err != nil {
 		t.Fatal(err)
@@ -412,8 +428,14 @@ func TestRoutedDHCPJobsV4CancellationAfterSendRejectsLateReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
+	service, id, e := o.RetainedServicePin()
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer service.Close()
+	version := 1
 	baseline := map[string]int{}
-	for _, file := range []*os.File{f.Request, f.Reply, f.ProducerPIDFD} {
+	for _, file := range []*os.File{f.Request, f.Reply, f.ProducerPIDFD, service} {
 		target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", file.Fd()))
 		if err != nil {
 			t.Fatal(err)
@@ -422,7 +444,7 @@ func TestRoutedDHCPJobsV4CancellationAfterSendRejectsLateReply(t *testing.T) {
 	}
 	// Cancellation may already have closed the peer; either outcome must reject
 	// the late response, never hand its capabilities to the caller.
-	_ = routedDHCPJobSendV4(r, routedDHCPJobReplyV4{Job: request, Binding: &binding}, []*os.File{f.Request, f.Reply, f.ProducerPIDFD})
+	_ = routedDHCPJobSendV4(r, routedDHCPJobReplyV4{Job: request, Binding: &binding, ServiceCgroupVersion: &version, ServiceCgroupIdentity: &id}, []*os.File{f.Request, f.Reply, f.ProducerPIDFD, service})
 	select {
 	case err := <-done:
 		if err == nil {

@@ -11,16 +11,16 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewallipc"
-	"github.com/AsterG/andeiva/internal/localengine"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
 )
 
 type routedDHCPJobAssemblyV4 struct {
-	network      *routedNetworkSelectorV4
-	listeners    localengine.Listeners
-	target, host *os.File
-	client       *routedDHCPJobClientV4
+	network       *routedNetworkSelectorV4
+	listeners     *routedEmptyListenersV3
+	packetProfile routedDHCPPacketProfileV1
+	target, host  *os.File
+	client        *routedDHCPJobClientV4
 }
 
 type routedDHCPJobsHelperV4 struct {
@@ -98,6 +98,9 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 			}
 			return nil // Reader and actual LAN/lease were revalidated above.
 		}
+		if !h.assembly.packetProfile.valid() {
+			return ErrUnavailable
+		}
 		listeners, e := h.assembly.listeners.Observe(ctx)
 		if e != nil || len(listeners) != 0 {
 			return ErrUnavailable
@@ -112,12 +115,27 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 		id := h.authority.Identity()
 		if binding.Desired.Hash != desired.Hash || binding.Owner.Namespace != id.Namespace || binding.Owner.RunID != id.RunID || binding.Owner.BootID != id.BootID {
 			_ = f.Close()
+			_ = files[3].Close()
 			h.failed = true
 			return ErrIdentity
 		}
 		owner, e := NewRoutedDHCPDeferredReaderV4(f, binding)
 		if e != nil {
 			_ = f.Close()
+			_ = files[3].Close()
+			h.failed = true
+			return e
+		}
+		service, e := newRoutedDHCPServiceObservationV1(ctx, files[3], *reply.ServiceCgroupIdentity, binding, owner, h.assembly.packetProfile)
+		if e != nil {
+			_ = files[3].Close()
+			_ = owner.Close()
+			h.failed = true
+			return e
+		}
+		if e = h.assembly.listeners.installService(ctx, service); e != nil {
+			_ = service.closePins()
+			_ = owner.Close()
 			h.failed = true
 			return e
 		}
@@ -125,6 +143,7 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 		r, closeRuntime, e := assembleRoutedDHCPRuntimeV3(lifetime, RoutedDHCPRuntimeOptionsV3{LAN: lan, Target: h.assembly.target, Host: h.assembly.host, Desired: desired, Owner: binding.Owner, Current: owner.Current}, id, h.readerGID, h.reader, h.authority, h.integrity)
 		if e != nil {
 			cancel()
+			h.assembly.listeners.revokeService()
 			_ = owner.Close()
 			h.failed = true
 			return e
@@ -132,7 +151,7 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 		h.runtime, h.owner, h.work, h.desired, h.closeRuntime, h.cancel = r, owner, plan.Reference(), desired.Hash, closeRuntime, cancel
 		// Root repeats its selected preflight before privately confirming the real
 		// acquisition PID. No grant can be read before that acknowledgement.
-		if _, _, e = h.assembly.client.call(ctx, "activate", h.work); e != nil {
+		if e = h.assembly.listeners.activateService(ctx, h.assembly.client, h.work); e != nil {
 			h.failed = true
 			return e
 		}
@@ -205,7 +224,12 @@ func (h *routedDHCPJobsHelperV4) stopBeforeRestore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	h.assembly.listeners.revokeService()
 	if _, _, err = h.assembly.client.call(ctx, "stop", h.work); err != nil {
+		h.failed = true
+		return err
+	}
+	if err = h.assembly.listeners.releaseService(ctx); err != nil {
 		h.failed = true
 		return err
 	}
@@ -234,6 +258,7 @@ func (h *routedDHCPJobsHelperV4) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.failed = true
+	h.assembly.listeners.revokeService()
 	if h.cancel != nil {
 		h.cancel()
 	}
@@ -241,8 +266,11 @@ func (h *routedDHCPJobsHelperV4) Close() error {
 		<-h.done
 	}
 	var err error
+	cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	err = h.assembly.listeners.releaseService(cleanup)
+	cancel()
 	if h.closeRuntime != nil {
-		err = h.closeRuntime()
+		err = errors.Join(err, h.closeRuntime())
 		h.closeRuntime = nil
 	}
 	if h.owner != nil {
