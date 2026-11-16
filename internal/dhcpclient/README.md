@@ -25,6 +25,12 @@ foreground; the launcher thread remains pinned until its child is reaped. Stop
 invalidates before termination and the outer service must use KillMode=control-group
 to reap every privilege-separated descendant after supervisor death.
 
+Leader exit revokes lease and acquisition evidence as soon as the retained child
+is observed exited, before `exec.Wait` drains stderr. A descendant holding that
+pipe cannot prolong authority. Late hooks and control requests cannot revive it;
+process-group termination and reaping still complete before drainage is reported.
+This does not bound shutdown if a stream reader itself is blocked.
+
 The hook supplies no authenticated ACK acquisition timestamp. The expiry bound
 therefore uses process-start time for the first ACK and the previous grant hook's
 CLOCK_BOOTTIME for later ACKs. This can expire early, but never extends validity by

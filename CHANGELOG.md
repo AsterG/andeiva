@@ -4,6 +4,10 @@
 
 - Add an opt-in same-effective renewal capability and bounded mutation RPC budget while preserving legacy limits. Transport alone does not enable renewal or change lease authority.
 
+## Unreleased — DHCP owner exit
+
+- Revoke acquisition and lease evidence on observed producer exit before waiting for stderr drainage. Reject late hooks and controls while preserving process-group termination and reaping.
+
 ## Unreleased — configuration recovery test reliability
 
 - Give the lost-helper-ack recovery test a bounded confirmation window that remains valid under the full race suite load.

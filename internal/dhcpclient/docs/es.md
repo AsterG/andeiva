@@ -52,3 +52,10 @@ Esto no implementa adopción de ifupdown, rollback de interfaces principales,
 renovación de NAT, continuidad administrativa ni un perfil de privilegios de
 producción. Un fallo se contiene deteniendo la unidad y sus descendientes;
 no se deben retirar reglas, rutas o archivos ajenos para hacer pasar la prueba.
+## Revocación al terminar el productor
+
+La salida del proceso principal revoca inmediatamente la evidencia de concesión
+y adquisición, antes de esperar el drenaje de stderr. Un descendiente que retenga
+esa tubería no prolonga la autoridad; eventos tardíos y órdenes no la recuperan.
+Se conservan la terminación del grupo y la recolección del proceso. Esto no
+garantiza un plazo de cierre si el lector del flujo queda bloqueado.

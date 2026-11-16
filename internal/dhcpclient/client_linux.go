@@ -174,14 +174,7 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		started <- nil
 		// Keep the leader unreaped while signalling its owned process group;
 		// otherwise a recycled numeric PID could identify an unrelated group.
-		var info unix.Siginfo
-		var waitErr error
-		for {
-			waitErr = unix.Waitid(unix.P_PID, c.pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
-			if !errors.Is(waitErr, unix.EINTR) {
-				break
-			}
-		}
+		waitErr := c.observeOwnerExit()
 		if waitErr == nil {
 			_ = unix.Kill(-c.pid, unix.SIGKILL)
 		} else {
@@ -219,6 +212,26 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		}
 	}()
 	return c, nil
+}
+
+// Revoke evidence as soon as the leader is known to have exited, not after
+// exec.Wait drains stderr. A descendant can retain that pipe beyond leader exit.
+// Keep WNOWAIT until the caller finishes signalling its owned process group.
+func (c *Client) observeOwnerExit() error {
+	var info unix.Siginfo
+	var err error
+	for {
+		err = unix.Waitid(unix.P_PID, c.pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if !errors.Is(err, unix.EINTR) {
+			break
+		}
+	}
+	if err == nil {
+		c.failAt("owner_exit_observed")
+	} else {
+		c.failAt("owner_wait_failed")
+	}
+	return err
 }
 
 func (c *Client) readEvents() {
