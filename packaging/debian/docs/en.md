@@ -11,6 +11,11 @@ separate development page; this service does not serve web administration.
 The commands describe the package contract. A successful laboratory run must be
 recorded against the exact build; this guide is not a claim that those tests passed.
 
+Static verification compares the packaged `go.mod` and `go.sum` byte for byte
+against the reviewed source checkout, in addition to the archive, checksums,
+license and module-inventory checks. Run it from that matching source revision;
+dependency patch versions are not duplicated in the verifier.
+
 ## Requirements and roles
 
 Build as an ordinary user on a trusted Linux workstation with the source revision,
