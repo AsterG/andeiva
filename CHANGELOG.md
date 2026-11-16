@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — explicit DHCP renewal transport
+
+- Add an opt-in same-effective renewal capability and bounded mutation RPC budget while preserving legacy limits. Transport alone does not enable renewal or change lease authority.
+
 ## Unreleased — configuration recovery test reliability
 
 - Give the lost-helper-ack recovery test a bounded confirmation window that remains valid under the full race suite load.
