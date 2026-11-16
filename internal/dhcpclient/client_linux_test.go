@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -213,4 +214,97 @@ func TestStartRejectsHostBeforeFilesystemEffects(t *testing.T) {
 	if _, err := StartIsolated(context.Background(), Scope{HostNetwork: h, HostMount: m, Interface: "wan0", Index: 1, HardwareAddress: "02:00:00:00:00:01"}); !errors.Is(err, ErrScope) {
 		t.Fatal(err)
 	}
+}
+
+type blockedOwnerExitWriter struct{ entered, release chan struct{} }
+
+func (w *blockedOwnerExitWriter) Write(b []byte) (int, error) {
+	select {
+	case <-w.entered:
+	default:
+		close(w.entered)
+	}
+	<-w.release
+	return len(b), nil
+}
+
+func TestOwnerExitRevokesBeforeStderrDrain(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	w := &blockedOwnerExitWriter{make(chan struct{}), make(chan struct{})}
+	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestOwnerExitSubprocess$")
+	cmd.Env = append(os.Environ(), "ANDEIVA_DHCP_EXIT_HELPER=1")
+	cmd.Stderr = w
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitDone := make(chan error, 1)
+	waitStarted, released := false, false
+	defer func() {
+		if !released {
+			close(w.release)
+		}
+		_ = cmd.Process.Kill()
+		if waitStarted {
+			<-waitDone
+		} else {
+			_ = cmd.Wait()
+		}
+	}()
+	select {
+	case <-w.entered:
+	case <-ctx.Done():
+		t.Fatal("stderr copier not reached", ctx.Err())
+	}
+	c := &Client{cmd: cmd, pid: cmd.Process.Pid, iface: "wan0", epoch: 1, lastReason: "BOUND", lease: Lease{Epoch: 1, DeadlineBootNS: int64(20 * time.Second)}}
+	if _, err = c.currentAt(int64(10 * time.Second)); err != nil {
+		t.Fatal("fixture grant unavailable", err)
+	}
+	if err = c.observeOwnerExit(); err != nil {
+		t.Fatal("observe exited leader", err)
+	}
+	waitStarted = true
+	go func() { waitDone <- cmd.Wait() }()
+	select {
+	case <-waitDone:
+		waitStarted = false
+		t.Fatal("Wait returned while stderr copier blocked")
+	default:
+	}
+	if _, err = c.currentAt(int64(10 * time.Second)); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("exited owner retained lease", err)
+	}
+	if _, err = c.observationAt(int64(10 * time.Second)); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("exited acquisition remained live", err)
+	}
+	if !reflect.DeepEqual(c.lease, Lease{}) || c.failure != "owner_exit_observed" {
+		t.Fatal("exit did not revoke evidence atomically")
+	}
+	if c.Renew() == nil || c.Rebind() == nil {
+		t.Fatal("exited owner accepted control")
+	}
+	e, _ := HookEvent(goodEnv(), int64(15*time.Second))
+	e.PID = cmd.Process.Pid
+	if c.accept(e, int64(15*time.Second)) == nil {
+		t.Fatal("late hook restored exited evidence")
+	}
+	close(w.release)
+	released = true
+	if err = <-waitDone; err != nil {
+		waitStarted = false
+		t.Fatal("reap", err)
+	}
+	waitStarted = false
+}
+
+func TestOwnerExitSubprocess(t *testing.T) {
+	if os.Getenv("ANDEIVA_DHCP_EXIT_HELPER") != "1" {
+		return
+	}
+	_, _ = fmt.Fprintln(os.Stderr, "owner-exit")
+	os.Exit(0)
 }
