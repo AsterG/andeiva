@@ -27,9 +27,12 @@ done
 [[ $(sha256sum "$dependencies/golang-x-LICENSE.txt" | cut -d ' ' -f 1) = 911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad ]]
 [[ $(sha256sum "$dependencies/golang-x-PATENTS.txt" | cut -d ' ' -f 1) = 96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc ]]
 for file in go.mod go.sum; do cmp "$source_root/$file" "$dependencies/$file"; done
-# Keep the dependency inventory check without duplicating source version pins.
-grep -q '"path":"golang.org/x/crypto","version":"' "$dependencies/go-inventory.jsonl"
-grep -q '"path":"golang.org/x/sys","version":"' "$dependencies/go-inventory.jsonl"
+# Bind the two direct dependency inventory entries to the reviewed manifests.
+for module in golang.org/x/crypto golang.org/x/sys; do
+  module_version=$(awk -v name="$module" '$1 == name { print $2 } $1 == "require" && $2 == name { print $3 }' "$source_root/go.mod")
+  [[ "$module_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][[:alnum:].-]+)?$ ]]
+  grep -Fxq "{\"path\":\"$module\",\"version\":\"$module_version\",\"main\":false}" "$dependencies/go-inventory.jsonl"
+done
 bash -n "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/native.sh"
 bash "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/native.sh" --help >/dev/null
 if bash "$stage/root/usr/share/doc/andeiva-firewall-preview/tests/native.sh" >/dev/null 2>&1; then
