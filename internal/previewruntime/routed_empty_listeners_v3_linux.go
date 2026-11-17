@@ -105,7 +105,7 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 	}
 	if active != nil {
 		after, afterPhase, err := active.fact(ctx)
-		if err != nil || afterPhase != phase || after != fact {
+		if err != nil || !sameRoutedDHCPListenerAssociationV4(fact, phase, after, afterPhase) {
 			firewallipc.RecordRoutedDHCPFailureV1("listener_fact_after", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
@@ -119,6 +119,26 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 		return nil, ErrUnavailable
 	}
 	return []localpolicy.Listener{}, nil
+}
+
+// Both samples have already passed fact(), including live-source validation.
+// A lease version is not socket ownership: after two complete matching captures,
+// genuine progress may retain the exact same physical service association. This
+// comparison returns no lease or authority and cannot replace Current or the gate.
+func sameRoutedDHCPListenerAssociationV4(before RoutedDHCPOwnerFactV3, phase routedDHCPServicePhaseV1, after RoutedDHCPOwnerFactV3, afterPhase routedDHCPServicePhaseV1) bool {
+	if afterPhase != phase {
+		return false
+	}
+	if after == before {
+		return true
+	}
+	if phase != (routedDHCPServicePhaseV1{}) || before.Epoch == 0 || after.Epoch <= before.Epoch || before.Fact.Sequence == 0 || after.Fact.Sequence <= before.Fact.Sequence || before.Fact.Revoked || after.Fact.Revoked || before.Fact.DeadlineBootNS <= 0 || after.Fact.DeadlineBootNS <= 0 {
+		return false
+	}
+	association := after.Fact
+	association.Sequence = before.Fact.Sequence
+	association.DeadlineBootNS = before.Fact.DeadlineBootNS
+	return association == before.Fact
 }
 
 func (l *routedEmptyListenersV3) capture(ctx context.Context, s *routedDHCPServiceObservationV1, fact RoutedDHCPOwnerFactV3) (routedDHCPSocketCaptureV1, error) {
