@@ -192,6 +192,7 @@ func nativeDHCPB2ServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, bind
 type nativeDHCPB2GrantV4 struct {
 	BootNS  int64
 	Seconds uint32
+	Reason  string
 }
 type nativeDHCPB2DiagnosticStateV4 struct {
 	Grants       []nativeDHCPB2GrantV4
@@ -239,8 +240,11 @@ func (d *nativeDHCPB2DiagnosticsV4) observe(raw []byte) {
 					state.MarginBootNS = e.BootNS
 				}
 			case "event":
+				if state.MarginBootNS > 0 && (e.Detail == "EXPIRE" || e.Detail == "FAIL" || e.Detail == "NOCARRIER") {
+					state.err = errors.New("B2 lease continuity ended during WAIT")
+				}
 				if e.Detail == "BOUND" || e.Detail == "RENEW" || e.Detail == "REBIND" || e.Detail == "REBOOT" {
-					state.Grants = append(state.Grants, nativeDHCPB2GrantV4{e.BootNS, e.Seconds})
+					state.Grants = append(state.Grants, nativeDHCPB2GrantV4{e.BootNS, e.Seconds, e.Detail})
 				}
 			case "owner_exit", "owner_exit_observed", "stopped":
 				state.Ended = true
@@ -367,22 +371,45 @@ func nativeDHCPB2ClosedSetsV4(raw []byte) error {
 	return nil
 }
 
+// The first post-mask RENEW is the unsafe grant. Only later RENEW hooks
+// count as natural recovery; BOUND/REBOOT/REBIND cannot substitute for them.
+func nativeDHCPB2RenewalsV4(seconds uint32, d nativeDHCPB2DiagnosticStateV4) (int, nativeDHCPB2GrantV4, error) {
+	var natural nativeDHCPB2GrantV4
+	if (seconds != 70 && seconds != 71) || d.err != nil || d.Ended || d.MarginBootNS <= 0 || d.MarginCount != 1 || len(d.Grants) > 16 {
+		return 0, natural, ErrUnavailable
+	}
+	count := 0
+	var previous int64
+	for _, g := range d.Grants {
+		if g.BootNS <= previous || g.Seconds == 0 {
+			return 0, natural, ErrUnavailable
+		}
+		previous = g.BootNS
+		if g.BootNS < d.MarginBootNS {
+			continue
+		}
+		if g.Reason != "RENEW" || g.Seconds != seconds {
+			return 0, natural, errors.New("B2 expected uninterrupted RENEW hooks")
+		}
+		count++
+		if count == 2 {
+			natural = g
+		}
+	}
+	return count, natural, nil
+}
+
 func nativeDHCPB2NoProbeV4(seconds uint32, d nativeDHCPB2DiagnosticStateV4) error {
 	if d.MarginBootNS <= 0 || d.MarginCount != 1 || len(d.Signals) == 0 {
 		return ErrUnavailable
 	}
+	_, natural, err := nativeDHCPB2RenewalsV4(seconds, d)
+	if err != nil {
+		return err
+	}
 	var naturalAt int64
 	if seconds == 71 {
-		target := 0
-		for _, g := range d.Grants {
-			if g.Seconds == 71 {
-				target++
-				if target == 2 {
-					naturalAt = g.BootNS
-					break
-				}
-			}
-		}
+		naturalAt = natural.BootNS
 	}
 	before := 0
 	for _, at := range d.Signals {
@@ -610,11 +637,9 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 					closedSamples++
 				}
 			} else {
-				targetHooks := 0
-				for _, g := range d.Grants {
-					if g.Seconds == seconds {
-						targetHooks++
-					}
+				targetHooks, _, renewErr := nativeDHCPB2RenewalsV4(seconds, d)
+				if renewErr != nil {
+					t.Fatal("B2 lost uninterrupted natural renewal evidence", renewErr)
 				}
 				recovered, exists, err = nativeDHCPB2ReportV4(logs.String(), api, "recovered")
 				if err != nil {
@@ -784,16 +809,9 @@ func nativeDHCPB2NaturalMarginV4(log string, helper int, grant configpoc.RoutedD
 			}
 		}
 	}
-	var natural nativeDHCPB2GrantV4
-	target := 0
-	for _, g := range d.Grants {
-		if g.Seconds == 71 {
-			target++
-			if target == 2 {
-				natural = g
-				break
-			}
-		}
+	_, natural, err := nativeDHCPB2RenewalsV4(71, d)
+	if err != nil {
+		return err
 	}
 	if !found || hook.LeaseSeconds != 71 || hook.HookBootNS <= 0 || natural.BootNS < hook.HookBootNS || grant.Snapshot.DeadlineBootNS-natural.BootNS < int64(35*time.Second) {
 		return errors.New("natural 71-second hook did not retain measured 35-second margin")
@@ -903,6 +921,56 @@ func TestNativeDHCPB2DiagnosticsV4BoundsAndNoProbes(t *testing.T) {
 	}
 }
 
+func TestNativeDHCPB2DiagnosticsV4RejectsReacquisitionAsNaturalRenewal(t *testing.T) {
+	const prefix = "{\"boot_ns\":29004466547066,\"stage\":\"early_signal\"}\n{\"boot_ns\":29004503224772,\"stage\":\"early_margin_closed\",\"detail\":\"early_short_lease\"}\n{\"boot_ns\":29004503272672,\"stage\":\"event\",\"detail\":\"RENEW\",\"lease_seconds\":70}\n"
+	for _, reason := range []string{"EXPIRE", "FAIL", "NOCARRIER", "BOUND", "REBOOT", "REBIND"} {
+		t.Run(reason, func(t *testing.T) {
+			// The EXPIRE/BOUND/RENEW timestamps reproduce the false PASS from
+			// the 186.64-second native run; reacquisition is not renewal.
+			middle := fmt.Sprintf("{\"boot_ns\":29028932800510,\"stage\":\"event\",\"detail\":%q}\n", reason)
+			if reason == "BOUND" || reason == "REBOOT" || reason == "REBIND" {
+				middle = fmt.Sprintf("{\"boot_ns\":29028932800510,\"stage\":\"event\",\"detail\":%q,\"lease_seconds\":70}\n", reason)
+			}
+			raw := prefix + middle + "{\"boot_ns\":29034253784920,\"stage\":\"event\",\"detail\":\"BOUND\",\"lease_seconds\":70}\n{\"boot_ns\":29100371869773,\"stage\":\"event\",\"detail\":\"RENEW\",\"lease_seconds\":70}\n"
+			var d nativeDHCPB2DiagnosticsV4
+			d.observe([]byte(raw))
+			if nativeDHCPB2NoProbeV4(70, d.snapshot()) == nil {
+				t.Fatal("interrupted/reacquired lease accepted as continuous natural renewal")
+			}
+		})
+	}
+	var valid nativeDHCPB2DiagnosticsV4
+	valid.observe([]byte("{\"boot_ns\":28958466604033,\"stage\":\"event\",\"detail\":\"BOUND\",\"lease_seconds\":120}\n" + prefix + "{\"boot_ns\":29039503272672,\"stage\":\"event\",\"detail\":\"RENEW\",\"lease_seconds\":70}\n{\"boot_ns\":29074503272672,\"stage\":\"event\",\"detail\":\"RENEW\",\"lease_seconds\":70}\n"))
+	state := valid.snapshot()
+	count, natural, err := nativeDHCPB2RenewalsV4(70, state)
+	if nativeDHCPB2NoProbeV4(70, state) != nil || err != nil || count != 3 || natural.Reason != "RENEW" || natural.BootNS != 29039503272672 {
+		t.Fatal("two uninterrupted natural renewals rejected")
+	}
+	for _, reason := range []string{"EXPIRE", "FAIL", "NOCARRIER"} {
+		var interrupted nativeDHCPB2DiagnosticsV4
+		interrupted.observe([]byte(prefix + fmt.Sprintf("{\"boot_ns\":29028932800510,\"stage\":\"event\",\"detail\":%q}\n", reason)))
+		// Even a later complete-looking snapshot cannot silently forget the
+		// invalidating event already observed by the collector.
+		interrupted.observe([]byte(prefix))
+		if interrupted.snapshot().err == nil || nativeDHCPB2NoProbeV4(70, interrupted.snapshot()) == nil {
+			t.Fatal("lease continuity loss was not latched", reason)
+		}
+	}
+	for _, mutate := range []func(*nativeDHCPB2DiagnosticStateV4){
+		func(s *nativeDHCPB2DiagnosticStateV4) { s.Grants[2].Reason = "BOUND" },
+		func(s *nativeDHCPB2DiagnosticStateV4) { s.Grants[2].Seconds = 71 },
+		func(s *nativeDHCPB2DiagnosticStateV4) { s.Grants[2].BootNS = s.Grants[1].BootNS },
+		func(s *nativeDHCPB2DiagnosticStateV4) { s.Grants[2].Seconds = 0 },
+		func(s *nativeDHCPB2DiagnosticStateV4) { s.Ended = true },
+	} {
+		invalid := valid.snapshot()
+		mutate(&invalid)
+		if _, _, err := nativeDHCPB2RenewalsV4(70, invalid); err == nil {
+			t.Fatal("inconsistent renewal evidence accepted")
+		}
+	}
+}
+
 func TestNativeDHCPB2ClosedSetsV4RejectResidualAuthority(t *testing.T) {
 	const valid = `{"nftables":[{"set":{"family":"inet","table":"andeiva_lease_gate","name":"enabled"}},{"set":{"family":"inet","table":"andeiva_lease_gate","name":"live","elem":[]}}]}`
 	if err := nativeDHCPB2ClosedSetsV4([]byte(valid)); err != nil {
@@ -950,7 +1018,7 @@ func TestNativeDHCPB2NaturalMarginV4RequiresFreshMeasuredAuthority(t *testing.T)
 	hook := nativeDHCPHookEvidenceV4{PID: 123, Epoch: 3, HookBootNS: int64(54 * time.Second), LeaseSeconds: 71}
 	raw, _ := json.Marshal(hook)
 	log := "ANDEIVA_NATIVE_LEASE_HOOK_V4 " + string(raw) + "\n"
-	d := nativeDHCPB2DiagnosticStateV4{Grants: []nativeDHCPB2GrantV4{{int64(20 * time.Second), 71}, {int64(55 * time.Second), 71}}}
+	d := nativeDHCPB2DiagnosticStateV4{MarginBootNS: int64(19 * time.Second), MarginCount: 1, Grants: []nativeDHCPB2GrantV4{{int64(20 * time.Second), 71, "RENEW"}, {int64(55 * time.Second), 71, "RENEW"}}}
 	if err := nativeDHCPB2NaturalMarginV4(log, 123, grant, d); err != nil {
 		t.Fatal("measured35s boundary rejected", err)
 	}

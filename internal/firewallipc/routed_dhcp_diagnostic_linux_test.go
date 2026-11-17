@@ -42,7 +42,7 @@ func TestRoutedDHCPFirstFailureV4AllFixedStagesSurviveRPCSaturation(t *testing.T
 		}
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 23 || len(first.slots) != 23 || out.Len() > 23*512 || rpc.count != routedDHCPDiagnosticCapacityV1 {
+	if len(lines) != 33 || len(first.slots) != 33 || out.Len() > 33*512 || rpc.count != routedDHCPDiagnosticCapacityV1 {
 		t.Fatal("independent stage bound changed", len(lines), out.Len())
 	}
 	for i, line := range lines {

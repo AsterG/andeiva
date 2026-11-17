@@ -11,6 +11,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/dhcpsockets"
+	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/localengine"
 	"github.com/AsterG/andeiva/internal/localobserve"
 	"github.com/AsterG/andeiva/internal/localpolicy"
@@ -51,6 +52,7 @@ func (l *routedEmptyListenersV3) Apply(ctx context.Context, revision configpoc.R
 
 func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Listener, error) {
 	if l == nil || l.kernel == nil || ctx == nil || ctx.Err() != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("listener_initial", ErrUnavailable, ctx)
 		return nil, ErrUnavailable
 	}
 	runtime.LockOSThread()
@@ -62,6 +64,7 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 	phase := routedDHCPServicePhaseV1{}
 	if s != nil {
 		if s.validate(ctx, true) != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_source_guard", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
 	}
@@ -73,6 +76,7 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 		var err error
 		fact, phase, err = active.fact(ctx)
 		if err != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_fact_before", ErrUnavailable, ctx)
 			return nil, err
 		}
 	}
@@ -80,31 +84,38 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 	for pass := 0; pass < 2; pass++ {
 		capture, err := l.capture(ctx, active, fact)
 		if err != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_capture", ErrUnavailable, ctx)
 			return nil, err
 		}
 		if active == nil {
 			if len(capture.tables) != 0 || len(capture.packet) != 0 {
+				firewallipc.RecordRoutedDHCPFailureV1("listener_foreign", ErrUnavailable, ctx)
 				return nil, ErrUnavailable
 			}
 		} else if matchRoutedDHCPSocketsV1(capture, active.identity, active.packet, fact, phase.withoutLease()) != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_socket_match", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
 		if pass == 0 {
 			first = capture
 		} else if !sameRoutedDHCPSocketsV1(first, capture) {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_socket_changed", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
 	}
 	if active != nil {
 		after, afterPhase, err := active.fact(ctx)
 		if err != nil || afterPhase != phase || after != fact {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_fact_after", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
 	}
 	if s != nil && s.validate(ctx, true) != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("listener_final_guard", ErrUnavailable, ctx)
 		return nil, ErrUnavailable
 	}
 	if ctx.Err() != nil || !l.kernel.bound() {
+		firewallipc.RecordRoutedDHCPFailureV1("listener_final_context", ErrUnavailable, ctx)
 		return nil, ErrUnavailable
 	}
 	return []localpolicy.Listener{}, nil

@@ -46,6 +46,8 @@ var routedDHCPFailureStagesV4 = [...]string{
 	"withdraw_close", "withdraw_selected", "withdraw_build_gate", "withdraw_recover_gate", "withdraw_recover_lease", "withdraw_lease", "withdraw_verify",
 	"authority_selected", "authority_owner", "authority_lease", "authority_policy", "authority_owner_after",
 	"policy_ready", "policy_observe", "policy_state", "close_gate", "close_forward",
+	"listener_initial", "listener_source_guard", "listener_fact_before", "listener_capture", "listener_foreign",
+	"listener_socket_match", "listener_socket_changed", "listener_fact_after", "listener_final_guard", "listener_final_context",
 }
 
 type routedDHCPFirstStageRecorderV4 struct {
