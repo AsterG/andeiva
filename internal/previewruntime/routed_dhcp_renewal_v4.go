@@ -200,7 +200,7 @@ func (r *RoutedDHCPRuntimeV3) watchLeaseV4(ctx context.Context) {
 			return
 		}
 	}
-	if r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 && !r.withdrawn && !r.failed {
+	if ownerErr == errRoutedDHCPOwnerAdvancedV4 && !r.withdrawn && !r.failed {
 		next, err := r.currentUnder(ctx)
 		if err == nil && sameRenewalGrantV4(r.grant, next) {
 			if r.closeUnder(ctx) == nil {

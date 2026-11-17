@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -44,6 +45,17 @@ func (w observationChainWorkV4) Running() string { return w.running }
 type observationChainReaderV4 struct {
 	*dhcpRuntimeReaderV3
 	running string
+}
+
+// Explicit test model of the optional source-terminal capability. Legacy
+// verification is inherited unchanged; an earlier failure never mints a marker.
+type observationChainSelectedLeaseV4 struct {
+	routedDHCPLeaseV3
+	observe func() error
+}
+
+func (l observationChainSelectedLeaseV4) VerifySelectedObservationV4(context.Context, networkexecutor.LeaseSelectedSnapshotV3, networkexecutor.LeaseSelectedStateV3) error {
+	return l.observe()
 }
 
 func (r observationChainReaderV4) Resolve(ctx context.Context, hash string) (routedDHCPWorkV3, error) {
@@ -129,9 +141,31 @@ func observationChainAuthorityV4(t *testing.T, pending func() error) (*RoutedAut
 }
 
 func TestRoutedDHCPObservationChainV4LateMarginClosesAndFreshInspectionRecovers(t *testing.T) {
+	testRoutedDHCPObservationChainV4(t, "policy", "valid")
+}
+
+func TestRoutedDHCPObservationChainV4LateLeaseMarginRequiresCompletePolicyProof(t *testing.T) {
+	for _, mode := range []string{"valid", "nft-drift", "policy-error", "runner-sentinel", "scope", "joined", "wrong-fact", "wrapped", "drift-restored"} {
+		t.Run(mode, func(t *testing.T) { testRoutedDHCPObservationChainV4(t, "lease", mode) })
+	}
+}
+
+func TestRoutedDHCPObservationChainV4GenericPrimaryCannotBeReclassifiedByFreshGrant(t *testing.T) {
+	for _, mode := range []string{"observation", "scope", "runner-sentinel", "joined", "wrapped", "drift-restored"} {
+		t.Run("lease/"+mode, func(t *testing.T) { testRoutedDHCPObservationChainV4(t, "lease", mode+"-fresh") })
+	}
+	t.Run("owner/generic-first", func(t *testing.T) { testRoutedDHCPObservationChainV4(t, "owner", "owner-error-fresh") })
+}
+
+func testRoutedDHCPObservationChainV4(t *testing.T, phase, mode string) {
+	t.Helper()
 	ctx := context.Background()
 	r, k, reader, fact := dhcpRuntimeFixtureV3(t)
 	masked, maskOnPolicy := false, false
+	freshSource := strings.HasSuffix(mode, "-fresh")
+	primaryMode := strings.TrimSuffix(mode, "-fresh")
+	ownerErrorNext := false
+	var advanceSource func()
 	retained := fact.Fact
 	authority, policyKernel, policyNetwork, listeners, running := observationChainAuthorityV4(t, func() error {
 		if masked {
@@ -141,7 +175,12 @@ func TestRoutedDHCPObservationChainV4LateMarginClosesAndFreshInspectionRecovers(
 	})
 	r.reader = observationChainReaderV4{reader, running}
 	r.current = func(context.Context) (RoutedDHCPOwnerFactV3, error) {
-		if masked {
+		if ownerErrorNext {
+			ownerErrorNext = false
+			advanceSource()
+			return RoutedDHCPOwnerFactV3{}, ErrIdentity
+		}
+		if masked && !freshSource {
 			return RoutedDHCPOwnerFactV3{}, routedDHCPMarginClosedV4{fact.Epoch + 1, fact.Fact.Address}
 		}
 		return *fact, nil
@@ -181,6 +220,9 @@ func TestRoutedDHCPObservationChainV4LateMarginClosesAndFreshInspectionRecovers(
 			masked = true
 			maskOnPolicy = false
 		}
+		if masked && mode == "policy-error" {
+			return configpoc.ErrRecovery
+		}
 		receipt, hash, err := authority.Observe(call)
 		if err != nil {
 			return errors.Join(configpoc.ErrRecovery, err)
@@ -209,10 +251,73 @@ func TestRoutedDHCPObservationChainV4LateMarginClosesAndFreshInspectionRecovers(
 	gate, watermark, stages := r.gate, k.grant, k.stages
 	writes, networkEffects, listenerEffects := len(policyKernel.batches), policyNetwork.calls, listeners.calls
 	beforePolicy := policyCalls
-	maskOnPolicy = true
+	advanceSource = func() {
+		masked = true
+		next := grant
+		next.Epoch++
+		next.Snapshot = dhcpRuntimeRenewedSnapshotV4(t, grant.Snapshot)
+		*fact = RoutedDHCPOwnerFactV3{Epoch: next.Epoch, Fact: next.Snapshot.Fact()}
+		k.snapshot = next.Snapshot
+	}
+	maskOnPolicy = phase == "policy"
+	ownerErrorNext = phase == "owner"
+	if phase == "lease" {
+		base, inject := r.lease, true
+		r.lease = observationChainSelectedLeaseV4{routedDHCPLeaseV3: base, observe: func() error {
+			if inject {
+				inject, masked = false, true
+				if freshSource {
+					advanceSource()
+				}
+				if mode == "nft-drift" {
+					delete(policyKernel.objects, routedactivation.RoutedTable)
+				}
+				marker := networkexecutor.NewLeaseObservationPendingV4(retained)
+				switch primaryMode {
+				case "observation":
+					return networkexecutor.ErrObservation
+				case "runner-sentinel":
+					return networkexecutor.ErrLeaseUnavailable
+				case "scope":
+					return networkexecutor.ErrScope
+				case "joined":
+					return errors.Join(networkexecutor.ErrObservation, marker)
+				case "wrong-fact":
+					wrong := retained
+					wrong.Sequence++
+					return networkexecutor.NewLeaseObservationPendingV4(wrong)
+				case "wrapped":
+					return fmt.Errorf("earlier failure: %w", marker)
+				case "drift-restored":
+					// Restoring the physical predicate before a later policy read
+					// cannot erase the primary verifier's earlier drift failure.
+					policyNetwork.active = false
+					if policyNetwork.Verify(ctx) == nil {
+						t.Fatal("drift injection failed")
+					}
+					policyNetwork.active = true
+					return networkexecutor.ErrObservation
+				}
+				return marker
+			}
+			return base.VerifySelectedStateV3(ctx, r.grant.Snapshot, networkexecutor.LeaseSelectedTargetV3)
+		}}
+	}
 	err = (routedDHCPGateAuthorityV3{r}).Verify(ctx, watermark)
+	if mode != "valid" {
+		if err == nil || errors.Is(err, networkexecutor.ErrLeaseGateMarginClosed) || errors.Is(err, networkexecutor.ErrLeaseGateRenewal) || !masked {
+			t.Fatal("lease failure plus margin hid unproven policy/drift", mode, err)
+		}
+		if mode != "nft-drift" && mode != "policy-error" && policyCalls != beforePolicy {
+			t.Fatal("unproven primary failure invoked policy proof", mode, policyCalls, beforePolicy)
+		}
+		if closeErr := r.closeRenewalErrorV4(ctx, err); closeErr == nil || r.forward.VerifyClosed(ctx) != nil || r.gate.VerifyClosedSelectedV3(ctx) != nil || r.gate != gate || k.grant != watermark || k.stages != stages || !reflect.DeepEqual(r.grant, grant) || reader.work != work {
+			t.Fatal("generic rejection retained permission or replaced authority", mode, closeErr)
+		}
+		return
+	}
 	if !errors.Is(err, networkexecutor.ErrLeaseGateMarginClosed) || errors.Is(err, networkexecutor.ErrLeaseGateRenewal) || !masked || policyCalls != beforePolicy+1 {
-		t.Fatal("late policy margin did not traverse real Engine/Group classification", err, policyCalls, beforePolicy)
+		t.Fatal("late margin did not traverse real Engine/Group classification", phase, err, policyCalls, beforePolicy)
 	}
 	if closeErr := r.closeRenewalErrorV4(ctx, err); !errors.Is(closeErr, networkexecutor.ErrLeaseGateMarginClosed) {
 		t.Fatal(closeErr)
