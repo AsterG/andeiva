@@ -63,6 +63,7 @@ type RoutedDHCPServerLaunchV1 struct {
 	stopError error
 	stopWatch func() bool
 	closed    bool
+	waitGate  chan struct{}
 }
 
 func (s *RoutedDHCPServerLaunchV1) PID() int {
@@ -218,7 +219,7 @@ func routedDHCPServerSealedBootstrapV1(b routedDHCPServerBootstrapV1) (*os.File,
 // Stop waits for the role leader. It does not claim that its descendants or RAW
 // sockets are gone; Root retains and verifies/drains the service cgroup next.
 func (s *RoutedDHCPServerLaunchV1) Stop(ctx context.Context) error {
-	if s == nil || ctx == nil {
+	if s == nil || ctx == nil || s.control == nil || s.done == nil || s.pid <= 1 || s.pidfd < 0 {
 		return ErrIdentity
 	}
 	if _, ok := ctx.Deadline(); !ok {
@@ -229,31 +230,64 @@ func (s *RoutedDHCPServerLaunchV1) Stop(ctx context.Context) error {
 			s.stopWatch()
 		}
 		_ = s.control.Close()
-		grace := time.NewTimer(routedDHCPServerStopGraceV1)
-		defer grace.Stop()
-		reaped := false
+	})
+	// Revocation is one-shot. Waiting is retryable: a timed-out caller retains
+	// the pidfd until another bounded call observes Wait and closes it once.
+	s.mu.Lock()
+	if s.closed {
+		err := s.stopError
+		s.mu.Unlock()
+		return err
+	}
+	if s.waitGate == nil {
+		s.waitGate = make(chan struct{}, 1)
+	}
+	gate := s.waitGate
+	s.mu.Unlock()
+	select {
+	case gate <- struct{}{}:
+		defer func() { <-gate }()
+	case <-ctx.Done():
+		return errors.Join(ctx.Err(), s.killV1())
+	}
+	s.mu.Lock()
+	closed, closeErr := s.closed, s.stopError
+	s.mu.Unlock()
+	if closed {
+		return closeErr
+	}
+	grace := time.NewTimer(routedDHCPServerStopGraceV1)
+	defer grace.Stop()
+	select {
+	case <-s.done:
+	case <-ctx.Done():
+		return errors.Join(ctx.Err(), s.killV1())
+	case <-grace.C:
+		if err := s.killV1(); err != nil {
+			return err
+		}
 		select {
 		case <-s.done:
-			reaped = true
-		case <-grace.C:
-			_ = unix.PidfdSendSignal(s.pidfd, unix.SIGKILL, nil, 0)
 		case <-ctx.Done():
-			s.stopError = ctx.Err()
-			_ = unix.PidfdSendSignal(s.pidfd, unix.SIGKILL, nil, 0)
+			return ctx.Err()
 		}
-		// pidfd stays retained until the caller's bounded wait succeeds.
-		if !reaped {
-			select {
-			case <-s.done:
-			case <-ctx.Done():
-				s.stopError = errors.Join(s.stopError, ctx.Err())
-				return
-			}
-		}
-		s.mu.Lock()
-		s.closed = true
-		s.stopError = errors.Join(s.stopError, unix.Close(s.pidfd))
-		s.mu.Unlock()
-	})
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	s.stopError = unix.Close(s.pidfd)
 	return s.stopError
+}
+
+func (s *RoutedDHCPServerLaunchV1) killV1() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	err := unix.PidfdSendSignal(s.pidfd, unix.SIGKILL, nil, 0)
+	if errors.Is(err, unix.ESRCH) {
+		return nil
+	}
+	return err
 }

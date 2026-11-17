@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -81,15 +83,24 @@ func TestRoutedDHCPServerRoleCommandV1(t *testing.T) {
 }
 
 func TestRoutedDHCPServerLaunchChildV1(t *testing.T) {
-	if os.Getenv("ANDEIVA_DHCP_SERVER_LIFETIME_CHILD") != "1" {
+	mode := os.Getenv("ANDEIVA_DHCP_SERVER_LIFETIME_CHILD")
+	if mode != "1" && mode != "slow" {
 		t.Skip("subprocess only")
 	}
 	file := os.NewFile(3, "test-lifetime")
 	defer file.Close()
+	if mode == "slow" {
+		if _, err := os.Stdout.Write([]byte("ready\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var one [1]byte
 	n, err := file.Read(one[:])
 	if n != 0 || err != io.EOF {
 		t.Fatal("lifetime channel accepted command", err)
+	}
+	if mode == "slow" {
+		time.Sleep(time.Hour)
 	}
 }
 
@@ -122,5 +133,94 @@ func TestRoutedDHCPServerLaunchStopUsesPinnedLeaderAndLifetimeEOFV1(t *testing.T
 	}
 	if launch.Alive() || launch.Stop(ctx) != nil {
 		t.Fatal("stop did not remain terminal/idempotent")
+	}
+}
+
+func TestRoutedDHCPServerLaunchStopCanFinishAfterCancelledWaitV1(t *testing.T) {
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	defer write.Close()
+	readyRead, readyWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readyRead.Close()
+	defer readyWrite.Close()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-test.run=^TestRoutedDHCPServerLaunchChildV1$", "-test.count=1")
+	cmd.Env = []string{"ANDEIVA_DHCP_SERVER_LIFETIME_CHILD=slow"}
+	cmd.ExtraFiles = []*os.File{read}
+	cmd.Stdout = readyWrite
+	fd, actualDone, err := routedDHCPServerStartV1(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := readyRead.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var ready [6]byte
+	if _, err := io.ReadFull(readyRead, ready[:]); err != nil || string(ready[:]) != "ready\n" {
+		t.Fatal("slow child not ready", err)
+	}
+	// Delay only Wait notification, making the timed-out caller deterministic
+	// even when SIGKILL and kernel reaping complete before the scheduler runs.
+	delayedDone, release := make(chan error, 1), make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWait := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseWait()
+	go func() { err := <-actualDone; <-release; delayedDone <- err }()
+	launch := &RoutedDHCPServerLaunchV1{pid: cmd.Process.Pid, pidfd: fd, control: write, done: delayedDone}
+	cancelled, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	cancel()
+	if !errors.Is(launch.Stop(cancelled), context.Canceled) {
+		t.Fatal("cancelled wait did not report cancellation")
+	}
+	if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil || launch.closed {
+		t.Fatal("pidfd was not retained until Wait", err)
+	}
+	releaseWait()
+	ctx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 1000 {
+			_ = launch.Alive()
+		}
+	}()
+	if err := launch.Stop(ctx); err != nil {
+		t.Fatal("second bounded wait could not finish", err)
+	}
+	<-done
+	if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); !errors.Is(err, unix.EBADF) || launch.Alive() {
+		t.Fatal("final pidfd not closed", err)
+	}
+	// Reuse that descriptor deliberately: a third Stop must not close a new
+	// unrelated object or signal a recycled numeric descriptor.
+	sentinel, err := os.CreateTemp(t.TempDir(), "sentinel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sentinel.Close()
+	if int(sentinel.Fd()) != fd {
+		if err := unix.Dup3(int(sentinel.Fd()), fd, unix.O_CLOEXEC); err != nil {
+			t.Fatal(err)
+		}
+		defer unix.Close(fd)
+	}
+	if err := launch.Stop(ctx); err != nil {
+		t.Fatal("terminal Stop changed result", err)
+	}
+	if err := launch.Stop(cancelled); err != nil {
+		t.Fatal("completed Stop depended on a new wait budget", err)
+	}
+	if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
+		t.Fatal("terminal Stop closed a reused descriptor", err)
 	}
 }
