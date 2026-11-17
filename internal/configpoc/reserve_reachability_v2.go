@@ -117,7 +117,7 @@ func (r *v2ReachabilityReader) reserveBundle(bundle *v2ReserveBundle, key string
 }
 
 func (r *v2ReachabilityReader) activeReserves(key string, state v2State, depth int) error {
-	if validateRoutedDHCPSelectedV3(state, r.object) != nil {
+	if validateRoutedDHCPConfigurationSelectionV4(state.RoutedDHCPConfiguration, state, r.object, func(subject, id string) (v2Operation, error) { return r.lookup(state, subject, id) }, routedDHCPConfigurationHeaderV4) != nil {
 		return ErrRecovery
 	}
 	if d := state.RoutedDHCP; d != nil {
