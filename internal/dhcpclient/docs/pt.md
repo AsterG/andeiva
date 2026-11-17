@@ -57,12 +57,20 @@ regras, rotas ou arquivos de terceiros para fazer o teste passar.
 desligado por padrão. Desligado não cria worker, timer ou descritor exclusivos;
 V3 rejeita a opção. Não ativa o runtime instalado nem oferece uma opção de API.
 
-Com D conservador inalterado e t=BOOTTIME, I=(D-t-14s)/2, somente se I≥1s.
-Os 14 s incluem margem do token de 3 s, dois orçamentos de resposta de 5 s e despacho de 1 s;
-são limites de política, não latência medida. O timer absoluto BOOTTIME inclui
-suspensão. Uma solicitação pendente, sem rajadas: SIGUSR1 não altera lastGrant,
-epoch ou prazo. Somente um hook válido os altera; um hook espontâneo também
-pode satisfazer a espera sem provar que respondeu ao sinal.
+Com D conservador inalterado, autoridade restante R=D-t, instante do hook válido
+g e concessão L: P=(L-28s)/2; I=min(g+P-t, R-22s), somente se I>=13s. O proprietário
+aprovou esta fórmula provisória de Alpha em 2026-11-17. Constantes centralizadas
+em early_policy_v4.go: adoção 12 s, resposta 5 s mais despacho 1 s, margem de token 3 s
+e segurança 1 s. O timer absoluto BOOTTIME inclui suspensão. Nem g nem SIGUSR1
+alteram lastGrant, epoch ou autoridade; somente um hook válido o faz. Uma única
+solicitação pendente; hook espontâneo pode satisfazê-la sem atribuir o ACK ao sinal.
+
+Após B2 não há solicitação de recuperação fechada: aguarda-se exclusivamente
+um grant espontâneo com autoridade restante suficiente. Mínimo Alpha suportado:
+71s com T1=floor(L/2) e custo de resposta medido abaixo de 1 s; a autoridade restante
+real é sempre validada. 54 s é apenas o limite do calendário, não o mínimo de
+continuidade/recuperação suportado. Abaixo de 71 s o encaminhamento permanece
+fechado; a integração do aviso ao administrador continua pendente.
 
 Despacho tardio, concessão curta, falha de relógio/sinal ou ausência de evidência
 válida em 5 s revogam a evidência. O helper existente deve fechar e verificar o
@@ -70,10 +78,10 @@ encaminhamento (B2); o cliente não modifica esse estado do kernel. Observaçõe
 externas também rejeitam resposta vencida se o worker atrasar. Não há EXPIRE
 fictício nem substituição automática da instância nesta implementação.
 
-Aceitação integrada pendente: mesma conexão TCP e socket UDP durante≥3
-renovações. Há uma interrupção breve por renovação, com encaminhamento fechado.
-Medir cada interrupção, mínimo/mediana/máximo, perdas e CPU/memória/goroutines
-com/sem B1; o proprietário decide o máximo aceitável após ver as medições.
+Aceitação integrada pendente: dez renovações consecutivas mantendo a mesma
+conexão TCP e socket UDP. Cada limite superior de interrupção deve ser<=10s e
+hook->Open<=12s; limites provisórios deste teste Alpha, não garantias do produto.
+Medir fases, mínimo/mediana/máximo, perdas e CPU/memória/goroutines com/sem B1.
 
 ### Medição nativa do componente, 2026-11-17
 
@@ -119,8 +127,9 @@ da API; não comprova aceitação completa nem autorização para ativar o perfi
 
 Concessão recomendada para operação desta Alpha: pelo menos 1h;120s apenas para
 estresse em laboratório. Reduz a frequência de interrupções; não altera a
-concessão do provedor nem permite rejeitar sua evidência válida. O ajuste da
-fórmula para a adoção medida ainda exige revisão separada; intervalo atual e
-limites de produção permanecem inalterados. Handover atômico é obrigatório antes
-de qualquer versão posterior à Alpha, sem desenho agora. Recuperação de API e
-nova instância continuam como gates separados.
+concessão do provedor nem permite rejeitar sua evidência válida.
+
+A fórmula provisória aprovada inclui a reserva de adoção medida, sem ampliar
+a autoridade nem relaxar os limites 10 s/12 s. Qualificação nativa e comparação final
+de recursos continuam pendentes. Handover atômico é obrigatório antes de sair de
+Alpha e não é projetado aqui. API e nova instância continuam tarefas separadas.

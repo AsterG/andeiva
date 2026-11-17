@@ -58,12 +58,20 @@ no se deben retirar reglas, rutas o archivos ajenos para hacer pasar la prueba.
 apagado por defecto. Apagado no crea worker, timer ni descriptor exclusivos;
 V3 rechaza la opción. No es activación del runtime instalado ni opción de API.
 
-Con D conservador sin modificar y t=BOOTTIME, I=(D-t-14s)/2, sólo si I≥1s.
-Los 14 s incluyen margen de token de 3 s, dos presupuestos de respuesta de 5 s y despacho de 1 s;
-son límites de política, no latencia medida. El timer absoluto BOOTTIME incluye
-suspensión. Una solicitud pendiente, sin ráfagas: SIGUSR1 no cambia lastGrant,
-epoch ni plazo. Sólo un hook válido los cambia; un hook espontáneo también
-puede satisfacer la espera sin afirmar que respondió a la señal.
+Con D conservador sin modificar, autoridad restante R=D-t, hora del hook válido
+g y concesión L: P=(L-28s)/2; I=min(g+P-t, R-22s), sólo si I>=13s. El propietario
+aprobó esta fórmula provisional de Alpha el 2026-11-17. Constantes centralizadas
+en early_policy_v4.go: adopción 12 s, respuesta 5 s más despacho 1 s, margen de token 3 s
+y seguridad 1 s. El timer absoluto BOOTTIME incluye suspensión. Ni g ni SIGUSR1
+cambian lastGrant, epoch o autoridad; sólo lo hace un hook válido. Una solicitud
+pendiente; un hook espontáneo puede satisfacerla sin atribuir su ACK a la señal.
+
+Tras B2 no se envía solicitud de recuperación cerrada: sólo se espera un grant
+espontáneo con autoridad restante suficiente. Mínimo soportado Alpha: 71 s con
+T1=floor(L/2) y sobrecoste de respuesta medido inferior a 1 s; siempre se valida
+la autoridad restante real. 54 s es sólo el mínimo de calendario, no de continuidad
+y recuperación soportadas. Por debajo de 71 s el reenvío permanece cerrado;
+la integración del aviso al administrador sigue pendiente.
 
 Despacho tardío, concesión corta, fallo de reloj/señal o falta de evidencia
 válida en 5 s revocan la evidencia. El helper existente debe cerrar y verificar
@@ -71,10 +79,10 @@ el reenvío (B2); el cliente no modifica ese estado del kernel. Una observación
 externa también rechaza respuesta vencida si el worker está demorado. No hay
 EXPIRE ficticio ni nueva instancia automática en esta implementación.
 
-Aceptación integrada pendiente: misma conexión TCP y socket UDP durante≥3
-renovaciones. Hay un corte breve por renovación con reenvío cerrado. Medir
-cada corte, mínimo/mediana/máximo, pérdidas y CPU/memoria/goroutines con/sin B1;
-el propietario decide el máximo aceptable después de ver los resultados.
+Aceptación integrada pendiente: diez renovaciones consecutivas con la misma
+conexión TCP y socket UDP. Cada cota superior de corte debe ser<=10s y
+hook->Open<=12s; son límites provisionales de esta prueba Alpha, no del producto.
+Medir fases, mínimo/mediana/máximo, pérdidas y CPU/memoria/goroutines con/sin B1.
 
 ### Medición nativa del componente, 2026-11-17
 
@@ -120,8 +128,9 @@ posterior de API; no acredita aceptación completa ni habilitación del perfil.
 
 Concesión recomendada para uso operacional de esta Alpha: al menos 1h;120s queda
 para estrés de laboratorio. Reduce la frecuencia de cortes; no cambia lo que
-asigna el proveedor ni permite rechazar su evidencia válida. Falta revisar por
-separado el ajuste de fórmula para la adopción medida; el intervalo actual y
-los límites de producción siguen intactos. El handover atómico es obligatorio
-antes de cualquier versión posterior a Alpha; no se diseña aquí. Recuperación
-de API e instancia nueva siguen siendo gates separados.
+asigna el proveedor ni permite rechazar su evidencia válida.
+
+La fórmula provisional aprobada incluye la reserva de adopción medida, sin
+ampliar autoridad ni relajar los límites 10 s/12 s. Calificación nativa y comparación
+final de recursos pendientes. El handover atómico es obligatorio antes de salir
+de Alpha y no se diseña aquí. API y nueva instancia siguen como tareas separadas.

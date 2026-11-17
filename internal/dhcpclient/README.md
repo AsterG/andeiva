@@ -94,13 +94,22 @@ creates no feature worker, timer or descriptor when disabled. The V4 owner
 bootstrap must explicitly enable it; V3 rejects that option. It is not an
 administrative API option or an installed-runtime activation.
 
-Using the unchanged conservative BOOTTIME deadline D and current time t, send
-once after I=(D-t-14s)/2 only if I≥1s. The 14 s window contains the existing 3 s token
-margin, two 5 s response budgets and a 1 s dispatch budget. These are policy limits,
-not measured latency. An absolute CLOCK_BOOTTIME timer includes suspension.
-There is one pending request. SIGUSR1 never moves lastGrant, epoch or deadline;
-only a valid hook may change them. A valid unsolicited hook can satisfy the
-request; it is not evidence that the signal caused that ACK.
+Using the unchanged conservative BOOTTIME deadline D, remaining authority R=D-t,
+valid-hook time g and lease duration L, schedule P=(L-28s)/2 and
+I=min(g+P-t, R-22s), only if I>=13s. The owner approved this provisional
+Alpha formula on 2026-11-17. Constants are centralized in early_policy_v4.go:
+12s adoption, 5s response plus 1s dispatch, 3s token margin and 1s safety.
+An absolute CLOCK_BOOTTIME timer includes suspension. Neither scheduling g
+nor SIGUSR1 changes lastGrant, epoch or authority; only a valid hook does.
+There is one pending request, and an unsolicited valid hook may satisfy it
+without proving that the signal caused the ACK.
+
+After B2, no closed recovery request is sent: wait exclusively for a spontaneous
+grant with enough actual remaining authority. The supported Alpha floor is 71 s
+with default T1=floor(L/2) and measured response overhead below 1 s; the actual
+remaining-authority check always applies. 54 s is only the calendar lower bound,
+not a supported continuity/recovery minimum. Below 71 s forwarding remains closed;
+administrator warning integration remains pending.
 
 Late dispatch, short evidence, failed signal/clock and missing valid evidence
 within 5 s revoke acquisition evidence. The existing helper must then close and
@@ -108,11 +117,11 @@ verify forwarding (B2); the client itself does not modify kernel forwarding.
 No synthetic EXPIRE, retry burst or replacement acquisition is introduced.
 External observations also reject an overdue response if the worker is delayed.
 
-Integrated acceptance remains pending: the same established TCP connection and
-UDP socket must survive at least three renewals. There is a brief interruption
-per renewal with forwarding closed. Report each interruption, min/median/max,
-packet observations and measured CPU/memory/goroutines with and without B1;
-the owner approves the acceptable maximum after seeing the measurements.
+Integrated acceptance remains pending: ten consecutive renewals must retain
+the same TCP connection and UDP socket. Every interruption upper bound must be
+<=10s and hook-to-Open <=12s; these limits are provisional for this Alpha test,
+not product guarantees. Report phases, minimum/median/maximum, packet
+observations and measured CPU/memory/goroutines with and without B1.
 
 ### Native component measurements, 2026-11-17
 
@@ -166,7 +175,8 @@ API recovery. It is not full acceptance or permission to enable the profile.
 Recommended operational Alpha lease: at least 1h;120s is a stress-laboratory
 profile. This recommendation reduces interruption frequency; it cannot change
 leases assigned by a provider or authorize rejecting their valid evidence.
-The scheduler formula requires a separately reviewed adjustment for measured
-adoption time. Its current signal interval and all production bounds remain
-unchanged. Atomic handover is required before any version after Alpha; it is
-not designed here. API recovery and new-instance recovery remain separate gates.
+The approved provisional formula above includes the measured adoption reserve;
+it does not extend authority or relax the 10s/12s acceptance limits. Final native
+qualification and resource comparison remain pending. Atomic handover is required
+before any version after Alpha; it is not designed here. API recovery and
+new-instance recovery remain separate gates.

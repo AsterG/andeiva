@@ -157,7 +157,10 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 	if scope.EarlyRenewalV4 {
 		c.early = newEarlyRenewal()
 	}
-	cmd := exec.Command("/usr/sbin/dhcpcd", "-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath, scope.Interface) // #nosec G204 -- Fixed engine, hook and config; allowlisted interface bound to pinned namespaces; no shell.
+	args := []string{"-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath}
+	args = append(args, diagnostic.debugArguments()...)
+	args = append(args, scope.Interface)
+	cmd := exec.Command("/usr/sbin/dhcpcd", args...) // #nosec G204 -- Fixed engine, hook and config; allowlisted interface bound to pinned namespaces; no shell.
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout = w
 	// No raw lease/options or engine diagnostics escape through public output.
