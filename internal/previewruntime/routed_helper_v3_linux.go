@@ -212,7 +212,7 @@ func assembleRoutedHelperV3(ctx context.Context, m Metadata, ids Identities, o R
 		go func() { defer close(result.dhcpDone); result.session.dhcp.Run(lifetime) }()
 	}
 	if o.DHCPJobs != nil {
-		result.jobs, e = newRoutedDHCPJobsHelperV4(lifetime, *o.DHCPJobs, full, o.Authority, result.session.integrity, o.Access.ReaderGID)
+		result.jobs, e = newRoutedDHCPJobsHelperV4(lifetime, *o.DHCPJobs, full, reader, o.Authority, result.session.integrity, o.Access.ReaderGID)
 		if e != nil {
 			return nil, e
 		}

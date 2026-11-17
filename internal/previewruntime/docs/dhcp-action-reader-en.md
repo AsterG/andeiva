@@ -5,3 +5,5 @@ The helper uses the same selected action-authority reader as ordinary routed ope
 All four authority checks and original RPC deadlines remain. No cross-request cache is introduced. Tests exercise prepared/applied/withdrawn/released states with both reader policies, foreign work/identity, substituted reserve and missing terminal FinalWork. Existing runtime closure and generic dependency/selector negatives remain required.
 
 Run: `go test -race ./internal/configpoc -run 'TestRoutedDHCPSelectedV3(IndependentFullReaderAndRetirement|ActionReaderAndRetirement)'` and `go test -race ./internal/previewruntime -run 'TestRoutedDHCPRuntimeV3'`. Native renewal and API-restart timing require a separate Debian laboratory run; unit timings are not appliance throughput guarantees.
+
+The selected DHCP jobs profile also keeps a full reader for inspection and preflight, and passes the existing action reader to operational lease checks. This wiring changes no RPC deadline or authority check.
