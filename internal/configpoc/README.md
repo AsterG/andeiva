@@ -9,6 +9,10 @@ the production database.
 Developer guides: [English](docs/en.md), [Español](docs/es.md),
 [Português](docs/pt.md).
 
+The [routed persistence qualification](ROUTED_PERSISTENCE_QUALIFICATION.md) reuses
+the existing Commit/Confirm/rollback/Save/restart tests in one bounded Linux run.
+It is not native appliance or packet-flow qualification.
+
 ## Journal reading and capacity
 
 The store validates the complete committed chain at open, retaining lightweight
