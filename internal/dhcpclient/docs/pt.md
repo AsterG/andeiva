@@ -104,3 +104,23 @@ e aquisição, antes de aguardar a drenagem de stderr. Um descendente que retenh
 esse canal não prolonga a autoridade; eventos tardios e comandos não a recuperam.
 A terminação do grupo e a coleta do processo são preservadas. Isso não garante
 um prazo de encerramento se o leitor do fluxo ficar bloqueado.
+
+## Interrupções medidas na Alpha — 2026-11-17
+
+O proprietário aprovou provisoriamente o máximo de 10s por renovação apenas para
+este teste do marco Alpha. Limite superior medido acima de 10s reprova o teste;
+não é uma meta de produto. Três interrupções em Debian com duas vCPU mediram
+7,897–9,406s,7,813–9,336s e 7,654–9,268s. A mesma conexão TCP entregou 308/308
+mensagens com 15 retransmissões; o mesmo socket UDP enviou 1851 datagramas e recebeu
+943 ecos:908 solicitações não observadas no destino após drenagem limitada. Há
+perda UDP durante o fechamento. São observações da aplicação, não uma captura
+exata de todos os pacotes. O ensaio completo FALHOU 141,15s na recuperação posterior
+da API; não comprova aceitação completa nem autorização para ativar o perfil.
+
+Concessão recomendada para operação desta Alpha: pelo menos 1h;120s apenas para
+estresse em laboratório. Reduz a frequência de interrupções; não altera a
+concessão do provedor nem permite rejeitar sua evidência válida. O ajuste da
+fórmula para a adoção medida ainda exige revisão separada; intervalo atual e
+limites de produção permanecem inalterados. Handover atômico é obrigatório antes
+de qualquer versão posterior à Alpha, sem desenho agora. Recuperação de API e
+nova instância continuam como gates separados.

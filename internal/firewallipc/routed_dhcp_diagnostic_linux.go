@@ -115,7 +115,7 @@ func (d *routedDHCPDiagnosticRecorderV1) failure(stage string, err, ctxErr error
 }
 
 func (d *routedDHCPDiagnosticRecorderV1) record(side, verb string, started time.Time, err, ctxErr error) {
-	if (side != "client" && side != "helper") || !RoutedDHCPVerbV3(verb) || started.IsZero() {
+	if (side != "client" && side != "helper" && !(side == "queue" && verb == "dhcp_renew")) || !RoutedDHCPVerbV3(verb) || started.IsZero() {
 		return
 	}
 	d.append(side, verb, "", started, err, ctxErr)

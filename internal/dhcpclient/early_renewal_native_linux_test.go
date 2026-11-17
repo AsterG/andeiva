@@ -38,7 +38,7 @@ func TestNativeDHCPEarlyRenewalResources(t *testing.T) {
 		t.Fatal("unisolated resource test")
 	}
 	baseline := nativeBaseline(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 95*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 185*time.Second)
 	defer cancel()
 	c, err := StartIsolated(ctx, scope)
 	if err != nil {
@@ -46,8 +46,8 @@ func TestNativeDHCPEarlyRenewalResources(t *testing.T) {
 	}
 	defer c.Stop()
 	first := awaitLease(t, c, 0, 35*time.Second)
-	if first.Event.Seconds != 60 {
-		t.Fatal("comparison requires same 60s lease", first.Event.Seconds)
+	if first.Event.Seconds != 120 {
+		t.Fatal("comparison requires same 120s lease", first.Event.Seconds)
 	}
 	remove := nativeApplyWANLease(t, scope, first)
 	defer remove()
@@ -68,7 +68,7 @@ func TestNativeDHCPEarlyRenewalResources(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if now-started >= int64(55*time.Second) {
+		if now-started >= int64(145*time.Second) {
 			break
 		}
 		lease, err := c.Current()

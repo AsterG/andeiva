@@ -15,8 +15,10 @@ import (
 // Root assembly authenticates a single owner stream. No field below is accepted
 // from HTTP or the API/helper request channel. A new owner needs a new assembly.
 type RoutedDHCPOwnerFactV3 struct {
-	Epoch uint64
-	Fact  networkexecutor.LeaseFact
+	Epoch        uint64
+	Fact         networkexecutor.LeaseFact
+	hookBootNS   int64 // Authenticated V4 event metadata; never stored as a new lease bound.
+	leaseSeconds uint32
 }
 
 type routedDHCPLeaseV3 interface {
@@ -88,6 +90,14 @@ type RoutedDHCPRuntimeV3 struct {
 	renewalProfile            RoutedDHCPRenewalProfileV4
 	renewalWaiting            bool
 	retired                   bool // A V4 retired owner instance never acquires again.
+	adoptionClock             func() (int64, error)
+	hookEpoch                 uint64
+	hookBootNS                int64
+	budgetRejectedEpoch       uint64
+	adoptionOverruns          uint64
+	marginClosures            uint64
+	lastMarginEpoch           uint64
+	noticeV4                  string
 }
 
 // Gate callbacks run only while runtime.mu is held. They do not reenter Gate,
@@ -99,7 +109,12 @@ func (a routedDHCPGateAuthorityV3) Current(ctx context.Context) (networkexecutor
 	if r.work == "" {
 		return networkexecutor.LeaseGateGrant{}, ErrUnavailable
 	}
-	if r.sameOwner(ctx, r.grant) != nil {
+	if ownerErr := r.sameOwner(ctx, r.grant); ownerErr != nil {
+		if r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
+			if _, margin := routedDHCPMarginV4(ownerErr); margin {
+				return networkexecutor.LeaseGateGrant{}, errors.Join(networkexecutor.ErrLeaseGateMarginClosed, ErrUnavailable)
+			}
+		}
 		selected, err := r.selected(ctx, r.work)
 		if err == nil && selected.Phase() == "applied" && r.sameEffectiveRenewalPendingV4(ctx, selected) {
 			return networkexecutor.LeaseGateGrant{}, errors.Join(networkexecutor.ErrLeaseGateRenewal, ErrUnavailable)
@@ -116,6 +131,9 @@ func (a routedDHCPGateAuthorityV3) Verify(ctx context.Context, g networkexecutor
 		return configpoc.ErrRecovery
 	}
 	if err := r.sameOwner(ctx, r.grant); err != nil {
+		if _, margin := routedDHCPMarginV4(err); margin && r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
+			return errors.Join(networkexecutor.ErrLeaseGateMarginClosed, configpoc.ErrRecovery)
+		}
 		if r.sameEffectiveRenewalPendingV4(ctx, p) {
 			return errors.Join(networkexecutor.ErrLeaseGateRenewal, configpoc.ErrRecovery)
 		}
@@ -137,6 +155,9 @@ func (a routedDHCPGateAuthorityV3) Verify(ctx context.Context, g networkexecutor
 		return configpoc.ErrRecovery
 	}
 	err = r.sameOwner(ctx, r.grant)
+	if _, margin := routedDHCPMarginV4(err); margin && r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
+		return errors.Join(networkexecutor.ErrLeaseGateMarginClosed, configpoc.ErrRecovery)
+	}
 	if err != nil && r.sameEffectiveRenewalPendingV4(ctx, p) {
 		return errors.Join(networkexecutor.ErrLeaseGateRenewal, configpoc.ErrRecovery)
 	}
@@ -163,7 +184,14 @@ func (r *RoutedDHCPRuntimeV3) sameEffectiveRenewalPendingV4(ctx context.Context,
 }
 
 func (r *RoutedDHCPRuntimeV3) sameOwner(ctx context.Context, g configpoc.RoutedDHCPGrantV3) error {
+	if done := networkexecutor.StartNativeLeaseSpanV4("verify_owner"); done != nil {
+		defer done()
+	}
 	x, err := r.current(ctx)
+	r.observeHookV4(x, err)
+	if _, margin := routedDHCPMarginV4(err); margin && r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
+		return errors.Join(configpoc.ErrRecovery, err)
+	}
 	if err != nil || x.Epoch == 0 || x.Epoch != g.Epoch || x.Fact.Owner != r.owner || x.Fact.Revoked || x.Fact != g.Snapshot.Fact() || ctx.Err() != nil {
 		return configpoc.ErrRecovery
 	}
@@ -171,6 +199,9 @@ func (r *RoutedDHCPRuntimeV3) sameOwner(ctx context.Context, g configpoc.RoutedD
 }
 
 func (r *RoutedDHCPRuntimeV3) selected(ctx context.Context, work string) (routedDHCPWorkV3, error) {
+	if done := networkexecutor.StartNativeLeaseSpanV4("selected_authority"); done != nil {
+		defer done()
+	}
 	p, err := r.reader.Resolve(ctx, work)
 	if err != nil || p == nil || p.Reference().WorkHash != work || p.Snapshot().Identity != r.identity || p.Snapshot().Fact().Owner != r.owner || p.Epoch() == 0 {
 		return nil, configpoc.ErrRecovery
@@ -179,6 +210,9 @@ func (r *RoutedDHCPRuntimeV3) selected(ctx context.Context, work string) (routed
 }
 
 func (r *RoutedDHCPRuntimeV3) closeUnder(ctx context.Context) error {
+	if done := networkexecutor.StartNativeLeaseSpanV4("runtime_close"); done != nil {
+		defer done()
+	}
 	r.opened = false
 	var gateErr error
 	if r.gate != nil {
@@ -195,6 +229,9 @@ func (r *RoutedDHCPRuntimeV3) closeUnder(ctx context.Context) error {
 }
 
 func (r *RoutedDHCPRuntimeV3) currentUnder(ctx context.Context) (configpoc.RoutedDHCPGrantV3, error) {
+	if done := networkexecutor.StartNativeLeaseSpanV4("current_evidence"); done != nil {
+		defer done()
+	}
 	// Current is a bounded, read-only owner observation. Integrity inspection
 	// may temporarily pause effects, but must not make the selected lease look
 	// absent and trigger a destructive controller withdrawal.
@@ -203,6 +240,7 @@ func (r *RoutedDHCPRuntimeV3) currentUnder(ctx context.Context) (configpoc.Route
 		return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
 	}
 	x, err := r.current(ctx)
+	r.observeHookV4(x, err)
 	if err != nil || x.Epoch == 0 || x.Fact.Owner != r.owner || x.Fact.Revoked {
 		firewallipc.RecordRoutedDHCPFailureV1("current_owner", errors.Join(err, configpoc.ErrRecovery), ctx)
 		return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
@@ -248,6 +286,10 @@ func (r *RoutedDHCPRuntimeV3) begin(ctx context.Context) (configpoc.RoutedDHCPGr
 		}
 	}
 	if currentErr != nil {
+		if state, margin := routedDHCPMarginV4(currentErr); margin && r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 && r.lease == nil && r.work == "" && !r.opened && !r.withdrawn && r.forward.VerifyClosed(ctx) == nil && (r.gate == nil || r.gate.VerifyClosedSelectedV3(ctx) == nil) && r.reader.VerifyDHCPReleasedV3(ctx) == nil && r.ready() == nil && ctx.Err() == nil {
+			r.noteMarginClosedV4(state.epoch)
+			return configpoc.RoutedDHCPGrantV3{}, currentErr
+		}
 		if currentErr == errRoutedDHCPInitialWaitingV1 && x == (RoutedDHCPOwnerFactV3{}) && r.lease == nil && r.work == "" && !r.opened && !r.withdrawn && r.forward.VerifyClosed(ctx) == nil && (r.gate == nil || r.gate.VerifyClosedSelectedV3(ctx) == nil) && r.reader.VerifyDHCPReleasedV3(ctx) == nil && r.ready() == nil && ctx.Err() == nil {
 			return configpoc.RoutedDHCPGrantV3{}, errRoutedDHCPInitialWaitingV1
 		}
@@ -356,9 +398,15 @@ func (r *RoutedDHCPRuntimeV3) retire(ctx context.Context) error {
 }
 
 func (r *RoutedDHCPRuntimeV3) open(ctx context.Context, work string) error {
+	if done := networkexecutor.StartNativeLeaseSpanV4("runtime_open"); done != nil {
+		defer done()
+	}
 	if r.failed || r.ready() != nil || r.opened || r.work != work || r.gate == nil || r.lease == nil {
 		firewallipc.RecordRoutedDHCPFailureV1("open_state", configpoc.ErrRecovery, ctx)
 		return configpoc.ErrRecovery
+	}
+	if err := r.checkAdoptionBudgetV4(ctx); err != nil {
+		return err
 	}
 	p, err := r.selected(ctx, work)
 	if err != nil || p.Phase() != "applied" || !r.selectedGrantV4(p, r.grant) {
@@ -369,25 +417,38 @@ func (r *RoutedDHCPRuntimeV3) open(ctx context.Context, work string) error {
 		firewallipc.RecordRoutedDHCPFailureV1("open_owner", err, ctx)
 		return configpoc.ErrRecovery
 	}
+	if err := r.checkAdoptionBudgetV4(ctx); err != nil {
+		return err
+	}
 	if err := r.gate.Stage(ctx); err != nil {
 		firewallipc.RecordRoutedDHCPFailureV1("open_gate_stage", err, ctx)
 		return r.closeRenewalErrorV4(ctx, err)
+	}
+	if err := r.checkAdoptionBudgetV4(ctx); err != nil {
+		return err
 	}
 	if err := r.gate.Open(ctx); err != nil {
 		firewallipc.RecordRoutedDHCPFailureV1("open_gate_open", err, ctx)
 		return r.closeRenewalErrorV4(ctx, err)
 	}
+	if err := r.checkAdoptionBudgetV4(ctx); err != nil {
+		return err
+	}
 	if err := r.forward.Enable(ctx, r.gate.Verify); err != nil {
 		firewallipc.RecordRoutedDHCPFailureV1("open_forward", err, ctx)
 		return r.closeRenewalErrorV4(ctx, err)
 	}
+	if err := r.checkAdoptionBudgetV4(ctx); err != nil {
+		return err
+	}
 	r.opened = true
+	r.noticeV4 = ""
 	return nil
 }
 
 func (r *RoutedDHCPRuntimeV3) closeRenewalErrorV4(ctx context.Context, cause error) error {
 	closed := r.closeUnder(ctx)
-	if r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 && closed == nil && (errors.Is(cause, networkexecutor.ErrLeaseGateRenewal) || errors.Is(cause, networkexecutor.ErrLeaseGateExpired)) {
+	if r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 && closed == nil && (errors.Is(cause, networkexecutor.ErrLeaseGateRenewal) || errors.Is(cause, networkexecutor.ErrLeaseGateExpired) || errors.Is(cause, networkexecutor.ErrLeaseGateMarginClosed)) {
 		r.renewalWaiting = true
 	}
 	return errors.Join(cause, closed)
@@ -447,7 +508,11 @@ func (r *RoutedDHCPRuntimeV3) dispatch(ctx context.Context, c firewallipc.Routed
 	if r == nil || ctx == nil || ctx.Err() != nil {
 		return nil, ErrIdentity
 	}
+	finishWait := networkexecutor.StartNativeLeaseSpanV4("rpc_wait")
 	r.mu.Lock()
+	if finishWait != nil {
+		finishWait()
+	}
 	defer r.mu.Unlock()
 	var g configpoc.RoutedDHCPGrantV3
 	var err error

@@ -150,3 +150,23 @@ directory to contain `dhcp-native.test` built from this package and
 
 The upstream dhcpcd source is BSD-2-Clause. This repository integrates the packaged
 binary without vendoring or redistributing it; package/SBOM closure remains a release gate.
+
+## Alpha interruption measurements — 2026-11-17
+
+The owner provisionally approved a maximum 10s interruption per renewal for this
+Alpha milestone test only. Any measured upper bound above 10s fails the test;
+this is not a product target. Three two-vCPU Debian interruptions measured
+7.897–9.406s,7.813–9.336s and 7.654–9.268s. The same TCP connection delivered 308/308
+messages with 15 retransmissions; the same UDP socket sent 1851 datagrams and
+received 943 echoes, leaving 908 requests unobserved at the sink after bounded
+drain. UDP loss during closure is a limitation. These are application observations,
+not an exact wire-packet capture. The complete trial FAILED 141.15s on subsequent
+API recovery. It is not full acceptance or permission to enable the profile.
+
+Recommended operational Alpha lease: at least 1h;120s is a stress-laboratory
+profile. This recommendation reduces interruption frequency; it cannot change
+leases assigned by a provider or authorize rejecting their valid evidence.
+The scheduler formula requires a separately reviewed adjustment for measured
+adoption time. Its current signal interval and all production bounds remain
+unchanged. Atomic handover is required before any version after Alpha; it is
+not designed here. API recovery and new-instance recovery remain separate gates.

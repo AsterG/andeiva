@@ -51,21 +51,32 @@ func (t *earlyTestTimer) close()             { t.timer.Stop(); close(t.stop); <-
 func TestEarlyRenewalFormula(t *testing.T) {
 	sec := int64(time.Second)
 	for _, tc := range []struct {
+		length    uint32
 		remaining int64
+		age       int64
 		interval  int64
 		ok        bool
-	}{{14 * sec, 0, false}, {16*sec - 1, 0, false}, {16 * sec, sec, true}, {60 * sec, 23 * sec, true}, {60*sec + 1, 23 * sec, true}} {
-		now := 100 * sec
-		due, ok := earlyRenewalDue(now, now+tc.remaining)
+	}{
+		{30, 30 * sec, 0, 0, false}, {53, 53 * sec, 0, 0, false},
+		{54, 54 * sec, 0, 13 * sec, true}, {54, 35 * sec, 0, 13 * sec, true},
+		{54, 35*sec - 1, 0, 0, false}, {54, 54 * sec, 1, 0, false},
+		{60, 60 * sec, 0, 16 * sec, true}, {60, 60 * sec, 3 * sec, 13 * sec, true},
+		{60, 60 * sec, 3*sec + 1, 0, false}, {120, 120 * sec, 0, 46 * sec, true},
+		{120, 60 * sec, sec, 38 * sec, true}, {3600, 3600 * sec, 0, 1786 * sec, true},
+		{86400, 86400 * sec, 0, 43186 * sec, true},
+	} {
+		now := 1000 * sec
+		lease := Lease{Event: Event{Seconds: tc.length, BootNS: now - tc.age}, DeadlineBootNS: now + tc.remaining}
+		due, ok := earlyRenewalDue(now, lease)
 		if ok != tc.ok || ok && due-now != tc.interval {
 			t.Fatalf("R=%d due=%d ok=%v", tc.remaining, due, ok)
 		}
-		if ok && due+int64(earlyDispatch+earlyResponse) >= now+tc.remaining-int64(earlyTokenMargin+earlyResponse) {
-			t.Fatal("does not preserve the token and response margins")
+		if ok && due+int64(earlyResponseDispatch) > now+tc.remaining-int64(earlyAdoptionReserve) {
+			t.Fatal("does not preserve adoption, token and safety margins")
 		}
 	}
 	for _, pair := range [][2]int64{{0, sec}, {-1, sec}, {sec, sec}, {2 * sec, sec}} {
-		if _, ok := earlyRenewalDue(pair[0], pair[1]); ok {
+		if _, ok := earlyRenewalDue(pair[0], Lease{Event: Event{Seconds: 60, BootNS: sec}, DeadlineBootNS: pair[1]}); ok {
 			t.Fatal("invalid clock/deadline accepted")
 		}
 	}
@@ -77,9 +88,9 @@ func TestEarlyRenewalShortFirstGrantKeepsStartupLowerBound(t *testing.T) {
 		lease, arrival int
 		eligible       bool
 	}{
-		{10, 1, false}, {10, 11, false}, {20, 1, true}, {20, 5, false},
-		{20, 20, false}, {30, 1, true}, {30, 15, false}, {30, 31, false},
-		{60, 1, true}, {60, 44, true}, {60, 45, false},
+		{10, 1, false}, {20, 1, false}, {30, 1, false}, {30, 31, false},
+		{53, 1, false}, {54, 1, true}, {54, 20, false},
+		{60, 1, true}, {60, 25, true}, {60, 26, false}, {120, 44, true},
 	} {
 		c := &Client{iface: "wan0", pid: 123, lastGrant: 100 * sec, initialWaiting: true}
 		now := (100 + int64(tc.arrival)) * sec
@@ -93,7 +104,7 @@ func TestEarlyRenewalShortFirstGrantKeepsStartupLowerBound(t *testing.T) {
 			if c.lease.DeadlineBootNS != (100+int64(tc.lease))*sec {
 				t.Fatal("grant extended startup lower bound")
 			}
-			_, eligible = earlyRenewalDue(now, c.lease.DeadlineBootNS)
+			_, eligible = earlyRenewalDue(now, c.lease)
 		}
 		if eligible != tc.eligible {
 			t.Fatalf("lease=%d arrival=%d eligible=%v", tc.lease, tc.arrival, eligible)
@@ -142,7 +153,7 @@ func startEarlyTestOwner(ctx context.Context) *earlyTestOwner {
 
 func (h *earlyTestOwner) grant(epoch uint64, remaining time.Duration) {
 	h.mu.Lock()
-	h.o = earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: epoch, Lease: Lease{Epoch: epoch, DeadlineBootNS: h.clock() + int64(remaining)}}, completedEpoch: epoch - 1, completedBootNS: h.clock()}
+	h.o = earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: epoch, Lease: Lease{Event: Event{Seconds: 60, BootNS: h.clock()}, Epoch: epoch, DeadlineBootNS: h.clock() + int64(remaining)}}, completedEpoch: epoch - 1, completedBootNS: h.clock()}
 	h.mu.Unlock()
 	h.wake <- struct{}{}
 	synctest.Wait()
@@ -174,7 +185,7 @@ func TestEarlyRenewalThreeCyclesOnlyHooksAdvanceEvidence(t *testing.T) {
 		for epoch := uint64(1); epoch <= 3; epoch++ {
 			h.grant(epoch, 60*time.Second)
 			before := h.observationSnapshot()
-			time.Sleep(23 * time.Second)
+			time.Sleep(16 * time.Second)
 			synctest.Wait()
 			if len(h.signalSnapshot()) != int(epoch) || h.signalSnapshot()[epoch-1] != epoch || !reflect.DeepEqual(before, h.observationSnapshot()) {
 				t.Fatal("signal changed evidence or wrong number of requests", h.signalSnapshot())
@@ -202,7 +213,7 @@ func TestEarlyRenewalUnansweredRequestClosesWithoutRetry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := startEarlyTestOwner(context.Background())
 		h.grant(1, 60*time.Second)
-		time.Sleep(28 * time.Second)
+		time.Sleep(21 * time.Second)
 		<-h.exited
 		if h.failureSnapshot() != "early_response_timeout" || len(h.signalSnapshot()) != 1 || h.o.ObservedEpoch != 1 {
 			t.Fatal("missing response did not close once", h.failureSnapshot(), h.signalSnapshot())
@@ -222,7 +233,7 @@ func TestEarlyRenewalUnsolicitedGrantReplacesOldSchedule(t *testing.T) {
 		h.grant(1, 60*time.Second)
 		time.Sleep(10 * time.Second)
 		h.grant(2, 60*time.Second)
-		time.Sleep(13 * time.Second)
+		time.Sleep(6 * time.Second)
 		synctest.Wait()
 		if len(h.signalSnapshot()) != 0 {
 			t.Fatal("old epoch signalled")
@@ -266,7 +277,7 @@ func TestEarlyRenewalNoLeaseAndOwnerLossDisarm(t *testing.T) {
 func TestEarlyRenewalRejectsUnsafeSchedule(t *testing.T) {
 	sec := int64(time.Second)
 	grant := func(epoch uint64, deadline int64) earlyRenewalObservation {
-		return earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: epoch, Lease: Lease{Epoch: epoch, DeadlineBootNS: deadline}}}
+		return earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: epoch, Lease: Lease{Event: Event{Seconds: 60, BootNS: 100 * sec}, Epoch: epoch, DeadlineBootNS: deadline}}}
 	}
 	for _, tc := range []struct {
 		name string
@@ -306,7 +317,7 @@ func TestEarlyRenewalClockAndSignalErrorsRevoke(t *testing.T) {
 				return int64(100*time.Second + time.Since(start)), nil
 			}
 			runEarlyRenewal(context.Background(), nil, nil, clock, func(int64) (earlyRenewalObservation, error) {
-				return earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: 1, Lease: Lease{Epoch: 1, DeadlineBootNS: int64(160 * time.Second)}}}, nil
+				return earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: 1, Lease: Lease{Event: Event{Seconds: 60, BootNS: int64(100 * time.Second)}, Epoch: 1, DeadlineBootNS: int64(160 * time.Second)}}}, nil
 			}, func(uint64, int64) (int64, error) { return 0, ErrUnavailable }, func(s string) { stage = s }, func() (earlyRenewalTimer, error) {
 				return newEarlyTestTimer(func() int64 { n, _ := clock(); return n }), nil
 			})
@@ -325,7 +336,7 @@ func TestEarlyRenewalLateHookCannotWinDelayedWorker(t *testing.T) {
 	sec := int64(time.Second)
 	for _, accepted := range []int64{127 * sec, 128*sec - 1, 128 * sec, 129 * sec} {
 		s := earlyRenewalCycle{epoch: 1, sentEpoch: 1, responseBy: 128 * sec}
-		o := earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: 2, Lease: Lease{Epoch: 2, DeadlineBootNS: 190 * sec}}, completedEpoch: 1, completedBootNS: accepted}
+		o := earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: 2, Lease: Lease{Event: Event{Seconds: 60, BootNS: accepted}, Epoch: 2, DeadlineBootNS: 190 * sec}}, completedEpoch: 1, completedBootNS: accepted}
 		_, failure := s.next(o, 130*sec)
 		if (failure == "") != (accepted < 128*sec) {
 			t.Fatal("late acceptance bypasses pending or timely hook rejected", accepted, failure)
@@ -338,7 +349,7 @@ func TestEarlyRenewalCompletedRequestSurvivesLaterUnsolicitedHooks(t *testing.T)
 	s := earlyRenewalCycle{epoch: 1, sentEpoch: 1, responseBy: 128 * sec}
 	// Epoch2 was accepted at127; unsolicited epoch3 arrived at129. Completion
 	// belongs to the request, not to the latest hook's timestamp or epoch.
-	o := earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: 3, Lease: Lease{Epoch: 3, DeadlineBootNS: 190 * sec}}, completedEpoch: 1, completedBootNS: 127 * sec}
+	o := earlyRenewalObservation{AcquisitionObservation: AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: 3, Lease: Lease{Event: Event{Seconds: 60, BootNS: 129 * sec}, Epoch: 3, DeadlineBootNS: 190 * sec}}, completedEpoch: 1, completedBootNS: 127 * sec}
 	if _, failure := s.next(o, 130*sec); failure != "" {
 		t.Fatal(failure)
 	}

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — optional Alpha DHCP early renewal (draft)
+
+- Add a default-off V4 renewal profile with one outstanding request and the approved conservative authority budgets. B2 margin closure waits only for a spontaneous valid grant; no recovery probe is sent.
+- Prepare ten-renewal TCP/UDP measurements, hook-to-Open and interruption guards, and bounded phase diagnostics. Native acceptance and administrator warning/diagnostic integration remain pending.
+- Alpha renewals interrupt forwarding; previously measured upper bounds reached9.406s with TCP retained and UDP loss. The provisional10s interruption/12s adoption limits apply only to this Alpha test.
+- New-instance recovery after real expiry is deferred beyond this milestone by the owner. Access remains closed; manual recovery and a generic administrator notice are required. Retained-owner API restart recovery is a separate defect and is not claimed as fixed here.
+
 ## Unreleased — internal early DHCP renewal profile
 
 - Add an explicit V4-only early-renewal scheduler using the unchanged conservative deadline and an absolute BOOTTIME timer. One pending signal, bounded response wait and no automatic replacement acquisition. Disabled by default; component resource measurements are recorded, while integrated traffic qualification remains pending. There is a brief interruption per renewal under the approved close-before-refresh handover.

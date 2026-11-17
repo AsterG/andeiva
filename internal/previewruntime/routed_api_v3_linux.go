@@ -75,7 +75,7 @@ func openRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identities,
 		}
 		return nil, ErrIdentity
 	}
-	if o.RoutedFreshScope && o.RoutedRebootScope || ((o.RoutedDHCP || o.RoutedFreshScope || o.RoutedRebootScope) && (!integrity || !o.RoutedInventory)) || (o.RoutedInventory && (!integrity || o.NetworkInventory != nil)) || ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.ValidateRouted() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
+	if o.RoutedDHCPRenewalV4 && !o.RoutedDHCP || o.RoutedFreshScope && o.RoutedRebootScope || ((o.RoutedDHCP || o.RoutedFreshScope || o.RoutedRebootScope) && (!integrity || !o.RoutedInventory)) || (o.RoutedInventory && (!integrity || o.NetworkInventory != nil)) || ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.ValidateRouted() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
 		return fail()
 	}
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}
@@ -149,6 +149,11 @@ func connectRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identiti
 			return ConnectInheritedRoutedRebootScopeV4(ctx, c, uid, gid, pid, run, ns, o.RoutedDHCP)
 		}
 	}
+	if o.RoutedDHCPRenewalV4 {
+		connect = func(call context.Context, conn *net.UnixConn, uid, gid uint32, pid int32, run string, ns uint64) (*firewallipc.RoutedClientV3, error) {
+			return ConnectInheritedRoutedDHCPRenewalV4(call, conn, uid, gid, pid, run, ns, o.RoutedFreshScope, o.RoutedRebootScope)
+		}
+	}
 	client, e := connect(ctx, routed, ids.HelperUID, ids.IPCGID, routedPID, m.RunID, m.GatewayNamespace)
 	if e != nil {
 		if legacy != nil {
@@ -177,7 +182,7 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 			}
 		}
 	}()
-	if ctx == nil || client == nil || client.FreshScopeEnabled() != o.RoutedFreshScope || o.Runtime.FreshScope != nil || client.RebootScopeEnabled() != o.RoutedRebootScope || o.Runtime.RebootScope != nil || o.RoutedFreshScope && o.RoutedRebootScope || client.DHCPEnabled() != o.RoutedDHCP || o.Runtime.DHCPRecovery != nil || (client.InventoryEnabled() != o.RoutedInventory) || (o.RoutedInventory && o.NetworkInventory != nil) || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
+	if ctx == nil || client == nil || client.DHCPRenewalEnabledV4() != o.RoutedDHCPRenewalV4 || client.FreshScopeEnabled() != o.RoutedFreshScope || o.Runtime.FreshScope != nil || client.RebootScopeEnabled() != o.RoutedRebootScope || o.Runtime.RebootScope != nil || o.RoutedFreshScope && o.RoutedRebootScope || client.DHCPEnabled() != o.RoutedDHCP || o.Runtime.DHCPRecovery != nil || (client.InventoryEnabled() != o.RoutedInventory) || (o.RoutedInventory && o.NetworkInventory != nil) || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
 		return nil, ErrIdentity
 	}
 	authority, e := NewRoutedRemoteAuthority(client, identity)
@@ -232,16 +237,7 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 	}
 	if client.IntegrityEnabled() {
 		if result.DHCP != nil {
-			result.DHCP.scheduleV4(client.DHCPSelectedV4())
-			result.integrityScheduler = startRoutedIntegrityCallbackV4(service, func(call context.Context) error {
-				// Same ordering as Reconcile: controller lock, then store barrier.
-				// Existing valid WAN remains installed during full inspection.
-				result.DHCP.mu.Lock()
-				defer result.DHCP.mu.Unlock()
-				err := service.InspectRuntimeV1(call)
-				result.DHCP.scheduleV4(err == nil && client.DHCPSelectedV4())
-				return err
-			})
+			result.integrityScheduler = result.DHCP.startIntegritySchedulerV4(service)
 		} else {
 			result.integrityScheduler = startRoutedIntegritySchedulerV3(service)
 		}

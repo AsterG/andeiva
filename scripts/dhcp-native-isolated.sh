@@ -27,7 +27,7 @@ for artifact in "$script" "$lab/dhcp-native.test" "$lab/andeiva-dhcp-hook"; do
   (( (8#$mode & 0022) == 0 ))
 done
 if [[ $# == 1 && $1 == --check-artifacts ]]; then exit 0; fi
-if [[ $# == 0 || $# == 1 && ( $1 == --early-renewal-off || $1 == --early-renewal-on ) ]]; then
+if [[ $# == 0 || $# == 1 && ( $1 == --early-renewal-off || $1 == --early-renewal-on || $1 == --natural-margin-70 || $1 == --natural-margin-71 ) ]]; then
 	profile=${1:-legacy}
   [[ -x /usr/sbin/dhcpcd && -x /usr/bin/busybox ]]
   [[ -x ./dhcp-native.test && -x ./andeiva-dhcp-hook ]]
@@ -37,7 +37,7 @@ if [[ $# == 0 || $# == 1 && ( $1 == --early-renewal-off || $1 == --early-renewal
   exec 5</proc/self/ns/pid
   exec /usr/bin/unshare --mount --net --pid --fork -- /bin/bash "$script" isolated "$profile"
 fi
-[[ $# == 2 && $1 == isolated && ( $2 == legacy || $2 == --early-renewal-off || $2 == --early-renewal-on ) ]]
+[[ $# == 2 && $1 == isolated && ( $2 == legacy || $2 == --early-renewal-off || $2 == --early-renewal-on || $2 == --natural-margin-70 || $2 == --natural-margin-71 ) ]]
 profile=$2
 # Reject direct entry before any mount operation. The retained descriptors must
 # identify this laboratory host, while both current namespaces must be private.
@@ -89,8 +89,9 @@ opt router 198.18.1.1
 opt dns 198.18.1.1
 opt lease 120
 EOF
-if [[ $profile != legacy ]]; then
-  /usr/bin/sed -i 's/^opt lease 120$/opt lease 60/' /run/andeiva-dhcp/server.conf
+if [[ $profile == --natural-margin-70 || $profile == --natural-margin-71 ]]; then
+  natural_lease=${profile##*-}
+  /usr/bin/sed -i "s/^opt lease 120$/opt lease $natural_lease/" /run/andeiva-dhcp/server.conf
 fi
 /usr/bin/ip netns exec dhcp-server /usr/bin/busybox udhcpd -f /run/andeiva-dhcp/server.conf >/run/andeiva-dhcp/server.log 2>&1 &
 server=$!
@@ -104,10 +105,14 @@ export ANDEIVA_DHCP_SERVER_PID=$server ANDEIVA_DHCP_NATIVE=1
 if [[ $profile == legacy ]]; then
   test_name=TestNativeDHCPCDOwner
   test_timeout=5m
+elif [[ $profile == --natural-margin-70 || $profile == --natural-margin-71 ]]; then
+  export ANDEIVA_DHCP_NATURAL_LEASE=$natural_lease
+  test_name=TestNativeDHCPEarlyMarginNatural
+  test_timeout=140s
 else
   export ANDEIVA_DHCP_EARLY_PROFILE=${profile##*renewal-}
   test_name=TestNativeDHCPEarlyRenewalResources
-  test_timeout=100s
+  test_timeout=190s
 fi
 log=$(/usr/bin/mktemp /run/andeiva-dhcp/native-result.XXXXXXXX)
 if ! "$lab/dhcp-native.test" -test.run "^${test_name}$" -test.v -test.timeout "$test_timeout" >"$log" 2>&1; then
@@ -123,7 +128,10 @@ if grep -Eq '^[[:space:]]*--- (FAIL|SKIP):|^FAIL|no tests to run' "$log"; then
 else
   [[ $? == 1 ]] # A read/grep error is not evidence of a clean result.
 fi
-if [[ $profile != legacy ]]; then
+if [[ $profile == --early-renewal-off || $profile == --early-renewal-on ]]; then
   [[ $(grep -Fc ANDEIVA_DHCP_B1_COMPONENT_RESOURCES "$log") == 1 ]]
   grep -Fq "\"profile\":\"$ANDEIVA_DHCP_EARLY_PROFILE\"" "$log"
+fi
+if [[ $profile == --natural-margin-70 || $profile == --natural-margin-71 ]]; then
+  [[ $(grep -Fc ANDEIVA_DHCP_B2_NATURAL "$log") == 1 ]]
 fi

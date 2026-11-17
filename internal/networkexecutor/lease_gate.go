@@ -22,6 +22,7 @@ var (
 	ErrLeaseGateAuthority      = errors.New("ANDEIVA_LEASE_GATE_AUTHORITY_INVALID")
 	ErrLeaseGateChanged        = errors.New("ANDEIVA_LEASE_GATE_AUTHORITY_CHANGED")
 	ErrLeaseGateRenewal        = errors.New("ANDEIVA_LEASE_GATE_SAME_EFFECTIVE_RENEWAL")
+	ErrLeaseGateMarginClosed   = errors.New("ANDEIVA_LEASE_GATE_MARGIN_CLOSED")
 	ErrLeaseGateExpired        = errors.New("ANDEIVA_LEASE_GATE_TOKEN_EXPIRED")
 	ErrLeaseGateDeadline       = errors.New("ANDEIVA_LEASE_GATE_DEADLINE_INVALID")
 	ErrLeaseGateReady          = errors.New("ANDEIVA_LEASE_GATE_NOT_READY")
@@ -159,7 +160,7 @@ func (g *LeaseGate) ready(ctx context.Context) error {
 
 func (g *LeaseGate) current(ctx context.Context) (LeaseGateGrant, error) {
 	x, err := g.opts.Authority.Current(ctx)
-	if errors.Is(err, ErrLeaseGateRenewal) {
+	if errors.Is(err, ErrLeaseGateRenewal) || errors.Is(err, ErrLeaseGateMarginClosed) {
 		return LeaseGateGrant{}, errors.Join(ErrLeaseGate, err)
 	}
 	f := x.Fact
@@ -241,6 +242,11 @@ func (g *LeaseGate) Close(ctx context.Context) error {
 }
 
 func (g *LeaseGate) closeUnder(ctx context.Context) error {
+	sequence := g.staged.Fact.Sequence
+	marked := g.opened || sequence != 0
+	if marked {
+		nativeLeasePhaseV4("close_start", sequence, g.expiryFloorBootNS)
+	}
 	g.opened = false
 	g.staged = LeaseGateGrant{}
 	g.timeout = 0
@@ -253,6 +259,9 @@ func (g *LeaseGate) closeUnder(ctx context.Context) error {
 		return errors.Join(ErrLeaseGateUncertain, err, observed)
 	}
 	// Lost ACK is resolved only by the complete closed readback, never replay.
+	if marked {
+		nativeLeasePhaseV4("closed", sequence, 0)
+	}
 	return nil
 }
 
@@ -264,10 +273,10 @@ func (g *LeaseGate) fail(cause error) error {
 	return errors.Join(ErrLeaseGate, cause, g.closeUnder(ctx))
 }
 
-// Only trusted, explicitly classified same-effective renewal can retain the
-// closed gate for fresh evidence. All generic failures preserve legacy fencing.
+// Only trusted classified renewal or margin closure can retain a closed gate
+// for fresh evidence. Generic failures preserve legacy fencing.
 func (g *LeaseGate) rejectClosed(ctx context.Context, cause error) error {
-	if !errors.Is(cause, ErrLeaseGateRenewal) {
+	if !errors.Is(cause, ErrLeaseGateRenewal) && !errors.Is(cause, ErrLeaseGateMarginClosed) {
 		return g.fail(cause)
 	}
 	// A rejected grant may consume the request deadline. Proving closure is a
@@ -286,6 +295,9 @@ func (g *LeaseGate) rejectClosed(ctx context.Context, cause error) error {
 // verification. A sequence is consumed before the first mutation; no retry or
 // rollback can recreate the same grant's timeout.
 func (g *LeaseGate) Stage(ctx context.Context) error {
+	if done := StartNativeLeaseSpanV4("gate_stage"); done != nil {
+		defer done()
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ready(ctx); err != nil {
@@ -340,6 +352,9 @@ func (g *LeaseGate) Stage(ctx context.Context) error {
 // Open changes only the non-expiring enable set. It never touches the expiring
 // set, including on uncertain ACK. Readback time is sampled after receipt.
 func (g *LeaseGate) Open(ctx context.Context) error {
+	if done := StartNativeLeaseSpanV4("gate_open"); done != nil {
+		defer done()
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ready(ctx); err != nil {
@@ -355,7 +370,7 @@ func (g *LeaseGate) Open(ctx context.Context) error {
 		return g.fail(err)
 	}
 	if err := g.opts.Authority.Verify(ctx, g.staged); err != nil {
-		if errors.Is(err, ErrLeaseGateRenewal) {
+		if errors.Is(err, ErrLeaseGateRenewal) || errors.Is(err, ErrLeaseGateMarginClosed) {
 			return g.rejectClosed(ctx, err)
 		}
 		return g.fail(err)
@@ -396,7 +411,7 @@ func (g *LeaseGate) Verify(ctx context.Context) error {
 		return g.fail(err)
 	}
 	if err := g.opts.Authority.Verify(ctx, g.staged); err != nil {
-		if errors.Is(err, ErrLeaseGateRenewal) {
+		if errors.Is(err, ErrLeaseGateRenewal) || errors.Is(err, ErrLeaseGateMarginClosed) {
 			return g.rejectClosed(ctx, err)
 		}
 		return g.fail(errors.Join(ErrLeaseGateAuthority, err))

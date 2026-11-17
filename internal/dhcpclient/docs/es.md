@@ -105,3 +105,23 @@ y adquisición, antes de esperar el drenaje de stderr. Un descendiente que reten
 esa tubería no prolonga la autoridad; eventos tardíos y órdenes no la recuperan.
 Se conservan la terminación del grupo y la recolección del proceso. Esto no
 garantiza un plazo de cierre si el lector del flujo queda bloqueado.
+
+## Cortes medidos en Alpha — 2026-11-17
+
+El propietario aprobó provisionalmente 10s máximos por renovación sólo para esta
+prueba del hito Alpha. Una cota superior medida mayor de 10s hace fallar la prueba;
+no es un objetivo de producto. Tres cortes en Debian con dos vCPU midieron
+7,897–9,406s,7,813–9,336s y 7,654–9,268s. La misma conexión TCP entregó 308/308
+mensajes con 15 retransmisiones; el mismo socket UDP envió 1851 datagramas y recibió
+943 ecos:908 solicitudes no observadas en destino tras drenaje acotado. Hay
+pérdida UDP durante el cierre. Son observaciones de aplicación, no una captura
+exacta de todos los paquetes. El ensayo completo FALLÓ 141,15s en la recuperación
+posterior de API; no acredita aceptación completa ni habilitación del perfil.
+
+Concesión recomendada para uso operacional de esta Alpha: al menos 1h;120s queda
+para estrés de laboratorio. Reduce la frecuencia de cortes; no cambia lo que
+asigna el proveedor ni permite rechazar su evidencia válida. Falta revisar por
+separado el ajuste de fórmula para la adopción medida; el intervalo actual y
+los límites de producción siguen intactos. El handover atómico es obligatorio
+antes de cualquier versión posterior a Alpha; no se diseña aquí. Recuperación
+de API e instancia nueva siguen siendo gates separados.

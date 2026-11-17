@@ -318,14 +318,18 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 	}
 	lease, unavailable, err := decode(r.scanner.Bytes(), q)
 	epoch, noLease := routedDHCPNoLeaseEpochV1(err)
-	if err != nil && (r.profile != 4 || err != errRoutedDHCPInitialWaitingV1 && !noLease) || ctx.Err() != nil || !r.alive() {
+	margin, marginClosed := routedDHCPMarginV4(err)
+	if err != nil && (r.profile != 4 || err != errRoutedDHCPInitialWaitingV1 && !noLease && !marginClosed) || ctx.Err() != nil || !r.alive() {
 		r.closeLocked()
 		return empty, ErrUnavailable
 	}
 	if err == errRoutedDHCPInitialWaitingV1 {
 		return empty, err
 	}
-	if noLease {
+	if noLease || marginClosed {
+		if marginClosed {
+			epoch = margin.epoch
+		}
 		if epoch < r.facts.last.Epoch || epoch < r.facts.revokedEpoch || r.facts.revoke() != ErrUnavailable {
 			r.closeLocked()
 			return empty, ErrUnavailable

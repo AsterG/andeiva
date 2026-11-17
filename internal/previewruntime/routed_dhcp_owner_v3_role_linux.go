@@ -31,6 +31,13 @@ func (s routedDHCPOwnerClientV3) Current() (routedDHCPOwnerLeaseV3, error) {
 	if err == nil && o.State == dhcpclient.AcquisitionNoLease && o.ObservedEpoch > 0 {
 		return routedDHCPOwnerLeaseV3{}, routedDHCPNoLeaseV1{o.ObservedEpoch}
 	}
+	if err == nil && o.State == dhcpclient.AcquisitionMarginClosed && o.ObservedEpoch > 0 {
+		closed := routedDHCPMarginClosedV4{o.ObservedEpoch, o.ListenerAddress}
+		if _, valid := routedDHCPMarginV4(closed); valid {
+			return routedDHCPOwnerLeaseV3{}, closed
+		}
+		return routedDHCPOwnerLeaseV3{}, ErrUnavailable
+	}
 	if err != nil || o.State != dhcpclient.AcquisitionGranted {
 		return routedDHCPOwnerLeaseV3{}, ErrUnavailable
 	}

@@ -352,6 +352,7 @@ const (
 	AcquisitionInitialWaiting
 	AcquisitionGranted
 	AcquisitionNoLease
+	AcquisitionMarginClosed
 )
 
 // AcquisitionObservation separates service progress from a usable lease. The
@@ -360,6 +361,9 @@ type AcquisitionObservation struct {
 	State         AcquisitionState
 	ObservedEpoch uint64
 	Lease         Lease
+	// ListenerAddress is physical socket-association evidence only, never a
+	// grant. It is present exclusively for AcquisitionMarginClosed.
+	ListenerAddress string
 }
 
 func (c *Client) ObserveAcquisition() (AcquisitionObservation, error) {
@@ -440,6 +444,13 @@ func (c *Client) Rebind() error {
 func (c *Client) signal(signal syscall.Signal) error {
 	if c == nil {
 		return ErrUnavailable
+	}
+	if c.early != nil {
+		c.early.mu.Lock()
+		defer c.early.mu.Unlock()
+		if c.early.marginEpoch != 0 || c.early.responseBy != 0 {
+			return ErrUnavailable
+		}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

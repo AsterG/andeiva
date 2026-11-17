@@ -68,6 +68,9 @@ func (r *RoutedDHCPRuntimeV3) renewSameEffectiveV4(ctx context.Context, work, sn
 }
 
 func (r *RoutedDHCPRuntimeV3) renewSameEffectiveModeV4(ctx context.Context, work, snapshot string, refreshOnly bool) (out configpoc.RoutedDHCPGrantV3, result error) {
+	if done := networkexecutor.StartNativeLeaseSpanV4("renew_total"); done != nil {
+		defer done()
+	}
 	reject := func(stage string, cause error) (configpoc.RoutedDHCPGrantV3, error) {
 		firewallipc.RecordRoutedDHCPFailureV1(stage, cause, ctx)
 		return configpoc.RoutedDHCPGrantV3{}, configpoc.ErrRecovery
@@ -184,8 +187,18 @@ func (r *RoutedDHCPRuntimeV3) watchLeaseV4(ctx context.Context) {
 		_ = r.withdraw(ctx, r.work)
 		return
 	}
-	if r.sameOwner(ctx, r.grant) == nil {
+	ownerErr := r.sameOwner(ctx, r.grant)
+	if ownerErr == nil {
 		return
+	}
+	if r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
+		if state, margin := routedDHCPMarginV4(ownerErr); margin {
+			r.noteMarginClosedV4(state.epoch)
+			if r.closeUnder(ctx) == nil {
+				r.renewalWaiting = true
+			}
+			return
+		}
 	}
 	if r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 && !r.withdrawn && !r.failed {
 		next, err := r.currentUnder(ctx)
