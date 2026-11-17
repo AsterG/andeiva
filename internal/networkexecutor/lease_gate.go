@@ -159,6 +159,9 @@ func (g *LeaseGate) ready(ctx context.Context) error {
 
 func (g *LeaseGate) current(ctx context.Context) (LeaseGateGrant, error) {
 	x, err := g.opts.Authority.Current(ctx)
+	if errors.Is(err, ErrLeaseGateRenewal) {
+		return LeaseGateGrant{}, errors.Join(ErrLeaseGate, err)
+	}
 	f := x.Fact
 	now, clockErr := g.now()
 	if err != nil || clockErr != nil || now <= 0 || f.Owner != g.opts.Owner || f.Sequence == 0 || f.Revoked || f.DesiredHash != g.opts.Desired.Hash || f.WAN != g.wan.Binding || f.DeadlineBootNS <= now || f.DeadlineBootNS-now > int64(7*24*time.Hour) || !leaseGateHex(x.WorkHash, 64) {
@@ -184,7 +187,7 @@ func (g *LeaseGate) current(ctx context.Context) (LeaseGateGrant, error) {
 func (g *LeaseGate) same(ctx context.Context, x LeaseGateGrant) error {
 	actual, err := g.current(ctx)
 	if err != nil || actual != x {
-		return ErrLeaseGate
+		return errors.Join(ErrLeaseGate, err)
 	}
 	return nil
 }
@@ -358,14 +361,14 @@ func (g *LeaseGate) Open(ctx context.Context) error {
 		return g.fail(err)
 	}
 	if err := g.same(ctx, g.staged); err != nil {
-		return g.fail(err)
+		return g.rejectClosed(ctx, err)
 	}
 	applyErr := g.apply(ctx, leaseGateOpen(g.wan.Binding.Name))
 	if _, err := g.read(ctx, true, true); err != nil {
 		return g.fail(errors.Join(applyErr, err))
 	}
 	if err := g.same(ctx, g.staged); err != nil {
-		return g.fail(err)
+		return g.rejectClosed(ctx, err)
 	}
 	g.opened = true
 	return nil
@@ -399,7 +402,7 @@ func (g *LeaseGate) Verify(ctx context.Context) error {
 		return g.fail(errors.Join(ErrLeaseGateAuthority, err))
 	}
 	if err := g.same(ctx, g.staged); err != nil {
-		return g.fail(errors.Join(ErrLeaseGateChanged, err))
+		return g.rejectClosed(ctx, errors.Join(ErrLeaseGateChanged, err))
 	}
 	return nil
 }
