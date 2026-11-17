@@ -37,7 +37,15 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 			release()
 			return errV2Unavailable
 		}
-		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !preservesFeaturesV2(state, previousState) || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
+		featuresPreserved := true
+		if i > 0 {
+			featuresPreserved, err = r.preservesFeaturesConfigurationReadV4(state, previousState, selection, hash, previousSelection, routedDHCPConfigurationHeaderV4)
+			if err != nil {
+				release()
+				return err
+			}
+		}
+		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !featuresPreserved || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
 			release()
 			return errV2Unavailable
 		}
@@ -58,13 +66,16 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		previousSelection = selection
 		// Only the preceding feature set is needed by the selection edge. Do not
 		// retain every decoded state while traversing historical selections.
-		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary), Generation: state.Generation, RoutedDHCP: clone(state.RoutedDHCP), RoutedDHCPLast: state.RoutedDHCPLast}
+		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary), Generation: state.Generation, RoutedDHCP: clone(state.RoutedDHCP), RoutedDHCPLast: state.RoutedDHCPLast, RoutedDHCPConfiguration: clone(state.RoutedDHCPConfiguration)}
 		hash = selection.Previous
 	}
 	return errV2InspectionBudget
 }
 
 func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error {
+	if err := r.routedDHCPConfigurationV4(state.RoutedDHCPConfiguration, key, state, depth+1, routedDHCPConfigurationHeaderV4); err != nil {
+		return err
+	}
 	if validateRoutedBootBoundaryV2(state, r.object) != nil {
 		return errV2Unavailable
 	}
