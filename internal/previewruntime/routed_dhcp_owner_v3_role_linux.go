@@ -144,7 +144,7 @@ func runRoutedDHCPOwnerProfileV3(parent context.Context, profile int) (result er
 		return ErrIdentity
 	}
 	var b routedDHCPOwnerBootstrapV3
-	if routedDHCPOwnerDecodeV3(scan.Bytes(), &b) != nil || scan.Scan() || scan.Err() != nil || b.Version != profile || !ValidRun(b.Incarnation) || b.Metadata.ValidateRouted() != nil || b.ParentPID != os.Getppid() || b.ParentPID <= 1 || b.MountNamespace == 0 || b.MountNamespace == b.HostMountNamespace {
+	if routedDHCPOwnerDecodeV3(scan.Bytes(), &b) != nil || scan.Scan() || scan.Err() != nil || b.Version != profile || b.EarlyRenewalV4 && profile != 4 || !ValidRun(b.Incarnation) || b.Metadata.ValidateRouted() != nil || b.ParentPID != os.Getppid() || b.ParentPID <= 1 || b.MountNamespace == 0 || b.MountNamespace == b.HostMountNamespace {
 		return ErrIdentity
 	}
 	_ = files[3].Close()
@@ -189,7 +189,7 @@ func runRoutedDHCPOwnerProfileV3(parent context.Context, profile int) (result er
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	if profile == 4 {
-		return runRoutedDHCPDeferredRoleV4(ctx, b, [8]*os.File(files[:8]), dhcpclient.Scope{HostNetwork: files[1], HostMount: files[2], Interface: wan.Name, Index: iface.Index, HardwareAddress: wan.HardwareAddress})
+		return runRoutedDHCPDeferredRoleV4(ctx, b, [8]*os.File(files[:8]), dhcpclient.Scope{EarlyRenewalV4: b.EarlyRenewalV4, HostNetwork: files[1], HostMount: files[2], Interface: wan.Name, Index: iface.Index, HardwareAddress: wan.HardwareAddress})
 	}
 	client, err := dhcpclient.StartIsolated(ctx, dhcpclient.Scope{HostNetwork: files[1], HostMount: files[2], Interface: wan.Name, Index: iface.Index, HardwareAddress: wan.HardwareAddress})
 	if err != nil {

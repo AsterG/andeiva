@@ -51,6 +51,52 @@ Isto não implementa adoção do ifupdown, rollback de interfaces principais,
 renovação de NAT, continuidade administrativa ou perfil de privilégios de
 produção. Uma falha é contida parando a unidade e seus descendentes; não remover
 regras, rotas ou arquivos de terceiros para fazer o teste passar.
+## Perfil interno V4 de renovação antecipada
+
+`Scope.EarlyRenewalV4` exige habilitação explícita pelo supervisor V4 e permanece
+desligado por padrão. Desligado não cria worker, timer ou descritor exclusivos;
+V3 rejeita a opção. Não ativa o runtime instalado nem oferece uma opção de API.
+
+Com D conservador inalterado e t=BOOTTIME, I=(D-t-14s)/2, somente se I≥1s.
+Os 14 s incluem margem do token de 3 s, dois orçamentos de resposta de 5 s e despacho de 1 s;
+são limites de política, não latência medida. O timer absoluto BOOTTIME inclui
+suspensão. Uma solicitação pendente, sem rajadas: SIGUSR1 não altera lastGrant,
+epoch ou prazo. Somente um hook válido os altera; um hook espontâneo também
+pode satisfazer a espera sem provar que respondeu ao sinal.
+
+Despacho tardio, concessão curta, falha de relógio/sinal ou ausência de evidência
+válida em 5 s revogam a evidência. O helper existente deve fechar e verificar o
+encaminhamento (B2); o cliente não modifica esse estado do kernel. Observações
+externas também rejeitam resposta vencida se o worker atrasar. Não há EXPIRE
+fictício nem substituição automática da instância nesta implementação.
+
+Aceitação integrada pendente: mesma conexão TCP e socket UDP durante≥3
+renovações. Há uma interrupção breve por renovação, com encaminhamento fechado.
+Medir cada interrupção, mínimo/mediana/máximo, perdas e CPU/memória/goroutines
+com/sem B1; o proprietário decide o máximo aceitável após ver as medições.
+
+### Medição nativa do componente, 2026-11-17
+
+Dois laboratórios Debian novos e isolados, mesmo ciclo de observação de 55 s
+e concessão de 60 s. O processo medido inclui o componente cliente e o teste
+Go; não representa os recursos totais do appliance ou da API.
+
+| B1 | Janela (ns) | CPU processo (ns) | RSS amostrado máximo (bytes) | Goroutines mín/máx | Renovações reais |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Desligado | 55000796941 | 436522000 | 9007104 | 6 / 6 | 1 |
+| Ligado | 55000182642 | 419576000 | 8978432 | 8 / 9 | 3 |
+
+CPU por RUSAGE_SELF, RSS por `/proc/self/statm` e goroutines pelo runtime Go.
+Uma comparação não demonstra melhoria de CPU/RSS. As duas unidades terminaram
+corretamente; endereços, rotas, forwarding e namespaces do host coincidiram
+com a base após a limpeza. Este teste não mediu sobrevivência de sockets
+TCP/UDP nem a duração da interrupção.
+
+Repetir com o teste fixo `scripts/dhcp-native-isolated.sh --early-renewal-off`
+e `--early-renewal-on`, em Debian de laboratório descartável, com artefatos
+root e unidade systemd limitada KillMode=control-group. O diretório de trabalho
+deve conter `dhcp-native.test` deste pacote e `andeiva-dhcp-hook`.
+
 ## Revogação ao terminar o produtor
 
 A saída do processo principal revoga imediatamente as evidências de concessão

@@ -87,6 +87,57 @@ The next native run stayed alive after SIGUSR1 but received no renewal hook in
 configuration boundary without increasing that deadline or accepting a silent
 no-op as renewal. A passing renewal still requires a new RENEW hook from the engine.
 
+## Internal early-renewal V4 profile
+
+`Scope.EarlyRenewalV4` is trusted supervisor input, disabled by default. It
+creates no feature worker, timer or descriptor when disabled. The V4 owner
+bootstrap must explicitly enable it; V3 rejects that option. It is not an
+administrative API option or an installed-runtime activation.
+
+Using the unchanged conservative BOOTTIME deadline D and current time t, send
+once after I=(D-t-14s)/2 only if I≥1s. The 14 s window contains the existing 3 s token
+margin, two 5 s response budgets and a 1 s dispatch budget. These are policy limits,
+not measured latency. An absolute CLOCK_BOOTTIME timer includes suspension.
+There is one pending request. SIGUSR1 never moves lastGrant, epoch or deadline;
+only a valid hook may change them. A valid unsolicited hook can satisfy the
+request; it is not evidence that the signal caused that ACK.
+
+Late dispatch, short evidence, failed signal/clock and missing valid evidence
+within 5 s revoke acquisition evidence. The existing helper must then close and
+verify forwarding (B2); the client itself does not modify kernel forwarding.
+No synthetic EXPIRE, retry burst or replacement acquisition is introduced.
+External observations also reject an overdue response if the worker is delayed.
+
+Integrated acceptance remains pending: the same established TCP connection and
+UDP socket must survive at least three renewals. There is a brief interruption
+per renewal with forwarding closed. Report each interruption, min/median/max,
+packet observations and measured CPU/memory/goroutines with and without B1;
+the owner approves the acceptable maximum after seeing the measurements.
+
+### Native component measurements, 2026-11-17
+
+Two fresh, isolated Debian laboratories ran the same 55 s observation loop with
+a 60 s server lease. The process measured here owns the client component and
+also contains the native test framework; these are not appliance/API totals.
+
+| B1 | Window (ns) | Process CPU (ns) | Maximum sampled RSS (bytes) | Goroutines min/max | Actual renewals |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Off | 55000796941 | 436522000 | 9007104 | 6 / 6 | 1 |
+| On | 55000182642 | 419576000 | 8978432 | 8 / 9 | 3 |
+
+CPU uses RUSAGE_SELF; RSS samples `/proc/self/statm`; goroutines use the Go
+runtime. One paired run does not establish a CPU/RSS improvement. Both units
+exited successfully; host addresses, routes, forwarding and namespace list
+matched baseline after cleanup. No same-socket traffic survival or interruption
+duration was measured by this component test.
+
+Reproduce with the fixed native harness, root-owned artifacts in a disposable
+Debian laboratory and a bounded systemd unit with KillMode=control-group:
+`scripts/dhcp-native-isolated.sh --early-renewal-off`, then
+`scripts/dhcp-native-isolated.sh --early-renewal-on`. Each requires the working
+directory to contain `dhcp-native.test` built from this package and
+`andeiva-dhcp-hook`; the harness refuses untrusted artifacts and host namespaces.
+
 ## Engine contract sources
 
 - [Debian dhcpcd 10.1.0 manual](https://manpages.debian.org/trixie/dhcpcd-base/dhcpcd.8.en.html):

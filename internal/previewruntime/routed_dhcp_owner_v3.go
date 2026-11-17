@@ -27,9 +27,10 @@ const routedDHCPOwnerCallV3 = 2 * time.Second
 
 // Options are root's retained launch resources, never an administrative DTO.
 type RoutedDHCPOwnerOptionsV3 struct {
-	Metadata      Metadata
-	Desired       networkplan.Revision
-	Gateway, Host *os.File
+	Metadata       Metadata
+	Desired        networkplan.Revision
+	Gateway, Host  *os.File
+	EarlyRenewalV4 bool // Trusted V4-only option; disabled until native qualification.
 }
 
 // Binding is authenticated by root's bootstrap, not by its public contents.

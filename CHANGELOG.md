@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — internal early DHCP renewal profile
+
+- Add an explicit V4-only early-renewal scheduler using the unchanged conservative deadline and an absolute BOOTTIME timer. One pending signal, bounded response wait and no automatic replacement acquisition. Disabled by default; integrated native qualification and measured resource comparison remain pending. There is a brief interruption per renewal under the approved close-before-refresh handover; no claim of loss-free access.
+
 ## Unreleased — closed DHCP token expiry
 
 - Prepare an opt-in verified closure for expected kernel token expiry. Consumed sequences remain unavailable; legacy and uncertain-state fencing are preserved. Runtime wiring and native qualification remain separate.
