@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,57 @@ type routedDHCPDiagnosticRecorderV1 struct {
 }
 
 var routedDHCPDiagnosticsV1 routedDHCPDiagnosticRecorderV1
+
+var routedDHCPFailureStagesV4 = [...]string{
+	"open_state", "open_selected", "open_owner", "open_gate_stage", "open_gate_open", "open_forward",
+	"withdraw_close", "withdraw_selected", "withdraw_build_gate", "withdraw_recover_gate", "withdraw_recover_lease", "withdraw_lease", "withdraw_verify",
+	"authority_selected", "authority_owner", "authority_lease", "authority_policy", "authority_owner_after",
+	"policy_ready", "policy_observe", "policy_state", "close_gate", "close_forward",
+}
+
+type routedDHCPFirstStageRecorderV4 struct {
+	slots [len(routedDHCPFailureStagesV4)]atomic.Bool
+}
+
+var routedDHCPFirstStagesV4 routedDHCPFirstStageRecorderV4
+
+func routedDHCPFailureStageIndexV4(stage string) int {
+	for i, known := range routedDHCPFailureStagesV4 {
+		if stage == known {
+			return i
+		}
+	}
+	return -1
+}
+
+// Every known failure site has one reserved slot, independent of routine RPC
+// saturation. The native call site fixes stderr. Only bounded enum fields are
+// emitted, never arbitrary errors or request/owner/grant contents.
+func (d *routedDHCPFirstStageRecorderV4) emit(stage string, cause, ctxErr error, out io.Writer) {
+	index := routedDHCPFailureStageIndexV4(stage)
+	if cause == nil || index < 0 || out == nil || !d.slots[index].CompareAndSwap(false, true) {
+		return
+	}
+	var now unix.Timespec
+	if unix.ClockGettime(unix.CLOCK_BOOTTIME, &now) != nil {
+		return
+	}
+	raw, err := json.Marshal(struct {
+		PID     int    `json:"pid"`
+		BootNS  int64  `json:"boot_ns"`
+		Stage   string `json:"stage"`
+		Error   string `json:"error"`
+		Context string `json:"context"`
+	}{os.Getpid(), now.Nano(), stage, routedDHCPDiagnosticClassV1(cause), routedDHCPDiagnosticClassV1(ctxErr)})
+	if err != nil {
+		return
+	}
+	line := append([]byte("ANDEIVA_NATIVE_DHCP_FIRST_FAILURE_V4 "), raw...)
+	line = append(line, '\n')
+	if len(line) <= 512 {
+		_, _ = out.Write(line)
+	}
+}
 
 // Default artifacts do not read clocks or allocate a diagnostic recorder.
 func RoutedDHCPDiagnosticStartV1(verb string) time.Time {
@@ -93,18 +145,13 @@ func RecordRoutedDHCPFailureV1(stage string, err error, ctx context.Context) {
 	if ctx == nil {
 		return
 	}
-	routedDHCPDiagnosticsV1.failure(stage, err, ctx.Err())
+	ctxErr := ctx.Err()
+	routedDHCPFirstStagesV4.emit(stage, err, ctxErr, os.Stderr)
+	routedDHCPDiagnosticsV1.failure(stage, err, ctxErr)
 }
 
 func KnownRoutedDHCPFailureStageV1(stage string) bool {
-	switch stage {
-	case "open_state", "open_selected", "open_owner", "open_gate_stage", "open_gate_open", "open_forward",
-		"withdraw_close", "withdraw_selected", "withdraw_build_gate", "withdraw_recover_gate", "withdraw_recover_lease", "withdraw_lease", "withdraw_verify",
-		"authority_selected", "authority_owner", "authority_lease", "authority_policy", "authority_owner_after",
-		"policy_ready", "policy_observe", "policy_state", "close_gate", "close_forward":
-		return true
-	}
-	return false
+	return routedDHCPFailureStageIndexV4(stage) >= 0
 }
 
 func (d *routedDHCPDiagnosticRecorderV1) failure(stage string, err, ctxErr error) {

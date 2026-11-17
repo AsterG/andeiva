@@ -440,7 +440,9 @@ func nativeDHCPB2ServerV4(t *testing.T, ctx context.Context, base string, wan *o
 		t.Fatal("invalid B2 test peer")
 	}
 	path := filepath.Join(base, "b2-server.conf")
-	conf := fmt.Sprintf("start 198.18.1.10\nend 198.18.1.10\ninterface sink0\nmax_leases 1\nmin_lease 60\nlease_file %s\npidfile %s\nopt subnet 255.255.255.0\nopt router 198.18.1.1\nopt lease %d\n", filepath.Join(base, "b2-server.leases"), filepath.Join(base, "b2-server.pid"), seconds)
+	// This replacement peer has no dynamic lease history. Pin the existing lab
+	// client so it can ACK a real unicast RENEW instead of silently ignoring it.
+	conf := fmt.Sprintf("start 198.18.1.10\nend 198.18.1.10\ninterface sink0\nmax_leases 1\nmin_lease 60\nstatic_lease 02:00:00:00:02:01 198.18.1.10\nlease_file %s\npidfile %s\nopt subnet 255.255.255.0\nopt router 198.18.1.1\nopt lease %d\n", filepath.Join(base, "b2-server.leases"), filepath.Join(base, "b2-server.pid"), seconds)
 	if err := os.WriteFile(path, []byte(conf), 0600); err != nil {
 		t.Fatal(err)
 	}

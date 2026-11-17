@@ -181,6 +181,7 @@ func (l *LeaseExecutor) VerifyObservationV4(ctx context.Context) error {
 		return ErrScope
 	}
 	after, err := l.readObservationV4(ctx)
+	nativeLeaseObservationRaceV4(err, before, after)
 	if err != nil || after != before || l.guard(ctx) != nil || l.base.ready(ctx) != nil {
 		return ErrScope
 	}

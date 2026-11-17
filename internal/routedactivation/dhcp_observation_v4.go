@@ -36,24 +36,29 @@ func (e *Engine) matchesObservationV4(ctx context.Context, owned OwnedV1, deps D
 		return e.matches(ctx, owned, deps), nil
 	}
 	if ctx.Err() != nil {
+		nativeDHCPObservationFailureV4("context")
 		return false, ErrState
 	}
 	pending := observer.VerifyObservationV4(ctx)
 	// Only the concrete source witness qualifies; generic errors wrapping or
 	// joining it remain failures and cannot mint an Engine wrapper.
 	if pending != nil && !networkexecutor.IsLeaseObservationPendingV4(pending) {
+		nativeDHCPObservationFailureV4("network_generic")
 		return false, ErrState
 	}
 	network, err := acquisitionNetwork(owned.RoutedFirewall, deps)
 	if err != nil {
+		nativeDHCPObservationFailureV4("acquisition_network")
 		return false, ErrState
 	}
 	for table, state := range tables(owned) {
 		if !e.tableMatches(ctx, Table(table), state, deps, network) {
+			nativeDHCPObservationTableFailureV4(Table(table))
 			return false, ErrState
 		}
 	}
 	if !e.listenersMatch(ctx, owned.LocalServices, deps) || ctx.Err() != nil {
+		nativeDHCPObservationFailureV4("listeners_or_context")
 		return false, ErrState
 	}
 	return pending == nil, pending

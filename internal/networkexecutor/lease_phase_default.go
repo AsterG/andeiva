@@ -10,3 +10,8 @@ func nativeLeasePhaseV4(string, uint64, int64) {}
 func StartNativeLeaseSpanV4(string) func() { return nil }
 
 func RecordNativeLeaseHookV4(uint64, int64, uint32) {}
+
+func nativeLeaseGateFaultV4(string, error, *LeaseGate) {}
+
+func NativeLeaseOpenedForDiagnosticsV4() bool                                                    { return false }
+func nativeLeaseObservationRaceV4(error, leaseObservationSnapshotV4, leaseObservationSnapshotV4) {}

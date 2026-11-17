@@ -927,6 +927,7 @@ func (e *Engine) observeOwnedLocked(ctx context.Context) (string, error) {
 	}
 	if e.selected {
 		e.fenced = true
+		nativeDHCPObservationFailureV4("fence_selected")
 	}
 	return "", ErrState
 }

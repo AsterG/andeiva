@@ -221,6 +221,7 @@ func (g *LeaseGate) Initialize(ctx context.Context) error {
 		// A failed create may mean a foreign existing table. Never flush it.
 		g.fenced = true
 		g.fenceReason = ErrLeaseGateFenceCreate
+		nativeLeaseGateFaultV4("create", err, g)
 		return errors.Join(ErrLeaseGateUncertain, err)
 	}
 	g.initialized = true
@@ -256,6 +257,7 @@ func (g *LeaseGate) closeUnder(ctx context.Context) error {
 	if observed != nil {
 		g.fenced = true
 		g.fenceReason = errors.Join(ErrLeaseGateFenceClose, observed)
+		nativeLeaseGateFaultV4("close_readback", g.fenceReason, g)
 		return errors.Join(ErrLeaseGateUncertain, err, observed)
 	}
 	// Lost ACK is resolved only by the complete closed readback, never replay.
@@ -268,6 +270,7 @@ func (g *LeaseGate) closeUnder(ctx context.Context) error {
 func (g *LeaseGate) fail(cause error) error {
 	g.fenced = true
 	g.fenceReason = errors.Join(ErrLeaseGateFenceOperation, cause)
+	nativeLeaseGateFaultV4("fail", g.fenceReason, g)
 	ctx, cancel := context.WithTimeout(g.lifetime, 3*time.Second)
 	defer cancel()
 	return errors.Join(ErrLeaseGate, cause, g.closeUnder(ctx))
@@ -286,6 +289,7 @@ func (g *LeaseGate) rejectClosed(ctx context.Context, cause error) error {
 	if err := g.closeUnder(cleanup); err != nil {
 		g.fenced = true
 		g.fenceReason = errors.Join(ErrLeaseGateFenceReject, err)
+		nativeLeaseGateFaultV4("reject", g.fenceReason, g)
 		return errors.Join(ErrLeaseGateUncertain, cause, err)
 	}
 	return errors.Join(ErrLeaseGate, cause)
@@ -301,9 +305,11 @@ func (g *LeaseGate) Stage(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ready(ctx); err != nil {
+		nativeLeaseGateFaultV4("ready", err, g)
 		return errors.Join(ErrLeaseGateReady, err)
 	}
 	if !g.initialized || g.opened || g.staged.Fact.Sequence != 0 {
+		nativeLeaseGateFaultV4("state", ErrLeaseGateState, g)
 		return ErrLeaseGateState
 	}
 	if g.closedForwarding() != nil {
