@@ -262,6 +262,9 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 	if r == nil || parent == nil {
 		return empty, ErrIdentity
 	}
+	if parent.Err() != nil {
+		return empty, ErrUnavailable
+	}
 	ctx, cancel := context.WithTimeout(parent, routedDHCPOwnerCallV3)
 	defer cancel()
 	select {
@@ -270,7 +273,11 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 	case <-ctx.Done():
 		return empty, ErrUnavailable
 	}
-	if r.dead || ctx.Err() != nil || !r.alive() || r.request == math.MaxUint64 {
+	// Cancellation before the first frame cannot corrupt the owner stream.
+	if ctx.Err() != nil {
+		return empty, ErrUnavailable
+	}
+	if r.dead || !r.alive() || r.request == math.MaxUint64 {
 		r.closeLocked()
 		return empty, ErrUnavailable
 	}
@@ -290,6 +297,9 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 			<-callbackDone
 		}
 	}()
+	if ctx.Err() != nil {
+		return empty, ErrUnavailable
+	}
 	r.request++
 	b := r.facts.binding
 	version, incarnation := 3, b.Owner.Incarnation

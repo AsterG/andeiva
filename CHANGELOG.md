@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — internal same-effective DHCP handover
+
+- Prepare an explicit runtime profile that closes forwarding before refreshing identical effective lease evidence while retaining the selected undo Work and consumed gate sequences. Recovery-only requests revoke before owner reads and cannot open traffic. Retiring a renewed V4 instance is terminal; automatic replacement acquisition is separate. No factory or administrative activation is enabled here. There is a brief interruption per renewal; integrated traffic and resource qualification remain pending.
+
 ## Unreleased — closed DHCP token expiry
 
 - Prepare an opt-in verified closure for expected kernel token expiry. Consumed sequences remain unavailable; legacy and uncertain-state fencing are preserved. Runtime wiring and native qualification remain separate.
