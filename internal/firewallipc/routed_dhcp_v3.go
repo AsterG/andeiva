@@ -1,7 +1,9 @@
 package firewallipc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"reflect"
@@ -37,9 +39,10 @@ var ErrRoutedDHCPNoLeaseV1 = errors.New("ANDEIVA_ROUTED_DHCP_NO_LEASE_V1")
 // Requests carry correlation only. Neither owner identity, route, lease time,
 // epoch nor a serialized selected plan can be supplied by the controller.
 type RoutedDHCPRequestV3 struct {
-	Work     string                               `json:"work,omitempty"`
-	Snapshot string                               `json:"snapshot,omitempty"`
-	State    networkexecutor.LeaseSelectedStateV3 `json:"state,omitempty"`
+	Work        string                               `json:"work,omitempty"`
+	Snapshot    string                               `json:"snapshot,omitempty"`
+	State       networkexecutor.LeaseSelectedStateV3 `json:"state,omitempty"`
+	RefreshOnly bool                                 `json:"refresh_only,omitempty"`
 }
 
 type RoutedDHCPGrantV3 struct {
@@ -59,10 +62,12 @@ func RoutedDHCPVerbV3(verb string) bool {
 func decodeRoutedDHCPRequestV3(verb string, raw []byte) (RoutedDHCPRequestV3, error) {
 	var p RoutedDHCPRequestV3
 	var fields []string
+	var optional []string
 	switch verb {
 	case "dhcp_begin", "dhcp_current", "dhcp_retire":
 	case "dhcp_renew":
 		fields = []string{"work", "snapshot"}
+		optional = []string{"refresh_only"}
 	case "dhcp_verify":
 		fields = []string{"snapshot", "state"}
 	case "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_live":
@@ -70,8 +75,20 @@ func decodeRoutedDHCPRequestV3(verb string, raw []byte) (RoutedDHCPRequestV3, er
 	default:
 		return p, ErrChannel
 	}
-	if exactRoutedV3(raw, &p, fields) != nil {
+	if exactRoutedV3(raw, &p, fields, optional...) != nil {
 		return p, ErrChannel
+	}
+	if verb == "dhcp_renew" {
+		var members map[string]json.RawMessage
+		if json.Unmarshal(raw, &members) != nil {
+			return p, ErrChannel
+		}
+		if flag, present := members["refresh_only"]; present {
+			flag = bytes.TrimSpace(flag)
+			if !bytes.Equal(flag, []byte("true")) && !bytes.Equal(flag, []byte("false")) {
+				return p, ErrChannel
+			}
+		}
 	}
 	switch verb {
 	case "dhcp_renew":

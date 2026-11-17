@@ -23,6 +23,14 @@ func (r *routedDHCPRemoteV3) Current(ctx context.Context) (configpoc.RoutedDHCPG
 	x, err := r.client.Call(ctx, "dhcp_current", firewallipc.RoutedDHCPRequestV3{})
 	return configpoc.RoutedDHCPGrantV3{Epoch: x.DHCP.Epoch, Snapshot: x.DHCP.Snapshot}, err
 }
+func (r *routedDHCPRemoteV3) RenewSameEffective(ctx context.Context, work string, expected configpoc.RoutedDHCPGrantV3, refreshOnly bool) error {
+	result, err := r.client.Call(ctx, "dhcp_renew", firewallipc.RoutedDHCPRequestV3{Work: work, Snapshot: expected.Snapshot.Hash, RefreshOnly: refreshOnly})
+	got := configpoc.RoutedDHCPGrantV3{Epoch: result.DHCP.Epoch, Snapshot: result.DHCP.Snapshot}
+	if err != nil || !reflect.DeepEqual(got, expected) {
+		return errors.Join(err, ErrUnavailable)
+	}
+	return nil
+}
 func (r *routedDHCPRemoteV3) VerifyClosed(ctx context.Context, s networkexecutor.LeaseSelectedSnapshotV3, state networkexecutor.LeaseSelectedStateV3) error {
 	if _, err := networkexecutor.CanonicalLeaseSelectedSnapshotV3(s); err != nil {
 		return err
@@ -42,16 +50,34 @@ func (r *routedDHCPRemoteV3) ReleaseWithdrawn(ctx context.Context) error {
 // RoutedDHCPControllerV3 is a trusted assembly lane, not an HTTP handler. It
 // serializes selected Prepare -> helper Apply -> selected Applied -> helper Open.
 // The selected work blocks conflicting configuration publication until Withdraw.
+type routedDHCPSelectedWriterV3 interface {
+	Prepare(context.Context) (string, error)
+	Applied(context.Context, string) error
+	Withdrawn(context.Context, string) error
+}
+
 type RoutedDHCPControllerV3 struct {
 	mu             sync.Mutex
 	remote         *routedDHCPRemoteV3
-	writer         *configpoc.RoutedDHCPSelectedStoreV3
+	writer         routedDHCPSelectedWriterV3
 	work           string
 	grant          configpoc.RoutedDHCPGrantV3
+	recoveryOnly   bool // Controller ownership; incomplete inspection never admits new Work.
 	scheduleMu     sync.Mutex
 	scheduleCancel context.CancelFunc
 	scheduleDone   chan struct{}
 	scheduleClosed bool
+}
+
+// Caller holds c.mu, as in the production and native full-inspection callbacks.
+func (c *RoutedDHCPControllerV3) afterInspectionV4(err error, selected bool) {
+	if !c.remote.client.DHCPRenewalEnabledV4() {
+		c.recoveryOnly = false
+		c.scheduleV4(err == nil && selected)
+		return
+	}
+	c.recoveryOnly = err != nil
+	c.scheduleV4(err == nil && selected || err != nil && c.work != "")
 }
 
 // This loop exists only after an authenticated complete inspection reports a
@@ -142,9 +168,9 @@ func newRoutedDHCPControllerV3(service *configpoc.ServiceV2, client *firewallipc
 	return &RoutedDHCPControllerV3{remote: remote, writer: writer}, nil
 }
 
-// Reconcile applies at most one fresh authenticated grant. Unchanged authority
-// is verified without extending the original token. Renewal is serial and
-// interrupts WAN while the previous selected work is retired.
+// Reconcile applies at most one fresh authenticated grant. An unchanged grant
+// verifies existing authority; an explicitly negotiated same-effective renewal
+// refreshes only the operational lease proof while retaining selected L3 work.
 func (c *RoutedDHCPControllerV3) Reconcile(ctx context.Context) error {
 	if c == nil || ctx == nil || ctx.Err() != nil {
 		return ErrIdentity
@@ -160,16 +186,74 @@ func (c *RoutedDHCPControllerV3) reconcileLocked(ctx context.Context) error {
 		return ErrUnavailable
 	}
 	if c.work != "" {
+		if c.recoveryOnly && c.remote.client.DHCPRenewalEnabledV4() {
+			// Revoke with retained correlation before any fallible owner read.
+			// Recovery is expected: this lane never reports an opened grant.
+			err := c.remote.RenewSameEffective(ctx, c.work, c.grant, true)
+			if !errors.Is(err, configpoc.ErrRecovery) {
+				return errors.Join(configpoc.ErrRecovery, err)
+			}
+		}
 		got, err := c.remote.Current(ctx)
+		if err != nil {
+			if !c.remote.client.DHCPRenewalEnabledV4() {
+				if err = c.withdraw(ctx); err != nil {
+					return err
+				}
+				return c.acquireLocked(ctx)
+			}
+			// Preserve the last selected L3 work when the read-only owner source
+			// is temporarily unavailable. The helper watchdog and expiring gate
+			// remain authoritative; this path grants no new forwarding authority.
+			return err
+		}
 		if err == nil && reflect.DeepEqual(got, c.grant) {
+			if c.recoveryOnly && c.remote.client.DHCPRenewalEnabledV4() {
+				return configpoc.ErrRecovery // Already requested closure before Current.
+			}
 			_, err = c.remote.client.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: c.work})
 			if err == nil {
 				return nil
 			}
+			// The owner may publish a same-effective renewal between Current and
+			// Live. Live correctly rejects the now-stale epoch; re-read once so
+			// this race does not withdraw an otherwise unchanged selected lease.
+			// A different tuple still follows the normal fail-closed withdrawal.
+			if c.remote.client.DHCPRenewalEnabledV4() {
+				if ctx.Err() != nil {
+					return ErrUnavailable
+				}
+				got, err = c.remote.Current(ctx)
+				if err != nil {
+					return err
+				}
+				if reflect.DeepEqual(got, c.grant) {
+					// A failed live proof without a changed owner grant does not
+					// authorize a new selection or deleting the existing one.
+					return configpoc.ErrRecovery
+				}
+			}
+		}
+		if err == nil && c.remote.client.DHCPRenewalEnabledV4() && sameRenewalGrantV4(c.grant, got) {
+			if err = c.remote.RenewSameEffective(ctx, c.work, got, c.recoveryOnly); err != nil {
+				return err
+			}
+			c.grant = got
+			return nil
+		}
+		if c.recoveryOnly && c.remote.client.DHCPRenewalEnabledV4() {
+			return configpoc.ErrRecovery // A changed tuple cannot retire retained Work here.
 		}
 		if err := c.withdraw(ctx); err != nil {
 			return err
 		}
+	}
+	return c.acquireLocked(ctx)
+}
+
+func (c *RoutedDHCPControllerV3) acquireLocked(ctx context.Context) error {
+	if c.recoveryOnly || ctx.Err() != nil {
+		return configpoc.ErrRecovery
 	}
 	result, err := c.remote.client.Call(ctx, "dhcp_begin", firewallipc.RoutedDHCPRequestV3{})
 	if err != nil {

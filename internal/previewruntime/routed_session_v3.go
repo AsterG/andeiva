@@ -132,7 +132,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		return ErrUnavailable
 	}
 	hello, e := firewallipc.DecodeRoutedHelloV3(data, false)
-	if e != nil || hello.HasCapability(firewallipc.RoutedDHCPRenewalCapabilityV4) || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil || s.dhcpJobs != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
+	if e != nil || s.sameEffectiveRenewalV4() != hello.HasCapability(firewallipc.RoutedDHCPRenewalCapabilityV4) || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil || s.dhcpJobs != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
 		return ErrIdentity
 	}
 	hello.Run = runtimeRun
@@ -146,11 +146,14 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 			return ErrUnavailable
 		}
 		request, command, e := firewallipc.DecodeRoutedRequestV3(data, runtimeRun, identity.Namespace, last)
-		if e != nil || command.Verb == "dhcp_renew" || request.Sequence>>32 != epoch || request.Sequence&0xffffffff == 0 {
+		if e != nil || (command.Verb == "dhcp_renew" && !hello.HasCapability(firewallipc.RoutedDHCPRenewalCapabilityV4)) || request.Sequence>>32 != epoch || request.Sequence&0xffffffff == 0 {
 			return ErrIdentity
 		}
 		last = request.Sequence
 		timeout := 3 * time.Second
+		if hello.HasCapability(firewallipc.RoutedDHCPRenewalCapabilityV4) && firewallipc.RoutedDHCPMutationV3(command.Verb) {
+			timeout = firewallipc.RoutedDHCPMutationDeadlineV4
+		}
 		if command.Verb == "inspect" {
 			timeout = configpoc.IntegrityInspectionDeadlineV1
 		}
@@ -349,4 +352,15 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 		e = ErrIdentity
 	}
 	return struct{}{}, e
+}
+
+// Optional jobs implementations must advertise the profile they actually use.
+// A profile absent from either side is never inferred from the DHCP capability.
+
+func (s *RoutedSessionV3) sameEffectiveRenewalV4() bool {
+	if s.dhcpJobs != nil {
+		p, ok := s.dhcpJobs.(interface{ SameEffectiveRenewalV4() bool })
+		return ok && p.SameEffectiveRenewalV4()
+	}
+	return s.dhcp != nil && s.dhcp.SameEffectiveRenewalV4()
 }

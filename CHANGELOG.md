@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — internal same-effective DHCP handover
+
+- Prepare an explicit runtime profile that closes forwarding before refreshing identical effective lease evidence while retaining the selected undo Work and consumed gate sequences. Recovery-only requests revoke before owner reads and cannot open traffic. Retiring a renewed V4 instance is terminal; automatic replacement acquisition is separate. No factory or administrative activation is enabled here. There is a brief interruption per renewal; integrated traffic and resource qualification remain pending.
+
 ## Unreleased — DHCP renewal rechecks
 
 - Preserve the trusted same-effective renewal classification across final owner reads. Close and verify the old permit without resetting consumed sequences; generic authority changes and uncertain closure retain permanent fencing. This prerequisite does not enable operational renewal.

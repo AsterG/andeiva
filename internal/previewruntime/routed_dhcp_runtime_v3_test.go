@@ -1,10 +1,12 @@
 package previewruntime
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net"
 	"reflect"
 	"strings"
@@ -84,6 +86,7 @@ func (k *dhcpRuntimeKernelV3) Initialize(context.Context) error {
 	k.events = append(k.events, "initialize")
 	return nil
 }
+
 func (k *dhcpRuntimeKernelV3) RecoverClosedSelectedV3(context.Context, networkexecutor.LeaseSelectedSnapshotV3) error {
 	k.events = append(k.events, "recover-gate")
 	k.gate = false
@@ -163,6 +166,24 @@ func (f dhcpRuntimeForwardV3) Enable(ctx context.Context, verify func(context.Co
 
 type dhcpRuntimeLeaseV3 struct{ k *dhcpRuntimeKernelV3 }
 
+type dhcpRuntimeRenewableLeaseV4 struct {
+	dhcpRuntimeLeaseV3
+	refresh func(context.Context, networkexecutor.LeaseSelectedSnapshotV3, networkexecutor.LeaseSelectedSnapshotV3) error
+}
+
+type dhcpRuntimeInterleavedLeaseV4 struct {
+	routedDHCPLeaseV3
+	verify func() error
+}
+
+func (l dhcpRuntimeInterleavedLeaseV4) VerifySelectedStateV3(context.Context, networkexecutor.LeaseSelectedSnapshotV3, networkexecutor.LeaseSelectedStateV3) error {
+	return l.verify()
+}
+
+func (l dhcpRuntimeRenewableLeaseV4) RefreshSameEffectiveSelectedV4(ctx context.Context, previous, next networkexecutor.LeaseSelectedSnapshotV3) error {
+	return l.refresh(ctx, previous, next)
+}
+
 func (l dhcpRuntimeLeaseV3) PrepareSelectedSnapshotV3(context.Context) (networkexecutor.LeaseSelectedSnapshotV3, error) {
 	return l.k.snapshot, nil
 }
@@ -175,6 +196,9 @@ func (l dhcpRuntimeLeaseV3) Refresh(context.Context) (networkexecutor.LeaseOutco
 	return networkexecutor.LeaseApplied, nil
 }
 func (l dhcpRuntimeLeaseV3) VerifySelectedStateV3(_ context.Context, s networkexecutor.LeaseSelectedSnapshotV3, state networkexecutor.LeaseSelectedStateV3) error {
+	if state == networkexecutor.LeaseSelectedBaselineV3 && !l.k.target && networkexecutor.ValidateSameEffectiveLeaseV4(s, l.k.snapshot) == nil {
+		return nil // Baseline proof is physical and requires no live old grant.
+	}
 	if !reflect.DeepEqual(s, l.k.snapshot) || (state == networkexecutor.LeaseSelectedBaselineV3 && l.k.target) || (state == networkexecutor.LeaseSelectedTargetV3 && (!l.k.target || l.k.fact.Fact.Revoked || l.k.fact.Fact != s.Fact())) {
 		return configpoc.ErrRecovery
 	}
@@ -241,6 +265,442 @@ func dhcpRuntimeFixtureV3(t *testing.T) (*RoutedDHCPRuntimeV3, *dhcpRuntimeKerne
 	}
 	r.releaseLease = func(context.Context) error { k.events = append(k.events, "release"); return nil }
 	return r, k, reader, fact
+}
+
+func dhcpRuntimeRenewedSnapshotV4(t *testing.T, previous networkexecutor.LeaseSelectedSnapshotV3) networkexecutor.LeaseSelectedSnapshotV3 {
+	t.Helper()
+	next := previous
+	next.Sequence++
+	next.DeadlineBootNS += int64(time.Second)
+	next.Hash = ""
+	b, err := json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := sha256.Sum256(b)
+	next.Hash = hex.EncodeToString(h[:])
+	canonical, err := networkexecutor.CanonicalLeaseSelectedSnapshotV3(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
+}
+
+func TestRoutedDHCPRuntimeV4SameEffectiveRenewalKeepsSelectionAndClosesFirst(t *testing.T) {
+	r, k, reader, fact := dhcpRuntimeFixtureV3(t)
+	if err := r.SetRenewalProfileV4(RoutedDHCPSameEffectiveRenewalV4); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := r.begin(context.Background())
+	if err != nil {
+		t.Fatal("begin", err)
+	}
+	work := &dhcpRuntimeWorkV3{grant: previous, phase: "prepared", hash: strings.Repeat("e", 64), generation: 4}
+	reader.work = work
+	if err = r.apply(context.Background(), work.hash); err != nil {
+		t.Fatal("apply", err)
+	}
+	work.phase = "applied"
+	if err = r.open(context.Background(), work.hash); err != nil {
+		t.Fatal("open", err)
+	}
+	retainedGate := r.gate
+	next := previous
+	next.Epoch++
+	next.Snapshot = dhcpRuntimeRenewedSnapshotV4(t, previous.Snapshot)
+	*fact = RoutedDHCPOwnerFactV3{Epoch: next.Epoch, Fact: next.Snapshot.Fact()}
+	k.snapshot = next.Snapshot // New owner evidence, while selected work remains immutable.
+	var refreshCalls int
+	r.lease = dhcpRuntimeRenewableLeaseV4{dhcpRuntimeLeaseV3{k}, func(_ context.Context, gotPrevious, gotNext networkexecutor.LeaseSelectedSnapshotV3) error {
+		refreshCalls++
+		if k.forward || k.gate || !k.target || !reflect.DeepEqual(gotPrevious, previous.Snapshot) || !reflect.DeepEqual(gotNext, next.Snapshot) {
+			return configpoc.ErrRecovery
+		}
+		k.events = append(k.events, "renew-proof")
+		return nil
+	}}
+	ctx := context.Background()
+	if r.lease.VerifySelectedStateV3(ctx, previous.Snapshot, networkexecutor.LeaseSelectedTargetV3) == nil {
+		t.Fatal("superseded lease unexpectedly verified as current")
+	}
+	if err := (routedDHCPGateAuthorityV3{r}).Verify(ctx, networkexecutor.LeaseGateGrant{WorkHash: work.hash, Fact: previous.Snapshot.Fact()}); !errors.Is(err, networkexecutor.ErrLeaseGateRenewal) {
+		t.Fatal("same-effective owner race was not classified for a closed renewal handoff", err)
+	}
+	k.events = nil
+	out, err := r.renewSameEffectiveV4(context.Background(), work.hash, next.Snapshot.Hash)
+	if err != nil || !reflect.DeepEqual(out, next) || refreshCalls != 1 {
+		t.Fatal("renew", out, err, refreshCalls)
+	}
+	if r.gate != retainedGate || r.work != work.hash || !reflect.DeepEqual(work.Snapshot(), previous.Snapshot) || !reflect.DeepEqual(r.grant, next) {
+		t.Fatal("renewal rewrote immutable selected work")
+	}
+	if !k.gate || !k.forward || !k.target || !r.opened || r.renewalWaiting {
+		t.Fatal("renewal did not safely restore forwarding")
+	}
+	closeIndex, proofIndex, openIndex := -1, -1, -1
+	for i, event := range k.events {
+		switch event {
+		case "gate-close":
+			closeIndex = i
+		case "renew-proof":
+			proofIndex = i
+		case "open":
+			openIndex = i
+		case "L3-add", "L3-withdraw":
+			t.Fatal("same-effective renewal changed L3", k.events)
+		}
+	}
+	if closeIndex < 0 || proofIndex <= closeIndex || openIndex <= proofIndex {
+		t.Fatal("unsafe renewal order", k.events)
+	}
+	// A retried RPC after its reply was lost is idempotent and does not reopen
+	// or refresh the selected L3 proof a second time.
+	count := func(event string) int {
+		n := 0
+		for _, got := range k.events {
+			if got == event {
+				n++
+			}
+		}
+		return n
+	}
+	proofs, opens, forwardsOn := count("renew-proof"), count("open"), count("forward-on")
+	if got, retryErr := r.renewSameEffectiveV4(context.Background(), work.hash, next.Snapshot.Hash); retryErr != nil || !reflect.DeepEqual(got, next) || refreshCalls != 1 || count("renew-proof") != proofs || count("open") != opens || count("forward-on") != forwardsOn {
+		t.Fatal("lost-reply retry", retryErr, refreshCalls, k.events)
+	}
+}
+
+func TestRoutedDHCPRuntimeV4ChangedGrantClosesBeforeRejectingRenewal(t *testing.T) {
+	r, k, reader, fact := dhcpRuntimeFixtureV3(t)
+	if err := r.SetRenewalProfileV4(RoutedDHCPSameEffectiveRenewalV4); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := r.begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := &dhcpRuntimeWorkV3{grant: previous, phase: "applied", hash: strings.Repeat("f", 64), generation: 5}
+	reader.work = work
+	r.work, r.grant, r.lease = work.hash, previous, dhcpRuntimeLeaseV3{k}
+	// Model an already-applied selected target and an open forwarding token.
+	k.target, k.gate, k.forward = true, true, true
+	k.grant = networkexecutor.LeaseGateGrant{WorkHash: work.hash, Fact: previous.Snapshot.Fact()}
+	r.opened = true
+	changed := dhcpRuntimeRenewedSnapshotV4(t, previous.Snapshot)
+	changed.Address = "198.19.0.9/24"
+	changed.Hash = ""
+	b, _ := json.Marshal(changed)
+	h := sha256.Sum256(b)
+	changed.Hash = hex.EncodeToString(h[:])
+	changed, err = networkexecutor.CanonicalLeaseSelectedSnapshotV3(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*fact = RoutedDHCPOwnerFactV3{Epoch: previous.Epoch + 1, Fact: changed.Fact()}
+	k.snapshot = changed
+	k.events = nil
+	if _, err = r.renewSameEffectiveV4(context.Background(), work.hash, changed.Hash); err == nil {
+		t.Fatal("changed tuple accepted")
+	}
+	if k.gate || k.forward || r.opened || !r.renewalWaiting {
+		t.Fatal("invalid renewal left old forwarding open", k.events)
+	}
+}
+
+func TestRoutedDHCPRuntimeV4ReplayCannotRestorePermission(t *testing.T) {
+	for _, invalid := range []string{"epoch-replay", "sequence-replay"} {
+		t.Run(invalid, func(t *testing.T) {
+			r, k, reader, fact := dhcpRuntimeFixtureV3(t)
+			ctx := context.Background()
+			if err := r.SetRenewalProfileV4(RoutedDHCPSameEffectiveRenewalV4); err != nil {
+				t.Fatal(err)
+			}
+			previous, err := r.begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			work := &dhcpRuntimeWorkV3{grant: previous, phase: "prepared", hash: strings.Repeat("c", 64)}
+			reader.work = work
+			if err = r.apply(ctx, work.hash); err != nil {
+				t.Fatal(err)
+			}
+			work.phase = "applied"
+			if err = r.open(ctx, work.hash); err != nil {
+				t.Fatal(err)
+			}
+			gate, stages := r.gate, k.stages
+			next := configpoc.RoutedDHCPGrantV3{Epoch: previous.Epoch + 1, Snapshot: dhcpRuntimeRenewedSnapshotV4(t, previous.Snapshot)}
+			switch invalid {
+			case "epoch-replay":
+				next.Epoch = previous.Epoch
+			case "sequence-replay":
+				next.Snapshot.Sequence = previous.Snapshot.Sequence
+			}
+			next.Snapshot.Hash = ""
+			data, _ := json.Marshal(next.Snapshot)
+			hash := sha256.Sum256(data)
+			next.Snapshot.Hash = hex.EncodeToString(hash[:])
+			next.Snapshot, err = networkexecutor.CanonicalLeaseSelectedSnapshotV3(next.Snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			*fact = RoutedDHCPOwnerFactV3{Epoch: next.Epoch, Fact: next.Snapshot.Fact()}
+			k.snapshot = next.Snapshot
+			r.lease = dhcpRuntimeRenewableLeaseV4{dhcpRuntimeLeaseV3{k}, func(context.Context, networkexecutor.LeaseSelectedSnapshotV3, networkexecutor.LeaseSelectedSnapshotV3) error {
+				t.Error("replayed authority reached proof refresh")
+				return configpoc.ErrRecovery
+			}}
+			if _, err = r.renewSameEffectiveV4(ctx, work.hash, next.Snapshot.Hash); err == nil {
+				t.Fatal("invalid grant accepted")
+			}
+			if r.opened || k.gate || k.forward || !k.target || k.stages != stages || r.gate != gate || r.work != work.hash || !reflect.DeepEqual(r.grant, previous) || !reflect.DeepEqual(work.grant, previous) {
+				t.Fatal("invalid authority restored permission or replaced retained work/gate")
+			}
+		})
+	}
+}
+
+func TestRoutedDHCPRuntimeV4RetirementAfterRenewalsKeepsTerminalGate(t *testing.T) {
+	r, k, reader, fact := dhcpRuntimeFixtureV3(t)
+	ctx := context.Background()
+	if err := r.SetRenewalProfileV4(RoutedDHCPSameEffectiveRenewalV4); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := r.begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := &dhcpRuntimeWorkV3{grant: initial, phase: "prepared", hash: strings.Repeat("c", 64)}
+	reader.work = work
+	if err = r.apply(ctx, work.hash); err != nil {
+		t.Fatal(err)
+	}
+	work.phase = "applied"
+	if err = r.open(ctx, work.hash); err != nil {
+		t.Fatal(err)
+	}
+	retainedGate := r.gate
+	r.lease = dhcpRuntimeRenewableLeaseV4{dhcpRuntimeLeaseV3{k}, func(context.Context, networkexecutor.LeaseSelectedSnapshotV3, networkexecutor.LeaseSelectedSnapshotV3) error {
+		if k.forward || k.gate || !k.target {
+			return configpoc.ErrRecovery
+		}
+		return nil
+	}}
+	for range 2 {
+		next := configpoc.RoutedDHCPGrantV3{Epoch: r.grant.Epoch + 1, Snapshot: dhcpRuntimeRenewedSnapshotV4(t, r.grant.Snapshot)}
+		*fact = RoutedDHCPOwnerFactV3{Epoch: next.Epoch, Fact: next.Snapshot.Fact()}
+		k.snapshot = next.Snapshot
+		if _, err = r.renewSameEffectiveV4(ctx, work.hash, next.Snapshot.Hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	consumedSequence := k.grant.Fact.Sequence
+	if consumedSequence <= initial.Snapshot.Sequence || r.gate != retainedGate {
+		t.Fatal("renewals replaced the gate or lost its consumed sequence")
+	}
+	if err = r.withdraw(ctx, work.hash); err != nil {
+		t.Fatal(err)
+	}
+	reader.work, reader.last = nil, &initial.Snapshot
+	if err = r.retire(ctx); err != nil {
+		t.Fatal("terminal retirement failed", err)
+	}
+	if !r.retired || r.failed || r.gate != retainedGate || k.disposed || r.work != "" || r.lease != nil || k.gate || k.forward || k.target || k.grant.Fact.Sequence != consumedSequence {
+		t.Fatal("retirement replaced the gate, reset its sequence, retained L3, or invented an integrity failure")
+	}
+	releases := 0
+	for _, event := range k.events {
+		if event == "release" {
+			releases++
+		}
+	}
+	if releases != 1 {
+		t.Fatal("terminal retirement did not release its lease exactly once")
+	}
+	for _, replay := range []RoutedDHCPOwnerFactV3{{Epoch: initial.Epoch, Fact: initial.Snapshot.Fact()}, *fact} {
+		*fact = replay
+		k.events = nil
+		if _, err = r.begin(ctx); err == nil || len(k.events) != 0 || r.lease != nil || r.work != "" {
+			t.Fatal("retired instance admitted another acquisition", err)
+		}
+		if _, err = r.renewSameEffectiveV4(ctx, work.hash, initial.Snapshot.Hash); err == nil {
+			t.Fatal("retired instance accepted a replay")
+		}
+		if r.SetRenewalProfileV4(RoutedDHCPLegacyRenewalV4) == nil {
+			t.Fatal("retired instance changed its profile")
+		}
+	}
+	// The owning helper retains exactly this closed gate until resource cleanup.
+	if err = r.closeUnder(ctx); err != nil || r.gate != retainedGate || r.gate.VerifyClosedSelectedV3(ctx) != nil || k.grant.Fact.Sequence != consumedSequence {
+		t.Fatal("terminal cleanup changed retained authority", err)
+	}
+	releases = 0
+	for _, event := range k.events {
+		if event == "release" {
+			releases++
+		}
+		if event == "initialize" || event == "stage" || event == "open" || event == "L3-add" {
+			t.Fatal("cleanup reacquired or reset authority")
+		}
+	}
+	if releases != 0 {
+		t.Fatal("terminal cleanup released the lease twice")
+	}
+}
+
+func TestRoutedDHCPRuntimeV4RenewalProofFailureKeepsForwardingClosed(t *testing.T) {
+	r, k, reader, fact := dhcpRuntimeFixtureV3(t)
+	ctx := context.Background()
+	if err := r.SetRenewalProfileV4(RoutedDHCPSameEffectiveRenewalV4); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := r.begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := &dhcpRuntimeWorkV3{grant: previous, phase: "prepared", hash: strings.Repeat("d", 64), generation: 4}
+	reader.work = work
+	if err = r.apply(ctx, work.hash); err != nil {
+		t.Fatal(err)
+	}
+	work.phase = "applied"
+	if err = r.open(ctx, work.hash); err != nil {
+		t.Fatal(err)
+	}
+	next := configpoc.RoutedDHCPGrantV3{Epoch: previous.Epoch + 1, Snapshot: dhcpRuntimeRenewedSnapshotV4(t, previous.Snapshot)}
+	*fact = RoutedDHCPOwnerFactV3{Epoch: next.Epoch, Fact: next.Snapshot.Fact()}
+	k.snapshot = next.Snapshot
+	proofs := 0
+	r.lease = dhcpRuntimeRenewableLeaseV4{dhcpRuntimeLeaseV3{k}, func(context.Context, networkexecutor.LeaseSelectedSnapshotV3, networkexecutor.LeaseSelectedSnapshotV3) error {
+		proofs++
+		if k.forward || k.gate || r.opened {
+			t.Fatal("renewal proof ran before verified closure")
+		}
+		return networkexecutor.ErrObservation
+	}}
+	// Classification permits closing the obsolete token, never opening a new one.
+	if err = (routedDHCPGateAuthorityV3{r}).Verify(ctx, k.grant); !errors.Is(err, networkexecutor.ErrLeaseGateRenewal) {
+		t.Fatal("same-effective renewal not classified", err)
+	}
+	k.events = nil
+	if _, err = r.renewSameEffectiveV4(ctx, work.hash, next.Snapshot.Hash); err == nil || proofs != 1 {
+		t.Fatal("failed physical proof accepted", err, proofs)
+	}
+	if k.forward || k.gate || r.opened || !reflect.DeepEqual(r.grant, previous) || !reflect.DeepEqual(work.Snapshot(), previous.Snapshot) {
+		t.Fatal("failed renewal restored authority or rewrote selected work")
+	}
+	for _, event := range k.events {
+		if event == "stage" || event == "open" || event == "forward-on" {
+			t.Fatal("failed proof reached activation", k.events)
+		}
+	}
+}
+
+func TestRoutedDHCPRuntimeV4RenewalDuringAuthorityChecksOnlyRequestsClosure(t *testing.T) {
+	for _, phase := range []string{"lease", "policy", "final-owner"} {
+		t.Run(phase, func(t *testing.T) {
+			r, k, reader, fact := dhcpRuntimeFixtureV3(t)
+			ctx := context.Background()
+			if err := r.SetRenewalProfileV4(RoutedDHCPSameEffectiveRenewalV4); err != nil {
+				t.Fatal(err)
+			}
+			previous, err := r.begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			work := &dhcpRuntimeWorkV3{grant: previous, phase: "prepared", hash: strings.Repeat("e", 64)}
+			reader.work = work
+			if err = r.apply(ctx, work.hash); err != nil {
+				t.Fatal(err)
+			}
+			work.phase = "applied"
+			if err = r.open(ctx, work.hash); err != nil {
+				t.Fatal(err)
+			}
+			next := dhcpRuntimeRenewedSnapshotV4(t, previous.Snapshot)
+			advance := func() { *fact = RoutedDHCPOwnerFactV3{Epoch: previous.Epoch + 1, Fact: next.Fact()}; k.snapshot = next }
+			switch phase {
+			case "lease":
+				r.lease = dhcpRuntimeInterleavedLeaseV4{r.lease, func() error { advance(); return configpoc.ErrRecovery }}
+			case "policy":
+				r.policy = func(context.Context, routedDHCPWorkV3) error { advance(); return configpoc.ErrRecovery }
+			case "final-owner":
+				reads := 0
+				r.current = func(context.Context) (RoutedDHCPOwnerFactV3, error) {
+					reads++
+					if reads == 2 {
+						advance()
+					}
+					return *fact, nil
+				}
+			}
+			k.events = nil
+			err = (routedDHCPGateAuthorityV3{r}).Verify(ctx, k.grant)
+			if !errors.Is(err, networkexecutor.ErrLeaseGateRenewal) {
+				t.Fatal("fresh same-effective race not classified for closure", err)
+			}
+			if !reflect.DeepEqual(r.grant, previous) || !reflect.DeepEqual(work.grant, previous) || r.renewalWaiting {
+				t.Fatal("classification changed authority")
+			}
+			for _, event := range k.events {
+				if event == "stage" || event == "open" || event == "forward-on" {
+					t.Fatal("classification opened authority")
+				}
+			}
+		})
+	}
+}
+
+func TestRoutedDHCPRuntimeV4ReconciliationRefreshWaitsForFullInspection(t *testing.T) {
+	r, k, reader, fact := dhcpRuntimeFixtureV3(t)
+	ctx := context.Background()
+	if err := r.SetRenewalProfileV4(RoutedDHCPSameEffectiveRenewalV4); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := r.begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := &dhcpRuntimeWorkV3{grant: previous, phase: "prepared", hash: strings.Repeat("c", 64)}
+	reader.work = work
+	if err = r.apply(ctx, work.hash); err != nil {
+		t.Fatal(err)
+	}
+	work.phase = "applied"
+	if err = r.open(ctx, work.hash); err != nil {
+		t.Fatal(err)
+	}
+	next := configpoc.RoutedDHCPGrantV3{Epoch: previous.Epoch + 1, Snapshot: dhcpRuntimeRenewedSnapshotV4(t, previous.Snapshot)}
+	*fact = RoutedDHCPOwnerFactV3{Epoch: next.Epoch, Fact: next.Snapshot.Fact()}
+	k.snapshot = next.Snapshot
+	proofs := 0
+	r.lease = dhcpRuntimeRenewableLeaseV4{dhcpRuntimeLeaseV3{k}, func(context.Context, networkexecutor.LeaseSelectedSnapshotV3, networkexecutor.LeaseSelectedSnapshotV3) error {
+		proofs++
+		if k.forward || k.gate || r.opened {
+			t.Fatal("refresh before closure")
+		}
+		return nil
+	}}
+	ready := false
+	r.ready = func() error {
+		if !ready {
+			return configpoc.ErrRecovery
+		}
+		return nil
+	}
+	r.refreshReady = func() bool { return true } // Previously qualified, now Reconciling.
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err = r.renewSameEffectiveV4(ctx, work.hash, next.Snapshot.Hash); err == nil {
+			t.Fatal("incomplete inspection reported renewal success")
+		}
+		if k.gate || k.forward || r.opened || !r.renewalWaiting || proofs != 1 || !reflect.DeepEqual(r.grant, next) || ready {
+			t.Fatal("refresh opened authority or changed qualification", proofs)
+		}
+	}
+	ready = true // Only the independent full-inspection lane may establish this.
+	if got, err := r.renewSameEffectiveV4(ctx, work.hash, next.Snapshot.Hash); err != nil || !reflect.DeepEqual(got, next) || proofs != 1 || !k.gate || !k.forward || !r.opened {
+		t.Fatal("qualified retry did not open the refreshed grant exactly once", err, proofs)
+	}
 }
 
 func TestRoutedDHCPRuntimeV3SelectedLifecycleAndClosureOrder(t *testing.T) {
@@ -338,6 +798,23 @@ func TestRoutedDHCPRuntimeV3FreshHelperOnlyWithdrawsSelectedWAN(t *testing.T) {
 	}
 	if r.open(ctx, reader.work.hash) == nil {
 		t.Fatal("dead owner reopened")
+	}
+}
+
+func TestRoutedDHCPCurrentRemainsReadOnlyAvailableDuringIntegrityInspection(t *testing.T) {
+	r, k, _, _ := dhcpRuntimeFixtureV3(t)
+	r.lease = dhcpRuntimeLeaseV3{k}
+	r.ready = func() error { return configpoc.ErrRecovery }
+	grant, err := r.currentUnder(context.Background())
+	if err != nil || grant.Epoch == 0 {
+		t.Fatal("read-only current observation was blocked by inspection", err)
+	}
+	before := append([]string(nil), k.events...)
+	if _, err := r.begin(context.Background()); !errors.Is(err, configpoc.ErrRecovery) {
+		t.Fatal("effectful begin bypassed inspection readiness", err)
+	}
+	if !reflect.DeepEqual(before, k.events) || k.target || k.forward || k.gate {
+		t.Fatal("inspection-time observation caused dataplane mutation")
 	}
 }
 
@@ -448,4 +925,122 @@ func TestRoutedDHCPV3PrivateChannelNegotiatesWithoutRequestOwner(t *testing.T) {
 	}
 	_ = c.Close()
 	<-done
+}
+
+func TestRoutedDHCPControllerV3RechecksAfterRenewalRacesLive(t *testing.T) {
+	previous := configpoc.RoutedDHCPGrantV3{Epoch: 1, Snapshot: dhcpRuntimeSnapshotV3(t)}
+	nextSnapshot := previous.Snapshot
+	nextSnapshot.Sequence++
+	nextSnapshot.DeadlineBootNS += int64(5 * time.Second)
+	nextSnapshot.Hash = ""
+	encoded, err := json.Marshal(nextSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(encoded)
+	nextSnapshot.Hash = hex.EncodeToString(digest[:])
+	nextSnapshot, err = networkexecutor.CanonicalLeaseSelectedSnapshotV3(nextSnapshot)
+	if err != nil || networkexecutor.ValidateSameEffectiveLeaseV4(previous.Snapshot, nextSnapshot) != nil {
+		t.Fatal("renewal fixture", err)
+	}
+	next := configpoc.RoutedDHCPGrantV3{Epoch: 2, Snapshot: nextSnapshot}
+	work := strings.Repeat("c", 64)
+	run, helperRun, ns := strings.Repeat("a", 32), strings.Repeat("f", 32), uint64(22)
+	clientConn, helperConn := net.Pipe()
+	defer clientConn.Close()
+	verbs := make(chan string, 8)
+	helperDone := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(helperConn)
+		enc := json.NewEncoder(helperConn)
+		if !scanner.Scan() {
+			helperDone <- scanner.Err()
+			return
+		}
+		hello, e := firewallipc.DecodeRoutedHelloV3(scanner.Bytes(), false)
+		if e != nil {
+			helperDone <- e
+			return
+		}
+		if e = enc.Encode(firewallipc.RoutedHelloV3{ProtocolVersion: firewallipc.RoutedProtocolV3, RuntimeRun: hello.RuntimeRun, Namespace: hello.Namespace, Domain: hello.Domain, RequiredFeatures: hello.RequiredFeatures, Run: helperRun, Epoch: 1}); e != nil {
+			helperDone <- e
+			return
+		}
+		last := uint64(1) << 32
+		currentCalls := 0
+		for _, want := range []string{"dhcp_current", "dhcp_live", "dhcp_current", "dhcp_renew"} {
+			if !scanner.Scan() {
+				helperDone <- scanner.Err()
+				return
+			}
+			raw := append([]byte(nil), scanner.Bytes()...)
+			req, _, decodeErr := firewallipc.DecodeRoutedRequestV3(raw, helperRun, ns, last)
+			if decodeErr != nil || req.Verb != want {
+				helperDone <- errors.Join(decodeErr, errors.New("unexpected routed RPC sequence"))
+				return
+			}
+			last = req.Sequence
+			verbs <- req.Verb
+			payload := json.RawMessage(`{}`)
+			code := ""
+			switch req.Verb {
+			case "dhcp_live":
+				code = "ANDEIVA_CONFIG_RECOVERY_REQUIRED"
+			case "dhcp_current":
+				currentCalls++
+				grant := previous
+				if currentCalls == 2 {
+					grant = next
+				}
+				payload, _ = json.Marshal(firewallipc.RoutedDHCPGrantV3{Epoch: grant.Epoch, Snapshot: grant.Snapshot})
+			case "dhcp_renew":
+				var request firewallipc.RoutedDHCPRequestV3
+				if json.Unmarshal(req.Payload, &request) != nil || request.Work != work || request.Snapshot != next.Snapshot.Hash {
+					helperDone <- errors.New("renewal request did not bind current work and snapshot")
+					return
+				}
+				payload, _ = json.Marshal(firewallipc.RoutedDHCPGrantV3{Epoch: next.Epoch, Snapshot: next.Snapshot})
+			}
+			reply := firewallipc.RoutedReplyV3{ProtocolVersion: firewallipc.RoutedProtocolV3, Run: helperRun, Sequence: req.Sequence, Namespace: ns, Domain: req.Domain, Verb: req.Verb, Error: code, Payload: payload}
+			wire, marshalErr := json.Marshal(reply)
+			if marshalErr != nil {
+				helperDone <- marshalErr
+				return
+			}
+			if _, _, decodeErr := firewallipc.DecodeRoutedReplyV3(wire, req); decodeErr != nil {
+				helperDone <- errors.Join(errors.New(req.Verb+" reply rejected"), decodeErr)
+				return
+			}
+			if e = enc.Encode(reply); e != nil {
+				helperDone <- e
+				return
+			}
+		}
+		helperDone <- nil
+	}()
+
+	ctx := context.Background()
+	client, err := firewallipc.ConnectRoutedDHCPRenewalV4(ctx, clientConn, run, ns, false, false)
+	if err != nil {
+		t.Fatal("connect renewal-capable helper", err)
+	}
+	controller := &RoutedDHCPControllerV3{remote: &routedDHCPRemoteV3{client: client}, work: work, grant: previous}
+	if err := controller.reconcileLocked(ctx); err != nil {
+		helperErr := <-helperDone
+		t.Fatalf("same-effective renewal race withdrew live selection: %v; fake helper: %v", err, helperErr)
+	}
+	if controller.work != work || !reflect.DeepEqual(controller.grant, next) {
+		t.Fatal("controller rewrote the immutable selected work or operational baseline")
+	}
+	if err := <-helperDone; err != nil {
+		t.Fatal("fake helper", err)
+	}
+	close(verbs)
+	var got []string
+	for verb := range verbs {
+		got = append(got, verb)
+	}
+	if !reflect.DeepEqual(got, []string{"dhcp_current", "dhcp_live", "dhcp_current", "dhcp_renew"}) {
+		t.Fatalf("RPC sequence = %v", got)
+	}
 }
