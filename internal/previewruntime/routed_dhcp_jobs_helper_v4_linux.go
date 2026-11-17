@@ -28,6 +28,7 @@ type routedDHCPJobsHelperV4 struct {
 	assembly     routedDHCPJobAssemblyV4
 	ctx          context.Context
 	reader       *configpoc.RoutedSelectionReaderV2
+	actionReader *configpoc.RoutedSelectionReaderV2
 	authority    configpoc.RoutedAuthorityV1
 	integrity    *routedIntegrityGateV3
 	readerGID    uint32
@@ -41,11 +42,11 @@ type routedDHCPJobsHelperV4 struct {
 	failed       bool
 }
 
-func newRoutedDHCPJobsHelperV4(ctx context.Context, a routedDHCPJobAssemblyV4, reader *configpoc.RoutedSelectionReaderV2, authority configpoc.RoutedAuthorityV1, integrity *routedIntegrityGateV3, readerGID uint32) (*routedDHCPJobsHelperV4, error) {
-	if ctx == nil || a.network == nil || a.listeners == nil || a.client == nil || a.target == nil || a.host == nil || reader == nil || authority == nil || integrity == nil || readerGID == 0 {
+func newRoutedDHCPJobsHelperV4(ctx context.Context, a routedDHCPJobAssemblyV4, reader, actionReader *configpoc.RoutedSelectionReaderV2, authority configpoc.RoutedAuthorityV1, integrity *routedIntegrityGateV3, readerGID uint32) (*routedDHCPJobsHelperV4, error) {
+	if ctx == nil || a.network == nil || a.listeners == nil || a.client == nil || a.target == nil || a.host == nil || reader == nil || actionReader == nil || authority == nil || integrity == nil || readerGID == 0 {
 		return nil, ErrIdentity
 	}
-	h := &routedDHCPJobsHelperV4{assembly: a, ctx: ctx, reader: reader, authority: authority, integrity: integrity, readerGID: readerGID}
+	h := &routedDHCPJobsHelperV4{assembly: a, ctx: ctx, reader: reader, actionReader: actionReader, authority: authority, integrity: integrity, readerGID: readerGID}
 	a.network.beforeRestore = h.stopBeforeRestore
 	return h, nil
 }
@@ -140,7 +141,7 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 			return e
 		}
 		lifetime, cancel := context.WithCancel(h.ctx)
-		r, closeRuntime, e := assembleRoutedDHCPRuntimeV3(lifetime, RoutedDHCPRuntimeOptionsV3{LAN: lan, Target: h.assembly.target, Host: h.assembly.host, Desired: desired, Owner: binding.Owner, Current: owner.Current}, id, h.readerGID, h.reader, h.authority, h.integrity)
+		r, closeRuntime, e := assembleRoutedDHCPRuntimeV3(lifetime, RoutedDHCPRuntimeOptionsV3{LAN: lan, Target: h.assembly.target, Host: h.assembly.host, Desired: desired, Owner: binding.Owner, Current: owner.Current}, id, h.readerGID, h.actionReader, h.authority, h.integrity)
 		if e != nil {
 			cancel()
 			h.assembly.listeners.revokeService()
