@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"reflect"
@@ -20,6 +21,22 @@ import (
 	"github.com/AsterG/andeiva/internal/dhcpserver"
 	"golang.org/x/sys/unix"
 )
+
+func TestRoutedDHCPServerLaunchAliveDescriptorBoundsV1(t *testing.T) {
+	for _, fd := range []int{-1, math.MinInt32, math.MaxInt32, math.MaxInt32 + 1} {
+		if (&RoutedDHCPServerLaunchV1{pidfd: fd}).Alive() {
+			t.Fatal("invalid descriptor reported a live role", fd)
+		}
+	}
+	fd, err := unix.PidfdOpen(os.Getpid(), 0)
+	if err != nil {
+		t.Fatal("current process pidfd unavailable", err)
+	}
+	defer unix.Close(fd)
+	if !(&RoutedDHCPServerLaunchV1{pidfd: fd}).Alive() {
+		t.Fatal("live retained pidfd rejected")
+	}
+}
 
 func serverBootstrapFixtureV1() routedDHCPServerBootstrapV1 {
 	return routedDHCPServerBootstrapV1{Version: 1, ParentPID: 2, ParentStartTicks: 10, HostMountNamespace: 30, DeadlineBootNS: int64(time.Hour), Metadata: Metadata{SchemaVersion: 2, RunID: strings.Repeat("a", 32), BootID: "12345678-1234-1234-1234-123456789abc", HostNamespace: 10, GatewayNamespace: 20}, Config: dhcpserver.Config{SchemaVersion: 1, Enabled: true}, Bindings: []routedDHCPServerBindingWireV1{{InterfaceID: "lan", Role: "lan", Address: "198.18.1.1/24", Name: "lan0", SubnetID: 17}}, ServiceCgroups: []routedDHCPServerCgroupWireV1{{Role: "lan", Name: "dhcp-server-" + strings.Repeat("b", 32), Device: 1, Inode: 2}}, LeaseBudgetBytes: 4 << 20}

@@ -79,7 +79,7 @@ func (s *RoutedDHCPServerLaunchV1) Alive() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
+	if s.closed || s.pidfd < 0 || s.pidfd > math.MaxInt32 {
 		return false
 	}
 	poll := []unix.PollFd{{Fd: int32(s.pidfd), Events: unix.POLLIN}}
@@ -176,8 +176,7 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 	cmd := routedDHCPServerRoleCommandV1(self, files, int(own.Fd()))
 	fd, done, err := routedDHCPServerStartV1(cmd)
 	if err != nil {
-		controlWrite.Close()
-		return nil, err
+		return nil, errors.Join(err, controlWrite.Close())
 	}
 	s := &RoutedDHCPServerLaunchV1{pid: cmd.Process.Pid, pidfd: fd, control: controlWrite, done: done}
 	s.stopWatch = context.AfterFunc(ctx, func() { _ = s.control.Close() })
@@ -210,8 +209,7 @@ func routedDHCPServerSealedBootstrapV1(b routedDHCPServerBootstrapV1) (*os.File,
 		_, err = unix.FcntlInt(file.Fd(), unix.F_ADD_SEALS, unix.F_SEAL_WRITE|unix.F_SEAL_GROW|unix.F_SEAL_SHRINK|unix.F_SEAL_SEAL)
 	}
 	if err != nil {
-		file.Close()
-		return nil, ErrUnavailable
+		return nil, errors.Join(ErrUnavailable, file.Close())
 	}
 	return file, nil
 }
