@@ -467,7 +467,7 @@ func (s *v2Store) readSelection() error {
 			return errV2Unavailable
 		}
 		var state v2State
-		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage || !preservesFeaturesV2(state, currentState) || !preservesReclamationV2(state, currentState) || !preservesRecoveryReserveV2(state, currentState) {
+		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage || !preservesSelectedDHCPConfigurationReadV4(state, currentState, current.Previous, prior, s.readObject, routedDHCPConfigurationHeaderV4) || !preservesReclamationV2(state, currentState) || !preservesRecoveryReserveV2(state, currentState) {
 			return errV2Unavailable
 		}
 		if current.Checkpoint {

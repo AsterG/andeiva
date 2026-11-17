@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — prepared active-WAN configuration reader
+
+- Prepare a typed, read-only continuation contract that distinguishes the original DHCP Work from the current configuration generation. Bind transitions to the exact selected source, original reservations, operation and final audit. Existing readers reject the required feature.
+- Preserve/replace impact uses the complete canonical network revision. This phase does not enable active-WAN Stage, Save, Commit, Confirm or rollback; runtime, native continuity and comparative CPU/RAM qualification remain pending.
+
 ## Unreleased — selected DHCP job reader wiring
 
 - Use the existing action-authority reader for operational selected DHCP job checks, while retaining full-history inspection and preflight. Keep every authority check and RPC deadline.
