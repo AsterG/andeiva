@@ -38,6 +38,7 @@ type RoutedDHCPServerResourcesV1 struct {
 	Gateway, Host, HostMount, Configuration, Leases *os.File
 	Config                                          dhcpserver.Config
 	Bindings                                        []dhcpkea.Binding
+	ServiceCgroups                                  []RoutedDHCPServerCgroupPinV1
 	// Trusted storage-plan budget for existing lease/LFC files, not a request
 	// option. This preflight bound does not enforce ongoing filesystem quotas.
 	LeaseBudgetBytes int64
@@ -163,7 +164,7 @@ func routedDHCPServerScopeV1(o RoutedDHCPServerResourcesV1) error {
 	}
 	boot, err := routedDHCPOwnerReadV3("/proc/sys/kernel/random/boot_id", 128)
 	id, e := canonicalBoot(boot)
-	if err != nil || e != nil || id != m.BootID || routedDHCPOwnerCgroupV3() != nil {
+	if err != nil || e != nil || id != m.BootID || routedDHCPServerCgroupScopeV1(o.ServiceCgroups) != nil {
 		return ErrIdentity
 	}
 	for _, path := range []string{"/proc/sys/net/ipv4/ip_forward", "/proc/sys/net/ipv6/conf/all/forwarding"} {

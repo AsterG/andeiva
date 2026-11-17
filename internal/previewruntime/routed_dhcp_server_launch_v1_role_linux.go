@@ -1,0 +1,139 @@
+//go:build linux
+
+package previewruntime
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/netip"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/AsterG/andeiva/internal/dhcpkea"
+	"github.com/AsterG/andeiva/internal/dhcpserver"
+	"github.com/AsterG/andeiva/internal/jsoncheck"
+	"golang.org/x/sys/unix"
+)
+
+func decodeRoutedDHCPServerBootstrapV1(raw []byte) (routedDHCPServerBootstrapV1, error) {
+	var b routedDHCPServerBootstrapV1
+	if len(raw) == 0 || len(raw) > routedDHCPServerBootstrapLimitV1 || !jsoncheck.UniqueControlFields(raw) {
+		return b, ErrIdentity
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&b) != nil || d.Decode(new(any)) != io.EOF || b.Version != 1 || b.ParentPID <= 1 || b.ParentStartTicks == 0 || b.HostMountNamespace == 0 || b.DeadlineBootNS <= 0 || b.Metadata.ValidateRouted() != nil || len(b.Bindings) == 0 || len(b.Bindings) > 64 || len(b.ServiceCgroups) == 0 || len(b.ServiceCgroups) > 2 || b.LeaseBudgetBytes <= 0 {
+		return routedDHCPServerBootstrapV1{}, ErrIdentity
+	}
+	return b, nil
+}
+
+// The fixed role receives FD3 gateway,4 hostNET,5 hostMNT,6 config,7 leases,
+// 8 sealed bootstrap,9 lifetime control,10..11 exact readonly cgroup pins.
+// It never reads an administrative URL, path or shell command.
+func RunRoutedDHCPServerRoleV1(parent context.Context) (result error) {
+	if parent == nil || parent.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
+		return ErrIdentity
+	}
+	// Read the regular sealed bootstrap before constructing pollable pipe files,
+	// so a missing inherited service pin cannot be filled by a Go poller FD.
+	var st unix.Stat_t
+	seals, err := unix.FcntlInt(8, unix.F_GET_SEALS, 0)
+	wantSeals := unix.F_SEAL_WRITE | unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL
+	if err != nil || seals != wantSeals || unix.Fstat(8, &st) != nil || st.Mode != unix.S_IFREG|0400 || st.Uid != 0 || st.Size <= 0 || st.Size > routedDHCPServerBootstrapLimitV1 {
+		return ErrIdentity
+	}
+	raw := make([]byte, st.Size)
+	n, err := unix.Pread(8, raw, 0)
+	if err != nil || n != len(raw) {
+		return ErrIdentity
+	}
+	b, err := decodeRoutedDHCPServerBootstrapV1(raw)
+	if err != nil {
+		return err
+	}
+	var pins []RoutedDHCPServerCgroupPinV1
+	for i, wire := range b.ServiceCgroups {
+		fd := i + 10
+		if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR {
+			return ErrIdentity
+		}
+		pin := RoutedDHCPServerCgroupPinV1{Role: wire.Role, Name: wire.Name, Identity: RoutedDHCPServiceCgroupIdentityV1{Device: wire.Device, Inode: wire.Inode}, Directory: os.NewFile(uintptr(fd), "dhcp-server-service-pin")}
+		pins = append(pins, pin)
+		defer pin.Directory.Close()
+		unix.CloseOnExec(fd)
+		actual, err := routedDHCPServiceDirectoryV1(pin.Directory)
+		if err != nil || actual != pin.Identity || !routedDHCPServerCgroupPinNameV1(pin) {
+			return ErrIdentity
+		}
+	}
+	if b.ParentPID != os.Getppid() {
+		return ErrIdentity
+	}
+	start, _, err := routedDHCPOwnerProcessV3(b.ParentPID)
+	status, statusErr := routedDHCPOwnerReadV3("/proc/"+strconv.Itoa(b.ParentPID)+"/status", 65536)
+	if err != nil || start != b.ParentStartTicks || statusErr != nil || !rootRoutedParentStatusV3(status, b.ParentPID) {
+		return ErrIdentity
+	}
+	if unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(unix.SIGKILL), 0, 0, 0) != nil || b.ParentPID != os.Getppid() {
+		return ErrIdentity
+	}
+	controlFlags, err := unix.FcntlInt(9, unix.F_GETFL, 0)
+	if err != nil || controlFlags&unix.O_ACCMODE != unix.O_RDONLY || unix.Fstat(9, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFIFO || unix.SetNonblock(9, true) != nil {
+		return ErrIdentity
+	}
+	var files [7]*os.File
+	for i := range files {
+		fd := i + 3
+		files[i] = os.NewFile(uintptr(fd), "routed-dhcp-server-role")
+		defer files[i].Close()
+		unix.CloseOnExec(fd)
+	}
+	if !routedDHCPOwnerPipeV3(files[6], unix.O_RDONLY) {
+		return ErrIdentity
+	}
+	if !routedDHCPOwnerNamespaceV3(files[2], unix.CLONE_NEWNS, b.HostMountNamespace) {
+		return ErrIdentity
+	}
+	var bindings []dhcpkea.Binding
+	for _, wire := range b.Bindings {
+		prefix, err := netip.ParsePrefix(wire.Address)
+		if err != nil || prefix.String() != wire.Address {
+			return ErrIdentity
+		}
+		bindings = append(bindings, dhcpkea.Binding{Interface: dhcpserver.Binding{InterfaceID: wire.InterfaceID, Role: wire.Role, Address: prefix}, Name: wire.Name, SubnetID: wire.SubnetID})
+	}
+	now, err := routedDHCPOwnerBootNowV3()
+	if err != nil || b.DeadlineBootNS <= now {
+		return ErrIdentity
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(b.DeadlineBootNS-now))
+	defer cancel()
+	// EOF is revocation. Any byte is a protocol error, never a command.
+	controlDone := make(chan error, 1)
+	go func() {
+		var one [1]byte
+		n, err := files[6].Read(one[:])
+		if n != 0 {
+			err = ErrIdentity
+		}
+		if err == nil {
+			err = ErrIdentity
+		}
+		controlDone <- err
+		cancel()
+	}()
+	defer func() {
+		_ = files[6].Close()
+		controlErr := <-controlDone
+		if controlErr != io.EOF && !errors.Is(controlErr, os.ErrClosed) {
+			result = errors.Join(result, ErrIdentity)
+		}
+	}()
+	o := RoutedDHCPServerResourcesV1{Metadata: b.Metadata, Gateway: files[0], Host: files[1], HostMount: files[2], Configuration: files[3], Leases: files[4], Config: b.Config, Bindings: bindings, ServiceCgroups: pins, LeaseBudgetBytes: b.LeaseBudgetBytes}
+	return RunRoutedDHCPServerComponentV1(ctx, o)
+}

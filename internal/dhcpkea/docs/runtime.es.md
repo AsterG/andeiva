@@ -1,5 +1,20 @@
 # Componente de servidor confinado
 
+`StartRoutedDHCPServerV1` conecta un rol fijo con el componente existente. Aún no
+lo llama el dispatcher productivo ni el controlador seleccionado. Root transmite
+FDs heredados, bootstrap acotado y sellado, y pins de namespaces/cgroups. EOF del
+control retira el rol y Stop usa el pidfd retenido; el handle no es readiness ni
+permiso de paquetes. El perfil opcional exige el conjunto exacto de hasta dos
+hojas WAN/LAN: rechaza hijos desconocidos, sustituidos, ausentes o renombrados,
+sin permitir prefijos. El perfil previo sin hijos se conserva.
+
+Root debe coordinar ese conjunto con la autoridad WAN antes de activar o retirar
+LAN. Dispatcher, ciclo conjunto, frontera RAW y calificación nativa coexistente
+siguen pendientes. No habilita `SupportsDHCPServerV1`. Desactivado omite el launch
+y no crea procesos, pipes ni timers exclusivos. Root puede conservar el slot LAN vacío como infraestructura compartida de la encarnación; su coste kernel debe medirse. No cambia dependencias,
+formato persistente ni unidades Docker/EKS. Medición nueva de recursos pendiente;
+las pruebas locales de subproceso no cierran el hito.
+
 Experimental y desactivado por defecto. Sin API, dispatcher productivo ni nueva
 base de configuración. Reutiliza controles del supervisor existente. Root debe
 proporcionar un proceso dedicado dentro del gateway y un namespace de montajes
