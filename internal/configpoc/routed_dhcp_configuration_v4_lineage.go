@@ -85,7 +85,11 @@ func routedDHCPConfigurationContextV4Read(x v4RoutedDHCPConfiguration, st v2Stat
 		if op.Request.Kind != OpCommit || op.Request.ConfirmSeconds == nil || out.target.Pending == nil || x.Group.Side != "target" {
 			return bad()
 		}
-		projectionTime = out.target.Pending.Deadline.Add(-time.Duration(*op.Request.ConfirmSeconds) * time.Second)
+		seconds := *op.Request.ConfirmSeconds
+		projectionTime, err = routedDHCPConfigurationProjectionTimeV4(out.target.Pending.Deadline, seconds)
+		if err != nil {
+			return bad()
+		}
 		lease = out.target.Pending.Lease
 		if projectionTime.Before(op.Accepted) || projectionTime.After(op.ExecuteBefore) {
 			return bad()
@@ -111,6 +115,15 @@ func routedDHCPConfigurationContextV4Read(x v4RoutedDHCPConfiguration, st v2Stat
 		return bad()
 	}
 	return out, nil
+}
+
+// Match the routed target's existing confirmation range before converting the
+// unsigned wire value to nanoseconds. This reader does not change any deadline.
+func routedDHCPConfigurationProjectionTimeV4(deadline time.Time, seconds uint64) (time.Time, error) {
+	if seconds < 30 || seconds > 120 {
+		return time.Time{}, ErrRecovery
+	}
+	return deadline.Add(-time.Duration(seconds) * time.Second), nil
 }
 
 func sameDHCPConfigurationOperationV4(original, current v2Operation) bool {

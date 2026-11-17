@@ -215,6 +215,32 @@ func TestRoutedDHCPConfigurationV4MetadataRetainsExactWork(t *testing.T) {
 	}
 }
 
+func TestRoutedDHCPConfigurationV4ConfirmationProjectionBounds(t *testing.T) {
+	_, _, _, work, authority := selectedDHCPReaderFixtureV3(t)
+	f := dhcpConfigurationContractFromV4(t, work, authority)
+	if _, err := routedDHCPConfigurationContinuationV4Read(f.header.Continuation, f.state, f.load); err != nil {
+		t.Fatal("full valid fixture must pass before testing conversion bounds", err)
+	}
+	deadline := f.op.Accepted.Add(120 * time.Second)
+	for _, test := range []struct {
+		seconds uint64
+		want    time.Time
+	}{{30, f.op.Accepted.Add(90 * time.Second)}, {120, f.op.Accepted}} {
+		got, err := routedDHCPConfigurationProjectionTimeV4(deadline, test.seconds)
+		if err != nil || !got.Equal(test.want) {
+			t.Fatalf("confirmation boundary %d changed: %v %v", test.seconds, got, err)
+		}
+	}
+	for _, seconds := range []uint64{0, 1, 29, 121, ^uint64(0), 1 << 63, (1<<63-1)/uint64(time.Second) + 1, 1<<55 + 1} {
+		// 1<<55 seconds wraps to zero when multiplied by one billion in
+		// int64; adding one would falsely project only one second backwards.
+		got, err := routedDHCPConfigurationProjectionTimeV4(deadline, seconds)
+		if !errors.Is(err, ErrRecovery) || !got.IsZero() {
+			t.Fatalf("out-of-range/overflow seconds %d yielded a projection: %v %v", seconds, got, err)
+		}
+	}
+}
+
 func TestRoutedDHCPConfigurationV4AcceptedSourceG1AndR2(t *testing.T) {
 	f := dhcpConfigurationContractFixtureV4(t)
 	f.installObjects(t)
