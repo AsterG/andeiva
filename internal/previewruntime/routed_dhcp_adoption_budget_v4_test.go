@@ -107,6 +107,28 @@ func TestRoutedDHCPAdoptionBudgetV4BoundaryAndUnknownEvidence(t *testing.T) {
 	}
 }
 
+func TestRoutedDHCPAdoptionBudgetV4CountsMeasuredOverrunAfterUnknownClock(t *testing.T) {
+	r, k, reader, _ := adoptionRuntimeV4(t)
+	if err := r.closeUnder(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	r.renewalWaiting = true
+	r.hookEpoch, r.hookBootNS = r.grant.Epoch, int64(100*time.Second)
+	r.adoptionClock = func() (int64, error) { return 0, errors.New("clock unavailable") }
+	if !errors.Is(r.open(context.Background(), reader.work.hash), errRoutedDHCPAdoptionClockV4) || r.adoptionOverruns != 0 {
+		t.Fatal("unknown clock counted")
+	}
+	r.adoptionClock = func() (int64, error) { return int64(113 * time.Second), nil }
+	for range 10 {
+		if !errors.Is(r.open(context.Background(), reader.work.hash), errRoutedDHCPAdoptionBudgetV4) {
+			t.Fatal("rejected epoch reopened")
+		}
+	}
+	if r.adoptionOverruns != 1 || k.forward || k.gate {
+		t.Fatal("measured overrun lost or duplicated", r.adoptionOverruns)
+	}
+}
+
 func TestRoutedDHCPMarginRuntimeV4WaitsClosedForFreshNaturalGrant(t *testing.T) {
 	r, k, reader, fact := adoptionRuntimeV4(t)
 	previous, work, retained := r.grant, reader.work, r.gate

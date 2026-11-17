@@ -8,3 +8,7 @@ import (
 )
 
 func nativeDHCPJobsCollectV4(*testing.T, context.Context, Metadata) func() { return func() {} }
+
+func nativeDHCPJobsCollectDataV4(*testing.T, context.Context, Metadata, func([]byte)) func() {
+	return func() {}
+}

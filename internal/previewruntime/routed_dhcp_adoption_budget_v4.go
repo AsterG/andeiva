@@ -58,8 +58,11 @@ func (r *RoutedDHCPRuntimeV3) checkAdoptionBudgetV4(ctx context.Context) error {
 	if known && !overrun && r.budgetRejectedEpoch < r.grant.Epoch {
 		return nil
 	}
-	if overrun && r.budgetRejectedEpoch < r.grant.Epoch && r.adoptionOverruns < math.MaxUint64 {
-		r.adoptionOverruns++
+	if overrun && r.lastOverrunEpoch < r.grant.Epoch {
+		if r.adoptionOverruns < math.MaxUint64 {
+			r.adoptionOverruns++
+		}
+		r.lastOverrunEpoch = r.grant.Epoch
 	}
 	if r.grant.Epoch > r.budgetRejectedEpoch {
 		r.budgetRejectedEpoch = r.grant.Epoch

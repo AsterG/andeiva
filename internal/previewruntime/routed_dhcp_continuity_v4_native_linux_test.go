@@ -141,6 +141,8 @@ type nativeDHCPContinuityReportV4 struct {
 	Missing               []nativeDHCPContinuityMissingV4 `json:"missing_echo_probes"`
 	MissingTruncated      bool                            `json:"missing_echo_probes_truncated"`
 	UDPSentSet            continuitySetV4                 `json:"udp_sent_set"`
+	UDPSendStartBootNS    [continuityLimitV4 + 1]int64    `json:"udp_send_start_boot_ns"`
+	UDPSendEndBootNS      [continuityLimitV4 + 1]int64    `json:"udp_send_end_boot_ns"`
 	UDPEchoSet            continuitySetV4                 `json:"udp_echo_set"`
 	UDPSinkReceived       uint64                          `json:"udp_sink_received_datagrams"`
 	UDPSinkUniqueReceived uint64                          `json:"udp_sink_unique_received"`
@@ -238,9 +240,21 @@ func continuityReportValidV4(role string, r nativeDHCPContinuityReportV4) bool {
 	if r.UDPWriteAttempts > continuityLimitV4 || r.UDPSendErrors > continuityLimitV4 || r.UDPWriteAttempts != r.UDPSent+r.UDPSendErrors || r.UDPWriteICMP > r.UDPSendErrors || r.UDPSent != r.UDPSentSet.count() || r.UDPUniqueEchoes != r.UDPEchoSet.count() || !r.UDPEchoSet.subset(r.UDPSentSet) || r.UDPMissingEchoes != r.UDPSent-r.UDPUniqueEchoes || uint64(len(r.Missing)) != r.UDPMissingEchoes {
 		return false
 	}
+	var previousEnd int64
+	for seq := uint64(0); seq <= continuityLimitV4; seq++ {
+		start, end := r.UDPSendStartBootNS[seq], r.UDPSendEndBootNS[seq]
+		if r.UDPSentSet.has(seq) {
+			if start <= 0 || end < start || start < previousEnd {
+				return false
+			}
+			previousEnd = end
+		} else if start != 0 || end != 0 {
+			return false
+		}
+	}
 	var missing continuitySetV4
 	for _, p := range r.Missing {
-		if !r.UDPSentSet.has(p.Sequence) || r.UDPEchoSet.has(p.Sequence) || missing.has(p.Sequence) || p.SentBootNS <= 0 {
+		if !r.UDPSentSet.has(p.Sequence) || r.UDPEchoSet.has(p.Sequence) || missing.has(p.Sequence) || p.SentBootNS <= 0 || p.SentBootNS != r.UDPSendStartBootNS[p.Sequence] {
 			return false
 		}
 		missing.add(p.Sequence)
@@ -606,6 +620,7 @@ type continuityStateV4 struct {
 	role        string
 	report      nativeDHCPContinuityReportV4
 	sentAt      [continuityLimitV4 + 1]int64
+	sentEndAt   [continuityLimitV4 + 1]int64
 	tcp, udp    nativeDHCPContinuitySampleV4
 	pending     *nativeDHCPContinuityCheckpointV4
 	advertised  bool
@@ -676,6 +691,7 @@ func (s *continuityStateV4) snapshot() nativeDHCPContinuityReportV4 {
 	defer s.mu.Unlock()
 	r := s.report
 	if s.role == "source" {
+		r.UDPSendStartBootNS, r.UDPSendEndBootNS = s.sentAt, s.sentEndAt
 		r.UDPMissingEchoes = r.UDPSent - r.UDPUniqueEchoes
 		for seq := uint64(1); seq <= continuityLimitV4; seq++ {
 			if r.UDPSentSet.has(seq) && !r.UDPEchoSet.has(seq) {
@@ -743,6 +759,13 @@ func (s *continuityStateV4) sendUDP(ctx context.Context, write func([]byte) (int
 		s.report.UDPSent++
 		s.report.UDPSentSet.add(seq)
 		s.sentAt[seq] = boot
+		completed, clockErr := s.now()
+		if clockErr != nil || completed < boot {
+			s.failLocked(errors.New("UDP send completion clock unavailable"))
+			s.mu.Unlock()
+			return
+		}
+		s.sentEndAt[seq] = completed
 		s.mu.Unlock()
 	}
 	s.mu.Lock()
@@ -1143,6 +1166,7 @@ func continuityTestStateV4(role string) *continuityStateV4 {
 func continuityTestReportV4() nativeDHCPContinuityReportV4 {
 	r := nativeDHCPContinuityReportV4{Stopped: true, TCPSent: 1, TCPEchoed: 1, TCPFirstEchoBootNS: 100, TCPLastEchoBootNS: 100, TCPSource: "198.18.0.2:30000", TCPDestination: "198.18.1.1:18080", UDPSource: "198.18.0.2:30001", UDPDestination: "198.18.1.1:18081", UDPWriteAttempts: 1, UDPSent: 1, UDPUniqueEchoes: 1, FirstEchoBootNS: 100, LastEchoBootNS: 100}
 	r.UDPSentSet.add(1)
+	r.UDPSendStartBootNS[1], r.UDPSendEndBootNS[1] = 90, 91
 	r.UDPEchoSet.add(1)
 	return r
 }
@@ -1204,6 +1228,7 @@ func TestDHCPContinuityCollectorV4(t *testing.T) {
 	for seq := uint64(1); seq <= continuityLimitV4; seq++ {
 		s.report.UDPSentSet.add(seq)
 		s.sentAt[seq] = int64(seq) + 100
+		s.sentEndAt[seq] = s.sentAt[seq]
 	}
 	s.report.UDPSent, s.report.UDPWriteAttempts = continuityLimitV4, continuityLimitV4
 	s.echoLocked(1, 200)
@@ -1246,6 +1271,7 @@ func TestDHCPContinuityCollectorV4(t *testing.T) {
 	for seq := uint64(1); seq <= continuityLimitV4; seq++ {
 		s.report.UDPSentSet.add(seq)
 		s.sentAt[seq] = int64(1<<62) + int64(seq)
+		s.sentEndAt[seq] = s.sentAt[seq]
 	}
 	s.report.UDPSent, s.report.UDPWriteAttempts = continuityLimitV4, continuityLimitV4
 	r = s.snapshot()
@@ -1253,6 +1279,7 @@ func TestDHCPContinuityCollectorV4(t *testing.T) {
 	if err != nil || len(r.Missing) != continuityLimitV4 || len(encoded) > continuityJSONLimitV4 {
 		t.Fatal("entire missing-probe window is not bounded and complete")
 	}
+	t.Logf("full8192 UDP writes+missing+both timestamp arrays encoded bytes=%d limit=%d", len(encoded), continuityJSONLimitV4)
 }
 func TestDHCPContinuityPrivateProtocolV4(t *testing.T) {
 	ready := []byte(`{"version":1,"kind":"ready"}`)

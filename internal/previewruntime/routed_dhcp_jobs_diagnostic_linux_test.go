@@ -23,6 +23,7 @@ type nativeDHCPDiagnosticCaptureV4 struct {
 	servicePin *os.File
 	data       []byte
 	err        error
+	observe    func([]byte)
 	stop, done chan struct{}
 }
 
@@ -132,6 +133,9 @@ func (c *nativeDHCPDiagnosticCaptureV4) run(ctx context.Context) {
 			return
 		}
 		c.data = data
+		if c.observe != nil {
+			c.observe(data)
+		}
 	}
 	for {
 		select {
@@ -148,6 +152,10 @@ func (c *nativeDHCPDiagnosticCaptureV4) run(ctx context.Context) {
 }
 
 func nativeDHCPJobsCollectV4(t *testing.T, ctx context.Context, m Metadata) func() {
+	return nativeDHCPJobsCollectDataV4(t, ctx, m, nil)
+}
+
+func nativeDHCPJobsCollectDataV4(t *testing.T, ctx context.Context, m Metadata, observe func([]byte)) func() {
 	t.Helper()
 	var capture *nativeDHCPDiagnosticCaptureV4
 	var failure error
@@ -158,6 +166,7 @@ func nativeDHCPJobsCollectV4(t *testing.T, ctx context.Context, m Metadata) func
 		}
 		capture, failure = pinNativeDHCPDiagnosticV4(owner, m)
 		if failure == nil {
+			capture.observe = observe
 			go capture.run(ctx)
 		}
 	})

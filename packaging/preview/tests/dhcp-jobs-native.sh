@@ -8,10 +8,14 @@ test_name=TestNativeRoutedDHCPJobsV4
 test_budget=220s
 wrapper_budget=225s
 if [[ $# == 4 ]]; then
-  [[ $4 == --early-renewal-v4 ]] || exit 64
-  test_name=TestNativeRoutedDHCPEarlyRenewalV4
-  test_budget=730s
-  wrapper_budget=750s
+  case $4 in
+    --early-renewal-v4)
+      test_name=TestNativeRoutedDHCPEarlyRenewalV4
+      test_budget=730s; wrapper_budget=750s ;;
+    --b2-70) test_name=TestNativeRoutedDHCPB2Natural70V4 ;;
+    --b2-71) test_name=TestNativeRoutedDHCPB2Natural71V4 ;;
+    *) exit 64 ;;
+  esac
 fi
 if [[ -e /proc/sys/fs/binfmt_misc/WSLInterop || $(uname -r) == *[Mm]icrosoft* ]]; then exit 64; fi
 grep -qx 'ID=debian' /etc/os-release

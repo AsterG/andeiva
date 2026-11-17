@@ -45,12 +45,16 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 // The combined early-renewal/API-restart trial remains failed evidence. This
 // profile qualifies continuity and orderly retirement only, never API restart.
 func TestNativeRoutedDHCPEarlyRenewalV4(t *testing.T) {
-	nativeRunRoutedDHCPJobsV4(t, true)
+	nativeRunRoutedDHCPScenarioV4(t, true, 0)
 }
 
 const nativeDHCPEarlyRenewalSamplesV4 = 10
 
 func nativeRunRoutedDHCPJobsV4(t *testing.T, early bool) {
+	nativeRunRoutedDHCPScenarioV4(t, early, 0)
+}
+
+func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
 	t.Helper()
 	if os.Getenv("ANDEIVA_NATIVE_DHCP_JOBS_V4") != "1" {
 		t.Skip("requires authorized isolated root laboratory harness")
@@ -61,6 +65,9 @@ func nativeRunRoutedDHCPJobsV4(t *testing.T, early bool) {
 	budget := 210 * time.Second
 	if early {
 		budget = 700 * time.Second
+	}
+	if b2 != 0 {
+		budget = 210 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
@@ -96,6 +103,11 @@ func nativeRunRoutedDHCPJobsV4(t *testing.T, early bool) {
 	}()
 	if e = os.Chmod(base, 0755); e != nil {
 		t.Fatal(e)
+	}
+	if b2 != 0 {
+		if e = nativeDHCPB2WriteProfileV4(base, b2); e != nil {
+			t.Fatal(e)
+		}
 	}
 	for _, name := range []string{"store", "admission", "plan", "emergency"} {
 		path := filepath.Join(base, name)
@@ -243,7 +255,12 @@ func nativeRunRoutedDHCPJobsV4(t *testing.T, early bool) {
 	}
 	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs)
 	defer stopServer()
-	stopDiagnostic := nativeDHCPJobsCollectV4(t, ctx, metadata)
+	var b2Diagnostic nativeDHCPB2DiagnosticsV4
+	var observeDiagnostic func([]byte)
+	if b2 != 0 {
+		observeDiagnostic = b2Diagnostic.observe
+	}
+	stopDiagnostic := nativeDHCPJobsCollectDataV4(t, ctx, metadata, observeDiagnostic)
 	defer stopDiagnostic()
 	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{DHCPJobs: true, DHCPRenewalV4: early, Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
 	if e != nil {
@@ -263,6 +280,10 @@ func nativeRunRoutedDHCPJobsV4(t *testing.T, early bool) {
 	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata, &logs)
 	bound := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "bound")
 	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], bound.Grant.Snapshot)
+	if b2 != 0 {
+		nativeDHCPB2RootV4(t, ctx, b2, base, namespaces, supervisor, &logs, bound, &b2Diagnostic, stopServer, stopDiagnostic)
+		return
+	}
 	var earlyCuts []nativeDHCPCutV4
 	var earlyAdoptions []nativeDHCPAdoptionEvidenceV4
 	if early {
@@ -719,6 +740,9 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 	if launch.Epoch == 1 {
 		if err = nativeDHCPJobsReportEmitV4("bound", current.Global.Running, first); err != nil {
 			return err
+		}
+		if handled, e := nativeDHCPB2ServeV4(ctx, r, binding, launch, before, current.Global.Running, first, flowReady); handled {
+			return e
 		}
 		if launch.DHCPRenewalV4 {
 			select {
