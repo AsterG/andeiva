@@ -658,6 +658,11 @@ func nativeDHCPB2WithReadyV2(seconds uint32, bound nativeDHCPJobsReportV4, ready
 
 func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base string, namespaces [3]*os.File, supervisor *RoutedLaunchSupervisorV3, logs *nativeLogV3, bound nativeDHCPJobsReportV4, diagnostic *nativeDHCPB2DiagnosticsV4, pause *nativeDHCPB2PauseV2, stopInitial, stopDiagnostic func()) {
 	t.Helper()
+	defer func() {
+		if t.Failed() {
+			t.Logf("ANDEIVA_NATIVE_DHCP_B2_FAILURE_BUFFER_V2\n%s", logs.String())
+		}
+	}()
 	helper, api := supervisor.PIDs()
 	g0, err := nativeDHCPB2InitialHookV2(logs.String(), helper, bound.Grant)
 	if err != nil {

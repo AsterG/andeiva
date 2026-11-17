@@ -48,6 +48,8 @@ var routedDHCPFailureStagesV4 = [...]string{
 	"policy_ready", "policy_observe", "policy_state", "close_gate", "close_forward",
 	"listener_initial", "listener_source_guard", "listener_fact_before", "listener_capture", "listener_foreign",
 	"listener_socket_match", "listener_socket_changed", "listener_fact_after", "listener_final_guard", "listener_final_context",
+	"channel_arm", "channel_apply", "channel_confirm", "channel_recover", "channel_bootstrap", "channel_resume", "channel_inspect",
+	"channel_dhcp_begin", "channel_dhcp_apply", "channel_dhcp_open", "channel_dhcp_withdraw", "channel_dhcp_retire", "channel_dhcp_renew", "channel_dhcp_current", "channel_dhcp_live",
 }
 
 type routedDHCPFirstStageRecorderV4 struct {
@@ -135,10 +137,29 @@ func routedDHCPDiagnosticClassV1(err error) string {
 	}
 }
 
-// Record performs no I/O and never waits for the recorder. Arguments are local
-// observations only; no protocol payload or caller-selected metadata is stored.
+// The RPC buffer never waits for its recorder. This opt-in native build also
+// emits the first fatal channel frame. Only fixed local enum fields are stored.
 func RecordRoutedDHCPDiagnosticV1(side, verb string, started time.Time, err, ctxErr error) {
 	routedDHCPDiagnosticsV1.record(side, verb, started, err, ctxErr)
+	routedDHCPFirstStagesV4.channelFailure(side, verb, err, ctxErr, os.Stderr)
+}
+
+func (d *routedDHCPFirstStageRecorderV4) channelFailure(side, verb string, err, ctxErr error, out io.Writer) {
+	if side == "client" && errors.Is(err, ErrChannel) {
+		// Reserve the first fatal channel failure independently of the saturated
+		// RPC buffer. Expected recovery/wait results cannot consume this slot.
+		stage := routedDHCPChannelFailureStageV4(verb)
+		d.emit(stage, err, ctxErr, out)
+	}
+}
+
+func routedDHCPChannelFailureStageV4(verb string) string {
+	switch verb {
+	case "arm", "apply", "confirm", "recover", "bootstrap", "resume", "inspect", "dhcp_begin", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire", "dhcp_renew", "dhcp_current", "dhcp_live":
+		return "channel_" + verb
+	default:
+		return ""
+	}
 }
 
 // Stages describe local failure sites, not another request or a grant. Nested

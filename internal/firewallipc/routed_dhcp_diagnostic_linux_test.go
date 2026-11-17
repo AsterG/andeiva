@@ -16,6 +16,29 @@ import (
 
 type firstFailurePrivateErrorV4 struct{}
 
+func TestRoutedDHCPDiagnosticFatalChannelHasReservedSlot(t *testing.T) {
+	var first routedDHCPFirstStageRecorderV4
+	var out bytes.Buffer
+	first.channelFailure("helper", "dhcp_withdraw", ErrChannel, nil, &out)
+	first.channelFailure("client", "dhcp_withdraw", nil, nil, &out)
+	first.channelFailure("client", "dhcp_withdraw", context.DeadlineExceeded, nil, &out)
+	first.channelFailure("client", strings.Repeat("private", 10000), ErrChannel, nil, &out)
+	if out.Len() != 0 {
+		t.Fatal("nonfatal, foreign or unknown request consumed a fatal slot")
+	}
+	for range 100 {
+		first.channelFailure("client", "dhcp_withdraw", errors.Join(ErrChannel, firstFailurePrivateErrorV4{}), context.DeadlineExceeded, &out)
+	}
+	if bytes.Count(out.Bytes(), []byte("\n")) != 1 || out.Len() > 512 || !bytes.Contains(out.Bytes(), []byte(`"stage":"channel_dhcp_withdraw"`)) || !bytes.Contains(out.Bytes(), []byte(`"error":"channel"`)) || !bytes.Contains(out.Bytes(), []byte(`"context":"deadline"`)) || bytes.Contains(out.Bytes(), []byte("private")) {
+		t.Fatal("fatal channel diagnostic was lost, repeated or exposed raw input")
+	}
+	for _, verb := range []string{"arm", "apply", "confirm", "recover", "bootstrap", "resume", "inspect", "dhcp_begin", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire", "dhcp_renew", "dhcp_current", "dhcp_live"} {
+		if !KnownRoutedDHCPFailureStageV1(routedDHCPChannelFailureStageV4(verb)) {
+			t.Fatal("known call lost its reserved stage", verb)
+		}
+	}
+}
+
 func (firstFailurePrivateErrorV4) Error() string { panic("arbitrary error text inspected") }
 
 func TestRoutedDHCPFirstFailureV4AllFixedStagesSurviveRPCSaturation(t *testing.T) {
@@ -42,7 +65,7 @@ func TestRoutedDHCPFirstFailureV4AllFixedStagesSurviveRPCSaturation(t *testing.T
 		}
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 33 || len(first.slots) != 33 || out.Len() > 33*512 || rpc.count != routedDHCPDiagnosticCapacityV1 {
+	if len(lines) != 48 || len(first.slots) != 48 || out.Len() > 48*512 || rpc.count != routedDHCPDiagnosticCapacityV1 {
 		t.Fatal("independent stage bound changed", len(lines), out.Len())
 	}
 	for i, line := range lines {
