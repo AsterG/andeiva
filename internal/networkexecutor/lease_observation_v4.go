@@ -151,16 +151,34 @@ func (l *LeaseExecutor) VerifyObservationV4(ctx context.Context) error {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	var previousEnd int64
+	var boundary leaseObservationSnapshotV4
+	for attempt := 0; attempt < 2; attempt++ {
+		repeat, end, err := l.verifyObservationAttemptV4(ctx, previousEnd, attempt == 0, &boundary)
+		if !repeat {
+			return err
+		}
+		previousEnd = end
+	}
+	return ErrScope
+}
+
+// A coherent source advance may cross the read-only proof. Repeat the complete
+// proof once; neither a partial first proof nor a second change grants evidence.
+func (l *LeaseExecutor) verifyObservationAttemptV4(ctx context.Context, previousEnd int64, allowReobserve bool, boundary *leaseObservationSnapshotV4) (bool, int64, error) {
 	if l.base == nil || l.base.identity == nil || !validOwnedIdentity(*l.base.identity) || !l.validOwner() || l.base.ready(ctx) != nil || l.base.active == nil || l.guard(ctx) != nil {
-		return ErrScope
+		return false, 0, ErrScope
 	}
 	now, err := l.now()
-	if err != nil || now <= 0 || l.fact.Sequence != l.seen || !l.validObservationFactV4(l.fact, now, false) {
-		return ErrScope
+	if err != nil || now <= 0 || now < previousEnd || l.fact.Sequence != l.seen || !l.validObservationFactV4(l.fact, now, false) {
+		return false, 0, ErrScope
 	}
 	before, err := l.readObservationV4(ctx)
 	if err != nil {
-		return ErrScope
+		return false, 0, ErrScope
+	}
+	if !allowReobserve && before != *boundary {
+		return false, 0, ErrScope
 	}
 	kind := uint8(0)
 	if before.hasMargin {
@@ -168,29 +186,56 @@ func (l *LeaseExecutor) VerifyObservationV4(ctx context.Context) error {
 	} else {
 		f := before.fact
 		if !l.validObservationFactV4(f, now, true) {
-			return ErrScope
+			return false, 0, ErrScope
 		}
 		if f != l.fact {
 			if f.Sequence <= l.fact.Sequence || f.Address != l.fact.Address || f.Gateway != l.fact.Gateway {
-				return ErrScope
+				return false, 0, ErrScope
 			}
 			kind = 1
 		}
 	}
 	if l.observeExpected(ctx) != nil || l.observeExpected(ctx) != nil {
-		return ErrScope
+		return false, 0, ErrScope
 	}
 	after, err := l.readObservationV4(ctx)
 	nativeLeaseObservationRaceV4(err, before, after)
-	if err != nil || after != before || l.guard(ctx) != nil || l.base.ready(ctx) != nil {
-		return ErrScope
+	if err != nil || l.guard(ctx) != nil || l.base.ready(ctx) != nil || ctx.Err() != nil {
+		return false, 0, ErrScope
 	}
 	end, err := l.now()
-	if err != nil || end < now || !before.hasMargin && !l.validObservationFactV4(after.fact, end, true) {
-		return ErrScope
+	if err != nil || end < now || !after.hasMargin && !l.validObservationFactV4(after.fact, end, true) {
+		return false, 0, ErrScope
+	}
+	if after != before {
+		if allowReobserve && l.coherentObservationProgressV4(before, after) {
+			// This call-local boundary cannot be replayed or skipped between
+			// attempts. It never replaces the retained lease or its watermark.
+			*boundary = after
+			return true, end, nil
+		}
+		return false, 0, ErrScope
 	}
 	if kind != 0 {
-		return NewLeaseObservationPendingV4(l.fact)
+		return false, end, NewLeaseObservationPendingV4(l.fact)
 	}
-	return nil
+	return false, end, nil
+}
+
+func (l *LeaseExecutor) coherentObservationProgressV4(before, after leaseObservationSnapshotV4) bool {
+	if after.epoch < before.epoch {
+		return false
+	}
+	// Fact validation has already bound owner/desired/WAN. Margin contains only
+	// the separately validated retained association, never an invented gateway.
+	if !after.hasMargin && (after.fact.Address != l.fact.Address || after.fact.Gateway != l.fact.Gateway) {
+		return false
+	}
+	if before.hasMargin {
+		return after.epoch > before.epoch && (after.hasMargin || after.fact.Sequence > l.fact.Sequence)
+	}
+	if after.hasMargin {
+		return after.epoch >= before.epoch
+	}
+	return after.epoch > before.epoch && after.fact.Sequence > before.fact.Sequence
 }
