@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — selected DHCP job reader wiring
+
+- Use the existing action-authority reader for operational selected DHCP job checks, while retaining full-history inspection and preflight. Keep every authority check and RPC deadline.
+
 ## Unreleased — internal same-effective DHCP handover
 
 - Prepare an explicit runtime profile that closes forwarding before refreshing identical effective lease evidence while retaining the selected undo Work and consumed gate sequences. Recovery-only requests revoke before owner reads and cannot open traffic. Retiring a renewed V4 instance is terminal; automatic replacement acquisition is separate. No factory or administrative activation is enabled here. There is a brief interruption per renewal; integrated traffic and resource qualification remain pending.
