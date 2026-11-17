@@ -155,8 +155,24 @@ func nativeDHCPJobsCollectV4(t *testing.T, ctx context.Context, m Metadata) func
 	return nativeDHCPJobsCollectDataV4(t, ctx, m, nil)
 }
 
-func nativeDHCPJobsCollectDataV4(t *testing.T, ctx context.Context, m Metadata, observe func([]byte)) func() {
+func nativeDHCPJobsPinnedV2(c *nativeDHCPDiagnosticCaptureV4, owner *RoutedDHCPOwnerV3, fn func(*RoutedDHCPOwnerV3, *os.File, *os.File) error) error {
+	if fn == nil {
+		return nil
+	}
+	if err := fn(owner, c.pin, c.servicePin); err != nil {
+		_ = c.root.Close()
+		_ = c.pin.Close()
+		_ = c.servicePin.Close()
+		return err
+	}
+	return nil
+}
+
+func nativeDHCPJobsCollectDataV4(t *testing.T, ctx context.Context, m Metadata, observe func([]byte), pinned ...func(*RoutedDHCPOwnerV3, *os.File, *os.File) error) func() {
 	t.Helper()
+	if len(pinned) > 1 {
+		t.Fatal("multiple native owner capture callbacks")
+	}
 	var capture *nativeDHCPDiagnosticCaptureV4
 	var failure error
 	unregister, err := captureNativeDHCPDiagnosticV4(func(owner *RoutedDHCPOwnerV3) {
@@ -165,6 +181,12 @@ func nativeDHCPJobsCollectDataV4(t *testing.T, ctx context.Context, m Metadata, 
 			return
 		}
 		capture, failure = pinNativeDHCPDiagnosticV4(owner, m)
+		if failure == nil && len(pinned) == 1 && pinned[0] != nil {
+			failure = nativeDHCPJobsPinnedV2(capture, owner, pinned[0])
+			if failure != nil {
+				capture = nil
+			}
+		}
 		if failure == nil {
 			capture.observe = observe
 			go capture.run(ctx)
@@ -196,6 +218,42 @@ func nativeDHCPJobsCollectDataV4(t *testing.T, ctx context.Context, m Metadata, 
 				t.Errorf("native diagnostic unavailable: %v", failure)
 			}
 		})
+	}
+}
+
+func TestNativeDHCPB2PinnedCallbackV2FailureClosesCapture(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	defer b.Close()
+	defer root.Close()
+	c := &nativeDHCPDiagnosticCaptureV4{root: root, pin: a, servicePin: b}
+	want := errors.New("native capture callback failed")
+	calls := 0
+	err = nativeDHCPJobsPinnedV2(c, nil, func(_ *RoutedDHCPOwnerV3, pin, service *os.File) error {
+		calls++
+		if pin != a || service != b {
+			t.Fatal("capture capabilities changed")
+		}
+		return want
+	})
+	if !errors.Is(err, want) || calls != 1 {
+		t.Fatal("callback failure ignored/repeated", err, calls)
+	}
+	if _, err = root.Stat("."); err == nil {
+		t.Fatal("root capture left open")
+	}
+	if _, err = a.Stat(); err == nil {
+		t.Fatal("pidfd capture left open")
+	}
+	if _, err = b.Stat(); err == nil {
+		t.Fatal("service capture left open")
 	}
 }
 

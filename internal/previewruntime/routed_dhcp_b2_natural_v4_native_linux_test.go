@@ -113,6 +113,20 @@ func nativeDHCPB2EmitV4(phase string, seconds uint32, work, running string, gran
 	return err
 }
 
+func nativeDHCPB2FreshLiveV2(observe func() (bool, error), emit func() error) (bool, error) {
+	fresh, err := observe()
+	if err != nil {
+		return false, err
+	}
+	if !fresh {
+		return false, nil
+	}
+	if err = emit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func nativeDHCPB2ServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, binding adminauth.SessionBinding, launch RoutedLaunchContextV3, startup, running string, first configpoc.RoutedDHCPGrantV3, acks <-chan os.Signal) (bool, error) {
 	base, err := os.Open("/proc/self/fd/5/..")
 	if err != nil {
@@ -146,19 +160,25 @@ func nativeDHCPB2ServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, bind
 		for {
 			// Observe the autonomous controller only; do not manually Reconcile
 			// away a missing recovery wake. Live is read-only verification.
-			if r.DHCP.mu.TryLock() {
-				grant := r.DHCP.grant
+			var grant configpoc.RoutedDHCPGrantV3
+			complete, liveErr := nativeDHCPB2FreshLiveV2(func() (bool, error) {
+				if !r.DHCP.mu.TryLock() {
+					return false, nil
+				}
+				defer r.DHCP.mu.Unlock()
+				grant = r.DHCP.grant
 				fresh := grant.Epoch > first.Epoch && !r.DHCP.recoveryOnly && r.DHCP.work == work && r.Service.RuntimeIntegrityReadyV1()
 				if fresh {
-					_, err = r.routed.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: work})
+					_, e := r.routed.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: work})
+					return true, e
 				}
-				r.DHCP.mu.Unlock()
-				if fresh && err == nil {
-					if err = nativeDHCPB2EmitV4("recovered", seconds, work, running, grant); err != nil {
-						return true, err
-					}
-					break
-				}
+				return false, nil
+			}, func() error { return nativeDHCPB2EmitV4("recovered", seconds, work, running, grant) })
+			if liveErr != nil {
+				return true, liveErr
+			}
+			if complete {
+				break
 			}
 			select {
 			case <-tick.C:
@@ -199,6 +219,7 @@ type nativeDHCPB2DiagnosticStateV4 struct {
 	Signals      []int64
 	MarginBootNS int64
 	MarginCount  int
+	MarginReason string
 	Ended        bool
 	err          error
 }
@@ -238,6 +259,7 @@ func (d *nativeDHCPB2DiagnosticsV4) observe(raw []byte) {
 				state.MarginCount++
 				if state.MarginBootNS == 0 {
 					state.MarginBootNS = e.BootNS
+					state.MarginReason = e.Detail
 				}
 			case "event":
 				if state.MarginBootNS > 0 && (e.Detail == "EXPIRE" || e.Detail == "FAIL" || e.Detail == "NOCARRIER") {
@@ -392,7 +414,7 @@ func nativeDHCPB2RenewalsV4(seconds uint32, d nativeDHCPB2DiagnosticStateV4) (in
 			return 0, natural, errors.New("B2 expected uninterrupted RENEW hooks")
 		}
 		count++
-		if count == 2 {
+		if count == 2 && seconds == 70 || count == 1 && seconds == 71 {
 			natural = g
 		}
 	}
@@ -400,8 +422,15 @@ func nativeDHCPB2RenewalsV4(seconds uint32, d nativeDHCPB2DiagnosticStateV4) (in
 }
 
 func nativeDHCPB2NoProbeV4(seconds uint32, d nativeDHCPB2DiagnosticStateV4) error {
-	if d.MarginBootNS <= 0 || d.MarginCount != 1 || len(d.Signals) == 0 {
+	if d.MarginBootNS <= 0 || d.MarginCount != 1 {
 		return ErrUnavailable
+	}
+	wantReason := "early_short_lease"
+	if seconds == 71 {
+		wantReason = "early_dispatch_late"
+	}
+	if d.MarginReason != wantReason {
+		return errors.New("B2 did not exercise selected mask reason")
 	}
 	_, natural, err := nativeDHCPB2RenewalsV4(seconds, d)
 	if err != nil {
@@ -419,8 +448,12 @@ func nativeDHCPB2NoProbeV4(seconds uint32, d nativeDHCPB2DiagnosticStateV4) erro
 			return errors.New("active recovery signal during B2 WAIT")
 		}
 	}
-	if before != 1 {
-		return errors.New("B2 did not follow exactly one ordinary B1 request")
+	want := 1
+	if seconds == 71 {
+		want = 0
+	}
+	if before != want {
+		return errors.New("B2 request count differs from fixed fixture profile")
 	}
 	return nil
 }
@@ -581,19 +614,130 @@ func nativeDHCPB2WaitTrafficEvidenceV4(r nativeDHCPContinuityReportV4, proof nat
 	return result, nil
 }
 
-func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base string, namespaces [3]*os.File, supervisor *RoutedLaunchSupervisorV3, logs *nativeLogV3, bound nativeDHCPJobsReportV4, diagnostic *nativeDHCPB2DiagnosticsV4, stopInitial, stopDiagnostic func()) {
+func nativeDHCPB2InitialHookV2(log string, helper int, grant configpoc.RoutedDHCPGrantV3) (int64, error) {
+	var initial int64
+	if helper <= 1 || grant.Epoch == 0 || grant.Snapshot.Sequence == 0 {
+		return 0, ErrIdentity
+	}
+	for _, line := range strings.Split(log, "\n") {
+		raw, ok := strings.CutPrefix(line, "ANDEIVA_NATIVE_LEASE_HOOK_V4 ")
+		if !ok {
+			continue
+		}
+		var h nativeDHCPHookEvidenceV4
+		if routedDHCPOwnerDecodeV3([]byte(raw), &h) != nil || h.PID != helper {
+			return 0, ErrIdentity
+		}
+		if h.Epoch != grant.Epoch {
+			continue
+		}
+		if initial != 0 || h.LeaseSeconds != 71 || h.HookBootNS <= 0 || h.HookBootNS >= grant.Snapshot.DeadlineBootNS || grant.Snapshot.DeadlineBootNS-h.HookBootNS > int64(71*time.Second) {
+			return 0, ErrIdentity
+		}
+		initial = h.HookBootNS
+	}
+	if initial == 0 {
+		return 0, ErrIdentity
+	}
+	return initial, nil
+}
+
+func nativeDHCPB2ReadyV2(seconds uint32, bound nativeDHCPJobsReportV4, ready nativeDHCPB2APIReportV4, checkpoint nativeDHCPContinuityCheckpointV4, g, now int64) error {
+	if ready.PID <= 1 || ready.PID != bound.PID || ready.Phase != "ready" || ready.Seconds != seconds || ready.Running != bound.Running || !reflect.DeepEqual(ready.Grant, bound.Grant) || !routedPrivateHashV4(ready.Work) || !continuityCheckpointValidV4(checkpoint) || checkpoint.AfterBootNS <= g || checkpoint.TCP.EchoBootNS > now || checkpoint.UDP.EchoBootNS > now || g <= 0 || now <= 0 || now >= g+int64(21450*time.Millisecond) {
+		return ErrIdentity
+	}
+	return nil
+}
+
+func nativeDHCPB2WithReadyV2(seconds uint32, bound nativeDHCPJobsReportV4, ready nativeDHCPB2APIReportV4, checkpoint nativeDHCPContinuityCheckpointV4, g, now int64, action func() error) error {
+	if err := nativeDHCPB2ReadyV2(seconds, bound, ready, checkpoint, g, now); err != nil {
+		return err
+	}
+	return action()
+}
+
+func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base string, namespaces [3]*os.File, supervisor *RoutedLaunchSupervisorV3, logs *nativeLogV3, bound nativeDHCPJobsReportV4, diagnostic *nativeDHCPB2DiagnosticsV4, pause *nativeDHCPB2PauseV2, stopInitial, stopDiagnostic func()) {
 	t.Helper()
 	helper, api := supervisor.PIDs()
+	g0, err := nativeDHCPB2InitialHookV2(logs.String(), helper, bound.Grant)
+	if err != nil {
+		t.Fatal("B2 requires exact authenticated initial hook", err)
+	}
+	deadline := bound.Grant.Snapshot.DeadlineBootNS
+	if seconds == 70 {
+		deadline = g0 + int64(70*time.Second)
+	}
+	now, err := routedDHCPOwnerBootNowV3()
+	if err != nil || deadline <= now || seconds == 71 && g0+int64(35*time.Second) >= deadline {
+		t.Fatal("B2 natural renewal does not precede conservative deadline")
+	}
+	trial, cancelTrial := context.WithTimeout(ctx, time.Duration(deadline-now))
+	defer cancelTrial()
+	ctx = trial
 	nativeDHCPContinuitySourceV4(t, ctx, namespaces[1])
 	flow, err := startNativeDHCPContinuityV4(t, ctx, namespaces[1], namespaces[2])
 	if err != nil {
 		t.Fatal("B2 persistent flow startup", err)
 	}
-	stopInitial()
-	stopShort := nativeDHCPB2ServerV4(t, ctx, base, namespaces[2], seconds, logs)
+	stopShort := func() {}
+	if seconds == 70 {
+		stopInitial()
+		stopShort = nativeDHCPB2ServerV4(t, ctx, base, namespaces[2], seconds, logs)
+	}
 	defer stopShort()
 	if err = nativeDHCPB2SignalV4(supervisor); err != nil {
 		t.Fatal("B2 flow READY", err)
+	}
+	readyDeadline := g0 + int64(21450*time.Millisecond)
+	now, err = routedDHCPOwnerBootNowV3()
+	if err != nil || now >= readyDeadline {
+		t.Fatal("B2 flow/API READY deadline already missed")
+	}
+	readyCtx, cancelReady := context.WithTimeout(ctx, time.Duration(readyDeadline-now))
+	defer cancelReady()
+	initialCheckpoint, err := flow.Checkpoint(readyCtx, now)
+	if err != nil {
+		t.Fatal("B2 requires fresh TCP and UDP echoes before perturbation", err)
+	}
+	var ready nativeDHCPB2APIReportV4
+	readyTick := time.NewTicker(10 * time.Millisecond)
+	defer readyTick.Stop()
+	for {
+		var exists bool
+		ready, exists, err = nativeDHCPB2ReportV4(logs.String(), api, "ready")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			break
+		}
+		select {
+		case <-readyTick.C:
+		case <-readyCtx.Done():
+			t.Fatal("B2 actual API READY did not arrive before stop target", readyCtx.Err())
+		}
+	}
+	now, err = routedDHCPOwnerBootNowV3()
+	if err != nil {
+		t.Fatal("B2 READY clock unavailable")
+	}
+	var pauseReport *nativeDHCPPauseReportV2
+	err = nativeDHCPB2WithReadyV2(seconds, bound, ready, initialCheckpoint, g0, now, func() error {
+		if seconds != 71 {
+			return nil
+		}
+		if bound.Grant.Snapshot.DeadlineBootNS-g0 < int64(43500*time.Millisecond) {
+			return errors.New("B2 pause requires exact unchanged calendar due")
+		}
+		r, e := pause.run(ctx, g0)
+		if e != nil {
+			return e
+		}
+		pauseReport = &r
+		return nil
+	})
+	if err != nil {
+		t.Fatal("B2 READY or native pause failed without waiver", err)
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -601,7 +745,7 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 	var closedProofs []nativeDHCPB2ClosedProofV4
 	closedSamples := 0
 	var storeBefore [32]byte
-	var ready, recovered nativeDHCPB2APIReportV4
+	var recovered nativeDHCPB2APIReportV4
 	var finalDiagnostic nativeDHCPB2DiagnosticStateV4
 	for {
 		d := diagnostic.snapshot()
@@ -618,6 +762,16 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 		if d.MarginBootNS > 0 && exists {
 			if err = nativeDHCPB2NoProbeV4(seconds, d); err != nil {
 				t.Fatal(err)
+			}
+			if seconds == 70 {
+				for _, g := range d.Grants {
+					if g.Seconds == 70 && g.BootNS+int64(35*time.Second) >= deadline {
+						t.Fatal("B2 natural wait would cross conservative trial deadline")
+					}
+					if g.Seconds == 70 {
+						break
+					}
+				}
 			}
 			if closedAt == 0 {
 				if nativeDHCPB2ClosedKernelV4(ctx, namespaces[0]) == nil {
@@ -649,7 +803,7 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 					t.Fatal("70-second evidence reopened")
 				}
 				if seconds == 71 && exists {
-					if targetHooks < 2 || recovered.Work != ready.Work || recovered.Running != ready.Running || recovered.Grant.Epoch <= bound.Grant.Epoch+1 || recovered.Grant.Snapshot.Sequence <= bound.Grant.Snapshot.Sequence || recovered.Grant.Snapshot.Fact().Owner != bound.Grant.Snapshot.Fact().Owner {
+					if targetHooks < 1 || recovered.Work != ready.Work || recovered.Running != ready.Running || recovered.Grant.Epoch <= bound.Grant.Epoch || recovered.Grant.Snapshot.Sequence <= bound.Grant.Snapshot.Sequence || recovered.Grant.Snapshot.Fact().Owner != bound.Grant.Snapshot.Fact().Owner {
 						t.Fatal("natural recovery replaced owner/work or reused authority")
 					}
 					openedAt, err = routedDHCPOwnerBootNowV3()
@@ -659,7 +813,7 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 					finalDiagnostic = d
 					break
 				}
-				if seconds == 71 && targetHooks >= 2 {
+				if seconds == 71 && targetHooks >= 1 {
 					// A safe spontaneous hook ends WAIT before the API publishes its
 					// read-only Live receipt. Do not call that legitimate opening an
 					// old-token leak; require the fresh correlated receipt below.
@@ -683,7 +837,7 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 					t.Fatal("bounded B2 closed proof", e)
 				}
 				closedProofs = append(closedProofs, proof)
-				if seconds == 70 && targetHooks >= 3 { // Initial unsafe grant plus two natural renewals.
+				if seconds == 70 && targetHooks >= 2 { // Unsafe grant plus one actual natural renewal.
 					storeAfter, e := nativeDHCPB2StoreDigestV4(base)
 					if e != nil || storeBefore != storeAfter {
 						t.Fatal("B2 WAIT mutated selected store/audit", e)
@@ -704,7 +858,7 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 		t.Fatal("B2 retained Work/recovery mutated selected store or appended audit", storeErr)
 	}
 	var checkpoint nativeDHCPContinuityCheckpointV4
-	waitProof := nativeDHCPB2WaitProofV4{Enter: closedProofs[0], LastClosed: closedProofs[len(closedProofs)-1], EndBootNS: closedProofs[len(closedProofs)-1].BootNS, EndReason: "two_natural_renewals_still_closed"}
+	waitProof := nativeDHCPB2WaitProofV4{Enter: closedProofs[0], LastClosed: closedProofs[len(closedProofs)-1], EndBootNS: closedProofs[len(closedProofs)-1].BootNS, EndReason: "one_natural_renewal_still_closed"}
 	if seconds == 71 {
 		nativeDHCPJobsKernelV4(t, ctx, namespaces[0], recovered.Grant.Snapshot)
 		if err = nativeDHCPB2NaturalMarginV4(logs.String(), helper, recovered.Grant, finalDiagnostic); err != nil {
@@ -759,10 +913,18 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 	if waitErr != nil {
 		t.Fatalf("B2 WAIT forwarding oracle: %v evidence=%+v proof=%+v", waitErr, waitTraffic, waitProof)
 	}
+	now, err = routedDHCPOwnerBootNowV3()
+	if err != nil || now >= deadline {
+		t.Fatal("B2 retirement started after conservative trial deadline")
+	}
 	if err = nativeDHCPB2SignalV4(supervisor); err != nil {
 		t.Fatal(err)
 	}
 	retired := nativeDHCPJobsWaitReportV4(t, ctx, logs, "retired")
+	retiredAt, retireClockErr := routedDHCPOwnerBootNowV3()
+	if retireClockErr != nil || retiredAt >= deadline {
+		t.Fatal("B2 retirement exceeded conservative trial deadline")
+	}
 	if !routedPrivateHashV4(retired.Running) || retired.Running == bound.Running {
 		t.Fatal("B2 orderly retirement failed")
 	}
@@ -774,6 +936,13 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 	stopShort()
 	raw, err := json.Marshal(struct {
 		Seconds                   uint32                           `json:"lease_seconds"`
+		Version                   int                              `json:"fixture_version"`
+		InitialLease              uint32                           `json:"initial_lease_seconds"`
+		NaturalRenewals           int                              `json:"natural_renewals"`
+		Continuity                bool                             `json:"source_continuity"`
+		ConservativeDeadline      int64                            `json:"trial_conservative_deadline_boot_ns"`
+		RetiredAt                 int64                            `json:"retired_boot_ns"`
+		Pause                     *nativeDHCPPauseReportV2         `json:"pause"`
 		ClosedAt                  int64                            `json:"closed_verified_boot_ns"`
 		OpenedAt                  int64                            `json:"recovered_observed_boot_ns"`
 		ClosedSamples             int                              `json:"closed_kernel_samples"`
@@ -783,7 +952,7 @@ func nativeDHCPB2RootV4(t *testing.T, ctx context.Context, seconds uint32, base 
 		WaitTraffic               nativeDHCPB2WaitTrafficV4        `json:"wait_traffic_oracle"`
 		Checkpoint                nativeDHCPContinuityCheckpointV4 `json:"post_recovery_checkpoint"`
 		Traffic                   nativeDHCPContinuityReportV4     `json:"traffic"`
-	}{seconds, closedAt, openedAt, closedSamples, missing, finalDiagnostic.MarginCount, waitProof, waitTraffic, checkpoint, traffic})
+	}{seconds, nativeDHCPB2VersionV2, 71, 1, true, deadline, retiredAt, pauseReport, closedAt, openedAt, closedSamples, missing, finalDiagnostic.MarginCount, waitProof, waitTraffic, checkpoint, traffic})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -892,7 +1061,7 @@ func TestNativeDHCPB2FixedMarkerV4(t *testing.T) {
 }
 
 func TestNativeDHCPB2DiagnosticsV4BoundsAndNoProbes(t *testing.T) {
-	const valid = "{\"boot_ns\":10,\"stage\":\"early_signal\"}\n{\"boot_ns\":20,\"stage\":\"early_margin_closed\",\"detail\":\"early_short_lease\"}\n{\"boot_ns\":21,\"stage\":\"event\",\"detail\":\"RENEW\",\"lease_seconds\":71}\n{\"boot_ns\":56,\"stage\":\"event\",\"detail\":\"RENEW\",\"lease_seconds\":71}\n"
+	const valid = "{\"boot_ns\":10,\"stage\":\"event\",\"detail\":\"BOUND\",\"lease_seconds\":71}\n{\"boot_ns\":20,\"stage\":\"early_margin_closed\",\"detail\":\"early_dispatch_late\"}\n{\"boot_ns\":56,\"stage\":\"event\",\"detail\":\"RENEW\",\"lease_seconds\":71}\n"
 	var d nativeDHCPB2DiagnosticsV4
 	d.observe([]byte(valid))
 	state := d.snapshot()
@@ -1018,7 +1187,7 @@ func TestNativeDHCPB2NaturalMarginV4RequiresFreshMeasuredAuthority(t *testing.T)
 	hook := nativeDHCPHookEvidenceV4{PID: 123, Epoch: 3, HookBootNS: int64(54 * time.Second), LeaseSeconds: 71}
 	raw, _ := json.Marshal(hook)
 	log := "ANDEIVA_NATIVE_LEASE_HOOK_V4 " + string(raw) + "\n"
-	d := nativeDHCPB2DiagnosticStateV4{MarginBootNS: int64(19 * time.Second), MarginCount: 1, Grants: []nativeDHCPB2GrantV4{{int64(20 * time.Second), 71, "RENEW"}, {int64(55 * time.Second), 71, "RENEW"}}}
+	d := nativeDHCPB2DiagnosticStateV4{MarginBootNS: int64(21 * time.Second), MarginCount: 1, Grants: []nativeDHCPB2GrantV4{{int64(20 * time.Second), 71, "BOUND"}, {int64(55 * time.Second), 71, "RENEW"}}}
 	if err := nativeDHCPB2NaturalMarginV4(log, 123, grant, d); err != nil {
 		t.Fatal("measured35s boundary rejected", err)
 	}
@@ -1030,6 +1199,73 @@ func TestNativeDHCPB2NaturalMarginV4RequiresFreshMeasuredAuthority(t *testing.T)
 	for _, bad := range []string{log + log, strings.Replace(log, `"pid":123`, `"pid":456`, 1), strings.Replace(log, `"epoch":3`, `"epoch":2`, 1), strings.Replace(log, `"lease_seconds":71`, `"lease_seconds":70`, 1)} {
 		if nativeDHCPB2NaturalMarginV4(bad, 123, grant, d) == nil {
 			t.Fatal("ambiguous/foreign/notfresh hook accepted")
+		}
+	}
+}
+
+func TestNativeDHCPB2InitialHookV2RejectsDiagnosticClockOrForeignEpoch(t *testing.T) {
+	grant := configpoc.RoutedDHCPGrantV3{Epoch: 1}
+	grant.Snapshot.Sequence = 1
+	grant.Snapshot.DeadlineBootNS = int64(80 * time.Second)
+	h := nativeDHCPHookEvidenceV4{PID: 123, Epoch: 1, HookBootNS: int64(20 * time.Second), LeaseSeconds: 71}
+	raw, _ := json.Marshal(h)
+	valid := "ANDEIVA_NATIVE_LEASE_HOOK_V4 " + string(raw) + "\n"
+	if got, err := nativeDHCPB2InitialHookV2(valid, 123, grant); err != nil || got != h.HookBootNS {
+		t.Fatal("exact initial hook rejected", got, err)
+	}
+	for _, bad := range []string{"", valid + valid, strings.Replace(valid, `"pid":123`, `"pid":456`, 1), strings.Replace(valid, `"epoch":1`, `"epoch":2`, 1), strings.Replace(valid, `"lease_seconds":71`, `"lease_seconds":120`, 1), strings.Replace(valid, `"hook_boot_ns":20000000000`, `"hook_boot_ns":80000000000`, 1), "ANDEIVA_NATIVE_DHCP_OWNER {\"boot_ns\":20000000000,\"stage\":\"event\",\"detail\":\"BOUND\",\"lease_seconds\":71}\n"} {
+		if _, err := nativeDHCPB2InitialHookV2(bad, 123, grant); err == nil {
+			t.Fatal("missing/ambiguous/foreign or diagnostic-write clock accepted")
+		}
+	}
+}
+
+func TestNativeDHCPB2FreshLiveV2DoesNotRetryFailureOrEmitRecovery(t *testing.T) {
+	calls, emits := 0, 0
+	want := errors.New("first fresh Live failed")
+	done, err := nativeDHCPB2FreshLiveV2(func() (bool, error) {
+		calls++
+		if calls == 1 {
+			return true, want
+		}
+		return true, nil
+	}, func() error { emits++; return nil })
+	if done || !errors.Is(err, want) || calls != 1 || emits != 0 {
+		t.Fatal("fresh failure retried or emitted recovered", done, err, calls, emits)
+	}
+	done, err = nativeDHCPB2FreshLiveV2(func() (bool, error) { return true, nil }, func() error { emits++; return nil })
+	if !done || err != nil || emits != 1 {
+		t.Fatal("single healthy receipt failed", done, err, emits)
+	}
+}
+
+func TestNativeDHCPB2ReadyV2LateOrUnprovenReadyNeverPauses(t *testing.T) {
+	g := int64(time.Second)
+	now := g + int64(20*time.Second)
+	bound := nativeDHCPJobsReportV4{PID: 123, Running: strings.Repeat("a", 64), Grant: configpoc.RoutedDHCPGrantV3{Epoch: 1}}
+	ready := nativeDHCPB2APIReportV4{PID: 123, Phase: "ready", Seconds: 71, Work: strings.Repeat("b", 64), Running: bound.Running, Grant: bound.Grant}
+	cp := nativeDHCPContinuityCheckpointV4{ID: 1, AfterBootNS: g + 1, TCP: nativeDHCPContinuitySampleV4{1, g + 2, g + 3}, UDP: nativeDHCPContinuitySampleV4{1, g + 2, g + 3}}
+	calls := 0
+	if err := nativeDHCPB2WithReadyV2(71, bound, ready, cp, g, now, func() error { calls++; return nil }); err != nil || calls != 1 {
+		t.Fatal("valid scoped ready rejected", err, calls)
+	}
+	for _, mutate := range []func(*nativeDHCPB2APIReportV4, *nativeDHCPContinuityCheckpointV4, *int64){
+		func(_ *nativeDHCPB2APIReportV4, _ *nativeDHCPContinuityCheckpointV4, now *int64) {
+			*now = g + int64(21450*time.Millisecond)
+		},
+		func(r *nativeDHCPB2APIReportV4, _ *nativeDHCPContinuityCheckpointV4, _ *int64) { r.PID++ },
+		func(r *nativeDHCPB2APIReportV4, _ *nativeDHCPContinuityCheckpointV4, _ *int64) { r.Phase = "other" },
+		func(r *nativeDHCPB2APIReportV4, _ *nativeDHCPContinuityCheckpointV4, _ *int64) { r.Work = "" },
+		func(r *nativeDHCPB2APIReportV4, _ *nativeDHCPContinuityCheckpointV4, _ *int64) { r.Grant.Epoch++ },
+		func(_ *nativeDHCPB2APIReportV4, c *nativeDHCPContinuityCheckpointV4, _ *int64) { c.TCP.Sequence = 0 },
+		func(_ *nativeDHCPB2APIReportV4, c *nativeDHCPContinuityCheckpointV4, _ *int64) { c.UDP.Sequence = 0 },
+		func(_ *nativeDHCPB2APIReportV4, c *nativeDHCPContinuityCheckpointV4, _ *int64) { c.AfterBootNS = g - 1 },
+	} {
+		r, c, n := ready, cp, now
+		mutate(&r, &c, &n)
+		signals := 0
+		if err := nativeDHCPB2WithReadyV2(71, bound, r, c, g, n, func() error { signals++; return nil }); err == nil || signals != 0 {
+			t.Fatal("late/unproven READY triggered pause", err, signals)
 		}
 	}
 }
@@ -1046,7 +1282,7 @@ func TestNativeDHCPB2HarnessV4RejectsWrongOrMissingExecution(t *testing.T) {
 	}
 	makeLog := func(profile string) string {
 		name := "TestNativeRoutedDHCPB2Natural" + profile + "V4"
-		return "=== RUN   " + name + "\n    native.go:1: ANDEIVA_NATIVE_DHCP_B2_RESULT_V4 {\"lease_seconds\":" + profile + ",\"internal_margin_diagnostic_transitions\":1,\"wait_closed_proof\":{},\"wait_traffic_oracle\":{\"writes_fully_inside_wait\":2,\"sink_receipts_of_fully_bounded_writes\":0,\"boundary\":0}}\n--- PASS: " + name + " (96.77s)\nPASS\nANDEIVA_NATIVE_DHCP_JOBS_CLEANUP_OK\n"
+		return "=== RUN   " + name + "\n    native.go:1: ANDEIVA_NATIVE_DHCP_B2_RESULT_V4 {\"lease_seconds\":" + profile + ",\"fixture_version\":2,\"initial_lease_seconds\":71,\"natural_renewals\":1,\"source_continuity\":true,\"internal_margin_diagnostic_transitions\":1,\"wait_closed_proof\":{},\"wait_traffic_oracle\":{\"writes_fully_inside_wait\":2,\"sink_receipts_of_fully_bounded_writes\":0,\"boundary\":0}}\n--- PASS: " + name + " (96.77s)\nPASS\nANDEIVA_NATIVE_DHCP_JOBS_CLEANUP_OK\n"
 	}
 	for _, profile := range []string{"70", "71"} {
 		if !check(profile, makeLog(profile)) {
@@ -1059,6 +1295,11 @@ func TestNativeDHCPB2HarnessV4RejectsWrongOrMissingExecution(t *testing.T) {
 		"old_binary_no_tests":        "testing: warning: no tests to run\nPASS\nANDEIVA_NATIVE_DHCP_JOBS_CLEANUP_OK\n",
 		"wrong_test_name":            strings.ReplaceAll(valid, "TestNativeRoutedDHCPB2Natural70V4", "TestNativeRoutedDHCPEarlyRenewalV4"),
 		"wrong_result_lease":         strings.Replace(valid, `"lease_seconds":70`, `"lease_seconds":71`, 1),
+		"old_fixture_version":        strings.Replace(valid, `"fixture_version":2,`, "", 1),
+		"wrong_fixture_version":      strings.Replace(valid, `"fixture_version":2`, `"fixture_version":1`, 1),
+		"old_initial_lease":          strings.Replace(valid, `"initial_lease_seconds":71`, `"initial_lease_seconds":120`, 1),
+		"no_natural_renewal":         strings.Replace(valid, `"natural_renewals":1`, `"natural_renewals":0`, 1),
+		"lost_source_continuity":     strings.Replace(valid, `"source_continuity":true`, `"source_continuity":false`, 1),
 		"old_b2_without_wait_oracle": strings.Replace(valid, "wait_traffic_oracle", "old_no_oracle", 1),
 		"leaked_sink_receipt":        strings.Replace(valid, `"sink_receipts_of_fully_bounded_writes":0`, `"sink_receipts_of_fully_bounded_writes":1`, 1),
 		"missing_result":             strings.Replace(valid, "ANDEIVA_NATIVE_DHCP_B2_RESULT_V4", "other-result", 1),

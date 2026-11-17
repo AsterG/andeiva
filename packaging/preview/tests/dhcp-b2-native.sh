@@ -15,6 +15,8 @@ validate_b2_log() {
   # Fixed encoder puts top-level lease first; another profile cannot qualify.
   count=$(grep -Ec -- "ANDEIVA_NATIVE_DHCP_B2_RESULT_V4 \{\"lease_seconds\":${profile}," "$log") || return 1
   [[ $count == 1 ]] || return 1
+  # Revision 2 cannot be satisfied by the old 120-second shortening trial.
+  grep -Eq -- "ANDEIVA_NATIVE_DHCP_B2_RESULT_V4 .*\"lease_seconds\":${profile},\"fixture_version\":2,\"initial_lease_seconds\":71,\"natural_renewals\":1,\"source_continuity\":true," "$log" || return 1
   # Reject older B2 binaries whose result predates the strict WAIT oracle.
   grep -Eq -- 'ANDEIVA_NATIVE_DHCP_B2_RESULT_V4 .*"internal_margin_diagnostic_transitions":1,"wait_closed_proof":\{' "$log" || return 1
   grep -Eq -- 'ANDEIVA_NATIVE_DHCP_B2_RESULT_V4 .*"wait_traffic_oracle":\{"writes_fully_inside_wait":[1-9][0-9]*,"sink_receipts_of_fully_bounded_writes":0,' "$log" || return 1

@@ -20,6 +20,7 @@ import (
 type dhcpSchedulerPeerV4 struct {
 	requests         atomic.Int32
 	live             atomic.Bool
+	currentHold      atomic.Pointer[chan struct{}]
 	firstLiveSuccess chan struct{}
 	done             chan struct{}
 }
@@ -56,6 +57,9 @@ func dhcpSchedulerFixtureV4(t *testing.T, currentDelay, liveDelay time.Duration)
 			var payload any = struct{}{}
 			switch q.Verb {
 			case "dhcp_current":
+				if hold := peer.currentHold.Load(); hold != nil {
+					<-*hold
+				}
 				time.Sleep(currentDelay)
 				payload = firewallipc.RoutedDHCPGrantV3{Epoch: 1, Snapshot: snapshot}
 			case "dhcp_live":

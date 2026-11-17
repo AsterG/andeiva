@@ -253,35 +253,49 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
 			t.Fatal("failed preparation changed marker", e)
 		}
 	}
-	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs)
+	var initialLease []uint32
+	if b2 != 0 {
+		initialLease = []uint32{71}
+	}
+	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs, initialLease...)
 	defer stopServer()
 	var b2Diagnostic nativeDHCPB2DiagnosticsV4
+	var b2Pause nativeDHCPB2PauseV2
 	var observeDiagnostic func([]byte)
+	var pinned []func(*RoutedDHCPOwnerV3, *os.File, *os.File) error
 	if b2 != 0 {
 		observeDiagnostic = b2Diagnostic.observe
+		if b2 == 71 {
+			pinned = append(pinned, b2Pause.capture)
+		}
 	}
-	stopDiagnostic := nativeDHCPJobsCollectDataV4(t, ctx, metadata, observeDiagnostic)
+	stopDiagnostic := nativeDHCPJobsCollectDataV4(t, ctx, metadata, observeDiagnostic, pinned...)
 	defer stopDiagnostic()
 	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{DHCPJobs: true, DHCPRenewalV4: early, Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
 	if e != nil {
+		if err := b2Pause.Close(); err != nil {
+			t.Error("B2 owner capture cleanup", err)
+		}
 		t.Fatalf("native DHCP launch failed: %v\n%s", e, logs.String())
 	}
 	defer func() {
-		trace, closeErr := nativeDHCPJobsCloseTraceV4(&logs, supervisor.Close)
-		if trace != "" {
-			t.Log(trace)
-		}
+		closeErr := nativeDHCPPauseCleanupV2(b2Pause.Close, stopDiagnostic, func() error {
+			trace, err := nativeDHCPJobsCloseTraceV4(&logs, supervisor.Close)
+			if trace != "" {
+				t.Log(trace)
+			}
+			return err
+		})
 		if closeErr != nil {
-			t.Error("native supervisor close failed")
+			t.Error("native pause/supervisor cleanup failed")
 		}
 	}()
-	defer stopDiagnostic() // Collect before supervisor teardown on failure.
 	helper, api := supervisor.PIDs()
 	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata, &logs)
 	bound := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "bound")
 	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], bound.Grant.Snapshot)
 	if b2 != 0 {
-		nativeDHCPB2RootV4(t, ctx, b2, base, namespaces, supervisor, &logs, bound, &b2Diagnostic, stopServer, stopDiagnostic)
+		nativeDHCPB2RootV4(t, ctx, b2, base, namespaces, supervisor, &logs, bound, &b2Diagnostic, &b2Pause, stopServer, stopDiagnostic)
 		return
 	}
 	var earlyCuts []nativeDHCPCutV4
@@ -388,12 +402,18 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
 
 // udhcpd is only a test packet peer. The child joins the inherited WAN pin;
 // no name/PID from the environment chooses a namespace or signal target.
-func nativeDHCPJobsServerV4(t *testing.T, ctx context.Context, base string, wan *os.File, logs io.Writer) func() {
+func nativeDHCPJobsServerV4(t *testing.T, ctx context.Context, base string, wan *os.File, logs io.Writer, initial ...uint32) func() {
 	t.Helper()
 	if trustedRoutedExecutableV3("/usr/bin/busybox") != nil {
 		t.Fatal("trusted busybox udhcpd test dependency missing")
 	}
-	const leaseSeconds = 120
+	leaseSeconds := uint32(120)
+	if len(initial) > 1 || len(initial) == 1 && initial[0] != 71 {
+		t.Fatal("invalid fixed initial lab lease")
+	}
+	if len(initial) == 1 {
+		leaseSeconds = initial[0]
+	}
 	conf := fmt.Sprintf("start 198.18.1.10\nend 198.18.1.10\ninterface sink0\nmax_leases 1\nmin_lease 60\nlease_file %s\npidfile %s\nopt subnet 255.255.255.0\nopt router 198.18.1.1\nopt lease %d\n", filepath.Join(base, "test-server.leases"), filepath.Join(base, "test-server.pid"), leaseSeconds)
 	path := filepath.Join(base, "test-server.conf")
 	if err := os.WriteFile(path, []byte(conf), 0600); err != nil {
@@ -832,7 +852,7 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 func nativeDHCPJobsRetireV4(ctx context.Context, r *RoutedOperationsRuntimeV3, binding adminauth.SessionBinding, before string) error {
 	// Retire through the authenticated writer before closing the supervisor.
 	// No force-release, store rewrite or acquisition-instance replacement.
-	r.DHCP.closeSchedulerV4()
+	nativeDHCPJobsQuiesceSchedulerV4(r.DHCP)
 	if err := r.DHCP.Withdraw(ctx); err != nil {
 		return fmt.Errorf("native orderly withdrawal: %w", err)
 	}

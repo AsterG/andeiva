@@ -32,3 +32,15 @@ do owner. Falhas após começar a troca mantêm o fechamento estrito. Testes com
 sessão/codec/controlador/scheduler e Gate reais e doubles controlados de
 kernel/store. Sem daemon, worker periódico, dependência ou formato persistente
 novo; qualificação nativa e recursos da integração continuam pendentes.
+# Ensaio B2, revisão 2
+
+O ensaio nativo B2 começa com uma concessão suportada de 71 segundos e fluxos
+TCP/UDP existentes. O perfil 70 altera apenas o servidor do laboratório,
+exige um RENEW70 natural real com encaminhamento fechado e termina antes do
+prazo conservador autenticado do ensaio. O perfil 71 pausa brevemente apenas o
+proprietário Go fixado por pidfd para provocar despacho tardio; depois exige
+RENEW71 natural e nova abertura com os mesmos sockets. A pausa deve durar menos
+de 1,7 segundos. Jitter, erros RPC, expiração ou limpeza incerta fazem todo o
+ensaio falhar. BOUND após EXPIRE é reaquisição e não conta como renovação.
+O wrapper versionado rejeita resultados antigos. São cenários exclusivos de
+teste; a qualificação nativa e de recursos continua pendente.
