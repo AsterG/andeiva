@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — DHCP renewal rechecks
+
+- Preserve the trusted same-effective renewal classification across final owner reads. Close and verify the old permit without resetting consumed sequences; generic authority changes and uncertain closure retain permanent fencing. This prerequisite does not enable operational renewal.
+
 ## Unreleased — closed DHCP token expiry
 
 - Prepare an opt-in verified closure for expected kernel token expiry. Consumed sequences remain unavailable; legacy and uncertain-state fencing are preserved. Runtime wiring and native qualification remain separate.

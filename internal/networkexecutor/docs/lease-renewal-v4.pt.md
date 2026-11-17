@@ -28,3 +28,12 @@ incerto mantêm o bloqueio. Nenhum prazo da concessão é ampliado. Os testes co
 vencimento durante leitura, replay, concessão nova e objetos externos. Não adiciona
 processos, timers ou armazenamento; o caminho opcional adiciona leituras de relógio.
 Integração e benchmark do appliance continuam pendentes.
+## Mudança do proprietário durante a leitura final
+
+Uma renovação idêntica classificada pode chegar após verificar a autoridade
+e antes de reler Current em Stage, Open ou Verify. Preservar a classificação:
+retirar a permissão anterior e verificar a tabela exata fechada, mantendo a
+sequência consumida. Isso não permite reutilizá-la. Erros genéricos, autoridade
+diferente ou fechamento incerto mantêm o fence permanente. Não adiciona
+processos, timers, formatos persistentes ou ativação do runtime. A qualificação
+nativa e de recursos da integração permanece separada.

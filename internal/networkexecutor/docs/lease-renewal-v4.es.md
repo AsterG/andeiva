@@ -28,3 +28,12 @@ reloj y cierre incierto conservan el bloqueo. No amplía el plazo de la concesi�
 Las pruebas incluyen vencimiento durante la lectura, replay, concesión nueva y
 objetos ajenos. No añade procesos, temporizadores ni almacenamiento; la ruta
 opcional añade lecturas de reloj. Integración y benchmark del appliance pendientes.
+## Cambio del propietario durante la lectura final
+
+Una renovación idéntica clasificada puede llegar después de verificar autoridad
+y antes de releer Current en Stage, Open o Verify. Conservar esa clasificación:
+retirar el permiso anterior y verificar la tabla exacta cerrada, manteniendo la
+secuencia consumida. No permite reutilizarla. Errores genéricos, autoridad
+distinta o cierre incierto mantienen el fence permanente. No añade procesos,
+timers, formatos persistentes ni activación del runtime. La calificación nativa
+y de recursos de la integración permanece separada.
