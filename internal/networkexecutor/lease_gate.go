@@ -22,6 +22,7 @@ var (
 	ErrLeaseGateAuthority      = errors.New("ANDEIVA_LEASE_GATE_AUTHORITY_INVALID")
 	ErrLeaseGateChanged        = errors.New("ANDEIVA_LEASE_GATE_AUTHORITY_CHANGED")
 	ErrLeaseGateRenewal        = errors.New("ANDEIVA_LEASE_GATE_SAME_EFFECTIVE_RENEWAL")
+	ErrLeaseGateExpired        = errors.New("ANDEIVA_LEASE_GATE_TOKEN_EXPIRED")
 	ErrLeaseGateDeadline       = errors.New("ANDEIVA_LEASE_GATE_DEADLINE_INVALID")
 	ErrLeaseGateReady          = errors.New("ANDEIVA_LEASE_GATE_NOT_READY")
 	ErrLeaseGateState          = errors.New("ANDEIVA_LEASE_GATE_INVALID_STATE")
@@ -57,6 +58,8 @@ type LeaseGateOptions struct {
 	Desired   networkplan.Revision
 	Owner     LeaseOwner
 	Authority LeaseGateAuthority
+	// Internal opt-in: expected token expiry may prove closure, never reopening.
+	CloseOnExpiryV4 bool
 }
 
 // LeaseGate is an isolated, continuous-execution experiment. It only restricts
@@ -78,6 +81,7 @@ type LeaseGate struct {
 	seen                                  uint64
 	staged                                LeaseGateGrant
 	timeout                               int64
+	expiryFloorBootNS                     int64
 }
 
 type leaseGateKernel interface {
@@ -237,6 +241,7 @@ func (g *LeaseGate) closeUnder(ctx context.Context) error {
 	g.opened = false
 	g.staged = LeaseGateGrant{}
 	g.timeout = 0
+	g.expiryFloorBootNS = 0
 	err := g.apply(ctx, leaseGateClose())
 	_, observed := g.read(ctx, false, false)
 	if observed != nil {
@@ -313,6 +318,9 @@ func (g *LeaseGate) Stage(ctx context.Context) error {
 		return g.rejectClosed(ctx, ErrLeaseGateDeadline)
 	}
 	g.seen, g.staged, g.timeout = x.Fact.Sequence, x, ttl
+	// Sampled before apply: this lower bound may close early, but cannot extend
+	// either the actual kernel timeout or the authenticated lease deadline.
+	g.expiryFloorBootNS = now + ttl*int64(time.Second)
 	applyErr := g.apply(ctx, leaseGateStage(g.wan.Binding.Name, leaseGateDigest(x), ttl))
 	if _, err := g.read(ctx, false, true); err != nil {
 		return g.fail(errors.Join(applyErr, err))
@@ -373,7 +381,15 @@ func (g *LeaseGate) Verify(ctx context.Context) error {
 	if !g.opened {
 		return ErrLeaseGate
 	}
+	if due, err := g.closeExpiredV4(); due || err != nil {
+		return err
+	}
 	if _, err := g.read(ctx, true, true); err != nil {
+		// Expiry can cross while querying the kernel. A complete verified close
+		// is still mandatory; the failed read alone never establishes closure.
+		if due, expiryErr := g.closeExpiredV4(); due || expiryErr != nil {
+			return expiryErr
+		}
 		return g.fail(err)
 	}
 	if err := g.opts.Authority.Verify(ctx, g.staged); err != nil {
@@ -386,6 +402,27 @@ func (g *LeaseGate) Verify(ctx context.Context) error {
 		return g.fail(errors.Join(ErrLeaseGateChanged, err))
 	}
 	return nil
+}
+
+// Caller holds g.mu. Expected expiry keeps the consumed sequence watermark and
+// grants no retry of that token. Uncertain closure retains the normal fence.
+func (g *LeaseGate) closeExpiredV4() (bool, error) {
+	if !g.opts.CloseOnExpiryV4 || g.staged.Fact.Sequence == 0 || g.expiryFloorBootNS == 0 {
+		return false, nil
+	}
+	now, err := g.now()
+	if err != nil || now <= 0 {
+		return false, g.fail(ErrLeaseGateDeadline)
+	}
+	if now < g.expiryFloorBootNS {
+		return false, nil
+	}
+	cleanup, cancel := context.WithTimeout(g.lifetime, 3*time.Second)
+	defer cancel()
+	if err := g.closeUnder(cleanup); err != nil {
+		return true, errors.Join(ErrLeaseGateUncertain, err)
+	}
+	return true, errors.Join(ErrLeaseGate, ErrLeaseGateExpired)
 }
 
 // Dispose releases namespace pins only after a proven Close. It leaves the

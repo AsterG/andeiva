@@ -20,3 +20,14 @@ Reproduce with `go test -race ./internal/networkexecutor` and
 readback failure, cancellation, ended lifetime, fencing and disposal. No new
 process or periodic work is added. This component alone does not enable renewal
 or qualify appliance throughput, native traffic or CPU/RAM budgets.
+
+An internal `CloseOnExpiryV4` option defaults off. Its BOOTTIME threshold is
+sampled before token installation and can only close earlier. At that threshold,
+Verify closes the exact table with a bounded lifetime context and proves closure.
+It returns `ErrLeaseGateExpired`, retains the consumed sequence and never reopens
+that token. A fresh authenticated sequence still passes all normal checks.
+Legacy, pre-threshold drift, clock failure and uncertain closure retain fencing.
+No lease deadline is extended. Tests include expiry crossing during readback,
+replay, a fresh grant and foreign objects. No process, timer or storage is added;
+the opt-in path adds clock observations. Appliance resource benchmarking and
+runtime integration remain pending.
