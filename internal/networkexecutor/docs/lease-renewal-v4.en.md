@@ -31,3 +31,12 @@ No lease deadline is extended. Tests include expiry crossing during readback,
 replay, a fresh grant and foreign objects. No process, timer or storage is added;
 the opt-in path adds clock observations. Appliance resource benchmarking and
 runtime integration remain pending.
+## Owner changes during the final read
+
+An explicitly classified same-effective renewal can arrive after authority
+verification and before a subsequent Current read in Stage, Open or Verify.
+Preserve that classification through the read: remove the old permit and prove
+the exact closed table, retaining the consumed sequence. It grants no permission
+to reuse that sequence. Generic errors, changed authority and uncertain closure
+retain permanent fencing. No new process, timer, state format or runtime
+activation is introduced; integrated native/resource qualification is separate.
