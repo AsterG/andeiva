@@ -66,7 +66,7 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 		receipt, hash, e := authority.Observe(call)
 		if e != nil {
 			firewallipc.RecordRoutedDHCPFailureV1("policy_observe", e, call)
-			return configpoc.ErrRecovery
+			return errors.Join(configpoc.ErrRecovery, e)
 		}
 		if !integrityPhysicalIdleV3(receipt, hash) || hash != p.Running() {
 			firewallipc.RecordRoutedDHCPFailureV1("policy_state", configpoc.ErrRecovery, call)
@@ -82,6 +82,9 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 		return x.Fact, nil
 	}
 	opts := networkexecutor.LeaseOptions{Desired: desired, Owner: o.Owner, Current: current}
+	if o.RenewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
+		opts.GetObservationV4 = routedDHCPObservationSourceV4(o.Owner, desired.Hash, o.Current)
+	}
 	r.openLease = func(call context.Context) (routedDHCPLeaseV3, error) { return o.LAN.OpenLease(call, opts) }
 	r.recoverLease = func(call context.Context, s networkexecutor.LeaseSelectedSnapshotV3) (routedDHCPLeaseV3, error) {
 		return o.LAN.RecoverSelectedLeaseV3(call, opts, s)

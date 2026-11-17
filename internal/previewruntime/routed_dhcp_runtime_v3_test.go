@@ -636,7 +636,11 @@ func TestRoutedDHCPRuntimeV4RenewalDuringAuthorityChecksOnlyRequestsClosure(t *t
 			}
 			k.events = nil
 			err = (routedDHCPGateAuthorityV3{r}).Verify(ctx, k.grant)
-			if !errors.Is(err, networkexecutor.ErrLeaseGateRenewal) {
+			if phase == "policy" {
+				if err == nil || errors.Is(err, networkexecutor.ErrLeaseGateRenewal) || errors.Is(err, networkexecutor.ErrLeaseGateMarginClosed) {
+					t.Fatal("concurrent renewal hid a generic policy failure", err)
+				}
+			} else if !errors.Is(err, networkexecutor.ErrLeaseGateRenewal) {
 				t.Fatal("fresh same-effective race not classified for closure", err)
 			}
 			if !reflect.DeepEqual(r.grant, previous) || !reflect.DeepEqual(work.grant, previous) || r.renewalWaiting {

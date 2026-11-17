@@ -3,6 +3,7 @@ package nftguardian
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"time"
 
@@ -350,7 +351,13 @@ func (g *Group) observedContextLocked(ctx context.Context, requirePair bool) (St
 		var err error
 		observation, err = pair.ObserveCurrentOwned(ctx)
 		hash, owned = observation.Current, observation.Owned
-		if err != nil || ctx.Err() != nil || !ownedDigest(owned) || hash != "" && !ownedDigest(hash) || observation.Plan != g.plan || observation.MatchingOwned[0] != owned {
+		if err != nil {
+			if ctx.Err() == nil && observation.Plan == g.plan && hash == "" && owned == "" && observation.MatchingOwned == ([2]string{}) {
+				return State{}, "", errors.Join(ErrLease, err)
+			}
+			return State{}, "", ErrLease
+		}
+		if ctx.Err() != nil || !ownedDigest(owned) || hash != "" && !ownedDigest(hash) || observation.Plan != g.plan || observation.MatchingOwned[0] != owned {
 			return State{}, "", ErrLease
 		}
 		for i, ref := range observation.MatchingOwned {

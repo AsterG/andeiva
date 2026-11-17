@@ -4,6 +4,7 @@
 
 - Add a default-off V4 renewal profile with one outstanding request and the approved conservative authority budgets. B2 margin closure waits only for a spontaneous valid grant; no recovery probe is sent.
 - Prepare ten-renewal TCP/UDP measurements, hook-to-Open and interruption guards, and bounded phase diagnostics. Native acceptance and administrator warning/diagnostic integration remain pending.
+- Distinguish authenticated renewal progress during read-only observation from policy drift. The optional profile returns closure-only evidence after complete network, policy and listener checks; effect authorization and existing fences remain unchanged. Integrated native acceptance and final CPU/RAM measurements are pending.
 - Alpha renewals interrupt forwarding; previously measured upper bounds reached9.406s with TCP retained and UDP loss. The provisional10s interruption/12s adoption limits apply only to this Alpha test.
 - New-instance recovery after real expiry is deferred beyond this milestone by the owner. Access remains closed; manual recovery and a generic administrator notice are required. Retained-owner API restart recovery is a separate defect and is not claimed as fixed here.
 

@@ -10,6 +10,7 @@ import (
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/routedactivation"
 )
 
 // Root assembly authenticates a single owner stream. No field below is accepted
@@ -94,6 +95,7 @@ type RoutedDHCPRuntimeV3 struct {
 	hookEpoch                 uint64
 	hookBootNS                int64
 	budgetRejectedEpoch       uint64
+	lastOverrunEpoch          uint64
 	adoptionOverruns          uint64
 	marginClosures            uint64
 	lastMarginEpoch           uint64
@@ -148,8 +150,17 @@ func (a routedDHCPGateAuthorityV3) Verify(ctx context.Context, g networkexecutor
 		return configpoc.ErrRecovery
 	}
 	if err := r.policy(ctx, p); err != nil {
-		if r.sameEffectiveRenewalPendingV4(ctx, p) {
-			return errors.Join(networkexecutor.ErrLeaseGateRenewal, configpoc.ErrRecovery)
+		// A concurrent hook alone must not hide a policy/listener/table failure.
+		// Only the engine's complete, closure-only observation can classify this.
+		if r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 && routedactivation.MatchesClosedLeaseObservationV4(err, r.grant.Snapshot.Fact(), p.Running()) {
+			if ownerErr := r.sameOwner(ctx, r.grant); ownerErr != nil {
+				if _, margin := routedDHCPMarginV4(ownerErr); margin {
+					return errors.Join(networkexecutor.ErrLeaseGateMarginClosed, configpoc.ErrRecovery)
+				}
+			}
+			if r.sameEffectiveRenewalPendingV4(ctx, p) {
+				return errors.Join(networkexecutor.ErrLeaseGateRenewal, configpoc.ErrRecovery)
+			}
 		}
 		firewallipc.RecordRoutedDHCPFailureV1("authority_policy", err, ctx)
 		return configpoc.ErrRecovery

@@ -194,7 +194,7 @@ func recoverLeaseSelectedV3(ctx context.Context, base *Executor, options LeaseOp
 	if err != nil || r.Hash != s.Desired.Hash {
 		return nil, "", ErrScope
 	}
-	l := &LeaseExecutor{base: base, desired: r, owner: options.Owner, current: options.Current, now: now, baseline: observation{Links: s.Links, Routes: s.Routes}, seen: s.Sequence}
+	l := &LeaseExecutor{base: base, desired: r, owner: options.Owner, current: options.Current, getObservationV4: options.GetObservationV4, now: now, baseline: observation{Links: s.Links, Routes: s.Routes}, seen: s.Sequence}
 	for _, i := range r.Config.Interfaces {
 		if i.Role == networkplan.WAN {
 			l.wan = i
