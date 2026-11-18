@@ -16,6 +16,7 @@ import (
 const (
 	routedDHCPSubnetRegistryNameV1    = "scope-bindings.v1.json"
 	routedDHCPSubnetRegistryPendingV1 = "scope-bindings.v1.pending"
+	routedDHCPSubnetRegistryPublishV1 = "scope-bindings.v1.publish"
 	routedDHCPSubnetRegistryEntriesV1 = 4096
 	routedDHCPSubnetRegistryBytesV1   = 1 << 20
 	// Kea reserves 0xffffffff as a sentinel.

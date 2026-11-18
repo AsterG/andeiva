@@ -96,7 +96,7 @@ func TestDHCPSubnetRegistryV1FilesystemAndConcurrentWriters(t *testing.T) {
 }
 
 func TestDHCPSubnetRegistryV1UnsafeFilesAndUnmappedLeases(t *testing.T) {
-	for _, kind := range []string{"symlink", "hardlink", "fifo", "permissions", "corrupt", "oversize", "leases", "directory", "foreign-lease-pin", "pending"} {
+	for _, kind := range []string{"symlink", "hardlink", "fifo", "permissions", "corrupt", "oversize", "leases", "directory", "foreign-lease-pin", "pending", "staged"} {
 		t.Run(kind, func(t *testing.T) {
 			root, leases, uid, gid := subnetRegistryFSV1(t)
 			name := filepath.Join(root.Name(), routedDHCPSubnetRegistryNameV1)
@@ -135,6 +135,8 @@ func TestDHCPSubnetRegistryV1UnsafeFilesAndUnmappedLeases(t *testing.T) {
 				leases = root
 			case "pending":
 				e = os.WriteFile(filepath.Join(root.Name(), routedDHCPSubnetRegistryPendingV1), []byte("partial"), 0600)
+			case "staged":
+				e = os.WriteFile(filepath.Join(root.Name(), routedDHCPSubnetRegistryPublishV1), []byte("partial"), 0600)
 			}
 			if e != nil {
 				t.Fatal(e)
@@ -205,6 +207,36 @@ func TestDHCPSubnetRegistryV1ExhaustedIDPreservesManifest(t *testing.T) {
 	}
 }
 
+func TestDHCPSubnetRegistryV1EmptyManifestCannotAdoptLeases(t *testing.T) {
+	root, leases, uid, gid := subnetRegistryFSV1(t)
+	ctx := context.Background()
+	if _, err := ensureDHCPSubnetIDsV1(ctx, root, leases, nil, uid, gid); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root.Name(), routedDHCPSubnetRegistryNameV1)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leasePath := filepath.Join(leases.Name(), "old.csv")
+	const oldLease = "unmapped lease"
+	if err := os.WriteFile(leasePath, []byte(oldLease), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if ids, err := ensureDHCPSubnetIDsV1(ctx, root, leases, []RoutedDHCPSubnetBindingV1{subnetBindingFixtureV1()}, uid, gid); !errors.Is(err, ErrRoutedDHCPSubnetRegistryV1) || ids != nil {
+		t.Errorf("first assignment adopted existing leases: IDs=%v error=%v", ids, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Error("rejection changed the empty manifest", err)
+	}
+	rawLease, err := os.ReadFile(leasePath)
+	if err != nil || string(rawLease) != oldLease {
+		t.Fatal("rejection changed lease data", err)
+	}
+}
+
 type subnetPublicationCancelV1 struct {
 	context.Context
 	cancel     context.CancelFunc
@@ -264,7 +296,7 @@ func TestDHCPSubnetRegistryV1InterruptedPublication(t *testing.T) {
 	}
 }
 
-func TestDHCPSubnetRegistryV1RejectsRetryWhileDirectorySyncFails(t *testing.T) {
+func TestDHCPSubnetRegistryV1FencesRetryAfterPublicationSyncFails(t *testing.T) {
 	root, leases, uid, gid := subnetRegistryFSV1(t)
 	ctx := context.Background()
 	original := subnetBindingFixtureV1()
@@ -274,23 +306,66 @@ func TestDHCPSubnetRegistryV1RejectsRetryWhileDirectorySyncFails(t *testing.T) {
 	added := original
 	added.ScopeID = "new"
 	bindings := []RoutedDHCPSubnetBindingV1{original, added}
-	syncFails := func(*os.File) error { return unix.EIO }
+	syncCalls := 0
+	publicationFailed := false
+	failPublicationOnce := func(dir *os.File) error {
+		syncCalls++
+		record, _, err := readDHCPSubnetRegistryV1(dir, uid, gid)
+		if err != nil {
+			return err
+		}
+		// Inject EIO at the first sync whose directory contains the renamed
+		// manifest. A subsequent sync would succeed after writeback errors
+		// have already been reported.
+		if record.HighWater == 2 && !publicationFailed {
+			publicationFailed = true
+			return unix.EIO
+		}
+		return dir.Sync()
+	}
 
-	ids, err := ensureDHCPSubnetIDsWithDirectorySyncV1(ctx, root, leases, bindings, uid, gid, syncFails)
-	if !errors.Is(err, ErrRoutedDHCPSubnetRegistryV1) || ids != nil {
-		t.Fatalf("directory fsync failure returned IDs: %v, error=%v", ids, err)
+	ids, err := ensureDHCPSubnetIDsWithDirectorySyncV1(ctx, root, leases, bindings, uid, gid, failPublicationOnce)
+	if !publicationFailed || !errors.Is(err, ErrRoutedDHCPSubnetRegistryV1) || ids != nil {
+		t.Fatalf("publication fsync failure returned IDs: %v, error=%v", ids, err)
 	}
 	record, missing, err := readDHCPSubnetRegistryV1(root, uid, gid)
 	if err != nil || missing || record.HighWater != 2 {
 		t.Fatalf("expected complete renamed manifest, got high_water=%d missing=%v error=%v", record.HighWater, missing, err)
 	}
-	ids, err = ensureDHCPSubnetIDsWithDirectorySyncV1(ctx, root, leases, bindings, uid, gid, syncFails)
-	if !errors.Is(err, ErrRoutedDHCPSubnetRegistryV1) || ids != nil {
-		t.Fatalf("retry returned IDs without successful directory fsync: %v, error=%v", ids, err)
+	if _, err := os.Stat(filepath.Join(root.Name(), routedDHCPSubnetRegistryPendingV1)); err != nil {
+		t.Error("publication failure lost the pending marker", err)
 	}
-	ids, err = ensureDHCPSubnetIDsV1(ctx, root, leases, bindings, uid, gid)
-	if err != nil || !reflect.DeepEqual(ids, []uint32{1, 2}) {
-		t.Fatalf("retry after storage recovered: IDs=%v error=%v", ids, err)
+	beforeRetry := syncCalls
+	for _, keys := range [][]RoutedDHCPSubnetBindingV1{bindings, {original}, nil} {
+		ids, err = ensureDHCPSubnetIDsWithDirectorySyncV1(ctx, root, leases, keys, uid, gid, failPublicationOnce)
+		if !errors.Is(err, ErrRoutedDHCPSubnetRegistryV1) || ids != nil || syncCalls != beforeRetry {
+			t.Errorf("retry bypassed the pending fence: IDs=%v error=%v syncs=%d", ids, err, syncCalls-beforeRetry)
+		}
+	}
+}
+
+func TestDHCPSubnetRegistryV1MarkerRemovalSyncFailure(t *testing.T) {
+	root, leases, uid, gid := subnetRegistryFSV1(t)
+	ctx := context.Background()
+	bindings := []RoutedDHCPSubnetBindingV1{subnetBindingFixtureV1()}
+	syncCalls := 0
+	failCleanup := func(dir *os.File) error {
+		syncCalls++
+		if syncCalls == 3 {
+			return unix.EIO
+		}
+		return dir.Sync()
+	}
+	ids, err := ensureDHCPSubnetIDsWithDirectorySyncV1(ctx, root, leases, bindings, uid, gid, failCleanup)
+	if syncCalls != 3 || !errors.Is(err, ErrRoutedDHCPSubnetRegistryV1) || ids != nil {
+		t.Fatalf("marker-removal sync failure: IDs=%v error=%v syncs=%d", ids, err, syncCalls)
+	}
+	if _, err := os.Lstat(filepath.Join(root.Name(), routedDHCPSubnetRegistryPendingV1)); !os.IsNotExist(err) {
+		t.Fatalf("live marker removal unverified: %v", err)
+	}
+	ids, err = ensureDHCPSubnetIDsWithDirectorySyncV1(ctx, root, leases, bindings, uid, gid, failCleanup)
+	if syncCalls != 3 || err != nil || !reflect.DeepEqual(ids, []uint32{1}) {
+		t.Fatalf("durable manifest lookup: IDs=%v error=%v syncs=%d", ids, err, syncCalls)
 	}
 }
 

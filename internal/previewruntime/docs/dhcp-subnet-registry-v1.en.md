@@ -12,23 +12,31 @@ IPv4 subnet. Pool and option changes retain the ID. Interface/MAC/subnet changes
 allocate another nonzero uint32 ID. Allocation is monotonic; removed mappings
 remain, including across disable/re-enable and configuration rollback. Batch
 order cannot change allocation order. Limits are 4096 mappings and 1 MiB.
+Kea's reserved ID 4294967295 is rejected.
 
-An independent directory flock serializes callers. A new file is written with
-exclusive/no-follow creation, synced, atomically renamed and the directory
-synced before IDs are returned. Any failed persistence returns no IDs: callers
-must not start an engine. If the rename is visible after a directory sync
-failure, a retry must sync the directory under lock before returning any ID.
-A pending file blocks requests until a protected recovery. Cancellation is
-cooperative, without a hard disk I/O bound. The registry leaves any running
-service active.
+An independent directory flock serializes callers. Publication syncs the
+`scope-bindings.v1.pending` marker and directory before staging the new state in
+`scope-bindings.v1.publish`. Both files are created exclusively without
+following links. The candidate is synced and atomically renamed. The directory
+sync for that rename must succeed before the marker can be removed. A leftover
+marker or staged file blocks every request. If syncing marker removal fails,
+the attempt returns an error without IDs. The manifest was already synced, and
+a marker that reappears after restart still blocks requests. The registry leaves
+any running service active. Disk I/O can delay cancellation.
 
-Missing mappings with any existing lease entry refuse initialization. An empty,
-locked lease directory permits initialization. At the mapping/byte quota,
-existing keys remain readable without writes, while new allocation fails.
-Uncertain partial writes instead block resolution until protected recovery;
-there is no automatic history repair. Arbitrary root restoration/deletion of
-old files cannot be detected without an external monotonic anchor. Configuration
-rollback must never restore this registry independently of its lease history.
+The first ID requires an empty, locked lease directory, including when the
+manifest already exists with zero entries. At quota, existing keys remain
+readable without writes and new allocations fail.
+
+For protected recovery, quiesce the engine and all writers during authorized
+maintenance. Preserve the registry files and lease directory together as incident
+evidence. Verify storage health, the complete mapping history and its agreement
+with retained leases. Sync the verified manifest and its directory before
+clearing the marker or staged file, then sync the directory again. If the
+mapping cannot be proven, leave the fence in place. Keep all leases.
+Configuration rollback must never restore the manifest independently of its
+lease history. Detecting arbitrary rollback by root requires an external
+monotonic anchor.
 
 Linux/WSL, Go 1.27.4:
 
