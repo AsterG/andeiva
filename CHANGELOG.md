@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — shared DHCP service cgroups
+
+- Prepare the optional two-slot DHCP profile. WAN startup consumes a single reservation and a drain cancels it before reporting success. On Debian, draining an empty LAN slot preserved the WAN lease and existing TCP and UDP flows across an API restart. Kea coexistence remains pending.
+
 ## Unreleased — retained WAN during API restart (draft)
 
 - Qualify the original applied WAN Work before resuming the optional V4 API on the retained helper. Reuse the existing permit and expiry. During failed qualification, management writes stay unavailable and a verified existing permit can continue until its original expiration or independent revocation.

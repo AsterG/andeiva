@@ -7,7 +7,7 @@ customer appliance or alongside the installed grouped service.
 Build the current reviewed sources with Go 1.27.4:
 
 ```sh
-go test -c -o /tmp/previewruntime-dhcp.test ./internal/previewruntime
+go test -tags andeiva_native_dhcp_diagnostics -c -o /tmp/previewruntime-dhcp.test ./internal/previewruntime
 go build -o /tmp/andeiva-dhcp-hook ./cmd/andeiva-dhcp-hook
 bash -n packaging/preview/tests/dhcp-jobs-native.sh
 ```
@@ -50,7 +50,16 @@ active must be refused without replacing Running or its lease. Reports are
 `ANDEIVA_NATIVE_DHCP_JOBS` JSON with phases `bound`, `renewed`, `restarted` and
 `rollback-fenced`; cleanup success is `ANDEIVA_NATIVE_DHCP_JOBS_CLEANUP_OK`.
 
-This mode does not prove transactional DHCP retirement/rollback to NoNetwork,
+Build the diagnostic-tagged binary for the optional `--shared-wan` mode.
+Append that flag to the script invocation. The test reserves two exact service
+cgroups. It verifies that a drain consumes the WAN startup authorization and
+that a second launch cannot reuse the same owner identity. It drains the empty
+LAN slot with WAN DHCP active and checks that persistent TCP and UDP traffic
+survives an API-only restart with the same Work and lease. This is a WAN
+qualification with a reserved LAN slot. Kea and the installed service profile
+require separate native qualification.
+
+The first mode does not prove transactional DHCP retirement/rollback to NoNetwork,
 zero exclusive resources when disabled, lease expiry, owner death, traffic
 forwarding, reboot recovery or resource budgets. The closed residual gate is
 removed only when the entire disposable namespace is retired. Those remain

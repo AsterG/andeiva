@@ -5,10 +5,13 @@ package previewruntime
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sync/atomic"
@@ -54,14 +57,64 @@ func nativeDHCPWarmProfileV4() (bool, error) {
 		return false, err
 	}
 	switch string(data) {
-	case "healthy", "store", "helper", "both":
+	case "healthy", "store", "helper", "both", "shared":
 		return true, nil
 	default:
 		return false, ErrIdentity
 	}
 }
 
-func nativeDHCPWarmRootV4(t *testing.T, ctx context.Context, base string, namespaces [3]*os.File, supervisor *RoutedLaunchSupervisorV3, logs *nativeLogV3, bound nativeDHCPJobsReportV4) {
+func TestNativeRoutedDHCPSharedWANV2(t *testing.T) {
+	nativeRunRoutedDHCPScenarioV4(t, true, 0, "shared")
+}
+
+func nativeDHCPPrepareServiceSetV2(t *testing.T, ctx context.Context) *RoutedDHCPServerServiceSetV1 {
+	t.Helper()
+	var slots [32]byte
+	if _, err := rand.Read(slots[:]); err != nil {
+		t.Fatal(err)
+	}
+	services, err := PrepareRoutedDHCPServerServiceSetV1(ctx, RoutedDHCPServerServiceSetOptionsV1{
+		WANEnabled: true, WANIncarnation: hex.EncodeToString(slots[:16]), LANIncarnation: hex.EncodeToString(slots[16:]),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return services
+}
+
+func nativeDHCPRejectWANStartV2(t *testing.T, services *RoutedDHCPServerServiceSetV1, reason string) {
+	t.Helper()
+	cmd := exec.Command("/usr/bin/true")
+	cmd.SysProcAttr = &syscall.SysProcAttr{UseCgroupFD: true, CgroupFD: int(services.wan.directory.Fd())}
+	err := services.startWANV2(cmd, services.wan)
+	if err == nil {
+		t.Errorf("WAN process started %s: %v", reason, cmd.Wait())
+	} else if !errors.Is(err, ErrIdentity) {
+		t.Errorf("WAN start rejection %s: %v", reason, err)
+	}
+}
+
+func nativeDHCPWANDrainBeforeStartV2(t *testing.T, ctx context.Context) {
+	t.Helper()
+	services := nativeDHCPPrepareServiceSetV2(t, ctx)
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := services.DestroyV1(cleanup); err != nil {
+			t.Fatal("retire unused WAN slot", err)
+		}
+	}()
+	if _, err := services.claimWANV2(); err != nil {
+		t.Fatal("reserve WAN slot", err)
+	}
+	if err := services.DrainFeatureV1(ctx, "wan"); err != nil {
+		t.Fatal("drain reserved WAN slot", err)
+	}
+	nativeDHCPRejectWANStartV2(t, services, "after completed drain")
+}
+
+func nativeDHCPWarmRootV4(t *testing.T, ctx context.Context, base string, namespaces [3]*os.File, supervisor *RoutedLaunchSupervisorV3, services *RoutedDHCPServerServiceSetV1, logs *nativeLogV3, bound nativeDHCPJobsReportV4) {
 	t.Helper()
 	nativeDHCPContinuitySourceV4(t, ctx, namespaces[1])
 	flow, err := startNativeDHCPContinuityProfileV4(t, ctx, namespaces[1], namespaces[2], continuityDefaultV4)
@@ -78,6 +131,24 @@ func nativeDHCPWarmRootV4(t *testing.T, ctx context.Context, base string, namesp
 	}
 	if _, err := flow.Checkpoint(ctx, sample()); err != nil {
 		t.Fatal("TCP/UDP before restart", err)
+	}
+	if services != nil {
+		nativeDHCPRejectWANStartV2(t, services, "a second time in the same incarnation")
+		catalog, err := services.catalogV2(ctx)
+		if err != nil || bound.Grant.Snapshot.Fact().Owner.Incarnation != catalog.Leaves[0].Incarnation {
+			t.Fatal("active WAN does not match its reserved slot", err)
+		}
+		if err := services.DrainFeatureV1(ctx, "lan"); err != nil {
+			t.Fatal("drain the reserved LAN slot", err)
+		}
+		after, err := services.catalogV2(ctx)
+		if err != nil || !reflect.DeepEqual(catalog, after) {
+			t.Fatal("LAN drain changed the exact slot catalog", err)
+		}
+		if _, err := flow.Checkpoint(ctx, sample()); err != nil {
+			t.Fatal("same TCP/UDP did not survive isolated LAN slot drain", err)
+		}
+		t.Log("Active WAN retained the reserved owner across empty LAN slot drainage")
 	}
 	selector := filepath.Join(base, "store", "selected.json")
 	before, err := os.ReadFile(selector)

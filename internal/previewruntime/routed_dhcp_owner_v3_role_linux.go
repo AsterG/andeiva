@@ -157,7 +157,15 @@ func runRoutedDHCPOwnerProfileV3(parent context.Context, profile int) (result er
 	_ = files[3].Close()
 	start, _, err := routedDHCPOwnerProcessV3(b.ParentPID)
 	status, statusErr := routedDHCPOwnerReadV3("/proc/"+strconv.Itoa(b.ParentPID)+"/status", 65536)
-	if err != nil || start != b.ParentStartTicks || statusErr != nil || !rootRoutedParentStatusV3(status, b.ParentPID) || validateRoutedDHCPServiceRoleV1(files[8], b.Incarnation, b.ServiceCgroupVersion, RoutedDHCPServiceCgroupIdentityV1{b.ServiceCgroupDevice, b.ServiceCgroupInode}) != nil {
+	serviceID := RoutedDHCPServiceCgroupIdentityV1{b.ServiceCgroupDevice, b.ServiceCgroupInode}
+	serviceErr := ErrIdentity
+	if b.ServiceCgroupVersion == 1 && b.ServiceCatalog == nil {
+		serviceErr = validateRoutedDHCPServiceRoleV1(files[8], b.Incarnation, 1, serviceID)
+	}
+	if profile == 4 && b.ServiceCgroupVersion == 2 && b.ServiceCatalog != nil {
+		serviceErr = validateRoutedDHCPWANServiceRoleV2(files[8], b.Incarnation, serviceID, *b.ServiceCatalog)
+	}
+	if err != nil || start != b.ParentStartTicks || statusErr != nil || !rootRoutedParentStatusV3(status, b.ParentPID) || serviceErr != nil {
 		return ErrIdentity
 	}
 	if unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0) != nil || b.ParentPID != os.Getppid() {

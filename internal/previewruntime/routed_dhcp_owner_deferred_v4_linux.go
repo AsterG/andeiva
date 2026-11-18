@@ -17,7 +17,11 @@ type RoutedDHCPDeferredOwnerV4 struct{ owner *RoutedDHCPOwnerV3 }
 // root-selected DHCP plan. It neither starts dhcpcd nor authorizes R2. Static or
 // NoNetwork profiles must never invoke this constructor and are rejected.
 func PrepareRoutedDHCPDeferredOwnerV4(ctx context.Context, o RoutedDHCPOwnerOptionsV3) (*RoutedDHCPDeferredOwnerV4, error) {
-	s, err := startRoutedDHCPOwnerProfileV3(ctx, o, 4)
+	return prepareRoutedDHCPDeferredWithServicesV4(ctx, o, nil)
+}
+
+func prepareRoutedDHCPDeferredWithServicesV4(ctx context.Context, o RoutedDHCPOwnerOptionsV3, services *RoutedDHCPServerServiceSetV1) (*RoutedDHCPDeferredOwnerV4, error) {
+	s, err := startRoutedDHCPOwnerWithServicesV4(ctx, o, 4, services)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +184,6 @@ func (o *RoutedDHCPOwnerV3) closeDeferredLockedV4() error {
 	}
 	cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	o.closeErr = errors.Join(o.closeErr, o.service.drain(cleanup))
+	o.closeErr = errors.Join(o.closeErr, drainRoutedDHCPOwnerServiceV4(cleanup, o.service, o.services))
 	return o.closeErr
 }
