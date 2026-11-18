@@ -219,7 +219,7 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 	if client.RebootScopeEnabled() {
 		runtimeOptions.RebootScope = &routedRebootScopeRemoteV4{client}
 	}
-	startupUnavailable := false
+	startupUnavailable := o.routedStartupUnavailable
 	recordIncident := func(outcome string) error {
 		if !startupUnavailable || o.routedRecoveryAudit == nil {
 			return nil

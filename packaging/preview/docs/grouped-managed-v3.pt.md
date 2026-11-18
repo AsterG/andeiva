@@ -41,3 +41,14 @@ journalctl -u andeiva-preview-grouped.service --no-pager
 # After the unit has completed and the result/logs have been retained:
 systemctl stop andeiva-preview-grouped.service
 ```
+
+### Aviso de recuperação da gestão em Alpha
+
+Se o helper não confirmar a transferência da API, o supervisor registra um
+único aviso genérico do incidente. O registro imediato fica no diário do
+supervisor. Para essa falha, Alpha registra o incidente exclusivamente nesse diário.
+A incorporação de incidentes anteriores à auditoria protegida fica para depois
+do marco.
+
+O operador autorizado pode consultar o diário na consola local com
+`journalctl -u andeiva-preview-grouped.service --boot --no-pager`.
