@@ -50,7 +50,14 @@ func TestRoutedDHCPSchedulerV4OrderlyQuiescenceRetainsChannel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("quiescence did not drain the admitted RPC")
 	}
-	if !peer.live.Load() || peer.requests.Load() != 2 || !reflect.DeepEqual(c.grant, before) {
+	// The client may finish reading the reply before net.Pipe schedules the
+	// writer to publish its success. Synchronize with the fixture's receipt.
+	select {
+	case <-peer.firstLiveSuccess:
+	case <-time.After(2 * time.Second):
+		t.Fatal("peer did not acknowledge the admitted live RPC")
+	}
+	if peer.requests.Load() != 2 || !reflect.DeepEqual(c.grant, before) {
 		t.Fatal("quiescence cancelled an admitted RPC or changed its grant")
 	}
 	select {
