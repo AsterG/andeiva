@@ -6,22 +6,39 @@ if [[ ${EUID} != 0 || ${ANDEIVA_DHCP_LAB_AUTHORIZED:-} != 1 || -n ${CI:-} ]]; th
 if [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] || [[ $(uname -r) == *[Mm]icrosoft* ]]; then exit 64; fi
 grep -qx 'ID=debian' /etc/os-release
 grep -qx 'VERSION_ID="13"' /etc/os-release
-for artifact in "$0" ./dhcp-native.test ./andeiva-dhcp-hook; do
+# Validate ancestors top-down: root-owned files in a replaceable directory are
+# not trusted executable artifacts. Re-enter only through the canonical path.
+lab=$(/usr/bin/pwd -P)
+script=$(/usr/bin/realpath -e -- "$0")
+[[ ! -L $0 && ${script%/*} == "$lab" ]]
+IFS=/ read -r -a components <<< "${lab#/}"
+ancestor=/
+for part in '' "${components[@]}"; do
+  if [[ -n $part ]]; then ancestor=${ancestor%/}/$part; fi
+  [[ -d $ancestor && ! -L $ancestor && $(stat -c '%u' "$ancestor") == 0 ]]
+  mode=$(stat -c '%a' "$ancestor")
+  [[ $mode =~ ^[0-7]{3,4}$ ]]
+  (( (8#$mode & 0022) == 0 ))
+done
+for artifact in "$script" "$lab/dhcp-native.test" "$lab/andeiva-dhcp-hook"; do
   [[ -f $artifact && ! -L $artifact && $(stat -c '%u:%h' "$artifact") == 0:1 ]]
   mode=$(stat -c '%a' "$artifact")
   [[ $mode =~ ^[0-7]{3,4}$ ]]
   (( (8#$mode & 0022) == 0 ))
 done
-if [[ $# == 0 ]]; then
+if [[ $# == 1 && $1 == --check-artifacts ]]; then exit 0; fi
+if [[ $# == 0 || $# == 1 && ( $1 == --early-renewal-off || $1 == --early-renewal-on || $1 == --natural-margin-70 || $1 == --natural-margin-71 ) ]]; then
+	profile=${1:-legacy}
   [[ -x /usr/sbin/dhcpcd && -x /usr/bin/busybox ]]
   [[ -x ./dhcp-native.test && -x ./andeiva-dhcp-hook ]]
   # Descriptor provenance is established before either namespace is created.
   exec 3</proc/self/ns/net
   exec 4</proc/self/ns/mnt
   exec 5</proc/self/ns/pid
-  exec /usr/bin/unshare --mount --net --pid --fork -- /bin/bash "$0" isolated
+  exec /usr/bin/unshare --mount --net --pid --fork -- /bin/bash "$script" isolated "$profile"
 fi
-[[ $# == 1 && $1 == isolated ]]
+[[ $# == 2 && $1 == isolated && ( $2 == legacy || $2 == --early-renewal-off || $2 == --early-renewal-on || $2 == --natural-margin-70 || $2 == --natural-margin-71 ) ]]
+profile=$2
 # Reject direct entry before any mount operation. The retained descriptors must
 # identify this laboratory host, while both current namespaces must be private.
 [[ $(readlink /proc/self/fd/3) =~ ^net:\[[0-9]+\]$ ]]
@@ -72,6 +89,10 @@ opt router 198.18.1.1
 opt dns 198.18.1.1
 opt lease 120
 EOF
+if [[ $profile == --natural-margin-70 || $profile == --natural-margin-71 ]]; then
+  natural_lease=${profile##*-}
+  /usr/bin/sed -i "s/^opt lease 120$/opt lease $natural_lease/" /run/andeiva-dhcp/server.conf
+fi
 /usr/bin/ip netns exec dhcp-server /usr/bin/busybox udhcpd -f /run/andeiva-dhcp/server.conf >/run/andeiva-dhcp/server.log 2>&1 &
 server=$!
 cleanup() {
@@ -81,4 +102,36 @@ cleanup() {
 }
 trap cleanup EXIT
 export ANDEIVA_DHCP_SERVER_PID=$server ANDEIVA_DHCP_NATIVE=1
-./dhcp-native.test -test.run '^TestNativeDHCPCDOwner$' -test.v -test.timeout 5m
+if [[ $profile == legacy ]]; then
+  test_name=TestNativeDHCPCDOwner
+  test_timeout=5m
+elif [[ $profile == --natural-margin-70 || $profile == --natural-margin-71 ]]; then
+  export ANDEIVA_DHCP_NATURAL_LEASE=$natural_lease
+  test_name=TestNativeDHCPEarlyMarginNatural
+  test_timeout=140s
+else
+  export ANDEIVA_DHCP_EARLY_PROFILE=${profile##*renewal-}
+  test_name=TestNativeDHCPEarlyRenewalResources
+  test_timeout=190s
+fi
+log=$(/usr/bin/mktemp /run/andeiva-dhcp/native-result.XXXXXXXX)
+if ! "$lab/dhcp-native.test" -test.run "^${test_name}$" -test.v -test.timeout "$test_timeout" >"$log" 2>&1; then
+  cat "$log"
+  exit 1
+fi
+cat "$log"
+[[ $(grep -Fxc "=== RUN   $test_name" "$log") == 1 ]]
+[[ $(grep -Fc -- "--- PASS: $test_name (" "$log") == 1 ]]
+[[ $(grep -Fxc PASS "$log") == 1 ]]
+if grep -Eq '^[[:space:]]*--- (FAIL|SKIP):|^FAIL|no tests to run' "$log"; then
+  exit 1
+else
+  [[ $? == 1 ]] # A read/grep error is not evidence of a clean result.
+fi
+if [[ $profile == --early-renewal-off || $profile == --early-renewal-on ]]; then
+  [[ $(grep -Fc ANDEIVA_DHCP_B1_COMPONENT_RESOURCES "$log") == 1 ]]
+  grep -Fq "\"profile\":\"$ANDEIVA_DHCP_EARLY_PROFILE\"" "$log"
+fi
+if [[ $profile == --natural-margin-70 || $profile == --natural-margin-71 ]]; then
+  [[ $(grep -Fc ANDEIVA_DHCP_B2_NATURAL "$log") == 1 ]]
+fi

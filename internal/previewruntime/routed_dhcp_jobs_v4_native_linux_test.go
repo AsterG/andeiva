@@ -16,6 +16,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/dhcpclient"
 	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
@@ -37,13 +39,37 @@ import (
 // Explicit root laboratory only. The packet server is a test peer; acquisition,
 // private FD15/SCM transport, selected store, helper and kernel executors are real.
 func TestNativeRoutedDHCPJobsV4(t *testing.T) {
+	nativeRunRoutedDHCPJobsV4(t, false)
+}
+
+// The combined early-renewal/API-restart trial remains failed evidence. This
+// profile qualifies continuity and orderly retirement only, never API restart.
+func TestNativeRoutedDHCPEarlyRenewalV4(t *testing.T) {
+	nativeRunRoutedDHCPScenarioV4(t, true, 0)
+}
+
+const nativeDHCPEarlyRenewalSamplesV4 = 10
+
+func nativeRunRoutedDHCPJobsV4(t *testing.T, early bool) {
+	nativeRunRoutedDHCPScenarioV4(t, early, 0)
+}
+
+func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
+	t.Helper()
 	if os.Getenv("ANDEIVA_NATIVE_DHCP_JOBS_V4") != "1" {
 		t.Skip("requires authorized isolated root laboratory harness")
 	}
 	if os.Getenv("CI") != "" || os.Getuid() != 0 || os.Geteuid() != 0 || routedDHCPOwnerCgroupV3() != nil {
 		t.Fatal("root laboratory only")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 210*time.Second)
+	budget := 210 * time.Second
+	if early {
+		budget = 700 * time.Second
+	}
+	if b2 != 0 {
+		budget = 210 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	self, e := os.Executable()
 	if e != nil || trustedRoutedExecutableV3(self) != nil {
@@ -77,6 +103,11 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 	}()
 	if e = os.Chmod(base, 0755); e != nil {
 		t.Fatal(e)
+	}
+	if b2 != 0 {
+		if e = nativeDHCPB2WriteProfileV4(base, b2); e != nil {
+			t.Fatal(e)
+		}
 	}
 	for _, name := range []string{"store", "admission", "plan", "emergency"} {
 		path := filepath.Join(base, name)
@@ -190,6 +221,9 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 		return v
 	}
 	var logs nativeLogV3
+	if early {
+		logs.limit = 512 << 10
+	}
 	var private *os.Root
 	{
 		path := filepath.Join(base, "integrity")
@@ -219,47 +253,132 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 			t.Fatal("failed preparation changed marker", e)
 		}
 	}
-	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs)
+	var initialLease []uint32
+	if b2 != 0 {
+		initialLease = []uint32{71}
+	}
+	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs, initialLease...)
 	defer stopServer()
-	stopDiagnostic := nativeDHCPJobsCollectV4(t, ctx, metadata)
+	var b2Diagnostic nativeDHCPB2DiagnosticsV4
+	var b2Pause nativeDHCPB2PauseV2
+	var observeDiagnostic func([]byte)
+	var pinned []func(*RoutedDHCPOwnerV3, *os.File, *os.File) error
+	if b2 != 0 {
+		observeDiagnostic = b2Diagnostic.observe
+		if b2 == 71 {
+			pinned = append(pinned, b2Pause.capture)
+		}
+	}
+	stopDiagnostic := nativeDHCPJobsCollectDataV4(t, ctx, metadata, observeDiagnostic, pinned...)
 	defer stopDiagnostic()
-	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{DHCPJobs: true, Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
+	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{DHCPJobs: true, DHCPRenewalV4: early, Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
 	if e != nil {
+		if err := b2Pause.Close(); err != nil {
+			t.Error("B2 owner capture cleanup", err)
+		}
 		t.Fatalf("native DHCP launch failed: %v\n%s", e, logs.String())
 	}
 	defer func() {
-		trace, closeErr := nativeDHCPJobsCloseTraceV4(&logs, supervisor.Close)
-		if trace != "" {
-			t.Log(trace)
-		}
+		closeErr := nativeDHCPPauseCleanupV2(b2Pause.Close, stopDiagnostic, func() error {
+			trace, err := nativeDHCPJobsCloseTraceV4(&logs, supervisor.Close)
+			if trace != "" {
+				t.Log(trace)
+			}
+			return err
+		})
 		if closeErr != nil {
-			t.Error("native supervisor close failed")
+			t.Error("native pause/supervisor cleanup failed")
 		}
 	}()
-	defer stopDiagnostic() // Collect before supervisor teardown on failure.
 	helper, api := supervisor.PIDs()
 	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata, &logs)
 	bound := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "bound")
 	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], bound.Grant.Snapshot)
-	renewed := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "renewed")
-	if renewed.Grant.Epoch <= bound.Grant.Epoch || renewed.Grant.Snapshot.DeadlineBootNS <= bound.Grant.Snapshot.DeadlineBootNS || renewed.Grant.Snapshot.Fact().Owner != bound.Grant.Snapshot.Fact().Owner || renewed.Running != bound.Running {
-		t.Fatal("renewal reused an epoch/deadline or replaced owner/policy")
+	if b2 != 0 {
+		nativeDHCPB2RootV4(t, ctx, b2, base, namespaces, supervisor, &logs, bound, &b2Diagnostic, &b2Pause, stopServer, stopDiagnostic)
+		return
 	}
-	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], renewed.Grant.Snapshot)
-	if e = supervisor.RestartAPI(ctx); e != nil {
-		t.Fatalf("API restart failed: %v\n%s", e, logs.String())
+	var earlyCuts []nativeDHCPCutV4
+	var earlyAdoptions []nativeDHCPAdoptionEvidenceV4
+	if early {
+		nativeDHCPContinuitySourceV4(t, ctx, namespaces[1])
+		flow, e := startNativeDHCPContinuityProfileV4(t, ctx, namespaces[1], namespaces[2], continuityTenRenewalsV4)
+		if e != nil {
+			t.Fatal("start persistent TCP/UDP", e)
+		}
+		var readyBoot unix.Timespec
+		if e = unix.ClockGettime(unix.CLOCK_BOOTTIME, &readyBoot); e != nil {
+			t.Fatal(e)
+		}
+		// Test-only synchronization on the retained API process, not DHCP authority.
+		supervisor.mu.Lock()
+		e = supervisor.api.cmd.Process.Signal(syscall.SIGUSR2)
+		supervisor.mu.Unlock()
+		if e != nil {
+			t.Fatal("acknowledge persistent flow readiness", e)
+		}
+		renewed := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "renewed")
+		if renewed.Grant.Epoch <= bound.Grant.Epoch || renewed.Grant.Snapshot.DeadlineBootNS <= bound.Grant.Snapshot.DeadlineBootNS || renewed.Grant.Snapshot.Fact().Owner != bound.Grant.Snapshot.Fact().Owner || renewed.Running != bound.Running {
+			t.Fatal("renewal reused an epoch/deadline or replaced owner/policy")
+		}
+		nativeDHCPJobsKernelV4(t, ctx, namespaces[0], renewed.Grant.Snapshot)
+		var afterRenewals unix.Timespec
+		if e = unix.ClockGettime(unix.CLOCK_BOOTTIME, &afterRenewals); e != nil {
+			t.Fatal(e)
+		}
+		checkpoint, e := flow.Checkpoint(ctx, afterRenewals.Nano())
+		if e != nil {
+			t.Fatal("same TCP/UDP sockets did not progress after ten renewals", e)
+		}
+		traffic, e := flow.Stop()
+		if e != nil || traffic.TCPAccepted != 1 || traffic.TCPDisconnects != 0 || traffic.UDPTupleChanges != 0 || traffic.UDPInvalid != 0 || traffic.UDPSent == 0 || traffic.UDPUniqueEchoes == 0 {
+			t.Fatalf("persistent flow evidence failed: %v %+v", e, traffic)
+		}
+		cuts, e := nativeDHCPCutsV4(logs.String(), helper, readyBoot.Nano())
+		if e != nil || len(cuts) != nativeDHCPEarlyRenewalSamplesV4 {
+			t.Fatalf("ten verified post-READY closed/open renewal intervals required: %v %+v\n%s", e, cuts, logs.String())
+		}
+		adoptions, e := nativeDHCPAdoptionsV4(logs.String(), helper, api, readyBoot.Nano(), cuts)
+		if e != nil {
+			t.Fatal("authenticated hook-to-open evidence", e)
+		}
+		nativeDHCPReportAdoptionsV4(t, adoptions)
+		nativeDHCPRenewalEvidenceV4(t, cuts, checkpoint, traffic)
+		nativeDHCPReportPhasesV4(t, logs.String(), helper, cuts)
+		earlyCuts = cuts
+		earlyAdoptions = adoptions
+		// Permit retirement only after the parent has collected the flow evidence.
+		supervisor.mu.Lock()
+		e = supervisor.api.cmd.Process.Signal(syscall.SIGUSR2)
+		supervisor.mu.Unlock()
+		if e != nil {
+			t.Fatal("acknowledge persistent flow stopped", e)
+		}
+	} else {
+		renewed := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "renewed")
+		if renewed.Grant.Epoch <= bound.Grant.Epoch || renewed.Grant.Snapshot.DeadlineBootNS <= bound.Grant.Snapshot.DeadlineBootNS || renewed.Grant.Snapshot.Fact().Owner != bound.Grant.Snapshot.Fact().Owner || renewed.Running != bound.Running {
+			t.Fatal("natural renewal reused authority or replaced owner/policy")
+		}
+		nativeDHCPJobsKernelV4(t, ctx, namespaces[0], renewed.Grant.Snapshot)
+		if e = supervisor.RestartAPI(ctx); e != nil {
+			t.Fatalf("API restart failed: %v\n%s", e, logs.String())
+		}
+		h2, a2 := supervisor.PIDs()
+		if helper != h2 || api == a2 {
+			t.Fatal("API restart replaced helper or reused API PID")
+		}
+		nativeDHCPJobsPrivilegesV4(t, h2, a2, metadata, &logs)
+		restarted := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "restarted")
+		if restarted.Running != bound.Running || restarted.Grant.Snapshot.Fact().Owner != bound.Grant.Snapshot.Fact().Owner || restarted.Grant.Epoch < renewed.Grant.Epoch {
+			t.Fatal("API restart lost selected policy or real producer incarnation")
+		}
+		nativeDHCPJobsWaitReportV4(t, ctx, &logs, "rollback-fenced")
 	}
-	h2, a2 := supervisor.PIDs()
-	if helper != h2 || api == a2 {
-		t.Fatal("API restart replaced helper or reused API PID")
+	retired := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "retired")
+	if !routedPrivateHashV4(retired.Running) || retired.Running == bound.Running {
+		t.Fatal("retirement did not restore NoNetwork")
 	}
-	nativeDHCPJobsPrivilegesV4(t, h2, a2, metadata, &logs)
-	restarted := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "restarted")
-	if restarted.Running != bound.Running || restarted.Grant.Snapshot.Fact().Owner != bound.Grant.Snapshot.Fact().Owner || restarted.Grant.Epoch < renewed.Grant.Epoch {
-		t.Fatal("API restart lost selected policy or real producer incarnation")
-	}
-	nativeDHCPJobsWaitReportV4(t, ctx, &logs, "rollback-fenced")
-	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], restarted.Grant.Snapshot)
+	nativeDHCPJobsRetiredKernelV4(t, ctx, namespaces[0])
 	stopDiagnostic()
 	if e = supervisor.Close(); e != nil {
 		t.Fatal("grouped close", e)
@@ -268,17 +387,34 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 	if strings.Contains(logs.String(), "native role failed:") {
 		t.Fatalf("child failure: %s", logs.String())
 	}
-	t.Log("real selected DHCP acquisition, natural renewal, retained-helper API restart and active-work rollback refusal; lifecycle gate retirement, expiry/death and packet forwarding remain separate gates")
+	if !nativeDHCPEvidenceLogValidV4(logs.String()) {
+		t.Fatal("native log truncated or exceeded its bounded capture")
+	}
+	if early {
+		if e := nativeDHCPEarlyBudgetsV4(earlyCuts, earlyAdoptions); e != nil {
+			t.Fatal(e)
+		}
+		t.Log("B1+C: same TCP connection and UDP socket across ten post-READY renewals with nominal 100ms probe interval and orderly NoNetwork retirement; provisional Alpha cut/adoption maxima are 10s/12s; API restart is not qualified")
+	} else {
+		t.Log("Legacy: natural renewal, retained-helper API restart, active-work rollback refusal and orderly NoNetwork retirement")
+	}
 }
 
 // udhcpd is only a test packet peer. The child joins the inherited WAN pin;
 // no name/PID from the environment chooses a namespace or signal target.
-func nativeDHCPJobsServerV4(t *testing.T, ctx context.Context, base string, wan *os.File, logs io.Writer) func() {
+func nativeDHCPJobsServerV4(t *testing.T, ctx context.Context, base string, wan *os.File, logs io.Writer, initial ...uint32) func() {
 	t.Helper()
 	if trustedRoutedExecutableV3("/usr/bin/busybox") != nil {
 		t.Fatal("trusted busybox udhcpd test dependency missing")
 	}
-	conf := fmt.Sprintf("start 198.18.1.10\nend 198.18.1.10\ninterface sink0\nmax_leases 1\nmin_lease 60\nlease_file %s\npidfile %s\nopt subnet 255.255.255.0\nopt router 198.18.1.1\nopt lease 120\n", filepath.Join(base, "test-server.leases"), filepath.Join(base, "test-server.pid"))
+	leaseSeconds := uint32(120)
+	if len(initial) > 1 || len(initial) == 1 && initial[0] != 71 {
+		t.Fatal("invalid fixed initial lab lease")
+	}
+	if len(initial) == 1 {
+		leaseSeconds = initial[0]
+	}
+	conf := fmt.Sprintf("start 198.18.1.10\nend 198.18.1.10\ninterface sink0\nmax_leases 1\nmin_lease 60\nlease_file %s\npidfile %s\nopt subnet 255.255.255.0\nopt router 198.18.1.1\nopt lease %d\n", filepath.Join(base, "test-server.leases"), filepath.Join(base, "test-server.pid"), leaseSeconds)
 	path := filepath.Join(base, "test-server.conf")
 	if err := os.WriteFile(path, []byte(conf), 0600); err != nil {
 		t.Fatal(err)
@@ -288,9 +424,19 @@ func nativeDHCPJobsServerV4(t *testing.T, ctx context.Context, base string, wan 
 	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
 	cmd.Stdout, cmd.Stderr = logs, logs
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-	runtime.LockOSThread()
-	err := cmd.Start()
-	runtime.UnlockOSThread()
+	started, done := make(chan error, 1), make(chan error, 1)
+	go func() {
+		// Linux binds Pdeathsig to the creating thread: keep it alive until Wait.
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		err := cmd.Start()
+		started <- err
+		if err == nil {
+			err = cmd.Wait()
+		}
+		done <- err
+	}()
+	err := <-started
 	if err != nil {
 		t.Fatal("start isolated packet server", err)
 	}
@@ -299,19 +445,109 @@ func nativeDHCPJobsServerV4(t *testing.T, ctx context.Context, base string, wan 
 		if !stopped {
 			stopped = true
 			_ = cmd.Process.Kill() // Go retains the process pidfd on Linux.
-			_ = cmd.Wait()
+			<-done
+		}
+	}
+}
+
+func nativeDHCPContinuitySourceV4(t *testing.T, ctx context.Context, source *os.File) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"address", "add", "198.18.0.2/24", "dev", "source0"},
+		{"route", "add", "default", "via", "198.18.0.1", "dev", "source0"},
+	} {
+		cmd := exec.CommandContext(ctx, "/usr/bin/nsenter", append([]string{"--net=/proc/self/fd/3", "--", "/usr/bin/ip"}, args...)...)
+		cmd.ExtraFiles = []*os.File{source}
+		cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("configure pinned laboratory source: %v %s", err, output)
+		}
+	}
+}
+
+func nativeDHCPRenewalEvidenceV4(t *testing.T, cuts []nativeDHCPCutV4, checkpoint nativeDHCPContinuityCheckpointV4, traffic nativeDHCPContinuityReportV4) {
+	t.Helper()
+	lower, upper := make([]int64, len(cuts)), make([]int64, len(cuts))
+	for i, cut := range cuts {
+		lower[i], upper[i] = cut.LowerNS, cut.UpperNS
+		var missing uint64
+		for _, probe := range traffic.Missing {
+			if probe.SentBootNS >= cut.CloseStart && probe.SentBootNS <= cut.Opened {
+				missing++
+			}
+		}
+		raw, err := json.Marshal(struct {
+			Cycle                   int             `json:"cycle"`
+			Cut                     nativeDHCPCutV4 `json:"cut"`
+			MissingSentDuringBounds uint64          `json:"udp_missing_probes_sent_during_cut_bounds"`
+		}{i + 1, cut, missing})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("ANDEIVA_NATIVE_RENEWAL_CUT_V4 %s", raw)
+	}
+	loMin, loMedian, loMax := nativeDurationSummaryV4(lower)
+	hiMin, hiMedian, hiMax := nativeDurationSummaryV4(upper)
+	t.Logf("ANDEIVA_NATIVE_RENEWAL_SUMMARY_V4 lower_ns_min_median_max=%d,%d,%d upper_ns_min_median_max=%d,%d,%d alpha_max_cut_ns=%d product_slo=undefined", loMin, loMedian, loMax, hiMin, hiMedian, hiMax, int64(dhcpclient.EarlyRenewalAlphaCutBudgetV4))
+	raw, err := json.Marshal(struct {
+		Renewals        int                              `json:"renewals"`
+		ProbeIntervalNS int64                            `json:"nominal_probe_interval_ns"`
+		FlowWindowNS    int64                            `json:"maximum_flow_window_ns"`
+		Checkpoint      nativeDHCPContinuityCheckpointV4 `json:"post_renewals_checkpoint"`
+		Traffic         nativeDHCPContinuityReportV4     `json:"traffic"`
+	}{len(cuts), int64(100 * time.Millisecond), int64(650 * time.Second), checkpoint, traffic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("ANDEIVA_NATIVE_RENEWAL_TRAFFIC_V4 %s", raw)
+	t.Log("UDP missing counts are observed application datagrams after bounded drain; send errors and TCP retransmissions are reported separately. Cut bounds include readback overhead; echo gaps are not cut durations.")
+}
+
+func nativeDHCPJobsRetiredKernelV4(t *testing.T, ctx context.Context, gateway *os.File) {
+	t.Helper()
+	for _, name := range []string{"lan0", "wan0"} {
+		cmd := exec.CommandContext(ctx, "/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", "/usr/bin/ip", "-j", "-4", "address", "show", "dev", name)
+		cmd.ExtraFiles = []*os.File{gateway}
+		cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
+		data, err := cmd.Output()
+		var links []struct {
+			Name      string            `json:"ifname"`
+			Addresses []json.RawMessage `json:"addr_info"`
+		}
+		if err != nil || len(data) > 64<<10 || json.Unmarshal(data, &links) != nil || len(links) > 1 || len(links) == 1 && (links[0].Name != name || len(links[0].Addresses) != 0) {
+			t.Fatal("retired interface retains IPv4 state", name, err)
+		}
+	}
+	for _, inventory := range []struct {
+		executable string
+		args       []string
+	}{
+		{"/usr/bin/ip", []string{"-j", "-4", "route", "show", "table", "all"}},
+		{"/usr/sbin/nft", []string{"-j", "list", "ruleset"}},
+		{"/usr/bin/ss", []string{"-H", "-u", "-a", "-n"}},
+	} {
+		cmd := exec.CommandContext(ctx, "/usr/bin/nsenter", append([]string{"--net=/proc/self/fd/3", "--", inventory.executable}, inventory.args...)...)
+		cmd.ExtraFiles = []*os.File{gateway}
+		cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
+		data, err := cmd.Output()
+		if err != nil || len(data) > 256<<10 {
+			t.Fatal("retired inventory unavailable", inventory.executable, err)
+		}
+		if inventory.executable == "/usr/bin/ip" && strings.TrimSpace(string(data)) != "[]" || inventory.executable == "/usr/sbin/nft" && bytes.Contains(data, []byte("andeiva-dhcp-acquisition:v1")) || inventory.executable == "/usr/bin/ss" && len(bytes.TrimSpace(data)) != 0 {
+			t.Fatal("retired scope retains routes, acquisition rules or UDP sockets")
 		}
 	}
 }
 
 type nativeDHCPJobsReportV4 struct {
+	PID     int                         `json:"pid"`
 	Phase   string                      `json:"phase"`
 	Running string                      `json:"running"`
 	Grant   configpoc.RoutedDHCPGrantV3 `json:"grant"`
 }
 
 func nativeDHCPJobsReportEmitV4(phase, running string, grant configpoc.RoutedDHCPGrantV3) error {
-	raw, err := json.Marshal(nativeDHCPJobsReportV4{phase, running, grant})
+	raw, err := json.Marshal(nativeDHCPJobsReportV4{PID: os.Getpid(), Phase: phase, Running: running, Grant: grant})
 	if err != nil {
 		return err
 	}
@@ -466,9 +702,14 @@ func nativeDHCPJobsKernelV4(t *testing.T, ctx context.Context, gateway *os.File,
 
 // Called only by nativeFactoriesV3 for the authenticated DHCPJobs launch profile.
 // Uses the real Service and existing private controller; no local grant source.
-func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error, binding adminauth.SessionBinding, launch RoutedLaunchContextV3) error {
-	if !launch.DHCPJobsEnabled || !launch.Integrity || launch.Epoch < 1 || launch.Epoch > 2 || r.DHCP == nil || !r.Service.RuntimeIntegrityReadyV1() {
+func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error, binding adminauth.SessionBinding, authenticate func() (adminauth.SessionBinding, error), launch RoutedLaunchContextV3) error {
+	if !launch.DHCPJobsEnabled || !launch.Integrity || launch.Epoch < 1 || launch.Epoch > 2 || launch.DHCPRenewalV4 && launch.Epoch != 1 || r.DHCP == nil || !r.Service.RuntimeIntegrityReadyV1() {
 		return errors.New("native DHCP profile/readiness differs")
+	}
+	flowReady := make(chan os.Signal, 1)
+	if launch.DHCPRenewalV4 && launch.Epoch == 1 {
+		signal.Notify(flowReady, syscall.SIGUSR2)
+		defer signal.Stop(flowReady)
 	}
 	current, err := r.Service.Current(binding, "routed")
 	if err != nil || current.Routed == nil {
@@ -520,13 +761,70 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 		if err = nativeDHCPJobsReportEmitV4("bound", current.Global.Running, first); err != nil {
 			return err
 		}
-		renewed, err := nativeDHCPJobsLeaseV4(ctx, r, first.Epoch, 90*time.Second)
-		if err != nil {
-			return fmt.Errorf("native natural renewal: %w", err)
+		if handled, e := nativeDHCPB2ServeV4(ctx, r, binding, launch, before, current.Global.Running, first, flowReady); handled {
+			return e
 		}
-		if err = nativeDHCPJobsReportEmitV4("renewed", current.Global.Running, renewed); err != nil {
-			return err
+		if launch.DHCPRenewalV4 {
+			select {
+			case <-flowReady:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			// Renewals before flow readiness cannot satisfy continuity acceptance.
+			// Capture the authenticated owner's epoch after READY without a second
+			// reconciliation/Live. The controller can lag an already delivered hook;
+			// such a hook must not count toward ten subsequent renewals.
+			r.DHCP.mu.Lock()
+			renewed, err := r.DHCP.remote.Current(ctx)
+			work := r.DHCP.work
+			r.DHCP.mu.Unlock()
+			if err != nil || work == "" || renewed.Epoch < first.Epoch || renewed.Snapshot.Fact().Owner != first.Snapshot.Fact().Owner {
+				return errors.Join(err, errors.New("native ready owner lost its verified grant"))
+			}
+			if err = nativeDHCPJobsReportEmitV4("flow-ready", current.Global.Running, renewed); err != nil {
+				return err
+			}
+			for i := 0; i < nativeDHCPEarlyRenewalSamplesV4; i++ {
+				next, err := nativeDHCPJobsLeaseV4(ctx, r, renewed.Epoch, 65*time.Second)
+				if err != nil {
+					return fmt.Errorf("native early renewal %d: %w", i+1, err)
+				}
+				if next.Epoch != renewed.Epoch+1 || next.Snapshot.Fact().Owner != first.Snapshot.Fact().Owner || next.Snapshot.DeadlineBootNS <= renewed.Snapshot.DeadlineBootNS {
+					return fmt.Errorf("native early renewal %d skipped an epoch, changed owner or retained deadline: %w", i+1, ErrUnavailable)
+				}
+				renewed = next
+				if err = nativeDHCPJobsReportEmitV4(fmt.Sprintf("renewal-%d", i+1), current.Global.Running, renewed); err != nil {
+					return err
+				}
+			}
+			if err = nativeDHCPJobsReportEmitV4("renewed", current.Global.Running, renewed); err != nil {
+				return err
+			}
+			// A second parent ACK follows Checkpoint and Stop on the same sockets.
+			select {
+			case <-flowReady:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			// The ten-renewal traffic window can outlast the management session's
+			// idle limit. Log in again before issuing the final configuration changes.
+			binding, err = authenticate()
+			if err != nil {
+				return fmt.Errorf("native retirement authentication: %w", err)
+			}
+			if err = nativeDHCPJobsRetireV4(ctx, r, binding, before); err != nil {
+				return err
+			}
+		} else {
+			renewed, err := nativeDHCPJobsLeaseV4(ctx, r, first.Epoch, 90*time.Second)
+			if err != nil {
+				return fmt.Errorf("native natural renewal: %w", err)
+			}
+			if err = nativeDHCPJobsReportEmitV4("renewed", current.Global.Running, renewed); err != nil {
+				return err
+			}
 		}
+
 	} else {
 		if err = nativeDHCPJobsReportEmitV4("restarted", current.Global.Running, first); err != nil {
 			return err
@@ -540,16 +838,165 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 		if err != nil || after.Global.Running != current.Global.Running || after.Routed.Confirmation != nil {
 			return errors.Join(err, ErrUnavailable)
 		}
-		live, err := nativeDHCPJobsLeaseV4(ctx, r, 0, 3*time.Second)
+		// This outer fixture budget includes reconciliation and a separate Live
+		// read; each authenticated RPC retains its own unchanged production bound.
+		live, err := nativeDHCPJobsLeaseV4(ctx, r, 0, 10*time.Second)
 		if err != nil || live.Snapshot.Fact().Owner != first.Snapshot.Fact().Owner {
 			return errors.Join(err, ErrUnavailable)
 		}
 		if err = nativeDHCPJobsReportEmitV4("rollback-fenced", after.Global.Running, live); err != nil {
 			return err
 		}
+		if err = nativeDHCPJobsRetireV4(ctx, r, binding, before); err != nil {
+			return err
+		}
 	}
 	<-ctx.Done()
 	return nil
+}
+
+func nativeDHCPJobsRetireV4(ctx context.Context, r *RoutedOperationsRuntimeV3, binding adminauth.SessionBinding, before string) error {
+	// Retire through the authenticated writer before closing the supervisor.
+	// No force-release, store rewrite or acquisition-instance replacement.
+	nativeDHCPJobsQuiesceSchedulerV4(r.DHCP)
+	if err := r.DHCP.Withdraw(ctx); err != nil {
+		return fmt.Errorf("native orderly withdrawal: %w", err)
+	}
+	r.DHCP.mu.Lock()
+	cleared := r.DHCP.work == "" && reflect.DeepEqual(r.DHCP.grant, configpoc.RoutedDHCPGrantV3{})
+	r.DHCP.mu.Unlock()
+	if err := nativeDHCPRetireReceiptV4("after_withdraw", &cleared); err != nil {
+		return err
+	}
+	seconds := uint64(120)
+	rolled, err := nativeDHCPJobsOperationV4(ctx, r, binding, configpoc.OperationRequestV2{Kind: configpoc.OpRollback, Target: before, ConfirmSeconds: &seconds}, true)
+	if err != nil || rolled.Current.Confirmation == nil {
+		return fmt.Errorf("native orderly rollback: %w", errors.Join(err, ErrUnavailable))
+	}
+	if err = nativeDHCPRetireReceiptV4("after_rollback", nil); err != nil {
+		return err
+	}
+	_, err = nativeDHCPJobsOperationV4(ctx, r, binding, configpoc.OperationRequestV2{Kind: configpoc.OpConfirm, Origin: rolled.Operation.ID, Target: rolled.Current.RunningRevision}, false)
+	if err != nil {
+		return fmt.Errorf("native orderly rollback confirm: %w", err)
+	}
+	if err = nativeDHCPRetireReceiptV4("after_confirm", nil); err != nil {
+		return err
+	}
+	if err = nativeDHCPJobsInspectV4(ctx, r); err != nil {
+		return fmt.Errorf("native orderly retirement inspection: %w", err)
+	}
+	if err = nativeDHCPRetireReceiptV4("after_inspect", nil); err != nil {
+		return err
+	}
+	after, err := r.Service.Current(binding, "routed")
+	if err != nil || after.Global.Running != before || after.Snapshot.Running.Config.Routed != nil || after.Routed.Confirmation != nil || r.routed.DHCPSelectedV4() {
+		return errors.Join(err, ErrUnavailable)
+	}
+	if err = nativeDHCPJobsReportEmitV4("retired", after.Global.Running, configpoc.RoutedDHCPGrantV3{}); err != nil {
+		return err
+	}
+	return nil
+}
+
+type nativeDHCPRetirePhaseV4 struct {
+	PID               int    `json:"pid"`
+	BootNS            int64  `json:"boot_ns"`
+	Stage             string `json:"stage"`
+	ControllerCleared *bool  `json:"controller_cleared,omitempty"`
+}
+
+func nativeDHCPRetireEmitV4(w io.Writer, r nativeDHCPRetirePhaseV4) error {
+	if w == nil || r.PID <= 1 || r.BootNS <= 0 {
+		return ErrIdentity
+	}
+	switch r.Stage {
+	case "after_withdraw":
+		if r.ControllerCleared == nil {
+			return ErrIdentity
+		}
+	case "after_rollback", "after_confirm", "after_inspect":
+		if r.ControllerCleared != nil {
+			return ErrIdentity
+		}
+	default:
+		return ErrIdentity
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	line := append([]byte("ANDEIVA_NATIVE_DHCP_RETIRE_PHASE_V4 "), raw...)
+	line = append(line, '\n')
+	if len(line) > 512 {
+		return ErrUnavailable
+	}
+	n, err := w.Write(line)
+	if err != nil {
+		return err
+	}
+	if n != len(line) {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+func nativeDHCPRetireReceiptV4(stage string, cleared *bool) error {
+	now, err := routedDHCPOwnerBootNowV3()
+	if err != nil {
+		return err
+	}
+	return nativeDHCPRetireEmitV4(os.Stderr, nativeDHCPRetirePhaseV4{os.Getpid(), now, stage, cleared})
+}
+
+type nativeDHCPRetireWriterV4 struct{ short bool }
+
+func (w nativeDHCPRetireWriterV4) Write(p []byte) (int, error) {
+	if w.short {
+		return len(p) - 1, nil
+	}
+	return 0, io.ErrClosedPipe
+}
+
+func TestNativeDHCPRetirePhaseV4BoundedDiagnostic(t *testing.T) {
+	var output bytes.Buffer
+	cleared := true
+	for _, stage := range []string{"after_withdraw", "after_rollback", "after_confirm", "after_inspect"} {
+		r := nativeDHCPRetirePhaseV4{PID: 123, BootNS: 456, Stage: stage}
+		if stage == "after_withdraw" {
+			r.ControllerCleared = &cleared
+		}
+		before := output.Len()
+		if err := nativeDHCPRetireEmitV4(&output, r); err != nil || output.Len()-before > 512 {
+			t.Fatal("bounded fixed phase rejected", stage, err)
+		}
+		for _, w := range []io.Writer{nativeDHCPRetireWriterV4{}, nativeDHCPRetireWriterV4{short: true}} {
+			if nativeDHCPRetireEmitV4(w, r) == nil {
+				t.Fatal("receipt writer failure ignored")
+			}
+		}
+	}
+	if len(strings.Split(strings.TrimSpace(output.String()), "\n")) != 4 {
+		t.Fatal("unexpected receipt frame count")
+	}
+	for _, bad := range []nativeDHCPRetirePhaseV4{
+		{PID: 123, BootNS: 456, Stage: "unknown"},
+		{PID: 123, BootNS: 456, Stage: strings.Repeat("x", 513)},
+		{PID: 123, BootNS: 456, Stage: "after_withdraw"},
+		{PID: 123, BootNS: 456, Stage: "after_inspect", ControllerCleared: &cleared},
+		{PID: 1, BootNS: 456, Stage: "after_inspect"},
+		{PID: 123, BootNS: 0, Stage: "after_inspect"},
+	} {
+		var rejected bytes.Buffer
+		if nativeDHCPRetireEmitV4(&rejected, bad) == nil || rejected.Len() != 0 {
+			t.Fatal("non-fixed/oversize/invalid diagnostic emitted")
+		}
+	}
+	// A false observation remains a diagnostic, never a synthesized proof.
+	cleared = false
+	if nativeDHCPRetireEmitV4(&output, nativeDHCPRetirePhaseV4{123, 456, "after_withdraw", &cleared}) != nil || !strings.Contains(output.String(), `"controller_cleared":false`) {
+		t.Fatal("observed uncleared controller was hidden")
+	}
 }
 
 func nativeDHCPJobsCandidateV4() (configpoc.Revision, error) {
@@ -599,7 +1046,7 @@ func nativeDHCPJobsInspectV4(ctx context.Context, r *RoutedOperationsRuntimeV3) 
 	r.DHCP.mu.Lock()
 	defer r.DHCP.mu.Unlock()
 	err := r.Service.InspectRuntimeV1(ctx)
-	r.DHCP.scheduleV4(err == nil && r.routed.DHCPSelectedV4())
+	r.DHCP.afterInspectionV4(err, r.routed.DHCPSelectedV4())
 	return err
 }
 
@@ -612,17 +1059,21 @@ func nativeDHCPJobsOperationV4(ctx context.Context, r *RoutedOperationsRuntimeV3
 	}
 	status, err := r.Service.Status(binding)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("native %s status: %w", request.Kind, err)
 	}
 	ns, err := r.Service.Namespace(binding, "routed", time.Hour)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("native %s namespace: %w", request.Kind, err)
 	}
 	op, err := r.Service.Admit(binding, ns.ID, status.GlobalGeneration, request)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("native %s admission: %w", request.Kind, err)
 	}
-	return r.Service.Execute(ctx, binding, op.ID)
+	result, err = r.Service.Execute(ctx, binding, op.ID)
+	if err != nil {
+		return result, fmt.Errorf("native %s execution: %w", request.Kind, err)
+	}
+	return result, nil
 }
 
 func nativeDHCPJobsLeaseV4(parent context.Context, r *RoutedOperationsRuntimeV3, after uint64, budget time.Duration) (configpoc.RoutedDHCPGrantV3, error) {

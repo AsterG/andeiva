@@ -16,6 +16,7 @@ import (
 )
 
 type routedDHCPJobAssemblyV4 struct {
+	renewal       bool
 	network       *routedNetworkSelectorV4
 	listeners     *routedEmptyListenersV3
 	packetProfile routedDHCPPacketProfileV1
@@ -141,7 +142,11 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 			return e
 		}
 		lifetime, cancel := context.WithCancel(h.ctx)
-		r, closeRuntime, e := assembleRoutedDHCPRuntimeV3(lifetime, RoutedDHCPRuntimeOptionsV3{LAN: lan, Target: h.assembly.target, Host: h.assembly.host, Desired: desired, Owner: binding.Owner, Current: owner.Current}, id, h.readerGID, h.actionReader, h.authority, h.integrity)
+		profile := RoutedDHCPLegacyRenewalV4
+		if h.assembly.renewal {
+			profile = RoutedDHCPSameEffectiveRenewalV4
+		}
+		r, closeRuntime, e := assembleRoutedDHCPRuntimeV3(lifetime, RoutedDHCPRuntimeOptionsV3{RenewalProfile: profile, LAN: lan, Target: h.assembly.target, Host: h.assembly.host, Desired: desired, Owner: binding.Owner, Current: owner.Current}, id, h.readerGID, h.actionReader, h.authority, h.integrity)
 		if e != nil {
 			cancel()
 			h.assembly.listeners.revokeService()
@@ -168,6 +173,8 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 	})
 	return err == nil, err
 }
+
+func (h *routedDHCPJobsHelperV4) SameEffectiveRenewalV4() bool { return h != nil && h.assembly.renewal }
 
 func (h *routedDHCPJobsHelperV4) Dispatch(ctx context.Context, c firewallipc.RoutedCommandV3) (any, error) {
 	h.mu.Lock()

@@ -9,7 +9,7 @@ import (
 
 func TestNativeDiagnosticDefaultDisabled(t *testing.T) {
 	d, err := openClientDiagnostic()
-	if err != nil || d != nil || d.stderr() != io.Discard {
+	if err != nil || d != nil || d.stderr() != io.Discard || d.debugArguments() != nil {
 		t.Fatal("ordinary build enabled native diagnostics")
 	}
 	d.event("event", "CARRIER", 0)

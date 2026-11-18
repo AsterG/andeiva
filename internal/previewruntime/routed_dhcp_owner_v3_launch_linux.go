@@ -24,6 +24,7 @@ import (
 )
 
 type routedDHCPOwnerBootstrapV3 struct {
+	EarlyRenewalV4       bool                 `json:"early_renewal_v4,omitempty"`
 	Version              int                  `json:"version"`
 	ParentPID            int                  `json:"parent_pid"`
 	ParentStartTicks     uint64               `json:"parent_start_ticks"`
@@ -76,7 +77,7 @@ func StartRoutedDHCPOwnerV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3) (_ 
 }
 
 func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3, profile int) (_ *RoutedDHCPOwnerV3, result error) {
-	if profile != 3 && profile != 4 {
+	if profile != 3 && profile != 4 || o.EarlyRenewalV4 && profile != 4 {
 		return nil, ErrIdentity
 	}
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || o.Metadata.ValidateRouted() != nil || !routedDHCPOwnerNamespaceV3(o.Gateway, unix.CLONE_NEWNET, o.Metadata.GatewayNamespace) || !routedDHCPOwnerNamespaceV3(o.Host, unix.CLONE_NEWNET, o.Metadata.HostNamespace) || routedDHCPOwnerCgroupV3() != nil {
@@ -234,7 +235,7 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 	if bootW.SetWriteDeadline(deadline) != nil || eventR.SetReadDeadline(deadline) != nil {
 		return nil, ErrUnavailable
 	}
-	b := routedDHCPOwnerBootstrapV3{Version: profile, ParentPID: os.Getpid(), ParentStartTicks: parentStart, Metadata: o.Metadata, Desired: desired, Incarnation: incarnation, MountNamespace: mountID, HostMountNamespace: hostMountID, ServiceCgroupVersion: routedDHCPServiceCgroupVersionV1, ServiceCgroupDevice: serviceID.Device, ServiceCgroupInode: serviceID.Inode}
+	b := routedDHCPOwnerBootstrapV3{EarlyRenewalV4: o.EarlyRenewalV4, Version: profile, ParentPID: os.Getpid(), ParentStartTicks: parentStart, Metadata: o.Metadata, Desired: desired, Incarnation: incarnation, MountNamespace: mountID, HostMountNamespace: hostMountID, ServiceCgroupVersion: routedDHCPServiceCgroupVersionV1, ServiceCgroupDevice: serviceID.Device, ServiceCgroupInode: serviceID.Inode}
 	if routedDHCPOwnerWriteV3(bootW, b) != nil {
 		return nil, ErrUnavailable
 	}
