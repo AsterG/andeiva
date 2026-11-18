@@ -203,6 +203,9 @@ func (h *routedDHCPJobsHelperV4) VerifyRestartLiveV4(ctx context.Context, work s
 		return closeUncertain()
 	}
 	p, err := r.reader.Resolve(ctx, work)
+	if errors.Is(err, configpoc.ErrRoutedDHCPBindingMismatchV4) {
+		return closeUncertain()
+	}
 	if err != nil {
 		// A failed read alone cannot prove corruption. Keep only a permit
 		// independently verified against the retained physical guardian.

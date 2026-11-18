@@ -356,7 +356,7 @@ func (restartProofAuthorityV4) Observe(context.Context) (configpoc.RoutedReceipt
 }
 
 func TestRoutedDHCPRestartLiveV4DistinguishesStoreAndPhysicalFailure(t *testing.T) {
-	for _, mode := range []string{"healthy", "store", "forwarding", "work", "applied"} {
+	for _, mode := range []string{"healthy", "store", "forwarding", "work", "durable work", "applied"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			r, kernel, reader, _ := dhcpRuntimeFixtureV3(t)
@@ -383,6 +383,8 @@ func TestRoutedDHCPRestartLiveV4DistinguishesStoreAndPhysicalFailure(t *testing.
 				kernel.forward = false
 			case "work":
 				work = strings.Repeat("f", 64)
+			case "durable work":
+				reader.resolveError = errors.Join(configpoc.ErrRecovery, configpoc.ErrRoutedDHCPBindingMismatchV4)
 			case "applied":
 				reader.work.phase = "prepared"
 			}

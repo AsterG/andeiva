@@ -41,15 +41,19 @@ func (p dhcpRuntimeWorkV3) Phase() string   { return p.phase }
 func (p dhcpRuntimeWorkV3) Running() string { return strings.Repeat("d", 64) }
 
 type dhcpRuntimeReaderV3 struct {
-	work   *dhcpRuntimeWorkV3
-	denied bool
-	events *[]string
-	after  func()
-	last   *networkexecutor.LeaseSelectedSnapshotV3
+	work         *dhcpRuntimeWorkV3
+	denied       bool
+	resolveError error
+	events       *[]string
+	after        func()
+	last         *networkexecutor.LeaseSelectedSnapshotV3
 }
 
 func (x *dhcpRuntimeReaderV3) Resolve(_ context.Context, hash string) (routedDHCPWorkV3, error) {
 	*x.events = append(*x.events, "selected")
+	if x.resolveError != nil {
+		return nil, x.resolveError
+	}
 	if x.denied || x.work == nil || hash != x.work.hash {
 		return nil, configpoc.ErrRecovery
 	}
