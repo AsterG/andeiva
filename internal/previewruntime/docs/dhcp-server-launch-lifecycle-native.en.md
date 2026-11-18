@@ -1,8 +1,17 @@
 # LAN DHCP launcher lifecycle qualification
 
-Status: fixture prepared; native result and CPU/RAM measurements pending. This
-test does not enable a product feature, selected transactions, WAN, forwarding,
-NAT or a production factory. It does not repeat or claim DORA/RENEW acceptance.
+On 2026-11-18 the isolated Debian 13 fixture passed in 8.15 s. The test covered
+launch and disable of the LAN component with the WAN slot empty. It left zero
+owned processes and sockets before supervisor exit, unchanged firewall rules,
+no active generated configuration and the same lease file inventory and content.
+Selected transactions and DORA/RENEW qualification remain separate.
+
+The test unit used 0.387 CPU seconds and peaked at 44,118,016 bytes. Its parent
+cgroup used 42,840,064 bytes at the end of the enabled window and 34,959,360
+bytes at the end of the disabled window. The enabled component consumed 199
+microseconds of CPU between the two enabled samples. Its CPU counter stayed
+constant across the two disabled samples. These figures describe the fixture.
+The result SHA256 is `ad7b79085ddbb30f3196cfbcc61198475225f578c4ba9c4fffdebb20128d922b`.
 
 The fixed launcher and sealed role are exercised with an isolated gateway and
 the exact two-slot service set. WAN stays empty. Real Kea readiness requires the

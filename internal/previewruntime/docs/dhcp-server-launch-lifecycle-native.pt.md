@@ -1,9 +1,17 @@
 # Qualificação do ciclo de vida do lançador DHCP LAN
 
-Estado: fixture preparado; execução nativa e medições CPU/RAM pendentes. Não
-ativa produto, transações selecionadas, WAN, forwarding ou NAT. Não repete nem
-qualifica DORA/RENEW. Exercita lançador e papel selado reais, gateway isolado e
-dois slots exatos; WAN permanece vazio.
+Em 18-11-2026 o teste isolado no Debian 13 passou em 8,15 s. Verificou a
+inicialização e a desativação do componente LAN com o slot WAN vazio. Antes
+de encerrar o supervisor havia zero processos e sockets próprios, regras
+intactas, configuração gerada ausente e arquivos de concessão preservados.
+As transações selecionadas e a qualificação DORA/RENEW são testes separados.
+
+A unidade de teste consumiu 0,387 s de CPU e atingiu um pico de 44.118.016 B.
+O cgroup pai usou 42.840.064 B no fim da janela habilitada e 34.959.360 B no
+fim da desabilitada. O componente consumiu 199 µs de CPU entre as amostras
+habilitadas. Seu contador ficou constante entre as amostras desabilitadas.
+Os valores descrevem o ambiente isolado de teste.
+SHA256 do resultado `ad7b79085ddbb30f3196cfbcc61198475225f578c4ba9c4fffdebb20128d922b`.
 
 A preparação exige Kea real com usuário dedicado, capabilities exatas, AppArmor
 stock em enforcement, identidade pai/pidfd/start e socket AF_PACKET próprio no
