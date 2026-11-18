@@ -702,7 +702,7 @@ func nativeDHCPJobsKernelV4(t *testing.T, ctx context.Context, gateway *os.File,
 
 // Called only by nativeFactoriesV3 for the authenticated DHCPJobs launch profile.
 // Uses the real Service and existing private controller; no local grant source.
-func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error, binding adminauth.SessionBinding, launch RoutedLaunchContextV3) error {
+func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error, binding adminauth.SessionBinding, authenticate func() (adminauth.SessionBinding, error), launch RoutedLaunchContextV3) error {
 	if !launch.DHCPJobsEnabled || !launch.Integrity || launch.Epoch < 1 || launch.Epoch > 2 || launch.DHCPRenewalV4 && launch.Epoch != 1 || r.DHCP == nil || !r.Service.RuntimeIntegrityReadyV1() {
 		return errors.New("native DHCP profile/readiness differs")
 	}
@@ -805,6 +805,12 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 			case <-flowReady:
 			case <-ctx.Done():
 				return ctx.Err()
+			}
+			// The ten-renewal traffic window can outlast the management session's
+			// idle limit. Log in again before issuing the final configuration changes.
+			binding, err = authenticate()
+			if err != nil {
+				return fmt.Errorf("native retirement authentication: %w", err)
 			}
 			if err = nativeDHCPJobsRetireV4(ctx, r, binding, before); err != nil {
 				return err
@@ -1053,17 +1059,21 @@ func nativeDHCPJobsOperationV4(ctx context.Context, r *RoutedOperationsRuntimeV3
 	}
 	status, err := r.Service.Status(binding)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("native %s status: %w", request.Kind, err)
 	}
 	ns, err := r.Service.Namespace(binding, "routed", time.Hour)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("native %s namespace: %w", request.Kind, err)
 	}
 	op, err := r.Service.Admit(binding, ns.ID, status.GlobalGeneration, request)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("native %s admission: %w", request.Kind, err)
 	}
-	return r.Service.Execute(ctx, binding, op.ID)
+	result, err = r.Service.Execute(ctx, binding, op.ID)
+	if err != nil {
+		return result, fmt.Errorf("native %s execution: %w", request.Kind, err)
+	}
+	return result, nil
 }
 
 func nativeDHCPJobsLeaseV4(parent context.Context, r *RoutedOperationsRuntimeV3, after uint64, budget time.Duration) (configpoc.RoutedDHCPGrantV3, error) {

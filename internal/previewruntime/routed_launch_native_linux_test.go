@@ -239,6 +239,7 @@ func (e *nativeForbiddenLocalV3) Current() string { e.calls.Add(1); return "" }
 func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 	var binding adminauth.SessionBinding
 	var sessionToken string
+	var authenticate func() (adminauth.SessionBinding, error)
 	var launch RoutedLaunchContextV3
 	local := &nativeForbiddenLocalV3{}
 	return RoutedLaunchFactoriesV3{
@@ -419,15 +420,21 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 				return out, cleanup, err
 			}
 			step = "api-authenticate"
-			_, token, err := manager.Login(auth.Account.Username, auth.Credential)
+			authenticate = func() (adminauth.SessionBinding, error) {
+				_, token, err := manager.Login(auth.Account.Username, auth.Credential)
+				if err != nil {
+					return adminauth.SessionBinding{}, err
+				}
+				resolved, err := manager.ResolveSession(token)
+				if err == nil {
+					sessionToken = token
+				}
+				return resolved, err
+			}
+			binding, err = authenticate()
 			if err != nil {
 				return out, cleanup, err
 			}
-			binding, err = manager.ResolveSession(token)
-			if err != nil {
-				return out, cleanup, err
-			}
-			sessionToken = token
 			for i, resource := range []RoutedReaderRootV3{c.Admission, c.Plan, c.Emergency} {
 				step = []string{"api-open-admission", "api-open-plan", "api-open-emergency"}[i]
 				pools[i], err = recoveryreserve.OpenSharedV2(resource.Root, resource.Access)
@@ -441,7 +448,7 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 		},
 		ServeAPI: func(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error) (result error) {
 			if launch.DHCPJobsEnabled {
-				return nativeDHCPJobsServeV4(ctx, r, ready, binding, launch)
+				return nativeDHCPJobsServeV4(ctx, r, ready, binding, authenticate, launch)
 			}
 			step := "api-current"
 			fmt.Fprintln(os.Stderr, "ANDEIVA_NATIVE_STEP api-runtime-opened")
