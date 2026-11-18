@@ -41,3 +41,20 @@ arbitrary reattachment after producer death. It does not implement DHCP server,
 change host networking, or prove deployment/native readiness. Native tests must
 cover first transition, acquisition, renewal/loss, inspection, API restart,
 rollback and namespace drainage. Resource measurements remain pending.
+
+
+## Restarting management with a retained WAN lease
+
+The optional V4 profile can restart the API with the same helper, boot identity
+and applied DHCP Work. A full independent inspection and live forwarding
+readback precede readiness. The checks do not refresh the grant, write the
+selected configuration or reuse an expired token. A normal API restart
+preserves the current WAN address and the existing permit.
+
+If a startup read is unavailable, the API repeats eligible read-only checks at
+most three times, three seconds apart. Management writes stay unavailable until
+qualification succeeds. A legitimate installed permit keeps its original kernel
+expiration, while confirmed integrity failures and independent DHCP revocation
+can still close forwarding earlier. The administrator can check management
+availability and use the documented local recovery path if it remains
+unavailable.

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — retained WAN during API restart (draft)
+
+- Qualify the original applied WAN Work before resuming the optional V4 API on the retained helper. Reuse the existing permit and expiry. During failed qualification, management writes stay unavailable and a verified existing permit can continue until its original expiration or independent revocation.
+
+
 ## Unreleased — optional Alpha DHCP early renewal (draft)
 
 - Add a default-off V4 renewal profile with one outstanding request and the approved conservative authority budgets. B2 margin closure waits only for a spontaneous valid grant; no recovery probe is sent.

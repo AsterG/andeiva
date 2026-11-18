@@ -57,7 +57,7 @@ func (s *ServiceV2) qualifyRuntimeIntegrityV1(ctx context.Context) error {
 	if deferred {
 		return nil
 	}
-	return s.InspectRuntimeV1(ctx)
+	return s.inspectRuntimeV1(ctx, c.retainedDHCP)
 }
 
 // RuntimeIntegrityReadyV1 is for trusted runtime readiness checks, not an
@@ -109,6 +109,10 @@ func (c *v2Coordinator) integrityPublicationV1() {
 // existing writer lock prevents catalogue, timer and execution publication
 // throughout the independently authenticated helper inspection.
 func (s *ServiceV2) InspectRuntimeV1(ctx context.Context) error {
+	return s.inspectRuntimeV1(ctx, false)
+}
+
+func (s *ServiceV2) inspectRuntimeV1(ctx context.Context, retainedStartup bool) error {
 	if s == nil || s.coordinator == nil || ctx == nil {
 		return ErrInvalid
 	}
@@ -146,6 +150,10 @@ func (s *ServiceV2) InspectRuntimeV1(ctx context.Context) error {
 		c.store.blocked = true
 	}
 	current, currentErr := selectedReferenceV2(c.store)
+	if retainedStartup && err == nil && ctx.Err() == nil && currentErr == nil && current == expected &&
+		(result.State == IntegrityUnavailableV1 || result.State == IntegrityCancelledV1) {
+		return ErrRetainedStartupUnavailableV4
+	}
 	if err != nil || bounded.Err() != nil || currentErr != nil || current != expected || result.Selection != expected || result.State != IntegrityCompleteV1 || c.integrity.fenced {
 		return ErrRecovery
 	}

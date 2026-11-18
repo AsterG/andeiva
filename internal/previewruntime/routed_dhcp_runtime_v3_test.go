@@ -142,7 +142,21 @@ func (k *dhcpRuntimeKernelV3) Verify(ctx context.Context) error {
 	return k.authority.Verify(ctx, k.grant)
 }
 
+func (k *dhcpRuntimeKernelV3) VerifyRetainedV4(_ context.Context, grant networkexecutor.LeaseGateGrant) error {
+	if !k.gate || k.grant != grant {
+		return configpoc.ErrRecovery
+	}
+	return nil
+}
+
 type dhcpRuntimeForwardV3 struct{ k *dhcpRuntimeKernelV3 }
+
+func (f dhcpRuntimeForwardV3) VerifyOpen(context.Context) error {
+	if !f.k.forward {
+		return configpoc.ErrRecovery
+	}
+	return nil
+}
 
 func (f dhcpRuntimeForwardV3) Disable(context.Context) error {
 	f.k.events = append(f.k.events, "forward-off")

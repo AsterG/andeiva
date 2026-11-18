@@ -132,7 +132,7 @@ func (g *routedIntegrityGateV3) inspect(ctx context.Context, expected configpoc.
 		if !firewallipc.ValidRoutedIntegrityResultV3(result) {
 			result = configpoc.IntegrityResultV1{State: configpoc.IntegrityUnavailableV1}
 		}
-		if err != nil && result.State != configpoc.IntegrityFencedV1 {
+		if err != nil && result.State != configpoc.IntegrityFencedV1 && result.State != configpoc.IntegrityStaleV1 {
 			result = integrityIncompleteV3(ctx, result.Selection, err)
 		}
 		if result.State == configpoc.IntegrityCompleteV1 {

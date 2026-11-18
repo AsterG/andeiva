@@ -133,6 +133,7 @@ func NewRoutedApplianceFactoriesV3(c Config) (RoutedLaunchFactoriesV3, error) {
 			out = OperationsRuntimeOptionsV2{RoutedRebootScope: launch.RebootScopeEnabled, RoutedFreshScope: launch.FreshScopeEnabled, RoutedInventory: true, Store: launch.Store, Budget: launch.StoreBudget, Auth: auth, Origin: c.Origin(), Static: routedApplianceStaticV3(assets.FS()), Local: []configpoc.Engine{routedApplianceLocalV3{}}, Runtime: configpoc.RuntimeOptionsV2{SharedReader: &launch.Access, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}, BootID: launch.Metadata.BootID, GuardDeadlines: true}}
 			out.RoutedDHCP = launch.DHCPJobsEnabled
 			out.RoutedDHCPRenewalV4 = launch.DHCPRenewalV4
+			out.routedRecoveryAudit = audit.Append
 			return out, cleanup, nil
 		},
 		ServeAPI: func(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error) error {

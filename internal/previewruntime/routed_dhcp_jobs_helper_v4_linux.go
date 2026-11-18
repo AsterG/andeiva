@@ -185,6 +185,70 @@ func (h *routedDHCPJobsHelperV4) Dispatch(ctx context.Context, c firewallipc.Rou
 	return h.runtime.dispatch(ctx, c)
 }
 
+func (h *routedDHCPJobsHelperV4) VerifyRestartLiveV4(ctx context.Context, work string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.failed || h.runtime == nil {
+		return ErrUnavailable
+	}
+	r := h.runtime
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	closeUncertain := func() error {
+		bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		return errors.Join(configpoc.ErrRecovery, r.closeUnder(bounded))
+	}
+	if work == "" || work != r.work || r.verifyRetainedPermitV4(ctx) != nil {
+		return closeUncertain()
+	}
+	p, err := r.reader.Resolve(ctx, work)
+	if err != nil {
+		// A failed read alone cannot prove corruption. Keep only a permit
+		// independently verified against the retained physical guardian.
+		receipt, hash, observeErr := h.authority.Observe(ctx)
+		if observeErr != nil || hash == "" || !integrityPhysicalIdleV3(receipt, hash) || r.verifyRetainedPermitV4(ctx) != nil {
+			return closeUncertain()
+		}
+		return ErrUnavailable
+	}
+	if p == nil || p.Reference().WorkHash != work || p.Phase() != "applied" || p.Snapshot().Identity != r.identity ||
+		p.Snapshot().Fact().Owner != r.owner || !r.selectedGrantV4(p, r.grant) ||
+		r.verifySelectedGrantV4(ctx, p) != nil {
+		return closeUncertain()
+	}
+	grant := networkexecutor.LeaseGateGrant{Fact: r.grant.Snapshot.Fact(), WorkHash: r.work}
+	if r.gate.VerifyRetainedV4(ctx, grant) != nil {
+		return closeUncertain()
+	}
+	return nil
+}
+
+func (h *routedDHCPJobsHelperV4) VerifyRetainedPermitV4(ctx context.Context) error {
+	before, revision, err := h.authority.Observe(ctx)
+	if err != nil || revision == "" || !integrityPhysicalIdleV3(before, revision) {
+		return ErrUnavailable
+	}
+	h.mu.Lock()
+	r := h.runtime
+	if h.failed || r == nil {
+		h.mu.Unlock()
+		return ErrUnavailable
+	}
+	r.mu.Lock()
+	err = r.verifyRetainedPermitV4(ctx)
+	r.mu.Unlock()
+	h.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	after, observed, err := h.authority.Observe(ctx)
+	if err != nil || after != before || observed != revision || ctx.Err() != nil {
+		return ErrUnavailable
+	}
+	return nil
+}
+
 func (h *routedDHCPJobsHelperV4) Invalidate(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()

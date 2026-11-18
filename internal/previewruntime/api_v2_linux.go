@@ -33,6 +33,7 @@ type OperationsRuntimeOptionsV2 struct {
 	Origin              string
 	Static              http.Handler
 	NetworkInventory    func(context.Context) (networkinventory.Snapshot, error)
+	routedRecoveryAudit func(adminauth.Event) error
 }
 type OperationsRuntimeV2 struct {
 	Handler http.Handler

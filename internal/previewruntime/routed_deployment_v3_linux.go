@@ -461,6 +461,11 @@ func (s *RoutedLaunchSupervisorV3) apiExitV3() <-chan struct{} {
 
 var errRoutedAPIStartRetryableV3 = errors.New("ANDEIVA_GROUPED_API_START_RETRYABLE")
 
+const (
+	routedAPIRestartAttemptsV3 = 3
+	routedAPIRestartDelayV3    = 3 * time.Second
+)
+
 // Management failure is not a reason to terminate the independent helper. A
 // failed recovery or exhausted retry budget leaves this root process alive,
 // preserving PDEATHSIG ownership and the helper's original guardian deadline.
@@ -489,12 +494,12 @@ func keepRoutedSupervisorV3(ctx context.Context, helperDone <-chan struct{}, api
 			window = now
 			attempts = 0
 		}
-		if attempts >= 3 {
+		if attempts >= routedAPIRestartAttemptsV3 {
 			degraded = true
 			_, _ = io.WriteString(diagnostic, "ANDEIVA_GROUPED_API_RECOVERY_REQUIRED\n")
 			continue
 		}
-		timer := time.NewTimer(3 * time.Second)
+		timer := time.NewTimer(routedAPIRestartDelayV3)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

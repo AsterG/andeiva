@@ -401,6 +401,7 @@ func runRoutedAPILaunchV3(ctx context.Context, f *routedLaunchFilesV3, b routedL
 	if b.Integrity {
 		open = OpenRoutedIntegrityOperationsRuntimeV3
 	}
+	o.Runtime.RetainDHCPV4 = b.DHCPRenewalV4 && b.Epoch > 1
 	runtime, e := open(ctx, b.Metadata, b.Identities, routed, legacy, b.HelperPID, b.HelperPID, o)
 	if e != nil {
 		return e

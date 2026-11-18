@@ -11,7 +11,50 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/configpoc"
 )
+
+func TestRoutedRetainedStartupV4RetriesOnlyCompletedReadFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		retained   bool
+		failure    error
+		recover    bool
+		cancel     bool
+		wantChecks int
+		want       error
+	}{
+		{"resumes", true, configpoc.ErrRetainedStartupUnavailableV4, true, false, 2, nil},
+		{"bounded", true, configpoc.ErrRetainedStartupUnavailableV4, false, false, 3, configpoc.ErrRetainedStartupUnavailableV4},
+		{"ordinary startup", false, configpoc.ErrRetainedStartupUnavailableV4, true, false, 1, configpoc.ErrRetainedStartupUnavailableV4},
+		{"integrity rejection", true, configpoc.ErrRecovery, true, false, 1, configpoc.ErrRecovery},
+		{"shutdown", true, configpoc.ErrRetainedStartupUnavailableV4, true, true, 1, context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				calls := 0
+				start := time.Now()
+				err := retryRetainedStartupV4(ctx, tc.retained, func() error {
+					calls++
+					if tc.cancel {
+						cancel()
+					}
+					if calls > 1 && tc.recover {
+						return nil
+					}
+					return tc.failure
+				})
+				if calls != tc.wantChecks || !errors.Is(err, tc.want) ||
+					time.Since(start) != time.Duration(tc.wantChecks-1)*routedAPIRestartDelayV3 {
+					t.Fatalf("checks=%d, elapsed=%s, error=%v", calls, time.Since(start), err)
+				}
+			})
+		})
+	}
+}
 
 func TestRoutedSupervisorV3RetriesBeforeHandoffWithNoChild(t *testing.T) {
 	for _, tc := range []struct {

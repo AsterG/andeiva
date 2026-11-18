@@ -2,12 +2,17 @@ package configpoc
 
 import (
 	"context"
+	"errors"
 	"os"
 
 	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
 )
+
+// ErrRetainedStartupUnavailableV4 permits only another bounded, read-only
+// startup check on the same authenticated controller. It grants no effects.
+var ErrRetainedStartupUnavailableV4 = errors.New("ANDEIVA_RETAINED_STARTUP_UNAVAILABLE")
 
 // RuntimePoolsV2 are already opened, installer-owned pools. This constructor
 // neither prepares storage nor derives resources from administrative input.
@@ -20,6 +25,7 @@ type RuntimeOptionsV2 struct {
 	FreshScope     RoutedFreshScopeAuthorityV3
 	RebootScope    RoutedRebootScopeAuthorityV4
 	DHCPRecovery   RoutedDHCPRecoveryV3
+	RetainDHCPV4   bool // Only the trusted same-helper API restart can request this.
 	Integrity      RuntimeIntegrityV1
 	SharedReader   *recoveryreserve.ReaderAccessV2
 	Routed         RoutedAuthorityV1
@@ -39,6 +45,9 @@ func OpenRuntimeServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, a
 	if options.Integrity != nil && (options.Routed == nil || options.SharedReader == nil || options.BootID == "") {
 		return nil, ErrInvalid
 	}
+	if options.RetainDHCPV4 && (options.Integrity == nil || options.DHCPRecovery == nil) {
+		return nil, ErrInvalid
+	}
 	manager, err := newReserveManagerV2(options.Pools.Admission, options.Pools.Plan, options.Pools.Emergency)
 	if err != nil {
 		return nil, err
@@ -48,6 +57,7 @@ func OpenRuntimeServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, a
 	}
 	trusted := v2CoordinatorOptions{Integrity: options.Integrity, SharedReader: options.SharedReader, Reserves: manager, GuardDeadlines: true, LocalPolicy: options.LocalPolicy, Routed: options.Routed, RoutedIdentity: options.RoutedIdentity}
 	trusted.DHCPRecovery = options.DHCPRecovery
+	trusted.RetainDHCPV4 = options.RetainDHCPV4
 	trusted.FreshScope = options.FreshScope
 	trusted.RebootScope = options.RebootScope
 	if options.BootID != "" {
