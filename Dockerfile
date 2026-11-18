@@ -11,6 +11,7 @@ COPY internal/ internal/
 COPY scripts/check-go-format.sh scripts/check-go-format.sh
 
 FROM go-source AS check-go
+COPY packaging/preview/tests/dhcp-b2-native.sh packaging/preview/tests/dhcp-b2-native.sh
 # Permission and reader-identity tests must not inherit root's access bypasses.
 RUN install -d -m 0700 -o 65532 -g 65532 /tmp/andeiva-go-home /tmp/andeiva-go-cache
 ENV HOME=/tmp/andeiva-go-home GOCACHE=/tmp/andeiva-go-cache GOENV=off

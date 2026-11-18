@@ -35,3 +35,20 @@ afirma ausência total de regras DHCP no scope reutilizado nem reattach arbitrá
 após morte do produtor. Sem DHCP server ou alterações da rede host. Testes Debian
 de aquisição, renovação/perda, inspeção, reinício API, rollback e drenagem, além
 de medições de recursos e prontidão produtiva, continuam pendentes.
+
+
+## Reinício da gestão com uma concessão WAN vigente
+
+O perfil opcional V4 pode reiniciar a API com o mesmo helper, a mesma identidade
+de arranque e o Work DHCP aplicado. A disponibilidade exige inspeção independente
+completa e leitura do encaminhamento efetivo. As verificações preservam a
+concessão, a configuração selecionada e o vencimento da permissão. Um reinício
+normal mantém o endereço WAN.
+
+Quando uma leitura de arranque fica indisponível, a API repete as verificações
+elegíveis somente de leitura até três vezes, com três segundos entre elas.
+As gravações de gestão ficam bloqueadas até a validação. Uma permissão legítima
+mantém o vencimento original no kernel. Uma falha de integridade confirmada ou
+a revogação independente do DHCP ainda pode encerrar o encaminhamento antes.
+Se a gestão permanecer indisponível, o administrador pode recorrer à recuperação
+local documentada.

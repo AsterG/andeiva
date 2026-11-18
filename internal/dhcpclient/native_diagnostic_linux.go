@@ -14,6 +14,9 @@ import (
 
 const clientDiagnosticLimit = 64 << 10
 
+// Fixed native-only verbosity feeds the bounded classifier, never raw output.
+func (*clientDiagnostic) debugArguments() []string { return []string{"-d"} }
+
 type clientDiagnostic struct {
 	mu        sync.Mutex
 	file      *os.File
@@ -155,6 +158,22 @@ func (w *clientDiagnosticStderr) Write(p []byte) (int, error) {
 func clientDiagnosticClass(line string) string {
 	line = strings.ToLower(line)
 	for _, entry := range []struct{ text, code string }{
+		{"received sigusr1, renewing", "renew_signal"},
+		{"renewing lease of", "renew_request"},
+		{"sending request", "request_send"},
+		{"failed to renew dhcp, rebinding", "renew_rebind"},
+		{"rebinding lease of", "reboot_request"},
+		{"probing address", "address_probe"}, {"waiting for dad", "address_probe"},
+		{"duplicate address detected", "address_conflict"}, {"declined duplicate address", "address_conflict"},
+		{"checksum failure", "rx_checksum"},
+		{"wrong xid 0x", "rx_wrong_xid"}, {" is for hwaddr ", "rx_wrong_hwaddr"},
+		{"bound, ignoring", "rx_bound_ignored"}, {"probing, ignoring", "rx_probe_ignored"},
+		{"reject dhcp", "rx_rejected_option"}, {"reject nak", "rx_rejected_nak"}, {"reject invalid address", "rx_invalid_address"},
+		{"ps_inet_openbootp", "udp_open_error"}, {"dhcp_openudp", "udp_open_error"},
+		{"ps_inet_startcb: dhcp_open", "udp_open_error"},
+		{"dhcp_handleifa:", "address_socket_error"}, {"dhcp_bind:", "bind_error"},
+		{"dhcp_sendudp", "udp_send_error"}, {"ps_inet_recvbootp", "udp_receive_error"},
+		{"dhcp bpf validation failure", "bpf_validation"}, {"bpf_send", "bpf_send_error"},
 		{"operation not permitted", "permission"}, {"permission denied", "permission"},
 		{"address family not supported", "socket_family"}, {"no such file", "missing_file"},
 		{"invalid argument", "invalid_argument"}, {"address already in use", "address_in_use"},

@@ -27,9 +27,10 @@ const routedDHCPOwnerCallV3 = 2 * time.Second
 
 // Options are root's retained launch resources, never an administrative DTO.
 type RoutedDHCPOwnerOptionsV3 struct {
-	Metadata      Metadata
-	Desired       networkplan.Revision
-	Gateway, Host *os.File
+	Metadata       Metadata
+	Desired        networkplan.Revision
+	Gateway, Host  *os.File
+	EarlyRenewalV4 bool // Trusted V4-only option; disabled until native qualification.
 }
 
 // Binding is authenticated by root's bootstrap, not by its public contents.
@@ -317,14 +318,18 @@ func (r *RoutedDHCPOwnerReaderV3) Current(parent context.Context) (RoutedDHCPOwn
 	}
 	lease, unavailable, err := decode(r.scanner.Bytes(), q)
 	epoch, noLease := routedDHCPNoLeaseEpochV1(err)
-	if err != nil && (r.profile != 4 || err != errRoutedDHCPInitialWaitingV1 && !noLease) || ctx.Err() != nil || !r.alive() {
+	margin, marginClosed := routedDHCPMarginV4(err)
+	if err != nil && (r.profile != 4 || err != errRoutedDHCPInitialWaitingV1 && !noLease && !marginClosed) || ctx.Err() != nil || !r.alive() {
 		r.closeLocked()
 		return empty, ErrUnavailable
 	}
 	if err == errRoutedDHCPInitialWaitingV1 {
 		return empty, err
 	}
-	if noLease {
+	if noLease || marginClosed {
+		if marginClosed {
+			epoch = margin.epoch
+		}
 		if epoch < r.facts.last.Epoch || epoch < r.facts.revokedEpoch || r.facts.revoke() != ErrUnavailable {
 			r.closeLocked()
 			return empty, ErrUnavailable

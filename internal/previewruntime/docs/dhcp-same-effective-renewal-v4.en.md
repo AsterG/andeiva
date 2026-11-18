@@ -33,3 +33,14 @@ private channel usable. Errors after an exchange starts retain strict fencing.
 Tests use real session/codec/controller/scheduler and Gate paths with controlled
 kernel/store doubles. No daemon, periodic worker, dependency or storage format
 is added; integrated native/resource qualification is pending.
+
+The B2 native fixture revision 2 starts with a supported 71-second lease and
+pre-existing TCP/UDP flows. Profile 70 changes only its lab peer, requires one
+actual natural RENEW70 while forwarding stays closed, and retires before the
+authenticated conservative trial deadline. Profile 71 briefly pauses only the
+pinned Go acquisition owner to provoke late dispatch, then requires an actual
+natural RENEW71 and fresh Open on the same sockets. The pause must be below
+1.7 seconds; jitter, owner RPC errors, expiry or uncertain cleanup fail the
+entire test. BOUND after EXPIRE is reacquisition and cannot count as renewal.
+The versioned wrapper rejects old fixture results. These are test-only
+acceptance scenarios; passing native/resource qualification remains pending.

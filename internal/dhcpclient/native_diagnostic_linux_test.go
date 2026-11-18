@@ -6,11 +6,87 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
 )
+
+func TestNativeDiagnosticDebugArgumentsFixedAndIndependent(t *testing.T) {
+	var d *clientDiagnostic
+	args := d.debugArguments()
+	if !reflect.DeepEqual(args, []string{"-d"}) {
+		t.Fatal("native verbosity not fixed", args)
+	}
+	args[0] = "caller-mutated"
+	if !reflect.DeepEqual(d.debugArguments(), []string{"-d"}) {
+		t.Fatal("native flags share mutable state")
+	}
+}
+
+func TestNativeDiagnosticUpstreamStateClassesRemainRedacted(t *testing.T) {
+	path, fd, uid := diagnosticDirectory(t)
+	d, err := openClientDiagnosticAt(fd, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.close()
+	w := d.stderr()
+	for _, tc := range []struct{ line, code string }{
+		{"received SIGUSR1, renewing", "renew_signal"},
+		{"wan0: renewing lease of 203.0.113.77", "renew_request"},
+		{"wan0: sending REQUEST (xid 0x12345678), next in 4.2 seconds", "request_send"},
+		{"wan0: failed to renew DHCP, rebinding", "renew_rebind"},
+		{"wan0: rebinding lease of 203.0.113.77", "reboot_request"},
+		{"wan0: probing address 203.0.113.77/24", "address_probe"},
+		{"wan0: waiting for DAD on 203.0.113.77", "address_probe"},
+		{"wan0: Duplicate address detected", "address_conflict"},
+		{"wan0: declined duplicate address", "address_conflict"},
+		{"wan0: checksum failure from 203.0.113.1", "rx_checksum"},
+		{"wan0: wrong xid 0x12345678 (expecting 0x87654321) from 203.0.113.1", "rx_wrong_xid"},
+		{"wan0: xid 0x12345678 is for hwaddr 02:00:00:00:00:ff", "rx_wrong_hwaddr"},
+		{"wan0: bound, ignoring", "rx_bound_ignored"},
+		{"wan0: probing, ignoring", "rx_probe_ignored"},
+		{"wan0: reject DHCP", "rx_rejected_option"},
+		{"wan0: reject NAK", "rx_rejected_nak"},
+		{"wan0: reject invalid address", "rx_invalid_address"},
+		{"ps_inet_openbootp: No such file or directory", "udp_open_error"},
+		{"dhcp_openudp: Address already in use", "udp_open_error"},
+		{"ps_inet_startcb: dhcp_open: Permission denied", "udp_open_error"},
+		{"dhcp_handleifa: No such file or directory", "address_socket_error"},
+		{"dhcp_bind: Invalid argument", "bind_error"},
+		{"wan0: dhcp_sendudp: Operation not permitted", "udp_send_error"},
+		{"ps_inet_recvbootp: Invalid argument", "udp_receive_error"},
+		{"wan0: DHCP BPF validation failure", "bpf_validation"},
+		{"wan0: bpf_send: No buffer space available", "bpf_send_error"},
+		{"wan0: Permission denied", "permission"},
+		{"private unknown state 203.0.113.77 xid0x12345678", "unclassified"},
+	} {
+		line := tc.line + " private-host.example /private/path option=never-log\n"
+		if got := clientDiagnosticClass(line); got != tc.code {
+			t.Fatal("wrong specific/generic precedence", tc.line, got, tc.code)
+		}
+		// Fragmented engine writes must classify the complete line once.
+		for _, fragment := range []string{line[:len(line)/2], line[len(line)/2:]} {
+			if n, e := w.Write([]byte(fragment)); e != nil || n != len(fragment) {
+				t.Fatal(e, n)
+			}
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(path, "native-diagnostics", "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) > clientDiagnosticLimit || strings.Count(string(raw), "\n") != 28 {
+		t.Fatal("unbounded or split diagnostic", len(raw))
+	}
+	for _, secret := range []string{"203.0.113", "0x12345678", "02:00:00", "private-host", "/private/path", "never-log"} {
+		if bytes.Contains(raw, []byte(secret)) {
+			t.Fatal("raw engine data escaped classifier", secret)
+		}
+	}
+}
 
 func diagnosticDirectory(t *testing.T) (string, int, uint32) {
 	t.Helper()

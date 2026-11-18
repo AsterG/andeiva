@@ -243,11 +243,15 @@ func (e *nativeForbiddenLocalV3) Current() string { e.calls.Add(1); return "" }
 func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 	var binding adminauth.SessionBinding
 	var sessionToken string
+	var authenticate func() (adminauth.SessionBinding, error)
 	var launch RoutedLaunchContextV3
 	local := &nativeForbiddenLocalV3{}
 	return RoutedLaunchFactoriesV3{
 		Helper: func(ctx context.Context, c RoutedLaunchContextV3) (out RoutedHelperComponentsV3, err error) {
 			if c.DHCPJobsEnabled {
+				if c.DHCPRenewalV4 {
+					networkexecutor.EnableNativeLeasePhaseEvidenceV4()
+				}
 				if err = nativeDHCPJobsSocketReportV4(c); err != nil {
 					return out, err
 				}
@@ -420,15 +424,21 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 				return out, cleanup, err
 			}
 			step = "api-authenticate"
-			_, token, err := manager.Login(auth.Account.Username, auth.Credential)
+			authenticate = func() (adminauth.SessionBinding, error) {
+				_, token, err := manager.Login(auth.Account.Username, auth.Credential)
+				if err != nil {
+					return adminauth.SessionBinding{}, err
+				}
+				resolved, err := manager.ResolveSession(token)
+				if err == nil {
+					sessionToken = token
+				}
+				return resolved, err
+			}
+			binding, err = authenticate()
 			if err != nil {
 				return out, cleanup, err
 			}
-			binding, err = manager.ResolveSession(token)
-			if err != nil {
-				return out, cleanup, err
-			}
-			sessionToken = token
 			for i, resource := range []RoutedReaderRootV3{c.Admission, c.Plan, c.Emergency} {
 				step = []string{"api-open-admission", "api-open-plan", "api-open-emergency"}[i]
 				pools[i], err = recoveryreserve.OpenSharedV2(resource.Root, resource.Access)
@@ -436,13 +446,13 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 					return out, cleanup, err
 				}
 			}
-			out = OperationsRuntimeOptionsV2{RoutedDHCP: c.DHCPJobsEnabled, RoutedInventory: c.FreshScopeEnabled || c.DHCPJobsEnabled, RoutedFreshScope: c.FreshScopeEnabled, Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
+			out = OperationsRuntimeOptionsV2{RoutedDHCP: c.DHCPJobsEnabled, RoutedDHCPRenewalV4: c.DHCPRenewalV4, RoutedInventory: c.FreshScopeEnabled || c.DHCPJobsEnabled, RoutedFreshScope: c.FreshScopeEnabled, Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
 			fmt.Fprintln(os.Stderr, "ANDEIVA_NATIVE_STEP api-options-prepared")
 			return out, cleanup, nil
 		},
 		ServeAPI: func(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error) (result error) {
 			if launch.DHCPJobsEnabled {
-				return nativeDHCPJobsServeV4(ctx, r, ready, binding, launch)
+				return nativeDHCPJobsServeV4(ctx, r, ready, binding, authenticate, launch)
 			}
 			step := "api-current"
 			fmt.Fprintln(os.Stderr, "ANDEIVA_NATIVE_STEP api-runtime-opened")
@@ -582,19 +592,33 @@ func nativeSelectionBudgetV3() configpoc.SelectionReadBudgetV2 {
 }
 
 type nativeLogV3 struct {
-	mu     sync.Mutex
-	buffer bytes.Buffer
+	mu        sync.Mutex
+	buffer    bytes.Buffer
+	limit     int // Optional bounded phase-measurement capture, set before launch.
+	truncated bool
 }
 
 func (b *nativeLogV3) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.buffer.Len()+len(p) > 65536 {
+	limit := b.limit
+	if limit == 0 {
+		limit = 65536
+	}
+	if b.truncated || limit < 65536 || limit > 512<<10 || b.buffer.Len()+len(p) > limit {
+		b.truncated = true
 		return 0, errors.New("native report limit")
 	}
 	return b.buffer.Write(p)
 }
-func (b *nativeLogV3) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.buffer.String() }
+func (b *nativeLogV3) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.truncated {
+		return b.buffer.String() + "\nANDEIVA_NATIVE_LOG_TRUNCATED_V3\n"
+	}
+	return b.buffer.String()
+}
 
 func TestNativeRoutedLaunchV3(t *testing.T)          { testNativeRoutedLaunchV3(t, false, false) }
 func TestNativeRoutedIntegrityLaunchV3(t *testing.T) { testNativeRoutedLaunchV3(t, true, false) }

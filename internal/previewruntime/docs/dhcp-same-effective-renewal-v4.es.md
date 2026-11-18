@@ -32,3 +32,16 @@ owner. Fallos después de iniciar el intercambio mantienen su cierre estricto.
 Pruebas con sesión/codec/controlador/scheduler y Gate reales, dobles controlados
 de kernel/store. Sin nuevo daemon, worker periódico, dependencia ni formato
 persistente; calificación nativa y recursos de la integración pendientes.
+# Ensayo B2, revisión 2
+
+El ensayo nativo B2 parte de una concesión admitida de 71 segundos y flujos
+TCP/UDP existentes. El perfil 70 cambia sólo el servidor del laboratorio,
+exige un RENEW70 natural real con reenvío cerrado y se retira antes del plazo
+conservador autenticado del ensayo. El perfil 71 pausa brevemente sólo el
+propietario Go fijado mediante pidfd para provocar despacho tardío; después
+exige RENEW71 natural y apertura nueva con los mismos sockets. La pausa debe
+durar menos de 1,7 segundos. Jitter, errores RPC, vencimiento o limpieza
+incierta hacen fallar todo el ensayo. BOUND después de EXPIRE es readquisición
+y no cuenta como renovación. El wrapper versionado rechaza resultados antiguos.
+Son escenarios exclusivos de prueba; la calificación nativa y de recursos sigue
+pendiente.

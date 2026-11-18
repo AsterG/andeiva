@@ -41,15 +41,19 @@ func (p dhcpRuntimeWorkV3) Phase() string   { return p.phase }
 func (p dhcpRuntimeWorkV3) Running() string { return strings.Repeat("d", 64) }
 
 type dhcpRuntimeReaderV3 struct {
-	work   *dhcpRuntimeWorkV3
-	denied bool
-	events *[]string
-	after  func()
-	last   *networkexecutor.LeaseSelectedSnapshotV3
+	work         *dhcpRuntimeWorkV3
+	denied       bool
+	resolveError error
+	events       *[]string
+	after        func()
+	last         *networkexecutor.LeaseSelectedSnapshotV3
 }
 
 func (x *dhcpRuntimeReaderV3) Resolve(_ context.Context, hash string) (routedDHCPWorkV3, error) {
 	*x.events = append(*x.events, "selected")
+	if x.resolveError != nil {
+		return nil, x.resolveError
+	}
 	if x.denied || x.work == nil || hash != x.work.hash {
 		return nil, configpoc.ErrRecovery
 	}
@@ -142,7 +146,21 @@ func (k *dhcpRuntimeKernelV3) Verify(ctx context.Context) error {
 	return k.authority.Verify(ctx, k.grant)
 }
 
+func (k *dhcpRuntimeKernelV3) VerifyRetainedV4(_ context.Context, grant networkexecutor.LeaseGateGrant) error {
+	if !k.gate || k.grant != grant {
+		return configpoc.ErrRecovery
+	}
+	return nil
+}
+
 type dhcpRuntimeForwardV3 struct{ k *dhcpRuntimeKernelV3 }
+
+func (f dhcpRuntimeForwardV3) VerifyOpen(context.Context) error {
+	if !f.k.forward {
+		return configpoc.ErrRecovery
+	}
+	return nil
+}
 
 func (f dhcpRuntimeForwardV3) Disable(context.Context) error {
 	f.k.events = append(f.k.events, "forward-off")
@@ -636,7 +654,11 @@ func TestRoutedDHCPRuntimeV4RenewalDuringAuthorityChecksOnlyRequestsClosure(t *t
 			}
 			k.events = nil
 			err = (routedDHCPGateAuthorityV3{r}).Verify(ctx, k.grant)
-			if !errors.Is(err, networkexecutor.ErrLeaseGateRenewal) {
+			if phase == "policy" || phase == "lease" {
+				if err == nil || errors.Is(err, networkexecutor.ErrLeaseGateRenewal) || errors.Is(err, networkexecutor.ErrLeaseGateMarginClosed) {
+					t.Fatal("concurrent renewal hid a generic verification failure", err)
+				}
+			} else if !errors.Is(err, networkexecutor.ErrLeaseGateRenewal) {
 				t.Fatal("fresh same-effective race not classified for closure", err)
 			}
 			if !reflect.DeepEqual(r.grant, previous) || !reflect.DeepEqual(work.grant, previous) || r.renewalWaiting {

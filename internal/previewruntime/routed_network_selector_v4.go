@@ -167,6 +167,20 @@ func (s *routedNetworkSelectorV4) Verify(ctx context.Context) error {
 	}
 	return s.driver.Verify(ctx)
 }
+
+// Observation can report authenticated renewal progress without adopting it.
+// Effect paths continue to use Verify and its exact retained lease checks.
+func (s *routedNetworkSelectorV4) VerifyObservationV4(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ctx == nil || ctx.Err() != nil || s.closed || s.driver == nil || !s.active {
+		return ErrIdentity
+	}
+	if observer, ok := s.driver.(interface{ VerifyObservationV4(context.Context) error }); ok {
+		return observer.VerifyObservationV4(ctx)
+	}
+	return s.driver.Verify(ctx)
+}
 func (s *routedNetworkSelectorV4) PrepareObserved(ctx context.Context, bindings []networkplan.Binding) (networkexecutor.ObservedSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

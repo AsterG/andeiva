@@ -9,9 +9,95 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+type firstFailurePrivateErrorV4 struct{}
+
+func TestRoutedDHCPDiagnosticFatalChannelHasReservedSlot(t *testing.T) {
+	var first routedDHCPFirstStageRecorderV4
+	var out bytes.Buffer
+	first.channelFailure("helper", "dhcp_withdraw", ErrChannel, nil, &out)
+	first.channelFailure("client", "dhcp_withdraw", nil, nil, &out)
+	first.channelFailure("client", "dhcp_withdraw", context.DeadlineExceeded, nil, &out)
+	first.channelFailure("client", strings.Repeat("private", 10000), ErrChannel, nil, &out)
+	if out.Len() != 0 {
+		t.Fatal("nonfatal, foreign or unknown request consumed a fatal slot")
+	}
+	for range 100 {
+		first.channelFailure("client", "dhcp_withdraw", errors.Join(ErrChannel, firstFailurePrivateErrorV4{}), context.DeadlineExceeded, &out)
+	}
+	if bytes.Count(out.Bytes(), []byte("\n")) != 1 || out.Len() > 512 || !bytes.Contains(out.Bytes(), []byte(`"stage":"channel_dhcp_withdraw"`)) || !bytes.Contains(out.Bytes(), []byte(`"error":"channel"`)) || !bytes.Contains(out.Bytes(), []byte(`"context":"deadline"`)) || bytes.Contains(out.Bytes(), []byte("private")) {
+		t.Fatal("fatal channel diagnostic was lost, repeated or exposed raw input")
+	}
+	for _, verb := range []string{"arm", "apply", "confirm", "recover", "bootstrap", "resume", "inspect", "dhcp_begin", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire", "dhcp_renew", "dhcp_current", "dhcp_live"} {
+		if !KnownRoutedDHCPFailureStageV1(routedDHCPChannelFailureStageV4(verb)) {
+			t.Fatal("known call lost its reserved stage", verb)
+		}
+	}
+}
+
+func (firstFailurePrivateErrorV4) Error() string { panic("arbitrary error text inspected") }
+
+func TestRoutedDHCPFirstFailureV4AllFixedStagesSurviveRPCSaturation(t *testing.T) {
+	rpc := &routedDHCPDiagnosticRecorderV1{}
+	for range 100 {
+		rpc.record("helper", "dhcp_current", time.Now(), nil, nil)
+	}
+	first := &routedDHCPFirstStageRecorderV4{}
+	var out bytes.Buffer
+	first.emit("unknown-stage", ErrChannel, nil, &out)
+	first.emit(strings.Repeat("private", 10000), ErrChannel, nil, &out)
+	first.emit("authority_owner", nil, nil, &out)
+	if out.Len() != 0 {
+		t.Fatal("unknown stage or successful check emitted")
+	}
+	unique := map[string]bool{}
+	for _, stage := range routedDHCPFailureStagesV4 {
+		if unique[stage] || !KnownRoutedDHCPFailureStageV1(stage) {
+			t.Fatal("invalid fixed stage mapping")
+		}
+		unique[stage] = true
+		for range 100 {
+			first.emit(stage, firstFailurePrivateErrorV4{}, context.DeadlineExceeded, &out)
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 48 || len(first.slots) != 48 || out.Len() > 48*512 || rpc.count != routedDHCPDiagnosticCapacityV1 {
+		t.Fatal("independent stage bound changed", len(lines), out.Len())
+	}
+	for i, line := range lines {
+		data, ok := strings.CutPrefix(line, "ANDEIVA_NATIVE_DHCP_FIRST_FAILURE_V4 ")
+		var record struct {
+			PID     int    `json:"pid"`
+			BootNS  int64  `json:"boot_ns"`
+			Stage   string `json:"stage"`
+			Error   string `json:"error"`
+			Context string `json:"context"`
+		}
+		decoder := json.NewDecoder(strings.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if !ok || len(line)+1 > 512 || decoder.Decode(&record) != nil || record.PID <= 0 || record.BootNS <= 0 || record.Stage != routedDHCPFailureStagesV4[i] || record.Error != "other" || record.Context != "deadline" {
+			t.Fatal("invalid first failure frame", line)
+		}
+	}
+}
+
+func TestRoutedDHCPFirstFailureV4ConcurrentSameStageEmitsOnce(t *testing.T) {
+	d := &routedDHCPFirstStageRecorderV4{}
+	var out bytes.Buffer
+	var workers sync.WaitGroup
+	for range 100 {
+		workers.Add(1)
+		go func() { defer workers.Done(); d.emit("authority_policy", ErrChannel, context.Canceled, &out) }()
+	}
+	workers.Wait()
+	if strings.Count(out.String(), "\n") != 1 || !strings.Contains(out.String(), `"error":"channel","context":"cancelled"`) {
+		t.Fatal("duplicate or lost first stage")
+	}
+}
 
 func TestRoutedDHCPDiagnosticFixedBoundAndRedaction(t *testing.T) {
 	d := &routedDHCPDiagnosticRecorderV1{}

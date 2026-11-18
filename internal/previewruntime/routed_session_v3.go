@@ -31,16 +31,18 @@ type RoutedPreparationViewV3 struct {
 }
 
 type RoutedSessionV3 struct {
-	controller  sync.Mutex
-	authority   configpoc.RoutedAuthorityV1
-	source      RoutedSelectionSourceV3
-	epoch       uint64
-	integrity   *routedIntegrityGateV3
-	freshScope  routedFreshScopeProofV3
-	rebootScope routedRebootScopeProofV4
-	inventory   func(context.Context) (networkinventory.Snapshot, error)
-	dhcp        *RoutedDHCPRuntimeV3
-	dhcpJobs    routedDHCPJobsSessionV4
+	controller        sync.Mutex
+	authority         configpoc.RoutedAuthorityV1
+	source            RoutedSelectionSourceV3
+	epoch             uint64
+	integrity         *routedIntegrityGateV3
+	freshScope        routedFreshScopeProofV3
+	rebootScope       routedRebootScopeProofV4
+	inventory         func(context.Context) (networkinventory.Snapshot, error)
+	dhcp              *RoutedDHCPRuntimeV3
+	dhcpJobs          routedDHCPJobsSessionV4
+	restartInspection bool // Controller-owned until the first complete check.
+	restartLiveProof  bool // First live probe after successful restart inspection.
 }
 
 // This trusted hook runs under controller ownership after a completed full
@@ -135,6 +137,8 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 	if e != nil || s.sameEffectiveRenewalV4() != hello.HasCapability(firewallipc.RoutedDHCPRenewalCapabilityV4) || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil || s.dhcpJobs != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
 		return ErrIdentity
 	}
+	s.restartInspection = epoch > 1 && s.dhcpJobs != nil && s.sameEffectiveRenewalV4()
+	s.restartLiveProof = false
 	hello.Run = runtimeRun
 	hello.Epoch = epoch
 	if write(hello) != nil {
@@ -218,6 +222,22 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 	}
 	if firewallipc.RoutedDHCPVerbV3(c.Verb) {
 		if s.dhcpJobs != nil {
+			if s.restartLiveProof && c.Verb == "dhcp_live" {
+				proof, ok := s.dhcpJobs.(interface {
+					VerifyRestartLiveV4(context.Context, string) error
+				})
+				if !ok {
+					return nil, ErrUnavailable
+				}
+				err := proof.VerifyRestartLiveV4(ctx, c.DHCP.Work)
+				if err == nil {
+					s.restartLiveProof = false
+				}
+				return struct{}{}, err
+			}
+			if firewallipc.RoutedDHCPMutationV3(c.Verb) {
+				s.restartLiveProof = false
+			}
 			return s.dhcpJobs.Dispatch(ctx, c)
 		}
 		if s.dhcp == nil {
@@ -245,6 +265,7 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 		}
 		if c.Integrity.Mode == "check" {
 			result, err := s.integrity.inspect(ctx, c.Integrity.Selection, s.authority)
+			retain := s.restartInspection && (result.State == configpoc.IntegrityUnavailableV1 || result.State == configpoc.IntegrityCancelledV1)
 			selected := false
 			if err == nil && result.State == configpoc.IntegrityCompleteV1 && s.dhcpJobs != nil {
 				selected, err = s.dhcpJobs.Inspect(ctx, result.Selection)
@@ -252,8 +273,18 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 					result = integrityIncompleteV3(ctx, result.Selection, err)
 				}
 			}
-			if s.dhcpJobs != nil && (err != nil || result.State != configpoc.IntegrityCompleteV1) {
-				err = errors.Join(err, s.dhcpJobs.Invalidate(ctx))
+			if err == nil && result.State == configpoc.IntegrityCompleteV1 {
+				s.restartLiveProof = s.restartLiveProof || s.restartInspection && selected
+				s.restartInspection = false
+			} else if s.dhcpJobs != nil {
+				if retain && !s.verifyRestartPermitV4(ctx) {
+					// Failed physical proof is terminal for this startup.
+					// A clean close must not look like a retryable read outage.
+					err = errors.Join(err, configpoc.ErrRecovery)
+				}
+				if !retain || err != nil {
+					err = errors.Join(err, s.dhcpJobs.Invalidate(ctx))
+				}
 			}
 			return firewallipc.RoutedIntegrityResultV3{Mode: "check", Result: result, DHCPSelected: selected}, err
 		}
@@ -352,6 +383,16 @@ func (s *RoutedSessionV3) dispatch(ctx context.Context, c firewallipc.RoutedComm
 		e = ErrIdentity
 	}
 	return struct{}{}, e
+}
+
+func (s *RoutedSessionV3) verifyRestartPermitV4(ctx context.Context) bool {
+	inspect, ok := s.dhcpJobs.(interface{ VerifyRetainedPermitV4(context.Context) error })
+	if !ok {
+		return false
+	}
+	bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	return inspect.VerifyRetainedPermitV4(bounded) == nil
 }
 
 // Optional jobs implementations must advertise the profile they actually use.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -906,8 +907,14 @@ func (e *Engine) observeOwnedLocked(ctx context.Context) (string, error) {
 		return "", ErrState
 	}
 	if e.selected {
-		if e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
+		matched, observationErr := e.matchesObservationV4(ctx, e.prepared.Target, e.prepared.Dependencies)
+		if matched {
 			return e.plan.TargetOwned, nil
+		}
+		if networkexecutor.IsLeaseObservationPendingV4(observationErr) {
+			// No fallback can turn the still-selected pending target into Before
+			// authority. The error preserves only closed reconciliation context.
+			return "", &closedLeaseObservationV4{cause: observationErr, running: e.target.Composite.Hash}
 		}
 		if e.matches(ctx, e.prepared.Before, e.prepared.Dependencies) {
 			return e.plan.BeforeOwned, nil
@@ -920,6 +927,7 @@ func (e *Engine) observeOwnedLocked(ctx context.Context) (string, error) {
 	}
 	if e.selected {
 		e.fenced = true
+		nativeDHCPObservationFailureV4("fence_selected")
 	}
 	return "", ErrState
 }
@@ -999,6 +1007,10 @@ func (e *Engine) ObserveCurrentOwned(ctx context.Context) (nftguardian.GroupObse
 	defer e.mu.Unlock()
 	owned, err := e.observeOwnedLocked(ctx)
 	if err != nil {
+		var witness *closedLeaseObservationV4
+		if errors.As(err, &witness) && witness != nil && ctx.Err() == nil {
+			return nftguardian.GroupObservationV1{Plan: e.plan}, err
+		}
 		return nftguardian.GroupObservationV1{}, err
 	}
 	out := nftguardian.GroupObservationV1{Plan: e.plan, Current: e.currentForOwnedLocked(owned), Owned: owned, MatchingOwned: [2]string{owned, ""}}
