@@ -856,17 +856,32 @@ func nativeDHCPJobsRetireV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 	if err := r.DHCP.Withdraw(ctx); err != nil {
 		return fmt.Errorf("native orderly withdrawal: %w", err)
 	}
+	r.DHCP.mu.Lock()
+	cleared := r.DHCP.work == "" && reflect.DeepEqual(r.DHCP.grant, configpoc.RoutedDHCPGrantV3{})
+	r.DHCP.mu.Unlock()
+	if err := nativeDHCPRetireReceiptV4("after_withdraw", &cleared); err != nil {
+		return err
+	}
 	seconds := uint64(120)
 	rolled, err := nativeDHCPJobsOperationV4(ctx, r, binding, configpoc.OperationRequestV2{Kind: configpoc.OpRollback, Target: before, ConfirmSeconds: &seconds}, true)
 	if err != nil || rolled.Current.Confirmation == nil {
 		return fmt.Errorf("native orderly rollback: %w", errors.Join(err, ErrUnavailable))
 	}
+	if err = nativeDHCPRetireReceiptV4("after_rollback", nil); err != nil {
+		return err
+	}
 	_, err = nativeDHCPJobsOperationV4(ctx, r, binding, configpoc.OperationRequestV2{Kind: configpoc.OpConfirm, Origin: rolled.Operation.ID, Target: rolled.Current.RunningRevision}, false)
 	if err != nil {
 		return fmt.Errorf("native orderly rollback confirm: %w", err)
 	}
+	if err = nativeDHCPRetireReceiptV4("after_confirm", nil); err != nil {
+		return err
+	}
 	if err = nativeDHCPJobsInspectV4(ctx, r); err != nil {
 		return fmt.Errorf("native orderly retirement inspection: %w", err)
+	}
+	if err = nativeDHCPRetireReceiptV4("after_inspect", nil); err != nil {
+		return err
 	}
 	after, err := r.Service.Current(binding, "routed")
 	if err != nil || after.Global.Running != before || after.Snapshot.Running.Config.Routed != nil || after.Routed.Confirmation != nil || r.routed.DHCPSelectedV4() {
@@ -876,6 +891,106 @@ func nativeDHCPJobsRetireV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 		return err
 	}
 	return nil
+}
+
+type nativeDHCPRetirePhaseV4 struct {
+	PID               int    `json:"pid"`
+	BootNS            int64  `json:"boot_ns"`
+	Stage             string `json:"stage"`
+	ControllerCleared *bool  `json:"controller_cleared,omitempty"`
+}
+
+func nativeDHCPRetireEmitV4(w io.Writer, r nativeDHCPRetirePhaseV4) error {
+	if w == nil || r.PID <= 1 || r.BootNS <= 0 {
+		return ErrIdentity
+	}
+	switch r.Stage {
+	case "after_withdraw":
+		if r.ControllerCleared == nil {
+			return ErrIdentity
+		}
+	case "after_rollback", "after_confirm", "after_inspect":
+		if r.ControllerCleared != nil {
+			return ErrIdentity
+		}
+	default:
+		return ErrIdentity
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	line := append([]byte("ANDEIVA_NATIVE_DHCP_RETIRE_PHASE_V4 "), raw...)
+	line = append(line, '\n')
+	if len(line) > 512 {
+		return ErrUnavailable
+	}
+	n, err := w.Write(line)
+	if err != nil {
+		return err
+	}
+	if n != len(line) {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+func nativeDHCPRetireReceiptV4(stage string, cleared *bool) error {
+	now, err := routedDHCPOwnerBootNowV3()
+	if err != nil {
+		return err
+	}
+	return nativeDHCPRetireEmitV4(os.Stderr, nativeDHCPRetirePhaseV4{os.Getpid(), now, stage, cleared})
+}
+
+type nativeDHCPRetireWriterV4 struct{ short bool }
+
+func (w nativeDHCPRetireWriterV4) Write(p []byte) (int, error) {
+	if w.short {
+		return len(p) - 1, nil
+	}
+	return 0, io.ErrClosedPipe
+}
+
+func TestNativeDHCPRetirePhaseV4BoundedDiagnostic(t *testing.T) {
+	var output bytes.Buffer
+	cleared := true
+	for _, stage := range []string{"after_withdraw", "after_rollback", "after_confirm", "after_inspect"} {
+		r := nativeDHCPRetirePhaseV4{PID: 123, BootNS: 456, Stage: stage}
+		if stage == "after_withdraw" {
+			r.ControllerCleared = &cleared
+		}
+		before := output.Len()
+		if err := nativeDHCPRetireEmitV4(&output, r); err != nil || output.Len()-before > 512 {
+			t.Fatal("bounded fixed phase rejected", stage, err)
+		}
+		for _, w := range []io.Writer{nativeDHCPRetireWriterV4{}, nativeDHCPRetireWriterV4{short: true}} {
+			if nativeDHCPRetireEmitV4(w, r) == nil {
+				t.Fatal("receipt writer failure ignored")
+			}
+		}
+	}
+	if len(strings.Split(strings.TrimSpace(output.String()), "\n")) != 4 {
+		t.Fatal("unexpected receipt frame count")
+	}
+	for _, bad := range []nativeDHCPRetirePhaseV4{
+		{PID: 123, BootNS: 456, Stage: "unknown"},
+		{PID: 123, BootNS: 456, Stage: strings.Repeat("x", 513)},
+		{PID: 123, BootNS: 456, Stage: "after_withdraw"},
+		{PID: 123, BootNS: 456, Stage: "after_inspect", ControllerCleared: &cleared},
+		{PID: 1, BootNS: 456, Stage: "after_inspect"},
+		{PID: 123, BootNS: 0, Stage: "after_inspect"},
+	} {
+		var rejected bytes.Buffer
+		if nativeDHCPRetireEmitV4(&rejected, bad) == nil || rejected.Len() != 0 {
+			t.Fatal("non-fixed/oversize/invalid diagnostic emitted")
+		}
+	}
+	// A false observation remains a diagnostic, never a synthesized proof.
+	cleared = false
+	if nativeDHCPRetireEmitV4(&output, nativeDHCPRetirePhaseV4{123, 456, "after_withdraw", &cleared}) != nil || !strings.Contains(output.String(), `"controller_cleared":false`) {
+		t.Fatal("observed uncleared controller was hidden")
+	}
 }
 
 func nativeDHCPJobsCandidateV4() (configpoc.Revision, error) {
