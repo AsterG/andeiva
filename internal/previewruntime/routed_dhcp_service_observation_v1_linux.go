@@ -13,6 +13,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/dhcpsockets"
 	"github.com/AsterG/andeiva/internal/localobserve"
+	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
 	"golang.org/x/sys/unix"
 )
@@ -128,6 +129,7 @@ func (s *routedDHCPServiceObservationV1) validate(ctx context.Context, live bool
 type routedDHCPServicePhaseV1 struct {
 	initialWaiting bool
 	noLeaseEpoch   uint64
+	marginEpoch    uint64
 }
 
 func (p routedDHCPServicePhaseV1) withoutLease() bool { return p.initialWaiting || p.noLeaseEpoch > 0 }
@@ -143,6 +145,12 @@ func (s *routedDHCPServiceObservationV1) fact(ctx context.Context) (RoutedDHCPOw
 	}
 	if epoch, noLease := routedDHCPNoLeaseEpochV1(err); noLease && f == (RoutedDHCPOwnerFactV3{}) && ctx.Err() == nil && s.validate(ctx, true) == nil {
 		return RoutedDHCPOwnerFactV3{}, routedDHCPServicePhaseV1{noLeaseEpoch: epoch}, nil
+	}
+	if margin, closed := routedDHCPMarginV4(err); closed && f == (RoutedDHCPOwnerFactV3{}) && ctx.Err() == nil && s.validate(ctx, true) == nil {
+		// This is only a listener-association label. No deadline, owner grant or
+		// usable forwarding fact is synthesized from margin closure.
+		hint := RoutedDHCPOwnerFactV3{Epoch: margin.epoch, Fact: networkexecutor.LeaseFact{Address: margin.address, WAN: s.wan}}
+		return hint, routedDHCPServicePhaseV1{marginEpoch: margin.epoch}, nil
 	}
 	if err != nil || s.validate(ctx, true) != nil {
 		return RoutedDHCPOwnerFactV3{}, empty, ErrUnavailable

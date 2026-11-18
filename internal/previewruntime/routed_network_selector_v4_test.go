@@ -2,6 +2,7 @@ package previewruntime
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -9,6 +10,52 @@ import (
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
 )
+
+type selectorObservationFixtureV4 struct {
+	*selectorDriverFixtureV4
+	reads  int
+	result error
+}
+
+func (d *selectorObservationFixtureV4) VerifyObservationV4(context.Context) error {
+	d.reads++
+	return d.result
+}
+
+func TestRoutedNetworkSelectorV4ObservationCannotAuthorizeEffects(t *testing.T) {
+	marker := errors.New("closure-only observation")
+	d := &selectorObservationFixtureV4{selectorDriverFixtureV4: &selectorDriverFixtureV4{active: true, foreign: true}, result: marker}
+	s := &routedNetworkSelectorV4{driver: d, active: true}
+	ctx := context.Background()
+	if err := s.VerifyObservationV4(ctx); !errors.Is(err, marker) || d.reads != 1 {
+		t.Fatal("optional observation not forwarded", err, d.reads)
+	}
+	if err := s.Verify(ctx); err == nil || errors.Is(err, marker) || d.reads != 1 {
+		t.Fatal("effect verification used observation", err, d.reads)
+	}
+	s.active = false
+	if s.VerifyObservationV4(ctx) == nil || d.reads != 1 {
+		t.Fatal("inactive driver observed")
+	}
+	s.active, s.closed = true, true
+	if s.VerifyObservationV4(ctx) == nil || d.reads != 1 {
+		t.Fatal("closed driver observed")
+	}
+	s.closed = false
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if s.VerifyObservationV4(cancelled) == nil || d.reads != 1 {
+		t.Fatal("cancelled driver observed")
+	}
+	s.driver = &selectorDriverFixtureV4{active: true}
+	if s.VerifyObservationV4(ctx) != nil {
+		t.Fatal("legacy verifier fallback rejected")
+	}
+	s.driver.(*selectorDriverFixtureV4).foreign = true
+	if s.VerifyObservationV4(ctx) == nil {
+		t.Fatal("legacy verifier fallback weakened")
+	}
+}
 
 // Driver doubles model namespace exclusivity and physical emptiness. They do
 // not represent native netlink, LAN bootstrap or actual DHCP evidence.

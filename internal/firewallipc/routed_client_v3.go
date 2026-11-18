@@ -136,8 +136,15 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	if c == nil || parent == nil {
 		return RoutedResultV3{}, ErrChannel
 	}
+	var renewalQueued time.Time
+	if verb == "dhcp_renew" {
+		renewalQueued = RoutedDHCPDiagnosticStartV1(verb)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !renewalQueued.IsZero() {
+		RecordRoutedDHCPDiagnosticV1("queue", verb, renewalQueued, nil, nil)
+	}
 	noEffects := false
 	diagnosticStarted := RoutedDHCPDiagnosticStartV1(verb)
 	diagnosticContextErr := parent.Err()
