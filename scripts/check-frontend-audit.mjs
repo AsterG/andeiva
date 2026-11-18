@@ -92,20 +92,24 @@ export function verifyNoCorrectedRelease(advisory, registry) {
   }
 }
 
-async function fetchJSON(url) {
-  const response = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
-  if (!response.ok) throw new Error(`Upstream verification failed with HTTP ${response.status}`);
+async function fetchJSON(url, headers = {}) {
+  const response = await fetch(url, {
+    headers: { accept: 'application/json', ...headers }, redirect: 'error', signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new Error(`${new URL(url).hostname} verification failed with HTTP ${response.status}`);
   return response.json();
 }
 
 if (import.meta.main) {
   const [path, code] = process.argv.slice(2);
   try {
+    if (!/^[01]$/.test(code)) throw new Error('npm audit exited without a usable status');
     const report = JSON.parse(readFileSync(path, 'utf8'));
     const lock = JSON.parse(readFileSync(new URL('../frontend/package-lock.json', import.meta.url), 'utf8'));
     if (needsException(report, Number(code), lock)) {
+      const githubHeaders = process.env.GH_TOKEN ? { Authorization: `Bearer ${process.env.GH_TOKEN}` } : {};
       const [advisory, registry] = await Promise.all([
-        fetchJSON(`https://api.github.com/advisories/${exception.advisory}`),
+        fetchJSON(`https://api.github.com/advisories/${exception.advisory}`, githubHeaders),
         fetchJSON('https://registry.npmjs.org/picomatch'),
       ]);
       verifyNoCorrectedRelease(advisory, registry);
