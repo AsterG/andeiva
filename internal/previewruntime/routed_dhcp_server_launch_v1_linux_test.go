@@ -38,29 +38,29 @@ func TestRoutedDHCPServerLaunchAliveDescriptorBoundsV1(t *testing.T) {
 	}
 }
 
-func serverBootstrapFixtureV1() routedDHCPServerBootstrapV1 {
-	return routedDHCPServerBootstrapV1{Version: 1, ParentPID: 2, ParentStartTicks: 10, HostMountNamespace: 30, DeadlineBootNS: int64(time.Hour), Metadata: Metadata{SchemaVersion: 2, RunID: strings.Repeat("a", 32), BootID: "12345678-1234-1234-1234-123456789abc", HostNamespace: 10, GatewayNamespace: 20}, Config: dhcpserver.Config{SchemaVersion: 1, Enabled: true}, Bindings: []routedDHCPServerBindingWireV1{{InterfaceID: "lan", Role: "lan", Address: "198.18.1.1/24", Name: "lan0", SubnetID: 17}}, ServiceCgroups: []routedDHCPServerCgroupWireV1{{Role: "lan", Name: "dhcp-server-" + strings.Repeat("b", 32), Device: 1, Inode: 2}}, LeaseBudgetBytes: 4 << 20}
+func serverBootstrapFixtureV2() routedDHCPServerBootstrapV2 {
+	return routedDHCPServerBootstrapV2{Version: 2, ParentPID: 2, ParentStartTicks: 10, HostMountNamespace: 30, DeadlineBootNS: int64(time.Hour), Metadata: Metadata{SchemaVersion: 2, RunID: strings.Repeat("a", 32), BootID: "12345678-1234-1234-1234-123456789abc", HostNamespace: 10, GatewayNamespace: 20}, Config: dhcpserver.Config{SchemaVersion: 1, Enabled: true}, Bindings: []routedDHCPServerBindingWireV1{{InterfaceID: "lan", Role: "lan", Address: "198.18.1.1/24", Name: "lan0", SubnetID: 17}}, ServiceCgroups: []routedDHCPServerCgroupWireV1{{Role: "lan", Name: "dhcp-server-" + strings.Repeat("b", 32), Device: 1, Inode: 2}}, LeaseBudgetBytes: 4 << 20, MountPins: []routedDHCPServerMountWireV2{{Role: "configuration", Device: 7, Inode: 61}, {Role: "leases", Device: 7, Inode: 71}}}
 }
 
 func TestRoutedDHCPServerLaunchBootstrapV1(t *testing.T) {
-	b := serverBootstrapFixtureV1()
+	b := serverBootstrapFixtureV2()
 	raw, err := json.Marshal(b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := decodeRoutedDHCPServerBootstrapV1(raw); err != nil || !reflect.DeepEqual(got, b) {
+	if got, err := decodeRoutedDHCPServerBootstrapV2(raw); err != nil || !reflect.DeepEqual(got, b) {
 		t.Fatal("valid bootstrap rejected", err)
 	}
-	for _, bad := range [][]byte{nil, append(raw, raw...), bytes.Replace(raw, []byte(`"version":1`), []byte(`"version":1,"version":1`), 1), bytes.Replace(raw, []byte(`"version":1`), []byte(`"version":2`), 1), bytes.Replace(raw, []byte(`"parent_pid":2`), []byte(`"parent_pid":1`), 1), bytes.Replace(raw, []byte(`"host_mount_namespace":30`), []byte(`"host_mount_namespace":0`), 1), append([]byte(`{"unexpected":true,`), raw[1:]...), bytes.Repeat([]byte("x"), routedDHCPServerBootstrapLimitV1+1)} {
-		if _, err := decodeRoutedDHCPServerBootstrapV1(bad); err == nil {
+	for _, bad := range [][]byte{nil, append(raw, raw...), bytes.Replace(raw, []byte(`"version":2`), []byte(`"version":2,"version":2`), 1), bytes.Replace(raw, []byte(`"version":2`), []byte(`"version":1`), 1), bytes.Replace(raw, []byte(`"parent_pid":2`), []byte(`"parent_pid":1`), 1), bytes.Replace(raw, []byte(`"host_mount_namespace":30`), []byte(`"host_mount_namespace":0`), 1), append([]byte(`{"unexpected":true,`), raw[1:]...), bytes.Repeat([]byte("x"), routedDHCPServerBootstrapLimitV1+1)} {
+		if _, err := decodeRoutedDHCPServerBootstrapV2(bad); err == nil {
 			t.Fatal("ambiguous bootstrap accepted")
 		}
 	}
 }
 
 func TestRoutedDHCPServerSealedBootstrapV1(t *testing.T) {
-	b := serverBootstrapFixtureV1()
-	file, err := routedDHCPServerSealedBootstrapV1(b)
+	b := serverBootstrapFixtureV2()
+	file, err := routedDHCPServerSealedBootstrapV2(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestRoutedDHCPServerSealedBootstrapV1(t *testing.T) {
 	if _, err := file.ReadAt(raw, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeRoutedDHCPServerBootstrapV1(raw); err != nil {
+	if _, err := decodeRoutedDHCPServerBootstrapV2(raw); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -88,7 +88,7 @@ func TestRoutedDHCPServerSealedBootstrapV1(t *testing.T) {
 func TestRoutedDHCPServerRoleCommandV1(t *testing.T) {
 	files := []*os.File{os.Stdin, os.Stdin, os.Stdin}
 	cmd := routedDHCPServerRoleCommandV1("/opt/andeiva/bin/runtime", files, 23)
-	if !reflect.DeepEqual(cmd.Args, []string{"/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", "/opt/andeiva/bin/runtime", RoutedDHCPServerRoleV1}) || !reflect.DeepEqual(cmd.Env, []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}) || cmd.SysProcAttr.Cloneflags != unix.CLONE_NEWNS || cmd.SysProcAttr.Pdeathsig != syscall.SIGKILL || !cmd.SysProcAttr.UseCgroupFD || cmd.SysProcAttr.CgroupFD != 23 || !reflect.DeepEqual(cmd.ExtraFiles, files) || cmd.Stdout != os.Stdout || cmd.Stderr != os.Stderr {
+	if !reflect.DeepEqual(cmd.Args, []string{"/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", "/opt/andeiva/bin/runtime", RoutedDHCPServerRoleV2}) || !reflect.DeepEqual(cmd.Env, []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}) || cmd.SysProcAttr.Cloneflags != unix.CLONE_NEWNS || cmd.SysProcAttr.Pdeathsig != syscall.SIGKILL || !cmd.SysProcAttr.UseCgroupFD || cmd.SysProcAttr.CgroupFD != 23 || !reflect.DeepEqual(cmd.ExtraFiles, files) || cmd.Stdout != os.Stdout || cmd.Stderr != os.Stderr {
 		t.Fatal("fixed launch boundary changed")
 	}
 	if _, err := StartRoutedDHCPServerV1(nil, RoutedDHCPServerResourcesV1{}); err != ErrIdentity {

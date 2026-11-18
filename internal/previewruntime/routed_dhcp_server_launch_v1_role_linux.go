@@ -19,23 +19,42 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func decodeRoutedDHCPServerBootstrapV1(raw []byte) (routedDHCPServerBootstrapV1, error) {
-	var b routedDHCPServerBootstrapV1
+func decodeRoutedDHCPServerBootstrapV2(raw []byte) (routedDHCPServerBootstrapV2, error) {
+	var b routedDHCPServerBootstrapV2
 	if len(raw) == 0 || len(raw) > routedDHCPServerBootstrapLimitV1 || !jsoncheck.UniqueControlFields(raw) {
 		return b, ErrIdentity
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if d.Decode(&b) != nil || d.Decode(new(any)) != io.EOF || b.Version != 1 || b.ParentPID <= 1 || b.ParentStartTicks == 0 || b.HostMountNamespace == 0 || b.DeadlineBootNS <= 0 || b.Metadata.ValidateRouted() != nil || len(b.Bindings) == 0 || len(b.Bindings) > 64 || len(b.ServiceCgroups) == 0 || len(b.ServiceCgroups) > 2 || b.LeaseBudgetBytes <= 0 {
-		return routedDHCPServerBootstrapV1{}, ErrIdentity
+	if d.Decode(&b) != nil || d.Decode(new(any)) != io.EOF || b.Version != 2 || b.ParentPID <= 1 || b.ParentStartTicks == 0 || b.HostMountNamespace == 0 || b.DeadlineBootNS <= 0 || b.Metadata.ValidateRouted() != nil || len(b.Bindings) == 0 || len(b.Bindings) > 64 || len(b.ServiceCgroups) == 0 || len(b.ServiceCgroups) > 2 || b.LeaseBudgetBytes <= 0 || !routedDHCPServerMountWireValidV2(b.MountPins) {
+		return routedDHCPServerBootstrapV2{}, ErrIdentity
+	}
+	canonical, err := json.Marshal(b)
+	if err != nil || !bytes.Equal(raw, canonical) {
+		return routedDHCPServerBootstrapV2{}, ErrIdentity
+	}
+	roles := map[string]bool{}
+	identities := map[RoutedDHCPServiceCgroupIdentityV1]bool{}
+	for _, pin := range b.ServiceCgroups {
+		id := RoutedDHCPServiceCgroupIdentityV1{Device: pin.Device, Inode: pin.Inode}
+		if roles[pin.Role] || identities[id] || !routedDHCPServerCgroupPinNameV1(RoutedDHCPServerCgroupPinV1{Role: pin.Role, Name: pin.Name, Identity: id}) {
+			return routedDHCPServerBootstrapV2{}, ErrIdentity
+		}
+		roles[pin.Role], identities[id] = true, true
+	}
+	if !roles["lan"] {
+		return routedDHCPServerBootstrapV2{}, ErrIdentity
 	}
 	return b, nil
 }
 
+// The retired wire cannot start a component or negotiate a protocol fallback.
+func RunRoutedDHCPServerRoleV1(context.Context) error { return ErrIdentity }
+
 // The fixed role receives FD3 gateway,4 hostNET,5 hostMNT,6 config,7 leases,
-// 8 sealed bootstrap,9 lifetime control,10..11 exact readonly cgroup pins.
+// 8 sealed bootstrap,9 lifetime control,10/11 detached mounts,12..13 cgroup pins.
 // It never reads an administrative URL, path or shell command.
-func RunRoutedDHCPServerRoleV1(parent context.Context) (result error) {
+func RunRoutedDHCPServerRoleV2(parent context.Context) (result error) {
 	if parent == nil || parent.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return ErrIdentity
 	}
@@ -52,13 +71,16 @@ func RunRoutedDHCPServerRoleV1(parent context.Context) (result error) {
 	if err != nil || n != len(raw) {
 		return ErrIdentity
 	}
-	b, err := decodeRoutedDHCPServerBootstrapV1(raw)
+	b, err := decodeRoutedDHCPServerBootstrapV2(raw)
 	if err != nil {
+		return err
+	}
+	if err := captureRoutedDHCPServerRawFDsV2(b); err != nil {
 		return err
 	}
 	var pins []RoutedDHCPServerCgroupPinV1
 	for i, wire := range b.ServiceCgroups {
-		fd := i + 10
+		fd := i + 12
 		if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR {
 			return ErrIdentity
 		}
@@ -93,6 +115,10 @@ func RunRoutedDHCPServerRoleV1(parent context.Context) (result error) {
 		defer files[i].Close()
 		unix.CloseOnExec(fd)
 	}
+	mountPins := &routedDHCPServerMountPinsV2{configuration: os.NewFile(10, "configuration-mount"), leases: os.NewFile(11, "leases-mount")}
+	defer func() { result = errors.Join(result, mountPins.closeV2()) }()
+	unix.CloseOnExec(10)
+	unix.CloseOnExec(11)
 	if !routedDHCPOwnerPipeV3(files[6], unix.O_RDONLY) {
 		return ErrIdentity
 	}
@@ -134,6 +160,6 @@ func RunRoutedDHCPServerRoleV1(parent context.Context) (result error) {
 			result = errors.Join(result, ErrIdentity)
 		}
 	}()
-	o := RoutedDHCPServerResourcesV1{Metadata: b.Metadata, Gateway: files[0], Host: files[1], HostMount: files[2], Configuration: files[3], Leases: files[4], Config: b.Config, Bindings: bindings, ServiceCgroups: pins, LeaseBudgetBytes: b.LeaseBudgetBytes}
+	o := RoutedDHCPServerResourcesV1{Metadata: b.Metadata, Gateway: files[0], Host: files[1], HostMount: files[2], Configuration: files[3], Leases: files[4], Config: b.Config, Bindings: bindings, ServiceCgroups: pins, LeaseBudgetBytes: b.LeaseBudgetBytes, mountPins: mountPins}
 	return RunRoutedDHCPServerComponentV1(ctx, o)
 }

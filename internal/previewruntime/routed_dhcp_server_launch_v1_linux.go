@@ -19,6 +19,7 @@ import (
 )
 
 const RoutedDHCPServerRoleV1 = "--andeiva-routed-dhcp-server-v1"
+const RoutedDHCPServerRoleV2 = "--andeiva-routed-dhcp-server-v2"
 const routedDHCPServerBootstrapLimitV1 = 2*dhcpserver.MaxConfigBytes + 4096
 const routedDHCPServerStopGraceV1 = 5*time.Second + routedDHCPOwnerCallV3 // Existing engine shutdown plus role IPC budget.
 
@@ -37,7 +38,7 @@ type routedDHCPServerCgroupWireV1 struct {
 	Inode  uint64 `json:"inode"`
 }
 
-type routedDHCPServerBootstrapV1 struct {
+type routedDHCPServerBootstrapV2 struct {
 	Version            int                             `json:"version"`
 	ParentPID          int                             `json:"parent_pid"`
 	ParentStartTicks   uint64                          `json:"parent_start_ticks"`
@@ -48,6 +49,7 @@ type routedDHCPServerBootstrapV1 struct {
 	Bindings           []routedDHCPServerBindingWireV1 `json:"bindings"`
 	ServiceCgroups     []routedDHCPServerCgroupWireV1  `json:"service_cgroups"`
 	LeaseBudgetBytes   int64                           `json:"lease_budget_bytes"`
+	MountPins          []routedDHCPServerMountWireV2   `json:"mount_pins"`
 }
 
 // Handle pins the dedicated root role, not readiness or traffic permission.
@@ -90,7 +92,7 @@ func (s *RoutedDHCPServerLaunchV1) Alive() bool {
 // Start is called only after selected-policy authorization under closed
 // forwarding. It creates no configuration store, listener or timer when absent.
 // The supplied lease directory is operational state and is never replaced.
-func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1) (*RoutedDHCPServerLaunchV1, error) {
+func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1) (launch *RoutedDHCPServerLaunchV1, result error) {
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || o.Metadata.ValidateRouted() != nil {
 		return nil, ErrIdentity
 	}
@@ -136,7 +138,7 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 	if own == nil {
 		return nil, ErrIdentity
 	}
-	_, gid, err := routedDHCPServerAccountV1()
+	uid, gid, err := routedDHCPServerAccountV1()
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +146,22 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 	if err != nil || !artifact.Enabled || routedDHCPServerConfigFileV1(o.Configuration, artifact.JSON, gid) != nil {
 		return nil, ErrIdentity
 	}
+	if err := routedDHCPServerLeasesV1(o.Leases, uid, gid, o.LeaseBudgetBytes); err != nil {
+		return nil, err
+	}
+	mountPins, mountWire, err := prepareRoutedDHCPServerMountPinsV2(o.Configuration, o.Leases)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := mountPins.closeV2(); closeErr != nil {
+			result = errors.Join(result, ErrUnavailable, closeErr)
+			if launch != nil {
+				result = errors.Join(result, launch.Stop(ctx))
+				launch = nil
+			}
+		}
+	}()
 	self, err := os.Executable()
 	if err != nil || trustedRoutedExecutableV3(self) != nil || trustedRoutedExecutableV3("/usr/bin/nsenter") != nil {
 		return nil, ErrIdentity
@@ -152,14 +170,14 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 	if err != nil {
 		return nil, err
 	}
-	b := routedDHCPServerBootstrapV1{Version: 1, ParentPID: os.Getpid(), ParentStartTicks: start, HostMountNamespace: hostMount, DeadlineBootNS: now + int64(remaining), Metadata: o.Metadata, Config: o.Config, LeaseBudgetBytes: o.LeaseBudgetBytes}
+	b := routedDHCPServerBootstrapV2{Version: 2, ParentPID: os.Getpid(), ParentStartTicks: start, HostMountNamespace: hostMount, DeadlineBootNS: now + int64(remaining), Metadata: o.Metadata, Config: o.Config, LeaseBudgetBytes: o.LeaseBudgetBytes, MountPins: mountWire}
 	for _, binding := range o.Bindings {
 		b.Bindings = append(b.Bindings, routedDHCPServerBindingWireV1{binding.Interface.InterfaceID, binding.Interface.Role, binding.Interface.Address.String(), binding.Name, binding.SubnetID})
 	}
 	for _, pin := range o.ServiceCgroups {
 		b.ServiceCgroups = append(b.ServiceCgroups, routedDHCPServerCgroupWireV1{pin.Role, pin.Name, pin.Identity.Device, pin.Identity.Inode})
 	}
-	bootstrap, err := routedDHCPServerSealedBootstrapV1(b)
+	bootstrap, err := routedDHCPServerSealedBootstrapV2(b)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +187,7 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 		return nil, ErrUnavailable
 	}
 	defer controlRead.Close()
-	files := []*os.File{o.Gateway, o.Host, o.HostMount, o.Configuration, o.Leases, bootstrap, controlRead}
+	files := []*os.File{o.Gateway, o.Host, o.HostMount, o.Configuration, o.Leases, bootstrap, controlRead, mountPins.configuration, mountPins.leases}
 	for _, pin := range o.ServiceCgroups {
 		files = append(files, pin.Directory)
 	}
@@ -184,7 +202,7 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 }
 
 func routedDHCPServerRoleCommandV1(executable string, files []*os.File, cgroupFD int) *exec.Cmd {
-	cmd := exec.Command("/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", executable, RoutedDHCPServerRoleV1) // #nosec G204 -- Fixed role, retained gateway FD and current root-trusted executable only.
+	cmd := exec.Command("/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", executable, RoutedDHCPServerRoleV2) // #nosec G204 -- Fixed role, retained gateway FD and current root-trusted executable only.
 	cmd.ExtraFiles = files
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -192,7 +210,7 @@ func routedDHCPServerRoleCommandV1(executable string, files []*os.File, cgroupFD
 	return cmd
 }
 
-func routedDHCPServerSealedBootstrapV1(b routedDHCPServerBootstrapV1) (*os.File, error) {
+func routedDHCPServerSealedBootstrapV2(b routedDHCPServerBootstrapV2) (*os.File, error) {
 	raw, err := json.Marshal(b)
 	if err != nil || len(raw) == 0 || len(raw) > routedDHCPServerBootstrapLimitV1 {
 		return nil, ErrIdentity
