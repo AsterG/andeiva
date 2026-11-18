@@ -42,7 +42,21 @@ func pinNativeDHCPDiagnosticV4(owner *RoutedDHCPOwnerV3, m Metadata) (*nativeDHC
 	if nameErr != nil || currentErr != nil || string(current) != "0::"+routedSupervisorCgroupV3+"\n" || owner.service == nil || owner.service.name != name {
 		return nil, ErrIdentity
 	}
-	servicePin, identity, err := owner.service.readonly()
+	readonly := owner.service.readonly
+	verify := owner.service.verify
+	if owner.services != nil {
+		readonly = func() (*os.File, RoutedDHCPServiceCgroupIdentityV1, error) {
+			return owner.services.readonlyWANV2(owner.service)
+		}
+		verify = func() error {
+			catalog, err := owner.services.catalogV2(context.Background())
+			if err != nil || !catalog.matchesWANV2(b.Owner.Incarnation, owner.service.identity) {
+				return ErrIdentity
+			}
+			return nil
+		}
+	}
+	servicePin, identity, err := readonly()
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +89,7 @@ func pinNativeDHCPDiagnosticV4(owner *RoutedDHCPOwnerV3, m Metadata) (*nativeDHC
 	mount, mountErr := namespaceID(fmt.Sprintf("/proc/%d/ns/mnt", pid))
 	finalGroup, groupErr := routedDHCPOwnerReadV3(fmt.Sprintf("/proc/%d/cgroup", pid), 4096)
 	finalIdentity, identityErr := routedDHCPServiceDirectoryV1(servicePin)
-	if err != nil || mountErr != nil || mount != b.MountNamespace || end != start || parent != os.Getpid() || !routedDHCPOwnerPIDFDAliveV3(pin, pid) || groupErr != nil || !nativeDHCPDiagnosticGroupV4(finalGroup, b.Owner.Incarnation) || identityErr != nil || finalIdentity != identity || owner.service.verify() != nil {
+	if err != nil || mountErr != nil || mount != b.MountNamespace || end != start || parent != os.Getpid() || !routedDHCPOwnerPIDFDAliveV3(pin, pid) || groupErr != nil || !nativeDHCPDiagnosticGroupV4(finalGroup, b.Owner.Incarnation) || identityErr != nil || finalIdentity != identity || verify() != nil {
 		_ = root.Close()
 		return fail()
 	}

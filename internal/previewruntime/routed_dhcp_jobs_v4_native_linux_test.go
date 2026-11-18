@@ -264,7 +264,7 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 		}
 	}
 	var initialLease []uint32
-	if b2 != 0 || restartMode != "" && restartMode != "healthy" {
+	if b2 != 0 || restartMode != "" && restartMode != "healthy" && restartMode != "shared" {
 		initialLease = []uint32{71}
 	}
 	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs, initialLease...)
@@ -289,7 +289,19 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 	}
 	stopDiagnostic := nativeDHCPJobsCollectDataV4(t, ctx, metadata, observeDiagnostic, pinned...)
 	defer stopDiagnostic()
-	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{DHCPJobs: true, DHCPRenewalV4: early, Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
+	var services *RoutedDHCPServerServiceSetV1
+	if restartMode == "shared" {
+		nativeDHCPWANDrainBeforeStartV2(t, ctx)
+		services = nativeDHCPPrepareServiceSetV2(t, ctx)
+		defer func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := services.DestroyV1(cleanup); err != nil {
+				t.Error("retire shared slots", err)
+			}
+		}()
+	}
+	supervisor, e := StartRoutedLaunchV3(ctx, RoutedLaunchResourcesV3{DHCPServiceSet: services, DHCPJobs: true, DHCPRenewalV4: early, Metadata: metadata, Identities: nativeIdentitiesV3, Gateway: namespaces[0], Host: host, Directory: directory, IntegrityRoot: private, Store: resource(0), Admission: resource(1), Plan: resource(2), Emergency: resource(3), Budget: nativeSelectionBudgetV3()}, &logs)
 	if e != nil {
 		if err := b2Pause.Close(); err != nil {
 			t.Error("B2 owner capture cleanup", err)
@@ -318,12 +330,12 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 	}
 	var earlyCuts []nativeDHCPCutV4
 	var earlyAdoptions []nativeDHCPAdoptionEvidenceV4
-	if restartMode != "" && restartMode != "healthy" {
+	if restartMode != "" && restartMode != "healthy" && restartMode != "shared" {
 		nativeDHCPWarmUnavailableV4(t, ctx, restartMode, base, namespaces, supervisor, &earlyResponseTimedOut, stopServer, bound)
 		return
 	}
-	if restartMode == "healthy" {
-		nativeDHCPWarmRootV4(t, ctx, base, namespaces, supervisor, &logs, bound)
+	if restartMode == "healthy" || restartMode == "shared" {
+		nativeDHCPWarmRootV4(t, ctx, base, namespaces, supervisor, services, &logs, bound)
 	} else if early {
 		nativeDHCPContinuitySourceV4(t, ctx, namespaces[1])
 		flow, e := startNativeDHCPContinuityProfileV4(t, ctx, namespaces[1], namespaces[2], continuityTenRenewalsV4)
@@ -414,7 +426,7 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 	if !nativeDHCPEvidenceLogValidV4(logs.String()) {
 		t.Fatal("native log truncated or exceeded its bounded capture")
 	}
-	if restartMode == "healthy" {
+	if restartMode == "healthy" || restartMode == "shared" {
 		t.Log("V4 API restart retained the selected Work, lease, TCP connection and UDP socket")
 	} else if early {
 		if e := nativeDHCPEarlyBudgetsV4(earlyCuts, earlyAdoptions); e != nil {

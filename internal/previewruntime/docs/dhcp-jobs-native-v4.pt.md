@@ -26,7 +26,15 @@ deve ser recusado sem alterar Running ou lease. Marcadores JSON
 `ANDEIVA_NATIVE_DHCP_JOBS`: bound, renewed, restarted, rollback-fenced. Limpeza:
 `ANDEIVA_NATIVE_DHCP_JOBS_CLEANUP_OK`.
 
-Não comprova retirada transacional/rollback para NoNetwork, módulo desativado sem
+Para o modo opcional `--shared-wan`, compilar o binário com a tag de diagnóstico
+`andeiva_native_dhcp_diagnostics` e acrescentar essa opção ao script.
+O teste reserva dois cgroups exatos, verifica que drenar a WAN cancela a
+autorização de início e rejeita um segundo início com a mesma identidade.
+Depois, drena o espaço LAN vazio com DHCP WAN ativo e verifica a continuidade
+de TCP e UDP durante o reinício da API, mantendo o Work e a concessão. O Kea
+ativo e o perfil de serviço instalado exigem qualificação nativa separada.
+
+O primeiro modo não comprova retirada transacional/rollback para NoNetwork, módulo desativado sem
 recursos, expiração, morte do proprietário, tráfego, reboot ou orçamento de
 recursos. O gate residual fechado desaparece somente ao retirar o namespace
 inteiro. Preservar evidências de falhas; não remover pins com identidade alterada

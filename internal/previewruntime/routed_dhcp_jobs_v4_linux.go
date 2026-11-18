@@ -34,6 +34,7 @@ type routedDHCPJobReplyV4 struct {
 	Binding               *RoutedDHCPDeferredBindingV4       `json:"binding,omitempty"`
 	ServiceCgroupVersion  *int                               `json:"service_cgroup_version,omitempty"`
 	ServiceCgroupIdentity *RoutedDHCPServiceCgroupIdentityV1 `json:"service_cgroup_identity,omitempty"`
+	ServiceTree           *routedDHCPServiceCatalogV2        `json:"service_tree,omitempty"`
 }
 type routedDHCPJobPeerV4 struct {
 	pid      int
@@ -170,16 +171,31 @@ type routedDHCPJobOwnerV4 interface {
 // Root's dispatcher owns at most one producer. Only its independent preflight
 // supplies Desired. Requests carry correlation, never configuration or PIDs.
 type routedDHCPJobBrokerV4 struct {
-	preflight func(context.Context, configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error)
-	prepare   func(context.Context, networkplan.Revision) (routedDHCPJobOwnerV4, error)
-	owner     routedDHCPJobOwnerV4
-	work      configpoc.RoutedWorkReferenceV1
-	desired   string
-	active    bool
+	serviceTree func(context.Context) (routedDHCPServiceCatalogV2, error)
+	preflight   func(context.Context, configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error)
+	prepare     func(context.Context, networkplan.Revision) (routedDHCPJobOwnerV4, error)
+	owner       routedDHCPJobOwnerV4
+	work        configpoc.RoutedWorkReferenceV1
+	desired     string
+	active      bool
 }
 
 func (b *routedDHCPJobBrokerV4) dispatch(ctx context.Context, q routedDHCPJobV4) (reply routedDHCPJobReplyV4, files []*os.File, result error) {
 	reply.Job = q
+	if q.Version == 5 && q.Operation == "service_tree" {
+		if b.serviceTree == nil {
+			return reply, nil, ErrIdentity
+		}
+		catalog, err := b.serviceTree(ctx)
+		if err != nil {
+			return reply, nil, err
+		}
+		if _, err := catalog.expectedPins(); err != nil {
+			return reply, nil, err
+		}
+		reply.ServiceTree = &catalog
+		return reply, nil, nil
+	}
 	if q.Operation == "stop" {
 		if b.owner == nil || b.work != q.Work {
 			return reply, nil, ErrIdentity
@@ -232,6 +248,15 @@ func (b *routedDHCPJobBrokerV4) dispatch(ctx context.Context, q routedDHCPJobV4)
 		}
 		reply.Binding = &binding
 		version := routedDHCPServiceCgroupVersionV1
+		if b.serviceTree != nil {
+			catalog, err := b.serviceTree(ctx)
+			if err != nil || !catalog.matchesWANV2(binding.Owner.Incarnation, id) {
+				_ = f.Close()
+				_ = service.Close()
+				return reply, nil, errors.Join(ErrIdentity, owner.Close())
+			}
+			version = 2
+		}
 		reply.ServiceCgroupVersion, reply.ServiceCgroupIdentity = &version, &id
 		return reply, []*os.File{f.Request, f.Reply, f.ProducerPIDFD, service}, nil
 	case "activate":
@@ -268,7 +293,7 @@ func (b *routedDHCPJobBrokerV4) serve(ctx context.Context, c *net.UnixConn, m Me
 		for _, f := range files {
 			_ = f.Close()
 		}
-		if err != nil || len(files) != 0 || !routedDHCPJobValidV4(q, m, sequence) {
+		if err != nil || len(files) != 0 || !(routedDHCPJobValidV4(q, m, sequence) || b.serviceTree != nil && routedDHCPServiceTreeJobV5(q, m, sequence)) {
 			return ErrIdentity
 		}
 		sequence = q.Sequence
@@ -293,19 +318,24 @@ func (b *routedDHCPJobBrokerV4) serve(ctx context.Context, c *net.UnixConn, m Me
 }
 
 type routedDHCPJobClientV4 struct {
-	mu       sync.Mutex
-	conn     *net.UnixConn
-	metadata Metadata
-	peer     routedDHCPJobPeerV4
-	sequence uint64
-	failed   bool
+	servicesEnabled bool // Enabled only by the trusted shared-service profile.
+	mu              sync.Mutex
+	conn            *net.UnixConn
+	metadata        Metadata
+	peer            routedDHCPJobPeerV4
+	sequence        uint64
+	failed          bool
 }
 
-func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work configpoc.RoutedWorkReferenceV1) (reply routedDHCPJobReplyV4, returned []*os.File, result error) {
+func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work configpoc.RoutedWorkReferenceV1) (routedDHCPJobReplyV4, []*os.File, error) {
+	return c.callVersion(ctx, 4, op, work)
+}
+
+func (c *routedDHCPJobClientV4) callVersion(ctx context.Context, version int, op string, work configpoc.RoutedWorkReferenceV1) (reply routedDHCPJobReplyV4, returned []*os.File, result error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out routedDHCPJobReplyV4
-	if c.failed || ctx == nil || ctx.Err() != nil || c.sequence == math.MaxUint64 {
+	if c.failed || ctx == nil || ctx.Err() != nil || c.sequence == math.MaxUint64 || version != 4 && (version != 5 || !c.servicesEnabled) {
 		return out, nil, ErrUnavailable
 	}
 	callbackDone := make(chan struct{})
@@ -329,7 +359,7 @@ func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work config
 		}
 	}()
 	c.sequence++
-	q := routedDHCPJobV4{4, c.metadata.RunID, c.metadata.GatewayNamespace, c.sequence, op, work}
+	q := routedDHCPJobV4{version, c.metadata.RunID, c.metadata.GatewayNamespace, c.sequence, op, work}
 	deadline := time.Now().Add(configpoc.IntegrityInspectionDeadlineV1)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
@@ -342,7 +372,8 @@ func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work config
 		_ = c.conn.Close()
 		return routedDHCPJobReplyV4{}, nil, ErrUnavailable
 	}
-	if !routedDHCPJobValidV4(q, c.metadata, c.sequence-1) || c.conn.SetDeadline(deadline) != nil || routedDHCPJobSendV4(c.conn, q, nil) != nil {
+	valid := routedDHCPJobValidV4(q, c.metadata, c.sequence-1) || c.servicesEnabled && routedDHCPServiceTreeJobV5(q, c.metadata, c.sequence-1)
+	if !valid || c.conn.SetDeadline(deadline) != nil || routedDHCPJobSendV4(c.conn, q, nil) != nil {
 		return fail(nil)
 	}
 	files, err := routedDHCPJobReceiveV4(c.conn, c.peer, &out)
@@ -353,9 +384,21 @@ func (c *routedDHCPJobClientV4) call(ctx context.Context, op string, work config
 	if err != nil || ctx.Err() != nil || out.Job != q || out.Unavailable || len(files) != want || (out.Binding != nil) != (op == "prepare") || (out.ServiceCgroupVersion != nil) != (op == "prepare") || (out.ServiceCgroupIdentity != nil) != (op == "prepare") {
 		return fail(files)
 	}
+	if (out.ServiceTree != nil) != (version == 5 && op == "service_tree") {
+		return fail(files)
+	}
+	if out.ServiceTree != nil {
+		if _, err := out.ServiceTree.expectedPins(); err != nil {
+			return fail(files)
+		}
+	}
 	if op == "prepare" {
 		id, e := routedDHCPServiceDirectoryV1(files[3])
-		if !routedDHCPDeferredBindingValidV4(*out.Binding) || !routedDHCPServiceBootstrapValidV1(*out.ServiceCgroupVersion, *out.ServiceCgroupIdentity) || e != nil || id != *out.ServiceCgroupIdentity || adoptRoutedDHCPJobPipesV4(files[:3], c.peer) != nil {
+		expectedVersion := routedDHCPServiceCgroupVersionV1
+		if c.servicesEnabled {
+			expectedVersion = 2
+		}
+		if !routedDHCPDeferredBindingValidV4(*out.Binding) || *out.ServiceCgroupVersion != expectedVersion || e != nil || id != *out.ServiceCgroupIdentity || adoptRoutedDHCPJobPipesV4(files[:3], c.peer) != nil {
 			return fail(files)
 		}
 	}
