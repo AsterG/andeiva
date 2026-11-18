@@ -21,8 +21,9 @@ func (a *gateRenewalRaceAuthorityV4) Current(ctx context.Context) (LeaseGateGran
 
 func TestLeaseGateRenewalDuringCurrentRecheckClosesWithoutLosingWatermark(t *testing.T) {
 	for _, phase := range []string{"stage-current", "stage-before-write", "stage-after-write", "open-before-write", "open-after-write", "verify-after-authority"} {
-		for _, classified := range []bool{false, true} {
-			t.Run(phase+map[bool]string{false: "/generic", true: "/classified"}[classified], func(t *testing.T) {
+		for _, classification := range []string{"generic", "renewal", "margin"} {
+			classified := classification != "generic"
+			t.Run(phase+"/"+classification, func(t *testing.T) {
 				ctx := context.Background()
 				g, k, base, _ := gateFixture(t)
 				a := &gateRenewalRaceAuthorityV4{gateAuthorityFake: base}
@@ -41,6 +42,9 @@ func TestLeaseGateRenewalDuringCurrentRecheckClosesWithoutLosingWatermark(t *tes
 				cause := ErrLeaseUnavailable
 				if classified {
 					cause = ErrLeaseGateRenewal
+					if classification == "margin" {
+						cause = ErrLeaseGateMarginClosed
+					}
 				}
 				switch phase {
 				case "stage-current":
@@ -73,7 +77,7 @@ func TestLeaseGateRenewalDuringCurrentRecheckClosesWithoutLosingWatermark(t *tes
 					call = g.Verify
 				}
 				err := call(ctx)
-				if err == nil || classified && !errors.Is(err, ErrLeaseGateRenewal) {
+				if err == nil || classified && !errors.Is(err, cause) {
 					t.Fatal("renewal classification lost", err)
 				}
 				if g.opened || k.enabled || k.token != nil || g.fenced == classified {

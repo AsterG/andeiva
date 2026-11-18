@@ -38,6 +38,9 @@ type Scope struct {
 	Interface              string
 	HardwareAddress        string
 	Index                  int
+	// EarlyRenewalV4 is trusted, opt-in acquisition scheduling. It grants no
+	// authority and remains disabled in the installed runtime until qualified.
+	EarlyRenewalV4 bool
 }
 
 // Lease is acquisition evidence only. It authorizes neither L3 writes nor
@@ -66,6 +69,7 @@ type Client struct {
 	exitCode             int
 	stopOnce             sync.Once
 	diagnostic           *clientDiagnostic
+	early                *earlyRenewal
 }
 
 func bootNow() (int64, error) {
@@ -150,7 +154,13 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		return nil, err
 	}
 	c := &Client{lock: lock, output: r, done: make(chan struct{}), iface: scope.Interface, lastGrant: now, initialWaiting: true, diagnostic: diagnostic}
-	cmd := exec.Command("/usr/sbin/dhcpcd", "-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath, scope.Interface) // #nosec G204 -- Fixed engine, hook and config; allowlisted interface bound to pinned namespaces; no shell.
+	if scope.EarlyRenewalV4 {
+		c.early = newEarlyRenewal()
+	}
+	args := []string{"-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath}
+	args = append(args, diagnostic.debugArguments()...)
+	args = append(args, scope.Interface)
+	cmd := exec.Command("/usr/sbin/dhcpcd", args...) // #nosec G204 -- Fixed engine, hook and config; allowlisted interface bound to pinned namespaces; no shell.
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout = w
 	// No raw lease/options or engine diagnostics escape through public output.
@@ -203,6 +213,9 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		return nil, err
 	}
 	failed = false
+	if c.early != nil {
+		go c.runEarlyRenewal(ctx)
+	}
 	go c.readEvents()
 	go func() {
 		select {
@@ -245,12 +258,13 @@ func (c *Client) readEvents() {
 			return
 		}
 		now, err := bootNow()
-		if err != nil || c.accept(e, now) != nil {
+		if err != nil || c.acceptEvent(e, now) != nil {
 			c.failAt("event_scope")
 			_ = c.cmd.Process.Kill()
 			return
 		}
 		c.diagnostic.leaseEvent(e)
+		c.notifyEarlyRenewal()
 	}
 	c.failAt("event_channel_closed")
 	_ = c.cmd.Process.Kill()
@@ -279,6 +293,7 @@ func (c *Client) failAt(stage string) {
 		c.failure = stage
 		c.diagnostic.event(stage, c.lastReason, 0)
 	}
+	c.notifyEarlyRenewal()
 }
 
 func (c *Client) accept(e Event, now int64) error {
@@ -340,6 +355,7 @@ const (
 	AcquisitionInitialWaiting
 	AcquisitionGranted
 	AcquisitionNoLease
+	AcquisitionMarginClosed
 )
 
 // AcquisitionObservation separates service progress from a usable lease. The
@@ -348,6 +364,9 @@ type AcquisitionObservation struct {
 	State         AcquisitionState
 	ObservedEpoch uint64
 	Lease         Lease
+	// ListenerAddress is physical socket-association evidence only, never a
+	// grant. It is present exclusively for AcquisitionMarginClosed.
+	ListenerAddress string
 }
 
 func (c *Client) ObserveAcquisition() (AcquisitionObservation, error) {
@@ -383,6 +402,15 @@ func (c *Client) acquisitionAt(now int64) (Lease, AcquisitionState, error) {
 }
 
 func (c *Client) observationAt(now int64) (AcquisitionObservation, error) {
+	if c.early != nil {
+		c.early.mu.Lock()
+		defer c.early.mu.Unlock()
+		return c.observationWithEarlyLocked(now)
+	}
+	return c.observationLeaseAt(now)
+}
+
+func (c *Client) observationLeaseAt(now int64) (AcquisitionObservation, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.failed || now <= 0 {
@@ -420,6 +448,13 @@ func (c *Client) signal(signal syscall.Signal) error {
 	if c == nil {
 		return ErrUnavailable
 	}
+	if c.early != nil {
+		c.early.mu.Lock()
+		defer c.early.mu.Unlock()
+		if c.early.marginEpoch != 0 || c.early.responseBy != 0 {
+			return ErrUnavailable
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.failed {
@@ -444,6 +479,9 @@ func (c *Client) Stop() {
 			<-c.done
 		}
 		_ = c.lock.Close()
+		if c.early != nil {
+			<-c.early.done
+		}
 	})
 }
 

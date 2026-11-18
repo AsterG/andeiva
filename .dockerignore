@@ -5,6 +5,9 @@
 !packaging/licenses/
 !packaging/licenses/golang-x-LICENSE.txt
 !packaging/licenses/golang-x-PATENTS.txt
+!packaging/preview/
+!packaging/preview/tests/
+!packaging/preview/tests/dhcp-b2-native.sh
 !cmd/
 !cmd/**
 !internal/

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — retained WAN during API restart (draft)
+
+- Qualify the original applied WAN Work before resuming the optional V4 API on the retained helper. Reuse the existing permit and expiry. During failed qualification, management writes stay unavailable and a verified existing permit can continue until its original expiration or independent revocation.
+
+
+## Unreleased — optional Alpha DHCP early renewal (draft)
+
+- Add a default-off V4 renewal profile with one outstanding request and the approved conservative authority budgets. B2 margin closure waits only for a spontaneous valid grant; no recovery probe is sent.
+- Prepare ten-renewal TCP/UDP measurements, hook-to-Open and interruption guards, and bounded phase diagnostics. Native acceptance and administrator warning/diagnostic integration remain pending.
+- Distinguish authenticated renewal progress during read-only observation from policy drift. The optional profile returns closure-only evidence after complete network, policy and listener checks; effect authorization and existing fences remain unchanged. Integrated native acceptance and final CPU/RAM measurements are pending.
+- Alpha renewals interrupt forwarding; previously measured upper bounds reached9.406s with TCP retained and UDP loss. The provisional10s interruption/12s adoption limits apply only to this Alpha test.
+- New-instance recovery after real expiry is deferred beyond this milestone by the owner. Access remains closed; manual recovery and a generic administrator notice are required. Retained-owner API restart recovery is a separate defect and is not claimed as fixed here.
+
+## Unreleased — internal early DHCP renewal profile
+
+- Add an explicit V4-only early-renewal scheduler using the unchanged conservative deadline and an absolute BOOTTIME timer. One pending signal, bounded response wait and no automatic replacement acquisition. Disabled by default; component resource measurements are recorded, while integrated traffic qualification remains pending. There is a brief interruption per renewal under the approved close-before-refresh handover.
+
 ## Unreleased — prepared active-WAN configuration reader
 
 - Prepare a typed, read-only continuation contract that distinguishes the original DHCP Work from the current configuration generation. Bind transitions to the exact selected source, original reservations, operation and final audit. Existing readers reject the required feature.

@@ -43,6 +43,8 @@ type LeaseOptions struct {
 	Desired networkplan.Revision
 	Owner   LeaseOwner
 	Current func(context.Context) (LeaseFact, error)
+	// Trusted optional observation lane, independent of effects Current.
+	GetObservationV4 func(context.Context) (LeaseObservationV4, error)
 }
 
 type LeaseOutcome string
@@ -61,16 +63,17 @@ const (
 // forwarding. Trusted assembly must drive Refresh on events/deadlines. Until
 // authenticated selected-work recovery exists, opening an occupied WAN fails.
 type LeaseExecutor struct {
-	mu       sync.Mutex
-	base     *Executor
-	desired  networkplan.Revision
-	wan, lan networkplan.Interface
-	owner    LeaseOwner
-	current  func(context.Context) (LeaseFact, error)
-	now      func() (int64, error)
-	baseline observation
-	fact     LeaseFact
-	seen     uint64
+	mu               sync.Mutex
+	base             *Executor
+	desired          networkplan.Revision
+	wan, lan         networkplan.Interface
+	owner            LeaseOwner
+	current          func(context.Context) (LeaseFact, error)
+	getObservationV4 func(context.Context) (LeaseObservationV4, error)
+	now              func() (int64, error)
+	baseline         observation
+	fact             LeaseFact
+	seen             uint64
 }
 
 func newLeaseExecutor(ctx context.Context, base *Executor, options LeaseOptions, now func() (int64, error)) (*LeaseExecutor, error) {
@@ -81,7 +84,7 @@ func newLeaseExecutor(ctx context.Context, base *Executor, options LeaseOptions,
 	if err != nil || r.Hash != options.Desired.Hash || len(r.Config.Interfaces) != 2 || r.Config.DNS.Mode != "none" {
 		return nil, ErrUnsupported
 	}
-	l := &LeaseExecutor{base: base, desired: r, owner: options.Owner, current: options.Current, now: now}
+	l := &LeaseExecutor{base: base, desired: r, owner: options.Owner, current: options.Current, getObservationV4: options.GetObservationV4, now: now}
 	for _, i := range r.Config.Interfaces {
 		switch {
 		case i.Role == networkplan.WAN && i.IPv4.Mode == "dhcp":

@@ -42,3 +42,14 @@ journalctl -u andeiva-preview-grouped.service --no-pager
 # After the unit has completed and the result/logs have been retained:
 systemctl stop andeiva-preview-grouped.service
 ```
+
+### Management recovery notice in Alpha
+
+If the helper cannot acknowledge the API handoff, the supervisor writes one
+generic recovery notice for the incident. The immediate record is in the
+supervisor journal. For this failure, Alpha records the incident exclusively in that journal.
+Importing earlier incidents into protected audit is deferred until after the
+milestone.
+
+An authorized local operator can inspect the existing service journal with
+`journalctl -u andeiva-preview-grouped.service --boot --no-pager`.

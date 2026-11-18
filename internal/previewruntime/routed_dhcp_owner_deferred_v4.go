@@ -87,6 +87,7 @@ type routedDHCPDeferredReplyV4 struct {
 	Unavailable    bool                             `json:"unavailable,omitempty"`
 	WaitingVersion *int                             `json:"waiting_version,omitempty"`
 	NoLease        *routedDHCPNoLeaseWireV1         `json:"no_lease,omitempty"`
+	MarginClosed   *routedDHCPMarginClosedWireV4    `json:"margin_closed,omitempty"`
 	Acquisition    *RoutedDHCPAcquisitionIdentityV4 `json:"acquisition,omitempty"`
 	Lease          *routedDHCPOwnerLeaseV3          `json:"lease,omitempty"`
 }
@@ -134,12 +135,28 @@ func newRoutedDHCPDeferredReaderV4(files RoutedDHCPDeferredFilesV4, b RoutedDHCP
 		if routedDHCPOwnerDecodeV3(raw, &reply) != nil || q.Version != 4 || reply.Version != 4 || reply.Incarnation != q.Incarnation || reply.Sequence != q.Sequence {
 			return nil, false, ErrIdentity
 		}
+		var members map[string]json.RawMessage
+		if json.Unmarshal(raw, &members) != nil {
+			return nil, false, ErrIdentity
+		}
+		if _, present := members["margin_closed"]; present && reply.MarginClosed == nil {
+			return nil, false, ErrIdentity
+		}
 		if reply.NoLease != nil {
-			if reply.NoLease.Version != 1 || reply.NoLease.ObservedEpoch == 0 || reply.WaitingVersion != nil || reply.Unavailable || reply.Lease != nil || reply.Acquisition == nil || !reply.Acquisition.valid(int64(b.Owner.PID)) || acquisition != (RoutedDHCPAcquisitionIdentityV4{}) && acquisition != *reply.Acquisition {
+			if reply.MarginClosed != nil || reply.NoLease.Version != 1 || reply.NoLease.ObservedEpoch == 0 || reply.WaitingVersion != nil || reply.Unavailable || reply.Lease != nil || reply.Acquisition == nil || !reply.Acquisition.valid(int64(b.Owner.PID)) || acquisition != (RoutedDHCPAcquisitionIdentityV4{}) && acquisition != *reply.Acquisition {
 				return nil, false, ErrIdentity
 			}
 			acquisition, initial = *reply.Acquisition, false
 			return nil, false, routedDHCPNoLeaseV1{reply.NoLease.ObservedEpoch}
+		}
+		if reply.MarginClosed != nil {
+			closed := routedDHCPMarginClosedV4{reply.MarginClosed.ObservedEpoch, reply.MarginClosed.ListenerAddress}
+			_, valid := routedDHCPMarginV4(closed)
+			if !valid || reply.MarginClosed.Version != 4 || reply.WaitingVersion != nil || reply.Unavailable || reply.Lease != nil || reply.Acquisition == nil || !reply.Acquisition.valid(int64(b.Owner.PID)) || acquisition != (RoutedDHCPAcquisitionIdentityV4{}) && acquisition != *reply.Acquisition {
+				return nil, false, ErrIdentity
+			}
+			acquisition, initial = *reply.Acquisition, false
+			return nil, false, closed
 		}
 		if reply.WaitingVersion != nil {
 			if *reply.WaitingVersion != 1 || !initial || reply.Unavailable || reply.Lease != nil || reply.Acquisition == nil || !reply.Acquisition.valid(int64(b.Owner.PID)) || acquisition != (RoutedDHCPAcquisitionIdentityV4{}) && acquisition != *reply.Acquisition {
@@ -162,7 +179,12 @@ func newRoutedDHCPDeferredReaderV4(files RoutedDHCPDeferredFilesV4, b RoutedDHCP
 		return reply.Lease, false, nil
 	}
 	r.accept = func(l routedDHCPOwnerLeaseV3, now int64) (RoutedDHCPOwnerFactV3, error) {
-		return r.facts.acceptBound(l, now, routedDHCPDeferredBindingValidV4(b) && acquisition.valid(int64(b.Owner.PID)), b.Owner, b.Desired, int(acquisition.PID))
+		out, err := r.facts.acceptBound(l, now, routedDHCPDeferredBindingValidV4(b) && acquisition.valid(int64(b.Owner.PID)), b.Owner, b.Desired, int(acquisition.PID))
+		if err == nil {
+			out.hookBootNS, out.leaseSeconds = l.Event.BootNS, l.Event.Seconds
+			networkexecutor.RecordNativeLeaseHookV4(out.Epoch, out.hookBootNS, out.leaseSeconds)
+		}
+		return out, err
 	}
 	return &RoutedDHCPDeferredReaderV4{r}, nil
 }

@@ -156,6 +156,18 @@ func (g *LeaseGate) RecoverWithdrawnSelectedV3(ctx context.Context, snapshot Lea
 // VerifySelectedStateV3 compares actual kernel state with the retained original
 // LAN baseline. Expired authority permits baseline proof, never target proof.
 func (l *LeaseExecutor) VerifySelectedStateV3(ctx context.Context, snapshot LeaseSelectedSnapshotV3, state LeaseSelectedStateV3) error {
+	return l.verifySelectedStateV3(ctx, snapshot, state, false)
+}
+
+// VerifySelectedObservationV4 preserves the target verifier's full physical
+// checks. Only its final source resolution can classify authenticated renewal
+// or margin closure; an earlier runner or physical error never gains that meaning.
+// The result is an error, not authorization to adopt or open a lease.
+func (l *LeaseExecutor) VerifySelectedObservationV4(ctx context.Context, snapshot LeaseSelectedSnapshotV3, state LeaseSelectedStateV3) error {
+	return l.verifySelectedStateV3(ctx, snapshot, state, true)
+}
+
+func (l *LeaseExecutor) verifySelectedStateV3(ctx context.Context, snapshot LeaseSelectedSnapshotV3, state LeaseSelectedStateV3, classifyProgress bool) error {
 	if l == nil || l.base == nil {
 		return ErrScope
 	}
@@ -182,7 +194,31 @@ func (l *LeaseExecutor) VerifySelectedStateV3(ctx context.Context, snapshot Leas
 		if l.base.active == nil || l.fact != s.Fact() || !l.matches(first, l.base.active.revision, true) {
 			return ErrObservation
 		}
-		return l.sameFact(ctx, s.Fact())
+		if !classifyProgress {
+			return l.sameFact(ctx, s.Fact())
+		}
+		// Retain the first resolution's provenance: a second successful read
+		// cannot turn an earlier runner, scope or physical error into progress.
+		fact, _, err := l.resolve(ctx)
+		if err == ErrLeaseUnavailable && l.getObservationV4 != nil {
+			observed, observationErr := l.readObservationV4(ctx)
+			if observationErr == nil && observed.hasMargin && l.guard(ctx) == nil && l.base.ready(ctx) == nil && ctx.Err() == nil {
+				return NewLeaseObservationPendingV4(s.Fact())
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if fact == s.Fact() {
+			return nil
+		}
+		if l.getObservationV4 != nil && fact.Sequence > s.Sequence && fact.Address == s.Address && fact.Gateway == s.Gateway {
+			observed, observationErr := l.readObservationV4(ctx)
+			if observationErr == nil && !observed.hasMargin && observed.fact == fact && l.guard(ctx) == nil && l.base.ready(ctx) == nil && ctx.Err() == nil {
+				return NewLeaseObservationPendingV4(s.Fact())
+			}
+		}
+		return ErrScope
 	default:
 		return ErrScope
 	}

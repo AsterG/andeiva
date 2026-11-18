@@ -11,6 +11,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/dhcpsockets"
+	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/localengine"
 	"github.com/AsterG/andeiva/internal/localobserve"
 	"github.com/AsterG/andeiva/internal/localpolicy"
@@ -51,6 +52,7 @@ func (l *routedEmptyListenersV3) Apply(ctx context.Context, revision configpoc.R
 
 func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Listener, error) {
 	if l == nil || l.kernel == nil || ctx == nil || ctx.Err() != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("listener_initial", ErrUnavailable, ctx)
 		return nil, ErrUnavailable
 	}
 	runtime.LockOSThread()
@@ -62,6 +64,7 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 	phase := routedDHCPServicePhaseV1{}
 	if s != nil {
 		if s.validate(ctx, true) != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_source_guard", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
 	}
@@ -73,6 +76,7 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 		var err error
 		fact, phase, err = active.fact(ctx)
 		if err != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_fact_before", ErrUnavailable, ctx)
 			return nil, err
 		}
 	}
@@ -80,34 +84,61 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 	for pass := 0; pass < 2; pass++ {
 		capture, err := l.capture(ctx, active, fact)
 		if err != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_capture", ErrUnavailable, ctx)
 			return nil, err
 		}
 		if active == nil {
 			if len(capture.tables) != 0 || len(capture.packet) != 0 {
+				firewallipc.RecordRoutedDHCPFailureV1("listener_foreign", ErrUnavailable, ctx)
 				return nil, ErrUnavailable
 			}
 		} else if matchRoutedDHCPSocketsV1(capture, active.identity, active.packet, fact, phase.withoutLease()) != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_socket_match", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
 		if pass == 0 {
 			first = capture
 		} else if !sameRoutedDHCPSocketsV1(first, capture) {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_socket_changed", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
 	}
 	if active != nil {
 		after, afterPhase, err := active.fact(ctx)
-		if err != nil || afterPhase != phase || after != fact {
+		if err != nil || !sameRoutedDHCPListenerAssociationV4(fact, phase, after, afterPhase) {
+			firewallipc.RecordRoutedDHCPFailureV1("listener_fact_after", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
 	}
 	if s != nil && s.validate(ctx, true) != nil {
+		firewallipc.RecordRoutedDHCPFailureV1("listener_final_guard", ErrUnavailable, ctx)
 		return nil, ErrUnavailable
 	}
 	if ctx.Err() != nil || !l.kernel.bound() {
+		firewallipc.RecordRoutedDHCPFailureV1("listener_final_context", ErrUnavailable, ctx)
 		return nil, ErrUnavailable
 	}
 	return []localpolicy.Listener{}, nil
+}
+
+// Both samples have already passed fact(), including live-source validation.
+// A lease version is not socket ownership: after two complete matching captures,
+// genuine progress may retain the exact same physical service association. This
+// comparison returns no lease or authority and cannot replace Current or the gate.
+func sameRoutedDHCPListenerAssociationV4(before RoutedDHCPOwnerFactV3, phase routedDHCPServicePhaseV1, after RoutedDHCPOwnerFactV3, afterPhase routedDHCPServicePhaseV1) bool {
+	if afterPhase != phase {
+		return false
+	}
+	if after == before {
+		return true
+	}
+	if phase != (routedDHCPServicePhaseV1{}) || before.Epoch == 0 || after.Epoch <= before.Epoch || before.Fact.Sequence == 0 || after.Fact.Sequence <= before.Fact.Sequence || before.Fact.Revoked || after.Fact.Revoked || before.Fact.DeadlineBootNS <= 0 || after.Fact.DeadlineBootNS <= 0 {
+		return false
+	}
+	association := after.Fact
+	association.Sequence = before.Fact.Sequence
+	association.DeadlineBootNS = before.Fact.DeadlineBootNS
+	return association == before.Fact
 }
 
 func (l *routedEmptyListenersV3) capture(ctx context.Context, s *routedDHCPServiceObservationV1, fact RoutedDHCPOwnerFactV3) (routedDHCPSocketCaptureV1, error) {

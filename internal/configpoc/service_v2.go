@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -136,6 +137,18 @@ func openServiceCoordinatorV2(ctx context.Context, area *os.Root, budget BudgetV
 		store, err = openV2(area, v2Budget{Bytes: budget.Bytes, Inodes: budget.Inodes})
 	}
 	if err != nil {
+		if options.RetainDHCPV4 && errors.Is(err, errV2Unavailable) {
+			// The store reader's generic error also covers invalid contents.
+			// Retry only when a no-follow, nonblocking probe confirms an
+			// inaccessible selector, before any startup work is admitted.
+			probe, readErr := openRecordFile(area, "selected.json")
+			if probe != nil {
+				_ = probe.Close()
+			}
+			if errors.Is(readErr, os.ErrPermission) || errors.Is(readErr, os.ErrNotExist) {
+				err = errors.Join(ErrRetainedStartupUnavailableV4, err)
+			}
+		}
 		return nil, fmt.Errorf("selected configuration open: %w", err)
 	}
 	if options.Integrity != nil {

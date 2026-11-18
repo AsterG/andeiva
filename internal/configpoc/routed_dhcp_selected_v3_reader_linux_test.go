@@ -4,6 +4,7 @@ package configpoc
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -96,8 +97,8 @@ func testRoutedDHCPSelectedV3ReaderAndRetirement(t *testing.T, policy SelectionR
 	if err != nil || selected.Phase() != "prepared" || selected.Epoch() != 1 || selected.Snapshot().Hash != snap.Hash || selected.Running() != c.store.state.Configuration.Running.Hash {
 		t.Fatal("independent prepared read", err)
 	}
-	if _, err := r.ResolveDHCPCurrentV3(ctx, strings.Repeat("f", 64)); err == nil {
-		t.Fatal("foreign work accepted")
+	if _, err := r.ResolveDHCPCurrentV3(ctx, strings.Repeat("f", 64)); !errors.Is(err, ErrRoutedDHCPBindingMismatchV4) || !errors.Is(err, ErrRecovery) {
+		t.Fatal("confirmed foreign Work did not produce binding mismatch", err)
 	}
 	originalIdentity := r.options.Identity
 	for _, kind := range []string{"namespace", "owner-uid", "run"} {
@@ -117,8 +118,8 @@ func testRoutedDHCPSelectedV3ReaderAndRetirement(t *testing.T, policy SelectionR
 	r.options.Identity = originalIdentity
 	originalPlan := r.options.Plan
 	r.options.Plan = r.options.Admission
-	if _, err := r.ResolveDHCPCurrentV3(ctx, hash); err == nil {
-		t.Fatal("substituted physical reserve accepted")
+	if _, err := r.ResolveDHCPCurrentV3(ctx, hash); err == nil || errors.Is(err, ErrRoutedDHCPBindingMismatchV4) {
+		t.Fatal("unverifiable physical reserve yielded a confirmed binding result", err)
 	}
 	r.options.Plan = originalPlan
 	if r.VerifyDHCPReleasedV3(ctx) == nil {

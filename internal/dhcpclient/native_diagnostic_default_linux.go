@@ -12,3 +12,4 @@ func (*clientDiagnostic) stderr() io.Writer            { return io.Discard }
 func (*clientDiagnostic) event(string, string, int)    {}
 func (*clientDiagnostic) leaseEvent(Event)             {}
 func (*clientDiagnostic) close()                       {}
+func (*clientDiagnostic) debugArguments() []string     { return nil }

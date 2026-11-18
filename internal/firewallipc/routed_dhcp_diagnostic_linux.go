@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,61 @@ type routedDHCPDiagnosticRecorderV1 struct {
 }
 
 var routedDHCPDiagnosticsV1 routedDHCPDiagnosticRecorderV1
+
+var routedDHCPFailureStagesV4 = [...]string{
+	"open_state", "open_selected", "open_owner", "open_gate_stage", "open_gate_open", "open_forward",
+	"withdraw_close", "withdraw_selected", "withdraw_build_gate", "withdraw_recover_gate", "withdraw_recover_lease", "withdraw_lease", "withdraw_verify",
+	"authority_selected", "authority_owner", "authority_lease", "authority_policy", "authority_owner_after",
+	"policy_ready", "policy_observe", "policy_state", "close_gate", "close_forward",
+	"listener_initial", "listener_source_guard", "listener_fact_before", "listener_capture", "listener_foreign",
+	"listener_socket_match", "listener_socket_changed", "listener_fact_after", "listener_final_guard", "listener_final_context",
+	"channel_arm", "channel_apply", "channel_confirm", "channel_recover", "channel_bootstrap", "channel_resume", "channel_inspect",
+	"channel_dhcp_begin", "channel_dhcp_apply", "channel_dhcp_open", "channel_dhcp_withdraw", "channel_dhcp_retire", "channel_dhcp_renew", "channel_dhcp_current", "channel_dhcp_live",
+}
+
+type routedDHCPFirstStageRecorderV4 struct {
+	slots [len(routedDHCPFailureStagesV4)]atomic.Bool
+}
+
+var routedDHCPFirstStagesV4 routedDHCPFirstStageRecorderV4
+
+func routedDHCPFailureStageIndexV4(stage string) int {
+	for i, known := range routedDHCPFailureStagesV4 {
+		if stage == known {
+			return i
+		}
+	}
+	return -1
+}
+
+// Every known failure site has one reserved slot, independent of routine RPC
+// saturation. The native call site fixes stderr. Only bounded enum fields are
+// emitted, never arbitrary errors or request/owner/grant contents.
+func (d *routedDHCPFirstStageRecorderV4) emit(stage string, cause, ctxErr error, out io.Writer) {
+	index := routedDHCPFailureStageIndexV4(stage)
+	if cause == nil || index < 0 || out == nil || !d.slots[index].CompareAndSwap(false, true) {
+		return
+	}
+	var now unix.Timespec
+	if unix.ClockGettime(unix.CLOCK_BOOTTIME, &now) != nil {
+		return
+	}
+	raw, err := json.Marshal(struct {
+		PID     int    `json:"pid"`
+		BootNS  int64  `json:"boot_ns"`
+		Stage   string `json:"stage"`
+		Error   string `json:"error"`
+		Context string `json:"context"`
+	}{os.Getpid(), now.Nano(), stage, routedDHCPDiagnosticClassV1(cause), routedDHCPDiagnosticClassV1(ctxErr)})
+	if err != nil {
+		return
+	}
+	line := append([]byte("ANDEIVA_NATIVE_DHCP_FIRST_FAILURE_V4 "), raw...)
+	line = append(line, '\n')
+	if len(line) <= 512 {
+		_, _ = out.Write(line)
+	}
+}
 
 // Default artifacts do not read clocks or allocate a diagnostic recorder.
 func RoutedDHCPDiagnosticStartV1(verb string) time.Time {
@@ -81,10 +137,29 @@ func routedDHCPDiagnosticClassV1(err error) string {
 	}
 }
 
-// Record performs no I/O and never waits for the recorder. Arguments are local
-// observations only; no protocol payload or caller-selected metadata is stored.
+// The RPC buffer never waits for its recorder. This opt-in native build also
+// emits the first fatal channel frame. Only fixed local enum fields are stored.
 func RecordRoutedDHCPDiagnosticV1(side, verb string, started time.Time, err, ctxErr error) {
 	routedDHCPDiagnosticsV1.record(side, verb, started, err, ctxErr)
+	routedDHCPFirstStagesV4.channelFailure(side, verb, err, ctxErr, os.Stderr)
+}
+
+func (d *routedDHCPFirstStageRecorderV4) channelFailure(side, verb string, err, ctxErr error, out io.Writer) {
+	if side == "client" && errors.Is(err, ErrChannel) {
+		// Reserve the first fatal channel failure independently of the saturated
+		// RPC buffer. Expected recovery/wait results cannot consume this slot.
+		stage := routedDHCPChannelFailureStageV4(verb)
+		d.emit(stage, err, ctxErr, out)
+	}
+}
+
+func routedDHCPChannelFailureStageV4(verb string) string {
+	switch verb {
+	case "arm", "apply", "confirm", "recover", "bootstrap", "resume", "inspect", "dhcp_begin", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire", "dhcp_renew", "dhcp_current", "dhcp_live":
+		return "channel_" + verb
+	default:
+		return ""
+	}
 }
 
 // Stages describe local failure sites, not another request or a grant. Nested
@@ -93,18 +168,13 @@ func RecordRoutedDHCPFailureV1(stage string, err error, ctx context.Context) {
 	if ctx == nil {
 		return
 	}
-	routedDHCPDiagnosticsV1.failure(stage, err, ctx.Err())
+	ctxErr := ctx.Err()
+	routedDHCPFirstStagesV4.emit(stage, err, ctxErr, os.Stderr)
+	routedDHCPDiagnosticsV1.failure(stage, err, ctxErr)
 }
 
 func KnownRoutedDHCPFailureStageV1(stage string) bool {
-	switch stage {
-	case "open_state", "open_selected", "open_owner", "open_gate_stage", "open_gate_open", "open_forward",
-		"withdraw_close", "withdraw_selected", "withdraw_build_gate", "withdraw_recover_gate", "withdraw_recover_lease", "withdraw_lease", "withdraw_verify",
-		"authority_selected", "authority_owner", "authority_lease", "authority_policy", "authority_owner_after",
-		"policy_ready", "policy_observe", "policy_state", "close_gate", "close_forward":
-		return true
-	}
-	return false
+	return routedDHCPFailureStageIndexV4(stage) >= 0
 }
 
 func (d *routedDHCPDiagnosticRecorderV1) failure(stage string, err, ctxErr error) {
@@ -115,7 +185,7 @@ func (d *routedDHCPDiagnosticRecorderV1) failure(stage string, err, ctxErr error
 }
 
 func (d *routedDHCPDiagnosticRecorderV1) record(side, verb string, started time.Time, err, ctxErr error) {
-	if (side != "client" && side != "helper") || !RoutedDHCPVerbV3(verb) || started.IsZero() {
+	if (side != "client" && side != "helper" && !(side == "queue" && verb == "dhcp_renew")) || !RoutedDHCPVerbV3(verb) || started.IsZero() {
 		return
 	}
 	d.append(side, verb, "", started, err, ctxErr)

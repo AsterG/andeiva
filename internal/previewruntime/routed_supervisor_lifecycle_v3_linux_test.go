@@ -6,11 +6,113 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/configpoc"
 )
+
+func TestRoutedRetainedStartupV4RetriesOnlyCompletedReadFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		retained   bool
+		failure    error
+		recover    bool
+		cancel     bool
+		wantChecks int
+		want       error
+	}{
+		{"resumes", true, configpoc.ErrRetainedStartupUnavailableV4, true, false, 2, nil},
+		{"bounded", true, configpoc.ErrRetainedStartupUnavailableV4, false, false, 3, configpoc.ErrRetainedStartupUnavailableV4},
+		{"ordinary startup", false, configpoc.ErrRetainedStartupUnavailableV4, true, false, 1, configpoc.ErrRetainedStartupUnavailableV4},
+		{"integrity rejection", true, configpoc.ErrRecovery, true, false, 1, configpoc.ErrRecovery},
+		{"shutdown", true, configpoc.ErrRetainedStartupUnavailableV4, true, true, 1, context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				calls := 0
+				start := time.Now()
+				err := retryRetainedStartupV4(ctx, tc.retained, func() error {
+					calls++
+					if tc.cancel {
+						cancel()
+					}
+					if calls > 1 && tc.recover {
+						return nil
+					}
+					return tc.failure
+				})
+				if calls != tc.wantChecks || !errors.Is(err, tc.want) ||
+					time.Since(start) != time.Duration(tc.wantChecks-1)*routedAPIRestartDelayV3 {
+					t.Fatalf("checks=%d, elapsed=%s, error=%v", calls, time.Since(start), err)
+				}
+			})
+		})
+	}
+}
+
+func TestRoutedSupervisorV3RetriesBeforeHandoffWithNoChild(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		recover    bool
+		firstDelay time.Duration
+	}{{"exhausted across budget window", false, 65 * time.Second}, {"recovered", true, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				helperDone := make(chan struct{})
+				apiDone := make(chan struct{})
+				close(apiDone)
+				var times []time.Time
+				var diagnostic strings.Builder
+				result := make(chan error, 1)
+				go func() {
+					result <- keepRoutedSupervisorV3(ctx, helperDone, func() <-chan struct{} { return apiDone }, func(context.Context) error {
+						times = append(times, time.Now())
+						apiDone = nil // startChild failed; there is no replacement writer.
+						if len(times) == 1 {
+							time.Sleep(tc.firstDelay)
+						}
+						if tc.recover && len(times) == 2 {
+							apiDone = make(chan struct{})
+							return nil
+						}
+						return errRoutedAPIStartRetryableV3
+					}, &diagnostic)
+				}()
+				time.Sleep(2 * time.Minute)
+				synctest.Wait()
+				select {
+				case err := <-result:
+					t.Fatal("retry stopped the helper parent", err)
+				default:
+				}
+				cancel()
+				if err := <-result; err != nil {
+					t.Fatal(err)
+				}
+				wantAttempts, wantDiagnostic := 3, "ANDEIVA_GROUPED_API_RECOVERY_REQUIRED\n"
+				if tc.recover {
+					wantAttempts, wantDiagnostic = 2, ""
+				}
+				if len(times) != wantAttempts || diagnostic.String() != wantDiagnostic {
+					t.Fatalf("attempts=%d diagnostic=%q", len(times), diagnostic.String())
+				}
+				for i := 1; i < len(times); i++ {
+					if times[i].Sub(times[i-1]) < 3*time.Second {
+						t.Fatal("retry bypassed the existing backoff")
+					}
+				}
+			})
+		})
+	}
+}
 
 func TestRoutedSupervisorV3APIFailureKeepsGuardianParentAlive(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

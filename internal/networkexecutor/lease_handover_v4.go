@@ -35,6 +35,9 @@ func ValidateSameEffectiveLeaseV4(previous, next LeaseSelectedSnapshotV3) error 
 // an address/route and never changes the selected work or its R2 plan.
 // On any error the caller must keep the gate closed and reconcile withdrawal.
 func (l *LeaseExecutor) RefreshSameEffectiveSelectedV4(ctx context.Context, previous, next LeaseSelectedSnapshotV3) error {
+	if done := StartNativeLeaseSpanV4("refresh_evidence"); done != nil {
+		defer done()
+	}
 	if l == nil || l.base == nil || ctx == nil || ctx.Err() != nil || ValidateSameEffectiveLeaseV4(previous, next) != nil {
 		return ErrScope
 	}

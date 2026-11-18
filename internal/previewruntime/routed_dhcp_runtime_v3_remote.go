@@ -57,16 +57,58 @@ type routedDHCPSelectedWriterV3 interface {
 }
 
 type RoutedDHCPControllerV3 struct {
-	mu             sync.Mutex
-	remote         *routedDHCPRemoteV3
-	writer         routedDHCPSelectedWriterV3
-	work           string
-	grant          configpoc.RoutedDHCPGrantV3
-	recoveryOnly   bool // Controller ownership; incomplete inspection never admits new Work.
-	scheduleMu     sync.Mutex
-	scheduleCancel context.CancelFunc
-	scheduleDone   chan struct{}
-	scheduleClosed bool
+	mu              sync.Mutex
+	remote          *routedDHCPRemoteV3
+	writer          routedDHCPSelectedWriterV3
+	work            string
+	grant           configpoc.RoutedDHCPGrantV3
+	recoveryOnly    bool // Controller ownership; incomplete inspection never admits new Work.
+	inspectionWake  func() bool
+	inspectionWork  string
+	inspectionGrant configpoc.RoutedDHCPGrantV3
+	scheduleMu      sync.Mutex
+	scheduleCancel  context.CancelFunc
+	scheduleDone    chan struct{}
+	scheduleClosed  bool
+}
+
+func (c *RoutedDHCPControllerV3) startIntegritySchedulerV4(service routedIntegrityScheduledServiceV3) *routedIntegritySchedulerV3 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	scheduler := startRoutedIntegrityCallbackV4(service, func(call context.Context) error {
+		// Same order as Reconcile: controller ownership, then store barrier.
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		err := service.InspectRuntimeV1(call)
+		c.afterInspectionV4(err, c.remote.client.DHCPSelectedV4())
+		return err
+	})
+	if c.remote.client.DHCPRenewalEnabledV4() {
+		c.inspectionWake = scheduler.WakeV4
+	}
+	c.scheduleV4(c.remote.client.DHCPSelectedV4())
+	return scheduler
+}
+
+// Caller holds c.mu. Recovery alone proves nothing: authenticate the fresh
+// retained target under closed gates before asking the independent full scan.
+func (c *RoutedDHCPControllerV3) wakeClosedInspectionV4(ctx context.Context, got configpoc.RoutedDHCPGrantV3) error {
+	if !c.recoveryOnly || c.work == "" || c.inspectionWake == nil || !c.remote.client.DHCPRenewalEnabledV4() || !sameRenewalGrantV4(c.grant, got) || ctx.Err() != nil {
+		return configpoc.ErrRecovery
+	}
+	c.scheduleMu.Lock()
+	closed := c.scheduleClosed
+	c.scheduleMu.Unlock()
+	if closed || c.inspectionWork == c.work && !sameRenewalGrantV4(c.inspectionGrant, got) {
+		return configpoc.ErrRecovery
+	}
+	if err := c.remote.VerifyClosed(ctx, got.Snapshot, networkexecutor.LeaseSelectedTargetV3); err != nil {
+		return errors.Join(configpoc.ErrRecovery, err)
+	}
+	if ctx.Err() == nil && c.inspectionWake() {
+		c.inspectionWork, c.inspectionGrant = c.work, got
+	}
+	return configpoc.ErrRecovery
 }
 
 // Caller holds c.mu, as in the production and native full-inspection callbacks.
@@ -168,6 +210,32 @@ func newRoutedDHCPControllerV3(service *configpoc.ServiceV2, client *firewallipc
 	return &RoutedDHCPControllerV3{remote: remote, writer: writer}, nil
 }
 
+// Startup has exclusive controller ownership. Bind the existing Work to a
+// fresh, stable helper observation before starting workers or serving traffic.
+func (c *RoutedDHCPControllerV3) restoreRetainedWorkV4(ctx context.Context) error {
+	writer, ok := c.writer.(*configpoc.RoutedDHCPSelectedStoreV3)
+	if !ok || !c.remote.client.DHCPRenewalEnabledV4() {
+		return ErrIdentity
+	}
+	work, durable, err := writer.RetainedWorkV4(ctx)
+	if err != nil || work == "" {
+		return err
+	}
+	before, err := c.remote.Current(ctx)
+	if err != nil || !reflect.DeepEqual(durable, before) && !sameRenewalGrantV4(durable, before) {
+		return errors.Join(configpoc.ErrRecovery, err)
+	}
+	if _, err = c.remote.client.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: work}); err != nil {
+		return err
+	}
+	after, err := c.remote.Current(ctx)
+	if err != nil || !reflect.DeepEqual(before, after) || ctx.Err() != nil {
+		return errors.Join(configpoc.ErrRecovery, err)
+	}
+	c.work, c.grant = work, after
+	return nil
+}
+
 // Reconcile applies at most one fresh authenticated grant. An unchanged grant
 // verifies existing authority; an explicitly negotiated same-effective renewal
 // refreshes only the operational lease proof while retaining selected L3 work.
@@ -236,7 +304,13 @@ func (c *RoutedDHCPControllerV3) reconcileLocked(ctx context.Context) error {
 		}
 		if err == nil && c.remote.client.DHCPRenewalEnabledV4() && sameRenewalGrantV4(c.grant, got) {
 			if err = c.remote.RenewSameEffective(ctx, c.work, got, c.recoveryOnly); err != nil {
+				if c.recoveryOnly && errors.Is(err, configpoc.ErrRecovery) {
+					return c.wakeClosedInspectionV4(ctx, got)
+				}
 				return err
+			}
+			if c.recoveryOnly {
+				return errors.Join(configpoc.ErrRecovery, ErrUnavailable)
 			}
 			c.grant = got
 			return nil
@@ -259,7 +333,7 @@ func (c *RoutedDHCPControllerV3) acquireLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	c.grant = configpoc.RoutedDHCPGrantV3{Epoch: result.DHCP.Epoch, Snapshot: result.DHCP.Snapshot}
+	grant := configpoc.RoutedDHCPGrantV3{Epoch: result.DHCP.Epoch, Snapshot: result.DHCP.Snapshot}
 	work, err := c.writer.Prepare(ctx)
 	if err != nil {
 		return err
@@ -274,6 +348,7 @@ func (c *RoutedDHCPControllerV3) acquireLocked(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(err, c.withdraw(ctx))
 	}
+	c.grant = grant
 	return nil
 }
 
@@ -299,5 +374,6 @@ func (c *RoutedDHCPControllerV3) withdraw(ctx context.Context) error {
 		return err
 	}
 	c.work, c.grant = "", configpoc.RoutedDHCPGrantV3{}
+	c.inspectionWork, c.inspectionGrant = "", configpoc.RoutedDHCPGrantV3{}
 	return nil
 }
