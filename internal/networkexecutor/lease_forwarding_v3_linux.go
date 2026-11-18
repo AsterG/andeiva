@@ -128,6 +128,21 @@ func (f *LeaseForwardingV3) VerifyClosed(ctx context.Context) error {
 	return leaseForwardingClosed(LeaseOptions{Desired: f.desired})
 }
 
+// VerifyOpen checks current namespace, bindings and forwarding without writes.
+func (f *LeaseForwardingV3) VerifyOpen(ctx context.Context) error {
+	if f == nil || ctx == nil {
+		return ErrScope
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if ctx.Err() != nil || f.guard() != nil || f.ipv6Closed() != nil || leaseForwardingValueV3("/proc/sys/net/ipv4/ip_forward", "1\n") != nil {
+		return ErrScope
+	}
+	return ctx.Err()
+}
+
 func (f *LeaseForwardingV3) Disable(ctx context.Context) error {
 	if f == nil || ctx == nil {
 		return ErrScope

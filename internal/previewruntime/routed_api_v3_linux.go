@@ -8,8 +8,10 @@ import (
 	"net"
 	"net/http"
 	"syscall"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/adminapi"
+	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewalladmin"
 	"github.com/AsterG/andeiva/internal/firewallipc"
@@ -217,7 +219,25 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 	if client.RebootScopeEnabled() {
 		runtimeOptions.RebootScope = &routedRebootScopeRemoteV4{client}
 	}
-	service, e := configpoc.OpenRuntimeServiceV2(ctx, o.Store, o.Budget, o.Auth, []configpoc.Engine{guard}, o.Local, runtimeOptions)
+	startupUnavailable := o.routedStartupUnavailable
+	recordIncident := func(outcome string) error {
+		if !startupUnavailable || o.routedRecoveryAudit == nil {
+			return nil
+		}
+		startupUnavailable = false
+		return o.routedRecoveryAudit(adminauth.Event{At: time.Now().UTC(), Actor: "system", Action: "management_recovery", Result: outcome})
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, recordIncident("unavailable"))
+		}
+	}()
+	var service *configpoc.ServiceV2
+	e = retryRetainedStartupV4(ctx, o.Runtime.RetainDHCPV4, func() error {
+		service, e = configpoc.OpenRuntimeServiceV2(ctx, o.Store, o.Budget, o.Auth, []configpoc.Engine{guard}, o.Local, runtimeOptions)
+		startupUnavailable = startupUnavailable || (runtimeOptions.RetainDHCPV4 && errors.Is(e, configpoc.ErrRetainedStartupUnavailableV4))
+		return e
+	})
 	if e != nil {
 		return nil, e
 	}
@@ -231,9 +251,15 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 	result = &RoutedOperationsRuntimeV3{Handler: handler, Service: service, routed: client, legacy: legacy}
 	if client.DHCPEnabled() {
 		result.DHCP, e = newRoutedDHCPControllerV3(service, client, identity)
+		if e == nil && o.Runtime.RetainDHCPV4 {
+			e = result.DHCP.restoreRetainedWorkV4(ctx)
+		}
 		if e != nil {
 			return nil, errors.Join(e, service.Close())
 		}
+	}
+	if e = recordIncident("recovered"); e != nil {
+		return nil, errors.Join(e, service.Close())
 	}
 	if client.IntegrityEnabled() {
 		if result.DHCP != nil {
@@ -243,6 +269,24 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 		}
 	}
 	return result, nil
+}
+
+// This is one API process and one helper epoch. Each unsuccessful inspection
+// has returned and its writer has closed the store before the next check.
+func retryRetainedStartupV4(ctx context.Context, retained bool, check func() error) error {
+	for attempt := 1; ; attempt++ {
+		err := check()
+		if !retained || !errors.Is(err, configpoc.ErrRetainedStartupUnavailableV4) || attempt == routedAPIRestartAttemptsV3 {
+			return err
+		}
+		timer := time.NewTimer(routedAPIRestartDelayV3)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // Duplicated descriptors do not constitute two independently framed channels.

@@ -301,6 +301,107 @@ func TestRoutedDHCPJobsV4OnlyCompleteInspectionMayActivate(t *testing.T) {
 	}
 }
 
+type retainedInspectionFixtureV4 struct {
+	jobInspectionFixtureV4
+	retainedChecks int
+	proofError     error
+}
+
+func (h *retainedInspectionFixtureV4) VerifyRetainedPermitV4(context.Context) error {
+	h.retainedChecks++
+	return h.proofError
+}
+
+func TestRoutedDHCPJobsV4RestartInspectionRetainsOnlyProvenPermit(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		state      configpoc.IntegrityStateV1
+		proofError error
+		readErr    error
+		wantProof  int
+		wantClose  int
+	}{
+		{"store unavailable", configpoc.IntegrityUnavailableV1, nil, ErrUnavailable, 1, 0},
+		{"cancelled", configpoc.IntegrityCancelledV1, nil, context.DeadlineExceeded, 1, 0},
+		{"store unavailable and kernel mismatch", configpoc.IntegrityUnavailableV1, ErrIdentity, ErrUnavailable, 1, 1},
+		{"fenced", configpoc.IntegrityFencedV1, nil, configpoc.ErrRecovery, 0, 1},
+		{"stale", configpoc.IntegrityStaleV1, nil, configpoc.ErrConflict, 0, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			session, reader, _ := integritySessionFixtureV3(t)
+			hook := &retainedInspectionFixtureV4{proofError: test.proofError}
+			session.dhcpJobs = hook
+			command := firewallipc.RoutedCommandV3{Verb: "inspect", Integrity: firewallipc.RoutedIntegrityV3{Mode: "attach", Selection: reader.ref}}
+			if _, err := session.dispatch(ctx, command); err != nil {
+				t.Fatal(err)
+			}
+			session.restartInspection = true
+			reader.state, reader.errorFull = test.state, test.readErr
+			command.Integrity.Mode = "check"
+			reply, err := session.dispatch(ctx, command)
+			result := reply.(firewallipc.RoutedIntegrityResultV3)
+			if (err != nil) != (test.proofError != nil) || result.Result.State != test.state || result.DHCPSelected ||
+				hook.calls != 0 || hook.retainedChecks != test.wantProof || hook.invalidated != test.wantClose {
+				t.Fatalf("unexpected result: %+v, proof=%d, close=%d, err=%v", result, hook.retainedChecks, hook.invalidated, err)
+			}
+		})
+	}
+}
+
+type restartProofAuthorityV4 struct{ configpoc.RoutedAuthorityV1 }
+
+func (restartProofAuthorityV4) Observe(context.Context) (configpoc.RoutedReceiptV1, string, error) {
+	return configpoc.RoutedReceiptV1{Phase: "idle"}, strings.Repeat("d", 64), nil
+}
+
+func TestRoutedDHCPRestartLiveV4DistinguishesStoreAndPhysicalFailure(t *testing.T) {
+	for _, mode := range []string{"healthy", "store", "forwarding", "work", "durable work", "applied"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			r, kernel, reader, _ := dhcpRuntimeFixtureV3(t)
+			if err := r.SetRenewalProfileV4(RoutedDHCPSameEffectiveRenewalV4); err != nil {
+				t.Fatal(err)
+			}
+			grant, err := r.begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			work := strings.Repeat("e", 64)
+			reader.work = &dhcpRuntimeWorkV3{grant: grant, phase: "prepared", hash: work}
+			if err = r.apply(ctx, work); err != nil {
+				t.Fatal(err)
+			}
+			reader.work.phase = "applied"
+			if err = r.open(ctx, work); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "store":
+				reader.denied = true
+			case "forwarding":
+				kernel.forward = false
+			case "work":
+				work = strings.Repeat("f", 64)
+			case "durable work":
+				reader.resolveError = errors.Join(configpoc.ErrRecovery, configpoc.ErrRoutedDHCPBindingMismatchV4)
+			case "applied":
+				reader.work.phase = "prepared"
+			}
+			stages := kernel.stages
+			h := &routedDHCPJobsHelperV4{runtime: r, authority: restartProofAuthorityV4{}}
+			err = h.VerifyRestartLiveV4(ctx, work)
+			if (mode == "healthy") != (err == nil) || kernel.stages != stages {
+				t.Fatalf("grant changed or readback error incorrect: %v", err)
+			}
+			keep := mode == "healthy" || mode == "store"
+			if kernel.forward != keep || kernel.gate != keep || r.opened != keep {
+				t.Fatal("physical failure and store outage were not distinguished")
+			}
+		})
+	}
+}
+
 func jobDescriptorReferencesV4(t *testing.T, target string) int {
 	t.Helper()
 	entries, err := os.ReadDir("/proc/self/fd")

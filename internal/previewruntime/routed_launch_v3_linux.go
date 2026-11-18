@@ -605,6 +605,12 @@ func (s *RoutedLaunchSupervisorV3) RestartAPI(ctx context.Context) error {
 	s.api = nil
 	c, e := s.startChild(RoutedAPIRoleV3)
 	if e != nil {
+		// No replacement writer was started and the helper still has the old
+		// epoch. Retry only transient resource failures before the handoff.
+		if errors.Is(e, syscall.EAGAIN) || errors.Is(e, syscall.ENOMEM) ||
+			errors.Is(e, syscall.EMFILE) || errors.Is(e, syscall.ENFILE) {
+			return errors.Join(errRoutedAPIStartRetryableV3, e)
+		}
 		return e
 	}
 	s.api = c

@@ -166,6 +166,38 @@ func TestLeaseGateOpenDoesNotRecreateOrExtendToken(t *testing.T) {
 	}
 }
 
+func TestLeaseGateRetainedReadbackDoesNotConsultStoreOrChangePermit(t *testing.T) {
+	ctx := context.Background()
+	g, k, a, now := gateFixture(t)
+	if err := g.Stage(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	grant := a.grant
+	a.grant.Fact.Sequence++ // An authority read no longer agrees with the token.
+	applies, installed := k.applies, k.installed
+	if err := g.VerifyRetainedV4(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.VerifyRetainedV4(ctx, a.grant); err == nil {
+		t.Fatal("accepted a different grant")
+	}
+	k.observe = func(_ []byte) []byte { return nil }
+	if err := g.VerifyRetainedV4(ctx, grant); err == nil {
+		t.Fatal("accepted unreadable kernel state")
+	}
+	k.observe = nil
+	*now = g.expiryFloorBootNS
+	if err := g.VerifyRetainedV4(ctx, grant); err == nil {
+		t.Fatal("accepted a permit at the expiry floor")
+	}
+	if k.applies != applies || k.installed != installed || g.fenced || !g.opened || k.token == nil {
+		t.Fatal("readback changed the existing permit")
+	}
+}
+
 func TestLeaseGateRenewRequiresCloseAndFreshSequence(t *testing.T) {
 	g, k, a, _ := gateFixture(t)
 	if err := g.Stage(context.Background()); err != nil {

@@ -15,6 +15,7 @@ type v2CoordinatorOptions struct {
 	RebootScope       RoutedRebootScopeAuthorityV4
 	FreshScope        RoutedFreshScopeAuthorityV3
 	DHCPRecovery      RoutedDHCPRecoveryV3
+	RetainDHCPV4      bool
 	integrityAttached bool // Set only after the trusted pre-coordinator Attach.
 	Integrity         RuntimeIntegrityV1
 	SharedReader      *recoveryreserve.ReaderAccessV2
@@ -43,6 +44,7 @@ type v2Coordinator struct {
 	timerLease      string
 	timerOrigin     string
 	closed          bool
+	retainedDHCP    bool
 }
 
 func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []Engine, options v2CoordinatorOptions) (*v2Coordinator, error) {
@@ -88,6 +90,9 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 		return nil, ErrRecovery
 	}
 	if store.blocked {
+		if options.RetainDHCPV4 && store.state.RoutedDHCP != nil {
+			return nil, ErrRecovery
+		}
 		if store.state.RecoveryReserveVersion != 1 || options.Reserves == nil {
 			return nil, errV2Unavailable
 		}
@@ -116,6 +121,12 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	}
 	if err := c.validateReferencesLocked(); err != nil {
 		return nil, fmt.Errorf("selected references: %w", err)
+	}
+	if options.RetainDHCPV4 && store.state.RoutedDHCP != nil {
+		if err := c.retainRoutedDHCPAtOpenV4(); err != nil {
+			return nil, err
+		}
+		return c, nil
 	}
 	// A previous dynamic lease is never resumed by the static boot engine.
 	// Trusted DHCP recovery must withdraw it before this coordinator can open.

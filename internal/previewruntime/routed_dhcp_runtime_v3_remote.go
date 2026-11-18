@@ -210,6 +210,32 @@ func newRoutedDHCPControllerV3(service *configpoc.ServiceV2, client *firewallipc
 	return &RoutedDHCPControllerV3{remote: remote, writer: writer}, nil
 }
 
+// Startup has exclusive controller ownership. Bind the existing Work to a
+// fresh, stable helper observation before starting workers or serving traffic.
+func (c *RoutedDHCPControllerV3) restoreRetainedWorkV4(ctx context.Context) error {
+	writer, ok := c.writer.(*configpoc.RoutedDHCPSelectedStoreV3)
+	if !ok || !c.remote.client.DHCPRenewalEnabledV4() {
+		return ErrIdentity
+	}
+	work, durable, err := writer.RetainedWorkV4(ctx)
+	if err != nil || work == "" {
+		return err
+	}
+	before, err := c.remote.Current(ctx)
+	if err != nil || !reflect.DeepEqual(durable, before) && !sameRenewalGrantV4(durable, before) {
+		return errors.Join(configpoc.ErrRecovery, err)
+	}
+	if _, err = c.remote.client.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: work}); err != nil {
+		return err
+	}
+	after, err := c.remote.Current(ctx)
+	if err != nil || !reflect.DeepEqual(before, after) || ctx.Err() != nil {
+		return errors.Join(configpoc.ErrRecovery, err)
+	}
+	c.work, c.grant = work, after
+	return nil
+}
+
 // Reconcile applies at most one fresh authenticated grant. An unchanged grant
 // verifies existing authority; an explicitly negotiated same-effective renewal
 // refreshes only the operational lease proof while retaining selected L3 work.

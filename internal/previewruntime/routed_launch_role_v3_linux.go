@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/networkinventory"
@@ -388,11 +389,30 @@ func runRoutedAPILaunchV3(ctx context.Context, f *routedLaunchFilesV3, b routedL
 	if o.RoutedDHCPRenewalV4 != b.DHCPRenewalV4 || o.RoutedDHCP != b.DHCPJobs || o.RoutedFreshScope != b.FreshScope || o.RoutedRebootScope != b.RebootScope || o.Store != f.roots[1] || o.Runtime.SharedReader == nil || *o.Runtime.SharedReader != b.Access[0] || o.Runtime.BootID != b.Metadata.BootID || !o.Runtime.GuardDeadlines {
 		return ErrIdentity
 	}
-	routed, e := dialRoutedLaunchV3(ctx, f.roots[0], "routed.sock", b)
+	o.Runtime.RetainDHCPV4 = b.DHCPRenewalV4 && b.Epoch > 1
+	// Retry only before a channel has been admitted. An ambiguous or rejected
+	// identity, handshake or effect never becomes permission to reconnect.
+	dial := func(name string) (*net.UnixConn, error) {
+		var conn *net.UnixConn
+		err := retryRetainedStartupV4(ctx, o.Runtime.RetainDHCPV4, func() error {
+			var dialErr error
+			conn, dialErr = dialRoutedLaunchV3(ctx, f.roots[0], name, b)
+			if o.Runtime.RetainDHCPV4 && errors.Is(dialErr, ErrUnavailable) {
+				o.routedStartupUnavailable = true
+				return errors.Join(dialErr, configpoc.ErrRetainedStartupUnavailableV4)
+			}
+			return dialErr
+		})
+		if err != nil && o.routedStartupUnavailable && o.routedRecoveryAudit != nil {
+			err = errors.Join(err, o.routedRecoveryAudit(adminauth.Event{At: time.Now().UTC(), Actor: "system", Action: "management_recovery", Result: "unavailable"}))
+		}
+		return conn, err
+	}
+	routed, e := dial("routed.sock")
 	if e != nil {
 		return e
 	}
-	legacy, e := dialRoutedLaunchV3(ctx, f.roots[0], "compat.sock", b)
+	legacy, e := dial("compat.sock")
 	if e != nil {
 		_ = routed.Close()
 		return e

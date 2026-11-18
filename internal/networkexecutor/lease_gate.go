@@ -395,6 +395,25 @@ func (g *LeaseGate) Open(ctx context.Context) error {
 	return nil
 }
 
+// VerifyRetainedV4 checks only the existing kernel permit. It does not
+// consult selected state, change the permit or fence the gate. The helper
+// independently verifies the retained owner and forwarding state.
+func (g *LeaseGate) VerifyRetainedV4(ctx context.Context, grant LeaseGateGrant) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ready(ctx); err != nil {
+		return err
+	}
+	if !g.opened || grant != g.staged || g.expiryFloorBootNS == 0 {
+		return ErrLeaseGate
+	}
+	observedAt, err := g.read(ctx, true, true)
+	if err != nil || observedAt >= g.expiryFloorBootNS || ctx.Err() != nil {
+		return ErrLeaseGate
+	}
+	return nil
+}
+
 // Verify is a fresh readback, not a cached statement of permission.
 func (g *LeaseGate) Verify(ctx context.Context) error {
 	g.mu.Lock()

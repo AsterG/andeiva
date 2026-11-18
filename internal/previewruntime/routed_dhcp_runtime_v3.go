@@ -38,10 +38,12 @@ type routedDHCPGateV3 interface {
 	Stage(context.Context) error
 	Open(context.Context) error
 	Verify(context.Context) error
+	VerifyRetainedV4(context.Context, networkexecutor.LeaseGateGrant) error
 }
 type routedDHCPForwardingV3 interface {
 	Disable(context.Context) error
 	VerifyClosed(context.Context) error
+	VerifyOpen(context.Context) error
 	Enable(context.Context, func(context.Context) error) error
 }
 type routedDHCPReaderV3 interface {
@@ -138,6 +140,10 @@ func (a routedDHCPGateAuthorityV3) Verify(ctx context.Context, g networkexecutor
 		firewallipc.RecordRoutedDHCPFailureV1("authority_selected", configpoc.ErrRecovery, ctx)
 		return configpoc.ErrRecovery
 	}
+	return r.verifySelectedGrantV4(ctx, p)
+}
+
+func (r *RoutedDHCPRuntimeV3) verifySelectedGrantV4(ctx context.Context, p routedDHCPWorkV3) error {
 	if err := r.sameOwner(ctx, r.grant); err != nil {
 		if _, margin := routedDHCPMarginV4(err); margin && r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
 			return errors.Join(networkexecutor.ErrLeaseGateMarginClosed, configpoc.ErrRecovery)
@@ -189,7 +195,7 @@ func (a routedDHCPGateAuthorityV3) Verify(ctx context.Context, g networkexecutor
 		firewallipc.RecordRoutedDHCPFailureV1("authority_policy", err, ctx)
 		return configpoc.ErrRecovery
 	}
-	err = r.sameOwner(ctx, r.grant)
+	err := r.sameOwner(ctx, r.grant)
 	if _, margin := routedDHCPMarginV4(err); margin && r.renewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
 		return errors.Join(networkexecutor.ErrLeaseGateMarginClosed, configpoc.ErrRecovery)
 	}
@@ -249,6 +255,24 @@ func (r *RoutedDHCPRuntimeV3) selected(ctx context.Context, work string) (routed
 		return nil, configpoc.ErrRecovery
 	}
 	return p, nil
+}
+
+// Caller holds runtime ownership. This proof can only preserve an existing
+// permit during store unavailability. It grants no readiness or effect authority.
+func (r *RoutedDHCPRuntimeV3) verifyRetainedPermitV4(ctx context.Context) error {
+	if r.renewalProfile != RoutedDHCPSameEffectiveRenewalV4 || !r.opened || r.failed || r.withdrawn || r.retired || r.gate == nil || r.lease == nil || r.work == "" || r.fenced() {
+		return configpoc.ErrRecovery
+	}
+	grant := r.grant
+	fact := grant.Snapshot.Fact()
+	if r.lease.VerifySelectedStateV3(ctx, grant.Snapshot, networkexecutor.LeaseSelectedTargetV3) != nil || r.forward.VerifyOpen(ctx) != nil || r.gate.VerifyRetainedV4(ctx, networkexecutor.LeaseGateGrant{Fact: fact, WorkHash: r.work}) != nil {
+		return configpoc.ErrRecovery
+	}
+	actual, err := r.current(ctx)
+	if err != nil || actual.Epoch != grant.Epoch || actual.Fact != fact || r.fenced() || ctx.Err() != nil {
+		return configpoc.ErrRecovery
+	}
+	return nil
 }
 
 func (r *RoutedDHCPRuntimeV3) closeUnder(ctx context.Context) error {

@@ -10,6 +10,31 @@ type RoutedDHCPRecoveryV3 interface {
 	WithdrawSelected(context.Context, SelectionReferenceV2) error
 }
 
+// The same-helper restart starts with a read-only check of the durable Work.
+// Qualification still requires an independent full scan and live kernel proof.
+func (c *v2Coordinator) retainRoutedDHCPAtOpenV4() error {
+	s := c.store
+	d := s.state.RoutedDHCP
+	cfg := s.state.Configuration
+	if d == nil || d.Phase != "applied" || !c.options.integrityAttached || c.options.BootID == nil ||
+		!inspectionQuiescentV1(s.state) || cfg.LastCompletedBoot == "" || s.state.RoutedBootBoundary != nil ||
+		s.state.SystemBundle != nil || len(s.state.ActiveReserves) != 0 || s.reserves == nil ||
+		validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+		return ErrRecovery
+	}
+	var boot v2RecoveryRecord
+	if s.readObject(cfg.LastCompletedBoot, &boot) != nil || !validRecoveryRecordV2(boot, s.state.Lineage) ||
+		boot.Kind != v2BootKind || boot.State != "final" || boot.BootID == nil || *boot.BootID != *c.options.BootID {
+		return ErrRecovery
+	}
+	work, err := loadRoutedDHCPWorkV3(d.Work, s.state.Lineage, s.readObject)
+	if err != nil || work.Snapshot.Identity != c.options.RoutedIdentity {
+		return ErrRecovery
+	}
+	c.retainedDHCP = true
+	return nil
+}
+
 func (c *v2Coordinator) recoverRoutedDHCPAtOpenV3(ctx context.Context) error {
 	s := c.store
 	d := s.state.RoutedDHCP

@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -45,16 +46,16 @@ func TestNativeRoutedDHCPJobsV4(t *testing.T) {
 // The combined early-renewal/API-restart trial remains failed evidence. This
 // profile qualifies continuity and orderly retirement only, never API restart.
 func TestNativeRoutedDHCPEarlyRenewalV4(t *testing.T) {
-	nativeRunRoutedDHCPScenarioV4(t, true, 0)
+	nativeRunRoutedDHCPScenarioV4(t, true, 0, "")
 }
 
 const nativeDHCPEarlyRenewalSamplesV4 = 10
 
 func nativeRunRoutedDHCPJobsV4(t *testing.T, early bool) {
-	nativeRunRoutedDHCPScenarioV4(t, early, 0)
+	nativeRunRoutedDHCPScenarioV4(t, early, 0, "")
 }
 
-func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
+func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartMode string) {
 	t.Helper()
 	if os.Getenv("ANDEIVA_NATIVE_DHCP_JOBS_V4") != "1" {
 		t.Skip("requires authorized isolated root laboratory harness")
@@ -63,7 +64,7 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
 		t.Fatal("root laboratory only")
 	}
 	budget := 210 * time.Second
-	if early {
+	if early && restartMode == "" {
 		budget = 700 * time.Second
 	}
 	if b2 != 0 {
@@ -106,6 +107,15 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
 	}
 	if b2 != 0 {
 		if e = nativeDHCPB2WriteProfileV4(base, b2); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if restartMode != "" {
+		marker := filepath.Join(base, nativeDHCPWarmMarkerV4)
+		if e := os.WriteFile(marker, []byte(restartMode), 0600); e != nil {
+			t.Fatal(e)
+		}
+		if e := os.Chmod(marker, 0444); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -254,7 +264,7 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
 		}
 	}
 	var initialLease []uint32
-	if b2 != 0 {
+	if b2 != 0 || restartMode != "" && restartMode != "healthy" {
 		initialLease = []uint32{71}
 	}
 	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs, initialLease...)
@@ -262,6 +272,14 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
 	var b2Diagnostic nativeDHCPB2DiagnosticsV4
 	var b2Pause nativeDHCPB2PauseV2
 	var observeDiagnostic func([]byte)
+	var earlyResponseTimedOut atomic.Bool
+	if restartMode == "store" {
+		observeDiagnostic = func(data []byte) {
+			if bytes.Contains(data, []byte(`"stage":"early_response_timeout"`)) {
+				earlyResponseTimedOut.Store(true)
+			}
+		}
+	}
 	var pinned []func(*RoutedDHCPOwnerV3, *os.File, *os.File) error
 	if b2 != 0 {
 		observeDiagnostic = b2Diagnostic.observe
@@ -300,7 +318,13 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
 	}
 	var earlyCuts []nativeDHCPCutV4
 	var earlyAdoptions []nativeDHCPAdoptionEvidenceV4
-	if early {
+	if restartMode != "" && restartMode != "healthy" {
+		nativeDHCPWarmUnavailableV4(t, ctx, restartMode, base, namespaces, supervisor, &earlyResponseTimedOut, stopServer, bound)
+		return
+	}
+	if restartMode == "healthy" {
+		nativeDHCPWarmRootV4(t, ctx, base, namespaces, supervisor, &logs, bound)
+	} else if early {
 		nativeDHCPContinuitySourceV4(t, ctx, namespaces[1])
 		flow, e := startNativeDHCPContinuityProfileV4(t, ctx, namespaces[1], namespaces[2], continuityTenRenewalsV4)
 		if e != nil {
@@ -390,7 +414,9 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32) {
 	if !nativeDHCPEvidenceLogValidV4(logs.String()) {
 		t.Fatal("native log truncated or exceeded its bounded capture")
 	}
-	if early {
+	if restartMode == "healthy" {
+		t.Log("V4 API restart retained the selected Work, lease, TCP connection and UDP socket")
+	} else if early {
 		if e := nativeDHCPEarlyBudgetsV4(earlyCuts, earlyAdoptions); e != nil {
 			t.Fatal(e)
 		}
@@ -703,11 +729,15 @@ func nativeDHCPJobsKernelV4(t *testing.T, ctx context.Context, gateway *os.File,
 // Called only by nativeFactoriesV3 for the authenticated DHCPJobs launch profile.
 // Uses the real Service and existing private controller; no local grant source.
 func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error, binding adminauth.SessionBinding, authenticate func() (adminauth.SessionBinding, error), launch RoutedLaunchContextV3) error {
-	if !launch.DHCPJobsEnabled || !launch.Integrity || launch.Epoch < 1 || launch.Epoch > 2 || launch.DHCPRenewalV4 && launch.Epoch != 1 || r.DHCP == nil || !r.Service.RuntimeIntegrityReadyV1() {
+	warm, err := nativeDHCPWarmProfileV4()
+	if err != nil {
+		return err
+	}
+	if !launch.DHCPJobsEnabled || !launch.Integrity || warm && !launch.DHCPRenewalV4 || launch.Epoch < 1 || launch.Epoch > 2 || launch.DHCPRenewalV4 && launch.Epoch != 1 && !warm || r.DHCP == nil || !r.Service.RuntimeIntegrityReadyV1() {
 		return errors.New("native DHCP profile/readiness differs")
 	}
 	flowReady := make(chan os.Signal, 1)
-	if launch.DHCPRenewalV4 && launch.Epoch == 1 {
+	if launch.DHCPRenewalV4 && (launch.Epoch == 1 || warm) {
 		signal.Notify(flowReady, syscall.SIGUSR2)
 		defer signal.Stop(flowReady)
 	}
@@ -760,6 +790,10 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 	if launch.Epoch == 1 {
 		if err = nativeDHCPJobsReportEmitV4("bound", current.Global.Running, first); err != nil {
 			return err
+		}
+		if warm {
+			<-ctx.Done()
+			return nil
 		}
 		if handled, e := nativeDHCPB2ServeV4(ctx, r, binding, launch, before, current.Global.Running, first, flowReady); handled {
 			return e
@@ -828,6 +862,13 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 	} else {
 		if err = nativeDHCPJobsReportEmitV4("restarted", current.Global.Running, first); err != nil {
 			return err
+		}
+		if warm {
+			select {
+			case <-flowReady:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 		seconds := uint64(120)
 		_, rollbackErr := nativeDHCPJobsOperationV4(ctx, r, binding, configpoc.OperationRequestV2{Kind: configpoc.OpRollback, Target: before, ConfirmSeconds: &seconds}, false)

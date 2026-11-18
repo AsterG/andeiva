@@ -46,8 +46,12 @@ func nativeDHCPB2ProfileValueV4(value string) (uint32, error) {
 	}
 }
 
-func TestNativeRoutedDHCPB2Natural70V4(t *testing.T) { nativeRunRoutedDHCPScenarioV4(t, true, 70) }
-func TestNativeRoutedDHCPB2Natural71V4(t *testing.T) { nativeRunRoutedDHCPScenarioV4(t, true, 71) }
+func TestNativeRoutedDHCPB2Natural70V4(t *testing.T) {
+	nativeRunRoutedDHCPScenarioV4(t, true, 70, "")
+}
+func TestNativeRoutedDHCPB2Natural71V4(t *testing.T) {
+	nativeRunRoutedDHCPScenarioV4(t, true, 71, "")
+}
 
 func nativeDHCPB2WriteProfileV4(base string, seconds uint32) error {
 	if os.Geteuid() != 0 || seconds != 70 && seconds != 71 {

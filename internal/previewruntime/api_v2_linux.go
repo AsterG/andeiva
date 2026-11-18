@@ -20,19 +20,21 @@ import (
 // OperationsRuntimeOptionsV2 contains only trusted assembly resources. Store,
 // pool roots, identities and BootID are never populated from HTTP requests.
 type OperationsRuntimeOptionsV2 struct {
-	RoutedDHCPRenewalV4 bool // Trusted V4 profile, never request-decoded.
-	RoutedDHCP          bool // Explicit trusted grouped profile; requires inventory and integrity.
-	RoutedFreshScope    bool // Requires a root receipt held only by the helper.
-	RoutedRebootScope   bool // Separate v4 profile; mutually exclusive with same-Boot scope.
-	RoutedInventory     bool // Trusted grouped assembly requires the helper-only inventory capability.
-	Store               *os.Root
-	Budget              configpoc.BudgetV2
-	Auth                *adminauth.Manager
-	Local               []configpoc.Engine
-	Runtime             configpoc.RuntimeOptionsV2
-	Origin              string
-	Static              http.Handler
-	NetworkInventory    func(context.Context) (networkinventory.Snapshot, error)
+	RoutedDHCPRenewalV4      bool // Trusted V4 profile, never request-decoded.
+	RoutedDHCP               bool // Explicit trusted grouped profile; requires inventory and integrity.
+	RoutedFreshScope         bool // Requires a root receipt held only by the helper.
+	RoutedRebootScope        bool // Separate v4 profile; mutually exclusive with same-Boot scope.
+	RoutedInventory          bool // Trusted grouped assembly requires the helper-only inventory capability.
+	Store                    *os.Root
+	Budget                   configpoc.BudgetV2
+	Auth                     *adminauth.Manager
+	Local                    []configpoc.Engine
+	Runtime                  configpoc.RuntimeOptionsV2
+	Origin                   string
+	Static                   http.Handler
+	NetworkInventory         func(context.Context) (networkinventory.Snapshot, error)
+	routedRecoveryAudit      func(adminauth.Event) error
+	routedStartupUnavailable bool
 }
 type OperationsRuntimeV2 struct {
 	Handler http.Handler
