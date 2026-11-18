@@ -94,6 +94,10 @@ func validateRoutedDHCPServerCgroupPinsV1(parent *os.File, pins []RoutedDHCPServ
 			return ErrIdentity
 		}
 	}
+	return validateRoutedDHCPServerCgroupTopologyV1(parent, parentID, pins)
+}
+
+func validateRoutedDHCPServerCgroupTopologyV1(parent *os.File, parentID RoutedDHCPServiceCgroupIdentityV1, pins []RoutedDHCPServerCgroupPinV1) error {
 	fd, err := unix.Openat(int(parent.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return ErrIdentity

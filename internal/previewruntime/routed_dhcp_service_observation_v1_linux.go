@@ -41,6 +41,7 @@ func qualifiedRoutedDHCPPacketProfileV1() routedDHCPPacketProfileV1 {
 }
 
 type routedDHCPServiceObservationV1 struct {
+	tree      func(context.Context, string, RoutedDHCPServiceCgroupIdentityV1) error
 	pin       *os.File
 	identity  RoutedDHCPServiceCgroupIdentityV1
 	binding   RoutedDHCPDeferredBindingV4
@@ -61,6 +62,10 @@ type routedDHCPSocketCaptureV1 struct {
 }
 
 func newRoutedDHCPServiceObservationV1(ctx context.Context, pin *os.File, id RoutedDHCPServiceCgroupIdentityV1, b RoutedDHCPDeferredBindingV4, reader *RoutedDHCPDeferredReaderV4, packet routedDHCPPacketProfileV1) (*routedDHCPServiceObservationV1, error) {
+	return newRoutedDHCPServiceObservationTreeV2(ctx, pin, id, b, reader, packet, nil)
+}
+
+func newRoutedDHCPServiceObservationTreeV2(ctx context.Context, pin *os.File, id RoutedDHCPServiceCgroupIdentityV1, b RoutedDHCPDeferredBindingV4, reader *RoutedDHCPDeferredReaderV4, packet routedDHCPPacketProfileV1, tree func(context.Context, string, RoutedDHCPServiceCgroupIdentityV1) error) (*routedDHCPServiceObservationV1, error) {
 	if reader == nil || reader.reader == nil || !packet.valid() {
 		return nil, ErrIdentity
 	}
@@ -76,7 +81,7 @@ func newRoutedDHCPServiceObservationV1(ctx context.Context, pin *os.File, id Rou
 	if err != nil {
 		return nil, ErrIdentity
 	}
-	s := &routedDHCPServiceObservationV1{pin: pin, identity: id, binding: b, producer: os.NewFile(uintptr(fd), "retained-service-producer"), current: reader.Current, packet: packet}
+	s := &routedDHCPServiceObservationV1{pin: pin, identity: id, binding: b, producer: os.NewFile(uintptr(fd), "retained-service-producer"), current: reader.Current, packet: packet, tree: tree}
 	for _, link := range b.Desired.Config.Interfaces {
 		if link.Role == networkplan.WAN {
 			s.wan = link.Binding
@@ -112,12 +117,17 @@ func (s *routedDHCPServiceObservationV1) validate(ctx context.Context, live bool
 	}
 	// Parent traversal is permitted; child controls remain root-only (0700).
 	// Do not require a privilege change to read files below the retained pin.
-	parent, e := routedDHCPServiceParentV1()
-	if e != nil {
-		return e
+	if s.tree != nil {
+		e = s.tree(ctx, s.binding.Owner.Incarnation, id)
+	} else {
+		parent, err := routedDHCPServiceParentV1()
+		if err != nil {
+			return err
+		}
+		defer parent.Close()
+		e = routedDHCPServiceTreeV1(parent, name, id)
 	}
-	defer parent.Close()
-	if e = routedDHCPServiceTreeV1(parent, name, id); e != nil {
+	if e != nil {
 		return e
 	}
 	if ctx.Err() != nil || !routedDHCPOwnerPIDFDAliveV3(s.producer, pid) {

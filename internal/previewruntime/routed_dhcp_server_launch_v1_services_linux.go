@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"sync"
 
 	"golang.org/x/sys/unix"
@@ -19,8 +20,18 @@ type RoutedDHCPServerServiceSetV1 struct {
 	parent    *os.File
 	wan, lan  *routedDHCPServiceCgroupV1
 	retiring  bool
+	wanState  routedDHCPWANSlotStateV2
 	retireErr error
 }
+
+type routedDHCPWANSlotStateV2 uint8
+
+const (
+	routedDHCPWANUnclaimedV2 routedDHCPWANSlotStateV2 = iota
+	routedDHCPWANClaimedV2
+	routedDHCPWANStartAttemptedV2
+	routedDHCPWANDrainedV2
+)
 
 type RoutedDHCPServerServiceSetOptionsV1 struct {
 	WANEnabled, LANEnabled         bool
@@ -132,6 +143,51 @@ func (s *RoutedDHCPServerServiceSetV1) ReadOnlyPinsV1() ([]RoutedDHCPServerCgrou
 	return out, nil
 }
 
+// Each reserved WAN name binds one producer identity for this network scope.
+func (s *RoutedDHCPServerServiceSetV1) claimWANV2() (*routedDHCPServiceCgroupV1, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retiring || s.wanState != routedDHCPWANUnclaimedV2 || s.verifyUnderV1() != nil {
+		return nil, ErrUnavailable
+	}
+	var raw [257]byte
+	n, err := unix.Pread(int(s.wan.events.Fd()), raw[:], 0)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	populated, err := routedDHCPServicePopulatedV1(raw[:n])
+	if err != nil || populated {
+		return nil, ErrUnavailable
+	}
+	s.wanState = routedDHCPWANClaimedV2
+	return s.wan, nil
+}
+
+func (s *RoutedDHCPServerServiceSetV1) readonlyWANV2(slot *routedDHCPServiceCgroupV1) (*os.File, RoutedDHCPServiceCgroupIdentityV1, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retiring || s.wan != slot || (s.wanState != routedDHCPWANClaimedV2 && s.wanState != routedDHCPWANStartAttemptedV2) || s.verifyUnderV1() != nil {
+		return nil, RoutedDHCPServiceCgroupIdentityV1{}, ErrUnavailable
+	}
+	fd, err := unix.FcntlInt(slot.directory.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return nil, RoutedDHCPServiceCgroupIdentityV1{}, ErrUnavailable
+	}
+	return os.NewFile(uintptr(fd), "retained-wan-slot"), slot.identity, nil
+}
+
+func (s *RoutedDHCPServerServiceSetV1) startWANV2(cmd *exec.Cmd, slot *routedDHCPServiceCgroupV1) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retiring || s.wan != slot || s.wanState != routedDHCPWANClaimedV2 || s.verifyUnderV1() != nil ||
+		cmd.SysProcAttr == nil || !cmd.SysProcAttr.UseCgroupFD || cmd.SysProcAttr.CgroupFD != int(slot.directory.Fd()) {
+		return ErrIdentity
+	}
+	// Consume start permission even if clone fails. An incarnation is never retried.
+	s.wanState = routedDHCPWANStartAttemptedV2
+	return cmd.Start()
+}
+
 func (s *RoutedDHCPServerServiceSetV1) drainUnderV1(ctx context.Context, slot *routedDHCPServiceCgroupV1) error {
 	if slot == nil {
 		return ErrIdentity
@@ -168,6 +224,8 @@ func (s *RoutedDHCPServerServiceSetV1) DrainFeatureV1(ctx context.Context, role 
 	}
 	switch role {
 	case "wan":
+		// Revoke a reserved start before checking whether the leaf is empty.
+		s.wanState = routedDHCPWANDrainedV2
 		return s.drainUnderV1(ctx, s.wan)
 	case "lan":
 		return s.drainUnderV1(ctx, s.lan)

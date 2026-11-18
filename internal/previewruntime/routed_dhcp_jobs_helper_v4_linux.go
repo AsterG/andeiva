@@ -128,7 +128,11 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 			h.failed = true
 			return e
 		}
-		service, e := newRoutedDHCPServiceObservationV1(ctx, files[3], *reply.ServiceCgroupIdentity, binding, owner, h.assembly.packetProfile)
+		var tree func(context.Context, string, RoutedDHCPServiceCgroupIdentityV1) error
+		if h.assembly.client.servicesEnabled {
+			tree = h.assembly.client.verifyWANServiceTreeV2
+		}
+		service, e := newRoutedDHCPServiceObservationTreeV2(ctx, files[3], *reply.ServiceCgroupIdentity, binding, owner, h.assembly.packetProfile, tree)
 		if e != nil {
 			_ = files[3].Close()
 			_ = owner.Close()
