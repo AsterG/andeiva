@@ -137,8 +137,10 @@ func RunRoutedDHCPServerRoleV2(parent context.Context) (result error) {
 	if err != nil || b.DeadlineBootNS <= now {
 		return ErrIdentity
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(b.DeadlineBootNS-now))
+	lifetime, cancel := context.WithCancel(parent)
 	defer cancel()
+	ctx, cancelStartup := context.WithTimeout(lifetime, time.Duration(b.DeadlineBootNS-now))
+	defer cancelStartup()
 	// EOF is revocation. Any byte is a protocol error, never a command.
 	controlDone := make(chan error, 1)
 	go func() {
@@ -161,5 +163,8 @@ func RunRoutedDHCPServerRoleV2(parent context.Context) (result error) {
 		}
 	}()
 	o := RoutedDHCPServerResourcesV1{Metadata: b.Metadata, Gateway: files[0], Host: files[1], HostMount: files[2], Configuration: files[3], Leases: files[4], Config: b.Config, Bindings: bindings, ServiceCgroups: pins, LeaseBudgetBytes: b.LeaseBudgetBytes, mountPins: mountPins}
+	if b.SupervisorLifetime {
+		return runRoutedDHCPServerComponentScopedV2(ctx, lifetime, b.DeadlineBootNS, o)
+	}
 	return RunRoutedDHCPServerComponentV1(ctx, o)
 }

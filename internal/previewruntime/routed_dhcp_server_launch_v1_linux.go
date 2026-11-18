@@ -44,6 +44,7 @@ type routedDHCPServerBootstrapV2 struct {
 	ParentStartTicks   uint64                          `json:"parent_start_ticks"`
 	HostMountNamespace uint64                          `json:"host_mount_namespace"`
 	DeadlineBootNS     int64                           `json:"deadline_boot_ns"`
+	SupervisorLifetime bool                            `json:"supervisor_lifetime,omitempty"`
 	Metadata           Metadata                        `json:"metadata"`
 	Config             dhcpserver.Config               `json:"config"`
 	Bindings           []routedDHCPServerBindingWireV1 `json:"bindings"`
@@ -56,16 +57,20 @@ type routedDHCPServerBootstrapV2 struct {
 // Root must independently observe Kea and drain its exact service cgroup before
 // removing the namespace. No API/helper receives its control or writable FD.
 type RoutedDHCPServerLaunchV1 struct {
-	mu        sync.Mutex
-	pid       int
-	pidfd     int
-	control   *os.File
-	done      <-chan error
-	stopOnce  sync.Once
-	stopError error
-	stopWatch func() bool
-	closed    bool
-	waitGate  chan struct{}
+	mu               sync.Mutex
+	pid              int
+	pidfd            int
+	control          *os.File
+	done             <-chan error
+	stopOnce         sync.Once
+	stopError        error
+	stopWatch        func() bool
+	startup          context.Context
+	lifetime         context.Context
+	startupBootNS    int64
+	stopStartupWatch func() bool
+	closed           bool
+	waitGate         chan struct{}
 }
 
 func (s *RoutedDHCPServerLaunchV1) PID() int {
@@ -92,8 +97,18 @@ func (s *RoutedDHCPServerLaunchV1) Alive() bool {
 // Start is called only after selected-policy authorization under closed
 // forwarding. It creates no configuration store, listener or timer when absent.
 // The supplied lease directory is operational state and is never replaced.
-func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1) (launch *RoutedDHCPServerLaunchV1, result error) {
-	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || o.Metadata.ValidateRouted() != nil {
+func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1) (*RoutedDHCPServerLaunchV1, error) {
+	return startRoutedDHCPServerScopedV2(ctx, nil, o)
+}
+
+// An authenticated selected-runtime caller supplies its supervisor context.
+// The sealed bootstrap deadline bounds setup. The control pipe owns serving.
+func startRoutedDHCPServerScopedV2(ctx, lifetime context.Context, o RoutedDHCPServerResourcesV1) (launch *RoutedDHCPServerLaunchV1, result error) {
+	supervisorLifetime := lifetime != nil
+	if !supervisorLifetime {
+		lifetime = ctx
+	}
+	if ctx == nil || ctx.Err() != nil || lifetime.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || o.Metadata.ValidateRouted() != nil {
 		return nil, ErrIdentity
 	}
 	deadline, ok := ctx.Deadline()
@@ -170,7 +185,7 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 	if err != nil {
 		return nil, err
 	}
-	b := routedDHCPServerBootstrapV2{Version: 2, ParentPID: os.Getpid(), ParentStartTicks: start, HostMountNamespace: hostMount, DeadlineBootNS: now + int64(remaining), Metadata: o.Metadata, Config: o.Config, LeaseBudgetBytes: o.LeaseBudgetBytes, MountPins: mountWire}
+	b := routedDHCPServerBootstrapV2{Version: 2, ParentPID: os.Getpid(), ParentStartTicks: start, HostMountNamespace: hostMount, DeadlineBootNS: now + int64(remaining), SupervisorLifetime: supervisorLifetime, Metadata: o.Metadata, Config: o.Config, LeaseBudgetBytes: o.LeaseBudgetBytes, MountPins: mountWire}
 	for _, binding := range o.Bindings {
 		b.Bindings = append(b.Bindings, routedDHCPServerBindingWireV1{binding.Interface.InterfaceID, binding.Interface.Role, binding.Interface.Address.String(), binding.Name, binding.SubnetID})
 	}
@@ -191,14 +206,53 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 	for _, pin := range o.ServiceCgroups {
 		files = append(files, pin.Directory)
 	}
+	if ctx.Err() != nil || lifetime.Err() != nil || !routedDHCPServerBeforeBootDeadlineV2(b.DeadlineBootNS) {
+		return nil, errors.Join(ErrUnavailable, controlWrite.Close())
+	}
 	cmd := routedDHCPServerRoleCommandV1(self, files, int(own.Fd()))
 	fd, done, err := routedDHCPServerStartV1(cmd)
 	if err != nil {
 		return nil, errors.Join(err, controlWrite.Close())
 	}
 	s := &RoutedDHCPServerLaunchV1{pid: cmd.Process.Pid, pidfd: fd, control: controlWrite, done: done}
-	s.stopWatch = context.AfterFunc(ctx, func() { _ = s.control.Close() })
+	s.stopWatch = context.AfterFunc(lifetime, func() { _ = s.control.Close() })
+	if supervisorLifetime {
+		s.startup, s.lifetime, s.startupBootNS = ctx, lifetime, b.DeadlineBootNS
+		s.stopStartupWatch = context.AfterFunc(ctx, func() { _ = s.control.Close() })
+	}
+	if ctx.Err() != nil || lifetime.Err() != nil || !routedDHCPServerBeforeBootDeadlineV2(b.DeadlineBootNS) {
+		cleanup, cancel := context.WithTimeout(context.Background(), routedDHCPServerStopGraceV1)
+		defer cancel()
+		return nil, errors.Join(ErrUnavailable, s.Stop(cleanup))
+	}
 	return s, nil
+}
+
+// acceptStartupV2 hands lifetime to the retained control pipe after the caller
+// verifies readiness and the selected Work again. It grants no network authority.
+func (s *RoutedDHCPServerLaunchV1) acceptStartupV2() error {
+	if s == nil {
+		return ErrIdentity
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.startup == nil || s.stopStartupWatch == nil {
+		return ErrUnavailable
+	}
+	available := func() bool {
+		return s.startup.Err() == nil && s.lifetime != nil && s.lifetime.Err() == nil && routedDHCPServerBeforeBootDeadlineV2(s.startupBootNS)
+	}
+	if !available() || !s.stopStartupWatch() || !available() {
+		_ = s.control.Close()
+		return ErrUnavailable
+	}
+	s.startup = nil
+	return nil
+}
+
+func routedDHCPServerBeforeBootDeadlineV2(deadline int64) bool {
+	now, err := routedDHCPOwnerBootNowV3()
+	return err == nil && now > 0 && now < deadline
 }
 
 func routedDHCPServerRoleCommandV1(executable string, files []*os.File, cgroupFD int) *exec.Cmd {
@@ -242,6 +296,9 @@ func (s *RoutedDHCPServerLaunchV1) Stop(ctx context.Context) error {
 		return ErrIdentity
 	}
 	s.stopOnce.Do(func() {
+		if s.stopStartupWatch != nil {
+			s.stopStartupWatch()
+		}
 		if s.stopWatch != nil {
 			s.stopWatch()
 		}
