@@ -16,9 +16,11 @@ order cannot change allocation order. Limits are 4096 mappings and 1 MiB.
 An independent directory flock serializes callers. A new file is written with
 exclusive/no-follow creation, synced, atomically renamed and the directory
 synced before IDs are returned. Any failed persistence returns no IDs: callers
-must not start an engine. A pending file is an uncertainty fence; it is neither
-adopted nor automatically deleted. Cancellation is cooperative, not a hard disk
-I/O bound. The registry never stops an existing service.
+must not start an engine. If the rename is visible after a directory sync
+failure, a retry must sync the directory under lock before returning any ID.
+A pending file blocks requests until a protected recovery. Cancellation is
+cooperative, without a hard disk I/O bound. The registry leaves any running
+service active.
 
 Missing mappings with any existing lease entry refuse initialization. An empty,
 locked lease directory permits initialization. At the mapping/byte quota,

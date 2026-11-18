@@ -26,7 +26,11 @@ func EnsureRoutedDHCPSubnetIDsV1(ctx context.Context, directory, leases *os.File
 
 // Owner parameters keep filesystem validation independently testable without
 // root. The production entry point fixes both to zero.
-func ensureDHCPSubnetIDsV1(ctx context.Context, directory, leases *os.File, bindings []RoutedDHCPSubnetBindingV1, uid, gid uint32) (ids []uint32, result error) {
+func ensureDHCPSubnetIDsV1(ctx context.Context, directory, leases *os.File, bindings []RoutedDHCPSubnetBindingV1, uid, gid uint32) ([]uint32, error) {
+	return ensureDHCPSubnetIDsWithDirectorySyncV1(ctx, directory, leases, bindings, uid, gid, (*os.File).Sync)
+}
+
+func ensureDHCPSubnetIDsWithDirectorySyncV1(ctx context.Context, directory, leases *os.File, bindings []RoutedDHCPSubnetBindingV1, uid, gid uint32, syncDirectory func(*os.File) error) (ids []uint32, result error) {
 	if ctx == nil || ctx.Err() != nil || directory == nil || leases == nil {
 		return nil, ErrRoutedDHCPSubnetRegistryV1
 	}
@@ -103,8 +107,14 @@ func ensureDHCPSubnetIDsV1(ctx context.Context, directory, leases *os.File, bind
 		return nil, ErrRoutedDHCPSubnetRegistryV1
 	}
 	if changed || missing {
-		if err := publishDHCPSubnetRegistryV1(ctx, dir, next, uid, gid); err != nil {
+		if err := publishDHCPSubnetRegistryV1(ctx, dir, next, uid, gid, syncDirectory); err != nil {
 			return nil, err
+		}
+	} else {
+		// A previous rename may be visible despite a failed directory sync.
+		// Verify durability while still holding the registry lock.
+		if syncDirectory(dir) != nil || ctx.Err() != nil {
+			return nil, ErrRoutedDHCPSubnetRegistryV1
 		}
 	}
 	return ids, nil
@@ -185,7 +195,7 @@ func readDHCPSubnetRegistryV1(dir *os.File, uid, gid uint32) (r routedDHCPSubnet
 	return r, false, e
 }
 
-func publishDHCPSubnetRegistryV1(ctx context.Context, dir *os.File, r routedDHCPSubnetRegistryV1, uid, gid uint32) error {
+func publishDHCPSubnetRegistryV1(ctx context.Context, dir *os.File, r routedDHCPSubnetRegistryV1, uid, gid uint32, syncDirectory func(*os.File) error) error {
 	raw, e := json.Marshal(r)
 	if e != nil || len(raw) > routedDHCPSubnetRegistryBytesV1 {
 		return ErrRoutedDHCPSubnetRegistryFullV1
@@ -223,7 +233,7 @@ func publishDHCPSubnetRegistryV1(ctx context.Context, dir *os.File, r routedDHCP
 	if unix.Renameat(int(dir.Fd()), routedDHCPSubnetRegistryPendingV1, int(dir.Fd()), routedDHCPSubnetRegistryNameV1) != nil {
 		return ErrRoutedDHCPSubnetRegistryV1
 	}
-	if dir.Sync() != nil || ctx.Err() != nil {
+	if syncDirectory(dir) != nil || ctx.Err() != nil {
 		return ErrRoutedDHCPSubnetRegistryV1
 	}
 	return nil

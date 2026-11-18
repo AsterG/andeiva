@@ -154,7 +154,7 @@ func TestDHCPSubnetRegistryV1FullFileStillServesExisting(t *testing.T) {
 		b.ScopeID = fmt.Sprintf("s-%d", i)
 		r.Entries = append(r.Entries, routedDHCPSubnetEntryV1{b, uint32(i)})
 	}
-	if e := publishDHCPSubnetRegistryV1(context.Background(), root, r, uid, gid); e != nil {
+	if e := publishDHCPSubnetRegistryV1(context.Background(), root, r, uid, gid, (*os.File).Sync); e != nil {
 		t.Fatal(e)
 	}
 	if ids, e := ensureDHCPSubnetIDsV1(context.Background(), root, leases, []RoutedDHCPSubnetBindingV1{r.Entries[0].Binding}, uid, gid); e != nil || ids[0] != 1 {
@@ -202,7 +202,7 @@ func TestDHCPSubnetRegistryV1InterruptedPublication(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			if e = publishDHCPSubnetRegistryV1(&subnetPublicationCancelV1{Context: ctx, cancel: cancel, at: at}, root, next, uid, gid); e == nil {
+			if e = publishDHCPSubnetRegistryV1(&subnetPublicationCancelV1{Context: ctx, cancel: cancel, at: at}, root, next, uid, gid, (*os.File).Sync); e == nil {
 				t.Fatal("cancellation accepted")
 			}
 			actual, _, e := readDHCPSubnetRegistryV1(root, uid, gid)
@@ -225,6 +225,36 @@ func TestDHCPSubnetRegistryV1InterruptedPublication(t *testing.T) {
 				t.Fatal("stable old ID lost", e)
 			}
 		})
+	}
+}
+
+func TestDHCPSubnetRegistryV1RejectsRetryWhileDirectorySyncFails(t *testing.T) {
+	root, leases, uid, gid := subnetRegistryFSV1(t)
+	ctx := context.Background()
+	original := subnetBindingFixtureV1()
+	if ids, err := ensureDHCPSubnetIDsV1(ctx, root, leases, []RoutedDHCPSubnetBindingV1{original}, uid, gid); err != nil || !reflect.DeepEqual(ids, []uint32{1}) {
+		t.Fatalf("initialize registry: IDs=%v error=%v", ids, err)
+	}
+	added := original
+	added.ScopeID = "new"
+	bindings := []RoutedDHCPSubnetBindingV1{original, added}
+	syncFails := func(*os.File) error { return unix.EIO }
+
+	ids, err := ensureDHCPSubnetIDsWithDirectorySyncV1(ctx, root, leases, bindings, uid, gid, syncFails)
+	if !errors.Is(err, ErrRoutedDHCPSubnetRegistryV1) || ids != nil {
+		t.Fatalf("directory fsync failure returned IDs: %v, error=%v", ids, err)
+	}
+	record, missing, err := readDHCPSubnetRegistryV1(root, uid, gid)
+	if err != nil || missing || record.HighWater != 2 {
+		t.Fatalf("expected complete renamed manifest, got high_water=%d missing=%v error=%v", record.HighWater, missing, err)
+	}
+	ids, err = ensureDHCPSubnetIDsWithDirectorySyncV1(ctx, root, leases, bindings, uid, gid, syncFails)
+	if !errors.Is(err, ErrRoutedDHCPSubnetRegistryV1) || ids != nil {
+		t.Fatalf("retry returned IDs without successful directory fsync: %v, error=%v", ids, err)
+	}
+	ids, err = ensureDHCPSubnetIDsV1(ctx, root, leases, bindings, uid, gid)
+	if err != nil || !reflect.DeepEqual(ids, []uint32{1, 2}) {
+		t.Fatalf("retry after storage recovered: IDs=%v error=%v", ids, err)
 	}
 }
 

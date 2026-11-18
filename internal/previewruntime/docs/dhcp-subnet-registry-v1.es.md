@@ -15,9 +15,12 @@ El orden del lote no cambia la asignación. Límites: 4096 entradas y 1 MiB.
 
 Flock independiente del directorio serializa llamadas. Creación exclusiva sin
 seguir enlaces, fsync del archivo, rename atómico y fsync del directorio preceden
-a devolver IDs. Cualquier fallo de persistencia devuelve cero IDs: no iniciar
-el motor. Un archivo pendiente bloquea por incertidumbre; no se adopta ni borra
-automáticamente. La cancelación es cooperativa, sin garantía temporal sobre disco.
+a devolver IDs. Si falla la persistencia, el registro no entrega IDs y el motor
+queda sin autorización para arrancar. Si el rename es visible tras fallar el
+fsync del directorio, el reintento debe sincronizarlo bajo bloqueo antes de
+entregar IDs. Un archivo pendiente bloquea por incertidumbre y se conserva para
+recuperación protegida. La cancelación es cooperativa, sin garantía temporal
+sobre disco.
 El registro nunca detiene el servicio existente.
 
 Sin registro, cualquier lease existente impide inicializar. Sólo un directorio

@@ -15,8 +15,10 @@ configuração. A ordem do lote não altera a atribuição. Limites: 4096 entrad
 
 Flock independente do diretório serializa chamadas. Criação exclusiva sem seguir
 links, fsync do arquivo, rename atômico e fsync do diretório precedem o retorno de
-IDs. Qualquer falha de persistência retorna zero IDs: não iniciar o motor. Arquivo
-pendente bloqueia por incerteza; não é adotado nem removido automaticamente.
+IDs. Se a persistência falhar, o registro não retorna IDs e o motor não pode
+iniciar. Se o rename estiver visível após uma falha no fsync do diretório, a
+próxima tentativa precisa sincronizar o diretório sob bloqueio para retornar IDs.
+Um arquivo pendente bloqueia as chamadas até a recuperação protegida.
 Cancelamento é cooperativo, sem garantia temporal de disco. O registro nunca
 interrompe o serviço existente.
 
