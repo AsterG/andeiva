@@ -11,8 +11,11 @@ import (
 	"testing"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/dhcpserver"
+	"github.com/AsterG/andeiva/internal/localpolicy"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/recoveryreserve"
+	"github.com/AsterG/andeiva/internal/routednft"
 )
 
 func preflightBootstrapFixtureV4() routedSelectedPreflightBootstrapV4 {
@@ -31,6 +34,12 @@ func TestRoutedSelectedPreflightV4CaplessProcessAndBoundedCodec(t *testing.T) {
 	if !b.valid() || routedPreflightProcessV4(1003, 1003, 1004, 1004, []int{1005}, status, b) != nil {
 		t.Fatal("valid capless reader rejected")
 	}
+	lan := b
+	lan.Purpose = RoutedPreflightDHCPServerV1
+	lan.Work = configpoc.RoutedWorkReferenceV1{Work: strings.Repeat("c", 64), Lineage: "lineage", Generation: 1}
+	if !lan.valid() || routedPreflightProcessV4(1003, 1003, 1004, 1004, []int{1005}, status, lan) != nil {
+		t.Fatal("valid capless LAN preflight rejected")
+	}
 	for name, mutate := range map[string]func(*routedSelectedPreflightBootstrapV4){
 		"profile":                func(v *routedSelectedPreflightBootstrapV4) { v.Version = 3 },
 		"nonce":                  func(v *routedSelectedPreflightBootstrapV4) { v.Nonce = "bad" },
@@ -39,6 +48,7 @@ func TestRoutedSelectedPreflightV4CaplessProcessAndBoundedCodec(t *testing.T) {
 		"retirement work":        func(v *routedSelectedPreflightBootstrapV4) { v.Work.Work = strings.Repeat("c", 64) },
 		"unknown purpose":        func(v *routedSelectedPreflightBootstrapV4) { v.Purpose = "apply" },
 		"DHCP no work":           func(v *routedSelectedPreflightBootstrapV4) { v.Purpose = RoutedPreflightDHCPV4 },
+		"LAN DHCP no work":       func(v *routedSelectedPreflightBootstrapV4) { v.Purpose = RoutedPreflightDHCPServerV1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			v := b
@@ -73,6 +83,71 @@ func TestRoutedSelectedPreflightV4CaplessProcessAndBoundedCodec(t *testing.T) {
 	}
 }
 
+func TestRoutedSelectedPreflightV4LANServerTarget(t *testing.T) {
+	local := localpolicy.Config{SchemaVersion: 1, Interfaces: []localpolicy.Interface{
+		{Name: "lan0", Zone: localpolicy.LAN, Addresses: []string{"198.18.0.1"}},
+		{Name: "wan0", Zone: localpolicy.WAN, Addresses: []string{"198.19.0.1"}},
+	}, Services: []localpolicy.Service{}}
+	localRevision, err := configpoc.Canonical(configpoc.Config{SchemaVersion: 3, DefaultAction: "deny", LocalServices: &local})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleFor := func(policy routednft.Policy) configpoc.RoutedActivationBundleV1 {
+		t.Helper()
+		firewall, err := configpoc.CanonicalRouted(configpoc.Config{SchemaVersion: 6, DefaultAction: "deny", Routed: &policy})
+		if err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := configpoc.NewRoutedActivationBundleV1(firewall, localRevision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bundle
+	}
+	policy := routednft.LabPolicy()
+	legacy := bundleFor(policy)
+	policy.SchemaVersion = 2
+	policy.DHCPServer = &dhcpserver.Config{SchemaVersion: 1, Enabled: true, Scopes: []dhcpserver.Scope{{
+		ID: "office", InterfaceID: "lan", Subnet: "198.18.0.0/24", Router: "198.18.0.1",
+		Pools:        []dhcpserver.Pool{{First: "198.18.0.10", Last: "198.18.0.20"}},
+		LeaseSeconds: 3600, RenewSeconds: 1800, RebindSeconds: 3000,
+	}}}
+	enabled := bundleFor(policy)
+	policy.DHCPServer.Enabled = false
+	disabled := bundleFor(policy)
+	identity := preflightBootstrapFixtureV4().Identity
+	work := configpoc.RoutedWorkReferenceV1{Work: strings.Repeat("c", 64), Lineage: "lineage", Generation: 1}
+	result := RoutedSelectedPreflightResultV4{
+		Identity: identity, Work: work, Bundle: enabled, Resolution: "target",
+		Reference: configpoc.SelectionReferenceV2{Selection: strings.Repeat("d", 64), State: strings.Repeat("e", 64), WorkHash: work.Work, Lineage: work.Lineage, Mode: "active"},
+	}
+	if routedPreflightResultV4(result, RoutedPreflightDHCPServerV1, identity, work) != nil {
+		t.Fatal("canonical active LAN server policy rejected")
+	}
+	if routedPreflightResultV4(result, RoutedPreflightDHCPV4, identity, work) == nil {
+		t.Fatal("static WAN treated as a DHCP acquisition plan")
+	}
+	for name, mutate := range map[string]func(*RoutedSelectedPreflightResultV4){
+		"legacy policy": func(v *RoutedSelectedPreflightResultV4) { v.Bundle = legacy },
+		"disabled":      func(v *RoutedSelectedPreflightResultV4) { v.Bundle = disabled },
+		"unresolved":    func(v *RoutedSelectedPreflightResultV4) { v.Resolution = "" },
+		"before side":   func(v *RoutedSelectedPreflightResultV4) { v.Resolution = "before" },
+		"pending":       func(v *RoutedSelectedPreflightResultV4) { v.Reference.Mode = "pending" },
+		"foreign scope": func(v *RoutedSelectedPreflightResultV4) { v.Identity.Namespace++ },
+		"forged work":   func(v *RoutedSelectedPreflightResultV4) { v.Reference.WorkHash = strings.Repeat("f", 64) },
+		"stale work":    func(v *RoutedSelectedPreflightResultV4) { v.Work.Generation++ },
+		"forged bundle": func(v *RoutedSelectedPreflightResultV4) { v.Bundle.Composite.Hash = strings.Repeat("f", 64) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := result
+			mutate(&v)
+			if routedPreflightResultV4(v, RoutedPreflightDHCPServerV1, identity, work) == nil {
+				t.Fatal("invalid server preflight accepted")
+			}
+		})
+	}
+}
+
 func TestRoutedSelectedPreflightV4RealFullReaderCorrelation(t *testing.T) {
 	f := newRoutedIPCFixtureWithPolicyV3(t, configpoc.SelectionFullHistoryV2)
 	ctx := context.Background()
@@ -90,6 +165,13 @@ func TestRoutedSelectedPreflightV4RealFullReaderCorrelation(t *testing.T) {
 	}
 	if _, err = routedReadPreflightV4(ctx, f.reader, RoutedPreflightDHCPV4, f.identity, configpoc.RoutedWorkReferenceV1{Work: out.Reference.WorkHash, Lineage: out.Reference.Lineage, Generation: 1}); err == nil {
 		t.Fatal("NoNetwork treated as DHCP")
+	}
+	plan, err := f.reader.Resolve(ctx, out.Reference, configpoc.SelectionMatchTargetV2)
+	if err != nil {
+		t.Fatal("NoNetwork selected plan", err)
+	}
+	if _, err = routedReadPreflightV4(ctx, f.reader, RoutedPreflightDHCPServerV1, f.identity, plan.Reference()); err == nil {
+		t.Fatal("NoNetwork treated as DHCP server")
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
