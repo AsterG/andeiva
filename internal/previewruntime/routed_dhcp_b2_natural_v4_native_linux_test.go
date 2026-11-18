@@ -127,6 +127,20 @@ func nativeDHCPB2FreshLiveV2(observe func() (bool, error), emit func() error) (b
 	return true, nil
 }
 
+func nativeDHCPB2ObserveControllerV2(ctx context.Context, c *RoutedDHCPControllerV3, observe func() (bool, error)) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	// Queue one read behind active reconciliation. Repeated TryLock probes can
+	// miss the gap between consecutive scheduler attempts.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return observe()
+}
+
 func nativeDHCPB2ServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, binding adminauth.SessionBinding, launch RoutedLaunchContextV3, startup, running string, first configpoc.RoutedDHCPGrantV3, acks <-chan os.Signal) (bool, error) {
 	base, err := os.Open("/proc/self/fd/5/..")
 	if err != nil {
@@ -162,17 +176,15 @@ func nativeDHCPB2ServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, bind
 			// away a missing recovery wake. Live is read-only verification.
 			var grant configpoc.RoutedDHCPGrantV3
 			complete, liveErr := nativeDHCPB2FreshLiveV2(func() (bool, error) {
-				if !r.DHCP.mu.TryLock() {
+				return nativeDHCPB2ObserveControllerV2(ctx, r.DHCP, func() (bool, error) {
+					grant = r.DHCP.grant
+					fresh := grant.Epoch > first.Epoch && !r.DHCP.recoveryOnly && r.DHCP.work == work && r.Service.RuntimeIntegrityReadyV1()
+					if fresh {
+						_, e := r.routed.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: work})
+						return true, e
+					}
 					return false, nil
-				}
-				defer r.DHCP.mu.Unlock()
-				grant = r.DHCP.grant
-				fresh := grant.Epoch > first.Epoch && !r.DHCP.recoveryOnly && r.DHCP.work == work && r.Service.RuntimeIntegrityReadyV1()
-				if fresh {
-					_, e := r.routed.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: work})
-					return true, e
-				}
-				return false, nil
+				})
 			}, func() error { return nativeDHCPB2EmitV4("recovered", seconds, work, running, grant) })
 			if liveErr != nil {
 				return true, liveErr
