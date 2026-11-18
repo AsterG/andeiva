@@ -3,10 +3,12 @@
 package previewruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -166,6 +168,40 @@ func TestDHCPSubnetRegistryV1FullFileStillServesExisting(t *testing.T) {
 	current, _, e := readDHCPSubnetRegistryV1(root, uid, gid)
 	if e != nil || !reflect.DeepEqual(current, r) {
 		t.Fatal("quota failure changed history", e)
+	}
+}
+
+func TestDHCPSubnetRegistryV1ExhaustedIDPreservesManifest(t *testing.T) {
+	root, leases, uid, gid := subnetRegistryFSV1(t)
+	ctx := context.Background()
+	key := subnetBindingFixtureV1()
+	const lastID = math.MaxUint32 - 1
+	sparse := routedDHCPSubnetRegistryV1{
+		Version: 1, HighWater: lastID,
+		Entries: []routedDHCPSubnetEntryV1{{key, lastID}},
+	}
+	if err := publishDHCPSubnetRegistryV1(ctx, root, sparse, uid, gid, (*os.File).Sync); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root.Name(), routedDHCPSubnetRegistryNameV1)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newKey := key
+	newKey.ScopeID = "new"
+	ids, err := ensureDHCPSubnetIDsV1(ctx, root, leases, []RoutedDHCPSubnetBindingV1{key, newKey}, uid, gid)
+	if !errors.Is(err, ErrRoutedDHCPSubnetRegistryFullV1) || ids != nil {
+		t.Errorf("exhausted registry accepted a new scope: IDs=%v error=%v", ids, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("exhaustion changed the manifest", err)
+	}
+	ids, err = ensureDHCPSubnetIDsV1(ctx, root, leases, []RoutedDHCPSubnetBindingV1{key}, uid, gid)
+	if err != nil || !reflect.DeepEqual(ids, []uint32{lastID}) {
+		t.Fatalf("last usable ID inaccessible: IDs=%v error=%v", ids, err)
 	}
 }
 

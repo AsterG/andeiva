@@ -76,11 +76,18 @@ func TestDHCPSubnetRegistryV1StrictDecodeAndQuota(t *testing.T) {
 	if _, ids, _, e := allocateDHCPSubnetRegistryV1(r, []RoutedDHCPSubnetBindingV1{b}); !errors.Is(e, ErrRoutedDHCPSubnetRegistryFullV1) || ids != nil {
 		t.Fatal("entry bound ignored")
 	}
-	r.Entries = []routedDHCPSubnetEntryV1{{b, math.MaxUint32}}
-	r.HighWater = math.MaxUint32
-	newKey := b
-	newKey.ScopeID = "new"
-	if _, _, _, e := allocateDHCPSubnetRegistryV1(r, []RoutedDHCPSubnetBindingV1{newKey}); !errors.Is(e, ErrRoutedDHCPSubnetRegistryFullV1) {
-		t.Fatal("uint32 ID wrapped")
+}
+
+func TestDHCPSubnetRegistryV1RejectsReservedID(t *testing.T) {
+	r := routedDHCPSubnetRegistryV1{
+		Version: 1, HighWater: math.MaxUint32,
+		Entries: []routedDHCPSubnetEntryV1{{subnetBindingFixtureV1(), math.MaxUint32}},
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeDHCPSubnetRegistryV1(raw); !errors.Is(err, ErrRoutedDHCPSubnetRegistryV1) {
+		t.Fatalf("reserved Kea ID accepted: %v", err)
 	}
 }

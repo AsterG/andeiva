@@ -18,6 +18,8 @@ const (
 	routedDHCPSubnetRegistryPendingV1 = "scope-bindings.v1.pending"
 	routedDHCPSubnetRegistryEntriesV1 = 4096
 	routedDHCPSubnetRegistryBytesV1   = 1 << 20
+	// Kea reserves 0xffffffff as a sentinel.
+	routedDHCPSubnetRegistryMaxIDV1 = math.MaxUint32 - 1
 )
 
 var ErrRoutedDHCPSubnetRegistryV1 = errors.New("ANDEIVA_DHCP_SUBNET_REGISTRY_UNAVAILABLE")
@@ -76,7 +78,7 @@ func decodeDHCPSubnetRegistryV1(raw []byte) (routedDHCPSubnetRegistryV1, error) 
 	keys := map[RoutedDHCPSubnetBindingV1]bool{}
 	var last uint32
 	for _, e := range r.Entries {
-		if !validDHCPSubnetBindingV1(e.Binding) || keys[e.Binding] || e.ID == 0 || e.ID <= last {
+		if !validDHCPSubnetBindingV1(e.Binding) || keys[e.Binding] || e.ID <= last || e.ID > routedDHCPSubnetRegistryMaxIDV1 {
 			return r, ErrRoutedDHCPSubnetRegistryV1
 		}
 		keys[e.Binding] = true
@@ -105,7 +107,7 @@ func allocateDHCPSubnetRegistryV1(r routedDHCPSubnetRegistryV1, bindings []Route
 			missing[b] = true
 		}
 	}
-	if len(r.Entries)+len(missing) > routedDHCPSubnetRegistryEntriesV1 || uint64(r.HighWater)+uint64(len(missing)) > math.MaxUint32 {
+	if len(r.Entries)+len(missing) > routedDHCPSubnetRegistryEntriesV1 || uint64(r.HighWater)+uint64(len(missing)) > routedDHCPSubnetRegistryMaxIDV1 {
 		return r, nil, false, ErrRoutedDHCPSubnetRegistryFullV1
 	}
 	ordered := make([]RoutedDHCPSubnetBindingV1, 0, len(missing))
