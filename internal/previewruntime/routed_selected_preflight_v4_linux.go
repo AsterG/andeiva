@@ -62,7 +62,7 @@ func (b routedSelectedPreflightBootstrapV4) valid() bool {
 	if b.Purpose == RoutedPreflightRetirementV4 {
 		return b.Work == (configpoc.RoutedWorkReferenceV1{})
 	}
-	return b.Purpose == RoutedPreflightDHCPV4 && i.Namespace == b.Metadata.GatewayNamespace && i.Host == b.Metadata.HostNamespace && i.BootID == b.Metadata.BootID && i.RunID == b.Metadata.RunID && routedPrivateHashV4(b.Work.Work) && b.Work.Lineage != "" && len(b.Work.Lineage) <= 128 && b.Work.Generation != 0
+	return (b.Purpose == RoutedPreflightDHCPV4 || b.Purpose == RoutedPreflightDHCPServerV1) && i.Namespace == b.Metadata.GatewayNamespace && i.Host == b.Metadata.HostNamespace && i.BootID == b.Metadata.BootID && i.RunID == b.Metadata.RunID && routedPrivateHashV4(b.Work.Work) && b.Work.Lineage != "" && len(b.Work.Lineage) <= 128 && b.Work.Generation != 0
 }
 
 func routedPreflightProcessV4(uid, euid, gid, egid int, groups []int, status string, b routedSelectedPreflightBootstrapV4) error {
@@ -305,7 +305,7 @@ func routedReadPreflightV4(ctx context.Context, reader *configpoc.RoutedSelectio
 			return out, ErrIdentity
 		}
 		out.Reference = source.Reference()
-	} else if purpose == RoutedPreflightDHCPV4 {
+	} else if purpose == RoutedPreflightDHCPV4 || purpose == RoutedPreflightDHCPServerV1 {
 		before, e := reader.Observe(ctx)
 		if e != nil {
 			return out, e
