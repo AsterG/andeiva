@@ -524,7 +524,11 @@ func TestRoutedDHCPV4InspectionFailureSchedulerClosesUnchangedLiveGrant(t *testi
 		// The production callback, without a manual Reconcile, must close it.
 		controller.mu.Lock()
 		controller.afterInspectionV4(ErrUnavailable, true)
+		// Force the first iteration to skip the busy controller, then let
+		// the scheduled retry run on the synthetic clock.
+		synctest.Wait()
 		controller.mu.Unlock()
+		time.Sleep(500 * time.Millisecond)
 		synctest.Wait()
 		r.mu.Lock()
 		closed := !r.opened && !k.gate && !k.forward && k.target && r.renewalWaiting
