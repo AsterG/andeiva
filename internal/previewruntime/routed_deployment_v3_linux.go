@@ -459,6 +459,8 @@ func (s *RoutedLaunchSupervisorV3) apiExitV3() <-chan struct{} {
 	return s.api.done
 }
 
+var errRoutedAPIStartRetryableV3 = errors.New("ANDEIVA_GROUPED_API_START_RETRYABLE")
+
 // Management failure is not a reason to terminate the independent helper. A
 // failed recovery or exhausted retry budget leaves this root process alive,
 // preserving PDEATHSIG ownership and the helper's original guardian deadline.
@@ -466,10 +468,14 @@ func keepRoutedSupervisorV3(ctx context.Context, helperDone <-chan struct{}, api
 	var window time.Time
 	attempts := 0
 	degraded := false
+	var retry <-chan struct{}
 	for {
 		var apiDone <-chan struct{}
 		if !degraded {
-			apiDone = apiExit()
+			apiDone = retry
+			if apiDone == nil {
+				apiDone = apiExit()
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -479,7 +485,7 @@ func keepRoutedSupervisorV3(ctx context.Context, helperDone <-chan struct{}, api
 		case <-apiDone:
 		}
 		now := time.Now()
-		if window.IsZero() || now.Sub(window) >= time.Minute {
+		if retry == nil && (window.IsZero() || now.Sub(window) >= time.Minute) {
 			window = now
 			attempts = 0
 		}
@@ -499,7 +505,15 @@ func keepRoutedSupervisorV3(ctx context.Context, helperDone <-chan struct{}, api
 		case <-timer.C:
 		}
 		attempts++
-		if err := restart(ctx); err != nil {
+		err := restart(ctx)
+		if errors.Is(err, errRoutedAPIStartRetryableV3) {
+			// The failed attempt has no child exit channel of its own. Keep
+			// the original trigger and consume the same incident's budget.
+			retry = apiDone
+			continue
+		}
+		retry = nil
+		if err != nil {
 			degraded = true
 			_, _ = io.WriteString(diagnostic, "ANDEIVA_GROUPED_API_RECOVERY_REQUIRED\n")
 		}
