@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import exception from './frontend-audit-exception.json' with { type: 'json' };
 
 const lock = JSON.parse(readFileSync('frontend/package-lock.json', 'utf8'));
 const runtimeLicenses = new Set(['Apache-2.0', 'MIT', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', '0BSD']);
@@ -14,6 +15,8 @@ for (const [path, dependency] of Object.entries(lock.packages)) {
     version: dependency.version,
     license: dependency.license,
     scope: dependency.dev ? 'development' : 'runtime',
+    ...(path === `node_modules/${exception.package}` && dependency.dev === true &&
+      dependency.version === exception.version ? { temporaryAuditException: exception } : {}),
   });
 }
 console.log(JSON.stringify({

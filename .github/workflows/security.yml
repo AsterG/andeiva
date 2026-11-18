@@ -41,7 +41,13 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: frontend
       - name: Audit all frontend dependencies including build tools
-        run: npm audit --audit-level=moderate
+        run: |
+          audit_status=0
+          audit_report="$RUNNER_TEMP/frontend-audit.json"
+          npm audit --audit-level=moderate --json > "$audit_report" || audit_status=$?
+          cat "$audit_report"
+          node --test ../scripts/check-frontend-audit.test.mjs
+          node ../scripts/check-frontend-audit.mjs "$audit_report" "$audit_status"
         working-directory: frontend
       - name: Generate dependency and license inventories
         run: |
