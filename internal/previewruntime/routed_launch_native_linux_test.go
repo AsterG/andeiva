@@ -55,6 +55,8 @@ func TestMain(m *testing.M) {
 			err = RunRoutedDHCPServerRoleV1(ctx)
 		case RoutedDHCPServerRoleV2:
 			err = RunRoutedDHCPServerRoleV2(ctx)
+		case RoutedDHCPServerRoleV3:
+			err = RunRoutedDHCPServerRoleV3(ctx)
 		case RoutedSelectedPreflightRoleV4:
 			err = RunRoutedSelectedPreflightRoleV4(ctx)
 		case RoutedDHCPOwnerRoleV3:

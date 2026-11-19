@@ -51,10 +51,32 @@ func captureRoutedDHCPServerRawFDsV2(b routedDHCPServerBootstrapV2) error {
 			}
 		}
 	}
-	if err := checkRoutedDHCPServerRawFDEndV2(len(b.ServiceCgroups)); err != nil {
+	slotsAfterMounts := len(b.ServiceCgroups)
+	if b.Version == 3 {
+		if err := checkRoutedKeaSocketProofFDV3(12+slotsAfterMounts, b.ParentPID); err != nil {
+			return err
+		}
+		slotsAfterMounts++
+	}
+	if err := checkRoutedDHCPServerRawFDEndV2(slotsAfterMounts); err != nil {
 		return err
 	}
 	return validateRoutedDHCPServerRawFDsV2(b, raw)
+}
+
+func checkRoutedKeaSocketProofFDV3(fd, parent int) error {
+	var stat unix.Stat_t
+	flags, flagErr := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+	typ, typeErr := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_TYPE)
+	domain, domainErr := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_DOMAIN)
+	peer, peerErr := unix.GetsockoptUcred(fd, unix.SOL_SOCKET, unix.SO_PEERCRED)
+	if flagErr != nil || flags != 0 || typeErr != nil || typ != unix.SOCK_SEQPACKET ||
+		domainErr != nil || domain != unix.AF_UNIX || peerErr != nil || int(peer.Pid) != parent ||
+		peer.Uid != 0 || peer.Gid != 0 || unix.Fstat(fd, &stat) != nil ||
+		stat.Mode&unix.S_IFMT != unix.S_IFSOCK || stat.Uid != 0 {
+		return ErrIdentity
+	}
+	return nil
 }
 
 func checkRoutedDHCPServerRawFDEndV2(cgroupPins int) error {

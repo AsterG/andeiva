@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"net"
 	"os"
 	"os/exec"
 	"sync"
@@ -20,6 +21,7 @@ import (
 
 const RoutedDHCPServerRoleV1 = "--andeiva-routed-dhcp-server-v1"
 const RoutedDHCPServerRoleV2 = "--andeiva-routed-dhcp-server-v2"
+const RoutedDHCPServerRoleV3 = "--andeiva-routed-dhcp-server-v3"
 const routedDHCPServerBootstrapLimitV1 = 2*dhcpserver.MaxConfigBytes + 4096
 const routedDHCPServerStopGraceV1 = 5*time.Second + routedDHCPOwnerCallV3 // Existing engine shutdown plus role IPC budget.
 
@@ -70,7 +72,9 @@ type RoutedDHCPServerLaunchV1 struct {
 	startupBootNS    int64
 	stopStartupWatch func() bool
 	closed           bool
+	stopping         bool
 	waitGate         chan struct{}
+	socketObserver   *routedKeaSocketObserverV1
 }
 
 func (s *RoutedDHCPServerLaunchV1) PID() int {
@@ -86,12 +90,35 @@ func (s *RoutedDHCPServerLaunchV1) Alive() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.aliveUnderV1()
+}
+
+func (s *RoutedDHCPServerLaunchV1) aliveUnderV1() bool {
 	if s.closed || s.pidfd < 0 || s.pidfd > math.MaxInt32 {
 		return false
 	}
 	poll := []unix.PollFd{{Fd: int32(s.pidfd), Events: unix.POLLIN}}
 	n, err := unix.Poll(poll, 0)
 	return err == nil && n == 0
+}
+
+func (s *RoutedDHCPServerLaunchV1) inspectSocketsV3(ctx context.Context) (routedKeaSocketProofV1, error) {
+	if s == nil || s.socketObserver == nil {
+		return routedKeaSocketProofV1{}, ErrUnavailable
+	}
+	active := func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return !s.stopping && s.aliveUnderV1()
+	}
+	if !active() {
+		return routedKeaSocketProofV1{}, ErrUnavailable
+	}
+	proof, err := s.socketObserver.observe(ctx)
+	if err != nil || !active() {
+		return routedKeaSocketProofV1{}, ErrUnavailable
+	}
+	return proof, nil
 }
 
 // Start is called only after selected-policy authorization under closed
@@ -105,6 +132,9 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 // The sealed bootstrap deadline bounds setup. The control pipe owns serving.
 func startRoutedDHCPServerScopedV2(ctx, lifetime context.Context, o RoutedDHCPServerResourcesV1) (launch *RoutedDHCPServerLaunchV1, result error) {
 	supervisorLifetime := lifetime != nil
+	if o.socketProof && !supervisorLifetime {
+		return nil, ErrIdentity
+	}
 	if !supervisorLifetime {
 		lifetime = ctx
 	}
@@ -186,6 +216,21 @@ func startRoutedDHCPServerScopedV2(ctx, lifetime context.Context, o RoutedDHCPSe
 		return nil, err
 	}
 	b := routedDHCPServerBootstrapV2{Version: 2, ParentPID: os.Getpid(), ParentStartTicks: start, HostMountNamespace: hostMount, DeadlineBootNS: now + int64(remaining), SupervisorLifetime: supervisorLifetime, Metadata: o.Metadata, Config: o.Config, LeaseBudgetBytes: o.LeaseBudgetBytes, MountPins: mountWire}
+	var proof *net.UnixConn
+	var roleProof *os.File
+	if o.socketProof {
+		proof, roleProof, err = routedDHCPJobPairV4()
+		if err != nil {
+			return nil, err
+		}
+		defer roleProof.Close()
+		defer func() {
+			if launch == nil {
+				_ = proof.Close()
+			}
+		}()
+		b.Version = 3
+	}
 	for _, binding := range o.Bindings {
 		b.Bindings = append(b.Bindings, routedDHCPServerBindingWireV1{binding.Interface.InterfaceID, binding.Interface.Role, binding.Interface.Address.String(), binding.Name, binding.SubnetID})
 	}
@@ -206,15 +251,24 @@ func startRoutedDHCPServerScopedV2(ctx, lifetime context.Context, o RoutedDHCPSe
 	for _, pin := range o.ServiceCgroups {
 		files = append(files, pin.Directory)
 	}
+	if roleProof != nil {
+		files = append(files, roleProof)
+	}
 	if ctx.Err() != nil || lifetime.Err() != nil || !routedDHCPServerBeforeBootDeadlineV2(b.DeadlineBootNS) {
 		return nil, errors.Join(ErrUnavailable, controlWrite.Close())
 	}
 	cmd := routedDHCPServerRoleCommandV1(self, files, int(own.Fd()))
+	if roleProof != nil {
+		cmd.Args[len(cmd.Args)-1] = RoutedDHCPServerRoleV3
+	}
 	fd, done, err := routedDHCPServerStartV1(cmd)
 	if err != nil {
 		return nil, errors.Join(err, controlWrite.Close())
 	}
 	s := &RoutedDHCPServerLaunchV1{pid: cmd.Process.Pid, pidfd: fd, control: controlWrite, done: done}
+	if proof != nil {
+		s.socketObserver = &routedKeaSocketObserverV1{conn: proof, peer: routedDHCPJobPeerV4{pid: s.pid}}
+	}
 	s.stopWatch = context.AfterFunc(lifetime, func() { _ = s.control.Close() })
 	if supervisorLifetime {
 		s.startup, s.lifetime, s.startupBootNS = ctx, lifetime, b.DeadlineBootNS
@@ -296,6 +350,9 @@ func (s *RoutedDHCPServerLaunchV1) Stop(ctx context.Context) error {
 		return ErrIdentity
 	}
 	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.stopping = true
+		s.mu.Unlock()
 		if s.stopStartupWatch != nil {
 			s.stopStartupWatch()
 		}
@@ -303,6 +360,9 @@ func (s *RoutedDHCPServerLaunchV1) Stop(ctx context.Context) error {
 			s.stopWatch()
 		}
 		_ = s.control.Close()
+		if s.socketObserver != nil {
+			_ = s.socketObserver.conn.Close()
+		}
 	})
 	// Revocation is one-shot. Waiting is retryable: a timed-out caller retains
 	// the pidfd until another bounded call observes Wait and closes it once.

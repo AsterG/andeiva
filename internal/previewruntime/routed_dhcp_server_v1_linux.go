@@ -40,6 +40,8 @@ type RoutedDHCPServerResourcesV1 struct {
 	Bindings                                        []dhcpkea.Binding
 	ServiceCgroups                                  []RoutedDHCPServerCgroupPinV1
 	mountPins                                       *routedDHCPServerMountPinsV2
+	socketProof                                     bool
+	inspect                                         func(context.Context, int, int, uint32, uint32) error
 	// Trusted storage-plan budget for existing lease/LFC files, not a request
 	// option. This preflight bound does not enforce ongoing filesystem quotas.
 	LeaseBudgetBytes int64
@@ -130,7 +132,13 @@ func runRoutedDHCPServerComponentScopedV2(ctx, lifetime context.Context, startup
 	if ctx.Err() != nil || lifetime.Err() != nil || (startupBootNS != 0 && !routedDHCPServerBeforeBootDeadlineV2(startupBootNS)) {
 		return ErrUnavailable
 	}
-	return routedDHCPServerExecV1(lifetime, uid, gid, nil)
+	if o.inspect == nil {
+		return routedDHCPServerExecV1(lifetime, uid, gid, nil)
+	}
+	cmd := routedDHCPServerCommandV1(uid, gid, false)
+	return routedDHCPServerWaitWithInspectionV1(lifetime, cmd, false, func(ctx context.Context, fd, pid int) error {
+		return o.inspect(ctx, fd, pid, uid, gid)
+	})
 }
 
 func routedDHCPServerAccountV1() (uint32, uint32, error) {
@@ -494,6 +502,10 @@ func routedDHCPServerStartV1(cmd *exec.Cmd) (int, <-chan error, error) {
 }
 
 func routedDHCPServerWaitV1(ctx context.Context, cmd *exec.Cmd, check bool) error {
+	return routedDHCPServerWaitWithInspectionV1(ctx, cmd, check, nil)
+}
+
+func routedDHCPServerWaitWithInspectionV1(ctx context.Context, cmd *exec.Cmd, check bool, inspect func(context.Context, int, int) error) error {
 	if ctx == nil || ctx.Err() != nil {
 		return ErrUnavailable
 	}
@@ -502,6 +514,19 @@ func routedDHCPServerWaitV1(ctx context.Context, cmd *exec.Cmd, check bool) erro
 		return err
 	}
 	defer unix.Close(fd)
+	var inspector <-chan error
+	if inspect != nil {
+		inspection, cancel := context.WithCancel(ctx)
+		observed := make(chan error, 1)
+		inspector = observed
+		go func() { observed <- inspect(inspection, fd, cmd.Process.Pid) }()
+		defer func() {
+			cancel()
+			if inspector != nil {
+				<-inspector
+			}
+		}()
+	}
 	select {
 	case err = <-done:
 		if err != nil || ctx.Err() != nil || !check {
@@ -509,15 +534,22 @@ func routedDHCPServerWaitV1(ctx context.Context, cmd *exec.Cmd, check bool) erro
 		}
 		return nil
 	case <-ctx.Done():
-		_ = unix.PidfdSendSignal(fd, unix.SIGTERM, nil, 0)
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second): // Existing DHCP owner shutdown budget.
-			_ = unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
-			<-done
+		err = ctx.Err()
+	case err = <-inspector:
+		// The inspected engine must never outlive a malformed or lost proof channel.
+		inspector = nil
+		if err == nil {
+			err = ErrUnavailable
 		}
-		return ctx.Err()
 	}
+	_ = unix.PidfdSendSignal(fd, unix.SIGTERM, nil, 0)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second): // Existing DHCP owner shutdown budget.
+		_ = unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
+		<-done
+	}
+	return err
 }
 
 // Bounded private capture; no lease data or engine diagnostics enter public
