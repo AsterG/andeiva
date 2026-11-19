@@ -469,6 +469,7 @@ func (s *v2Store) readSelection() error {
 		var state v2State
 		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage ||
 			!validRoutedCompensationSequenceV1(state, prior.Sequence) || !validRoutedCompensationPublicationV1(state, currentState, current.Sequence) ||
+			!validRoutedBootMarkSourceV1(state, currentState, current.Previous) ||
 			!preservesSelectedDHCPConfigurationReadV4(state, currentState, current.Previous, prior, s.readObject, routedDHCPConfigurationHeaderV4) || !preservesReclamationV2(state, currentState) || !preservesRecoveryReserveV2(state, currentState) {
 			return errV2Unavailable
 		}
@@ -540,6 +541,9 @@ func (s *v2Store) publish(state v2State) (result error) {
 	}
 	p, n := s.state.RoutedBootMarks, state.RoutedBootMarks
 	if n != nil && (p == nil || *p != *n) {
+		if !validRoutedBootMarkSourceV1(s.state, state, s.selector.Current) {
+			return ErrRecovery
+		}
 		record, err := loadRoutedBootMarkReservationV1(n, state.Lineage, s.readObject)
 		if err != nil || s.state.RoutedDHCP == nil || s.state.RoutedDHCP.Phase != "applied" || record.Work != s.state.RoutedDHCP.Work {
 			return ErrRecovery

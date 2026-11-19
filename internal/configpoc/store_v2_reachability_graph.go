@@ -39,6 +39,10 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		}
 		featuresPreserved := true
 		if i > 0 {
+			if !validRoutedBootMarkSourceV1(state, previousState, hash) {
+				release()
+				return ErrRecovery
+			}
 			featuresPreserved, err = r.preservesFeaturesConfigurationReadV4(state, previousState, selection, hash, previousSelection, routedDHCPConfigurationHeaderV4)
 			if err != nil {
 				release()

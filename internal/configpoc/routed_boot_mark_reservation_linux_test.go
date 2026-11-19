@@ -36,7 +36,7 @@ func TestRoutedBootMarksReserveRollbackBeforeEffects(t *testing.T) {
 	if err != nil || len(before.Policy.Rules) == 0 {
 		t.Fatal("invalid fixture policy", err)
 	}
-	initial, _, closed, err := s.reserveRoutedBootMarksLocked(id, nil, before, before)
+	initial, _, closed, err := s.reserveRoutedBootMarksLocked(id, "adopt", nil, before, before)
 	if err != nil || !closed || initial.Issued == 0 {
 		t.Fatal("first adoption requires named marks and a closed path", err)
 	}
@@ -46,7 +46,7 @@ func TestRoutedBootMarksReserveRollbackBeforeEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	applied, restored, closed, err := s.reserveRoutedBootMarksLocked(id, &initial, before, target)
+	applied, restored, closed, err := s.reserveRoutedBootMarksLocked(id, "group-commit", &initial, before, target)
 	if err != nil || closed || len(applied.Bindings) == 0 || applied.Issued <= initial.Issued ||
 		restored.Issued <= applied.Issued || restored.Bindings[0].Mark <= applied.Bindings[0].Mark {
 		t.Fatal("reservation failed to reserve a new restoration mark", applied, restored, err)
@@ -62,9 +62,19 @@ func TestRoutedBootMarksReserveRollbackBeforeEffects(t *testing.T) {
 		!sameRoutedAdmissionMarksV1(reservation.Applied, applied) || !sameRoutedAdmissionMarksV1(reservation.Restored, restored) {
 		t.Fatal("selected record did not bind both assignments to the original gateway and Work", err)
 	}
-	evidence, err := reader.ResolveBootMarkPlanV1(context.Background(), hash, stored.RoutedBootMarks.Reservation)
+	evidence, err := reader.ResolveBootMarkPlanV1(context.Background(), hash, stored.RoutedBootMarks.Reservation, "group-commit")
 	if err != nil || !sameRoutedAdmissionMarksV1(evidence.Applied, applied) || !sameRoutedAdmissionMarksV1(evidence.Restored, restored) {
 		t.Fatal("independent reader did not resolve the selected reservation", err)
+	}
+	if _, err = reader.ResolveBootMarkPlanV1(context.Background(), hash, stored.RoutedBootMarks.Reservation, "foreign-commit"); !errors.Is(err, ErrRecovery) {
+		t.Fatal("another operation resolved the mark assignment", err)
+	}
+	originalConfig := clone(*s.state.Configuration)
+	changedConfig := clone(originalConfig)
+	changedConfig.Firewall.Running.Config.Routed = &target.Policy
+	if !validReservedRoutedGroupMarksV1(stored, stored.RoutedBootMarks.Reservation, "group-commit", id, originalConfig, changedConfig, s.readObject) ||
+		validReservedRoutedGroupMarksV1(stored, stored.RoutedBootMarks.Reservation, "group-commit", id, originalConfig, originalConfig, s.readObject) {
+		t.Fatal("reservation did not constrain the exact grouped target")
 	}
 	// Simulate a lost effect reply. A retry using the same source policy and
 	// the persisted cursor consumes fresh marks instead of recycling either
@@ -72,15 +82,15 @@ func TestRoutedBootMarksReserveRollbackBeforeEffects(t *testing.T) {
 	if err = s.readSelection(); err != nil {
 		t.Fatal("could not reload the durable reservation", err)
 	}
-	retry, _, _, err := s.reserveRoutedBootMarksLocked(id, &initial, before, target)
+	retry, _, _, err := s.reserveRoutedBootMarksLocked(id, "group-commit", &initial, before, target)
 	if err != nil || retry.Bindings[0].Mark <= restored.Bindings[0].Mark {
 		t.Fatal("retry reused a reserved mark", retry, err)
 	}
-	if _, err = reader.ResolveBootMarkPlanV1(context.Background(), hash, stored.RoutedBootMarks.Reservation); !errors.Is(err, ErrRecovery) {
+	if _, err = reader.ResolveBootMarkPlanV1(context.Background(), hash, stored.RoutedBootMarks.Reservation, "group-commit"); !errors.Is(err, ErrRecovery) {
 		t.Fatal("a replaced reservation was still readable as selected", err)
 	}
 	previousCursor := *s.state.RoutedBootMarks
-	if _, _, _, err = s.reserveRoutedBootMarksLocked(id, &initial, before, before); err != nil ||
+	if _, _, _, err = s.reserveRoutedBootMarksLocked(id, "group-commit", &initial, before, before); err != nil ||
 		s.state.RoutedBootMarks.Issued != previousCursor.Issued ||
 		s.state.RoutedBootMarks.Reservation == previousCursor.Reservation {
 		t.Fatal("a reservation with unchanged rules used new marks or kept the previous plan", err)
@@ -88,7 +98,7 @@ func TestRoutedBootMarksReserveRollbackBeforeEffects(t *testing.T) {
 	head := s.selector.Current
 	foreign := id
 	foreign.Namespace++
-	if _, _, _, err = s.reserveRoutedBootMarksLocked(foreign, &initial, before, target); !errors.Is(err, ErrRecovery) || s.selector.Current != head {
+	if _, _, _, err = s.reserveRoutedBootMarksLocked(foreign, "group-commit", &initial, before, target); !errors.Is(err, ErrRecovery) || s.selector.Current != head {
 		t.Fatal("a foreign gateway reserved marks", err)
 	}
 	backward := clone(s.state)

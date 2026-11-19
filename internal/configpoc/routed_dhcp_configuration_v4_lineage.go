@@ -105,6 +105,12 @@ func routedDHCPConfigurationContextV4Read(x v4RoutedDHCPConfiguration, st v2Stat
 		if op.Reserve == nil || op.Reserve.PlanIntent == nil || op.Reserve.PlanIntent.RoutedWork != x.Group.Work {
 			return bad()
 		}
+		if source.RoutedBootMarks != nil || x.Group.MarkReservation != "" {
+			if op.State != "final" && !reflect.DeepEqual(source.RoutedBootMarks, st.RoutedBootMarks) ||
+				!validReservedRoutedGroupMarksV1(source, x.Group.MarkReservation, op.ID, out.sourceWork.Snapshot.Identity, out.before, out.target, load) {
+				return bad()
+			}
+		}
 	}
 	projected, changed, e := routedTargetV2(&v2Store{state: source, objectReader: load}, op, out.before, projectionTime, lease)
 	generation := x.Expected

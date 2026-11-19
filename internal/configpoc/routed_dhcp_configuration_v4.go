@@ -20,8 +20,9 @@ type v4RoutedDHCPConfigurationState struct {
 }
 
 type v4RoutedDHCPConfigurationGroup struct {
-	Work string `json:"work"`
-	Side string `json:"side"`
+	Work            string `json:"work"`
+	Side            string `json:"side"`
+	MarkReservation string `json:"mark_reservation,omitempty"`
 }
 
 // Replacement references the single shared acquisition contract required by
@@ -69,7 +70,8 @@ func validRoutedDHCPConfigurationShapeV4(x v4RoutedDHCPConfiguration) bool {
 	if x.Kind == "metadata" {
 		return x.Impact == "preserve" && x.Group == nil && x.Replacement == nil
 	}
-	if x.Kind != "grouped" || x.Group == nil || !validHash(x.Group.Work) || x.Group.Side != "target" && x.Group.Side != "before" {
+	if x.Kind != "grouped" || x.Group == nil || !validHash(x.Group.Work) || x.Group.Side != "target" && x.Group.Side != "before" ||
+		x.Group.MarkReservation != "" && !validHash(x.Group.MarkReservation) {
 		return false
 	}
 	return x.Impact == "preserve" && x.Replacement == nil || x.Impact == "replace" && x.Replacement != nil && validHash(x.Replacement.Acquisition)
