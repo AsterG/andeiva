@@ -280,6 +280,47 @@ func TestGroupEngineDenyFirstAtomicHandoverAndExactRestore(t *testing.T) {
 	}
 }
 
+type routedTransitionListenersFixture struct {
+	*listenersFixture
+	prepare func(*routednft.Policy) error
+}
+
+func (f routedTransitionListenersFixture) PrepareRoutedTransition(_ context.Context, target *routednft.Policy) error {
+	return f.prepare(target)
+}
+
+func TestGroupEngineRetiresRoutedListenersUnderDenyBeforeRestoringLinks(t *testing.T) {
+	for _, refuse := range []bool{false, true} {
+		f := assembleFixture(t)
+		ctx := context.Background()
+		if err := f.group.BootstrapStartup(ctx, f.plan, f.target, f.started); err != nil {
+			t.Fatal(err)
+		}
+		called := 0
+		f.engine.listeners = routedTransitionListenersFixture{f.listeners, func(target *routednft.Policy) error {
+			called++
+			var wanted *routednft.Policy
+			if revision := f.prepared.Before.RoutedFirewall.Revision; revision != nil {
+				wanted = revision.Config.Routed
+			}
+			denyErr := f.network.before()
+			if target != wanted || !f.network.active || denyErr != nil {
+				t.Fatalf("listener retirement target match=%t, links active=%t, deny=%v", target == wanted, f.network.active, denyErr)
+			}
+			if refuse {
+				return ErrState
+			}
+			return nil
+		}}
+		err := f.engine.RestoreOwned(ctx, f.plan.BeforeOwned)
+		if called != 1 || (err != nil) != refuse || f.network.active != refuse {
+			t.Fatal("unexpected retirement or network restore", called, err, f.network.active)
+		}
+		f.engine.listeners = f.listeners
+		f.group.Close()
+	}
+}
+
 func TestGroupEngineFaultsRestoreWithoutCallerContext(t *testing.T) {
 	for _, fault := range []string{"deny-lost-ack", "target-failed", "listener-partial", "caller-canceled"} {
 		t.Run(fault, func(t *testing.T) {

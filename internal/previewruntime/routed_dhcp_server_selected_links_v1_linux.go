@@ -19,9 +19,10 @@ import (
 )
 
 type routedDHCPServerSelectedLinkV1 struct {
-	Index     uint32
-	Name, MAC string
-	Address   netip.Prefix
+	Index   uint32       `json:"index"`
+	Name    string       `json:"name"`
+	MAC     string       `json:"mac"`
+	Address netip.Prefix `json:"address"`
 }
 
 // Read the selected LANs from the retained gateway, including the IPv4

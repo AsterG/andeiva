@@ -33,8 +33,10 @@ func TestRoutedDHCPServiceCatalogV2PrivateChannel(t *testing.T) {
 		broker    bool
 		client    bool
 		malformed bool
+		lan       bool
 	}{
 		{name: "authenticated", broker: true, client: true},
+		{name: "LAN business failure preserves the shared channel", broker: true, client: true, lan: true},
 		{name: "old client", broker: true},
 		{name: "old broker", client: true},
 		{name: "reused inode", client: true, broker: true, malformed: true},
@@ -42,7 +44,7 @@ func TestRoutedDHCPServiceCatalogV2PrivateChannel(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			m, _, _ := jobSourceFixtureV4(t, newJobOwnerFixtureV4(t).binding)
+			m, work, _ := jobSourceFixtureV4(t, newJobOwnerFixtureV4(t).binding)
 			root, helper, peer := jobChannelFixtureV4(t)
 			b := &routedDHCPJobBrokerV4{}
 			if test.broker {
@@ -56,9 +58,17 @@ func TestRoutedDHCPServiceCatalogV2PrivateChannel(t *testing.T) {
 					return catalog, nil
 				}
 			}
+			if test.lan {
+				b.server = &routedDHCPServerJobsV1{lifetime: ctx}
+			}
 			done := make(chan error, 1)
 			go func() { done <- b.serve(ctx, root, m, peer) }()
-			client := &routedDHCPJobClientV4{conn: helper, metadata: m, peer: peer, servicesEnabled: test.client}
+			client := &routedDHCPJobClientV4{conn: helper, metadata: m, peer: peer, servicesEnabled: test.client, serverEnabled: test.lan}
+			if test.lan {
+				if proof, err := client.callServerV1(ctx, "server_stop", work); err != ErrUnavailable || proof != nil {
+					t.Fatal("stopping an unowned LAN job received an unexpected result", err)
+				}
+			}
 			got, err := client.serviceTree(ctx)
 			if want := test.broker && test.client && !test.malformed; (err == nil) != want || want && !reflect.DeepEqual(got, catalog) {
 				t.Fatalf("catalog = %+v, error = %v", got, err)

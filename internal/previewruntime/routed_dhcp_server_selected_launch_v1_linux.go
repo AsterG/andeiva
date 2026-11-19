@@ -31,6 +31,9 @@ type routedDHCPServerSelectedLaunchV1 struct {
 	launch   *RoutedDHCPServerLaunchV1
 	artifact *routedDHCPServerSelectedArtifactV1
 	services *RoutedDHCPServerServiceSetV1
+	selected RoutedSelectedPreflightResultV4
+	links    []routedDHCPServerSelectedLinkV1
+	lan      RoutedDHCPServiceCgroupIdentityV1
 }
 
 // The caller retains the existing InspectRuntimeV1 publication barrier until
@@ -66,9 +69,11 @@ func startRoutedDHCPServerSelectedV1(ctx, lifetime context.Context, o routedDHCP
 		}
 	}()
 	var lan *os.File
+	var laneIdentity RoutedDHCPServiceCgroupIdentityV1
 	for _, pin := range pins {
 		if pin.Role == "lan" {
 			lan = pin.Directory
+			laneIdentity = pin.Identity
 		}
 	}
 	if lan == nil {
@@ -83,7 +88,9 @@ func startRoutedDHCPServerSelectedV1(ctx, lifetime context.Context, o routedDHCP
 	if err != nil {
 		return nil, err
 	}
-	active := &routedDHCPServerSelectedLaunchV1{artifact: artifact, services: o.services}
+	active := &routedDHCPServerSelectedLaunchV1{
+		artifact: artifact, services: o.services, selected: selected, links: links, lan: laneIdentity,
+	}
 	attempted := false
 	defer func() {
 		if result != nil {

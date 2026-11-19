@@ -35,6 +35,7 @@ type routedDHCPJobReplyV4 struct {
 	ServiceCgroupVersion  *int                               `json:"service_cgroup_version,omitempty"`
 	ServiceCgroupIdentity *RoutedDHCPServiceCgroupIdentityV1 `json:"service_cgroup_identity,omitempty"`
 	ServiceTree           *routedDHCPServiceCatalogV2        `json:"service_tree,omitempty"`
+	Server                *routedDHCPServerJobProofV1        `json:"server,omitempty"`
 }
 type routedDHCPJobPeerV4 struct {
 	pid      int
@@ -171,6 +172,7 @@ type routedDHCPJobOwnerV4 interface {
 // Root's dispatcher owns at most one producer. Only its independent preflight
 // supplies Desired. Requests carry correlation, never configuration or PIDs.
 type routedDHCPJobBrokerV4 struct {
+	server      *routedDHCPServerJobsV1
 	serviceTree func(context.Context) (routedDHCPServiceCatalogV2, error)
 	preflight   func(context.Context, configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error)
 	prepare     func(context.Context, networkplan.Revision) (routedDHCPJobOwnerV4, error)
@@ -182,6 +184,14 @@ type routedDHCPJobBrokerV4 struct {
 
 func (b *routedDHCPJobBrokerV4) dispatch(ctx context.Context, q routedDHCPJobV4) (reply routedDHCPJobReplyV4, files []*os.File, result error) {
 	reply.Job = q
+	if q.Version == 6 {
+		if b.server == nil {
+			return reply, nil, ErrIdentity
+		}
+		proof, err := b.server.dispatch(ctx, q)
+		reply.Server = proof
+		return reply, nil, err
+	}
 	if q.Version == 5 && q.Operation == "service_tree" {
 		if b.serviceTree == nil {
 			return reply, nil, ErrIdentity
@@ -280,6 +290,7 @@ func (b *routedDHCPJobBrokerV4) dispatch(ctx context.Context, q routedDHCPJobV4)
 func (b *routedDHCPJobBrokerV4) serve(ctx context.Context, c *net.UnixConn, m Metadata, peer routedDHCPJobPeerV4) error {
 	defer c.Close()
 	defer func() {
+		_ = b.server.close()
 		if b.owner != nil {
 			_ = b.owner.Close()
 		}
@@ -293,7 +304,9 @@ func (b *routedDHCPJobBrokerV4) serve(ctx context.Context, c *net.UnixConn, m Me
 		for _, f := range files {
 			_ = f.Close()
 		}
-		if err != nil || len(files) != 0 || !(routedDHCPJobValidV4(q, m, sequence) || b.serviceTree != nil && routedDHCPServiceTreeJobV5(q, m, sequence)) {
+		if err != nil || len(files) != 0 || !(routedDHCPJobValidV4(q, m, sequence) ||
+			b.serviceTree != nil && routedDHCPServiceTreeJobV5(q, m, sequence) ||
+			b.server != nil && routedDHCPServerJobValidV1(q, m, sequence)) {
 			return ErrIdentity
 		}
 		sequence = q.Sequence
@@ -311,7 +324,7 @@ func (b *routedDHCPJobBrokerV4) serve(ctx context.Context, c *net.UnixConn, m Me
 		for _, f := range sendFiles {
 			_ = f.Close()
 		}
-		if err != nil || writeErr != nil {
+		if err != nil && q.Version != 6 || writeErr != nil {
 			return errors.Join(err, writeErr)
 		}
 	}
@@ -319,6 +332,7 @@ func (b *routedDHCPJobBrokerV4) serve(ctx context.Context, c *net.UnixConn, m Me
 
 type routedDHCPJobClientV4 struct {
 	servicesEnabled bool // Enabled only by the trusted shared-service profile.
+	serverEnabled   bool
 	mu              sync.Mutex
 	conn            *net.UnixConn
 	metadata        Metadata
@@ -335,7 +349,8 @@ func (c *routedDHCPJobClientV4) callVersion(ctx context.Context, version int, op
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out routedDHCPJobReplyV4
-	if c.failed || ctx == nil || ctx.Err() != nil || c.sequence == math.MaxUint64 || version != 4 && (version != 5 || !c.servicesEnabled) {
+	if c.failed || ctx == nil || ctx.Err() != nil || c.sequence == math.MaxUint64 ||
+		(version != 4 && !(version == 5 && c.servicesEnabled) && !(version == 6 && c.serverEnabled)) {
 		return out, nil, ErrUnavailable
 	}
 	callbackDone := make(chan struct{})
@@ -372,11 +387,18 @@ func (c *routedDHCPJobClientV4) callVersion(ctx context.Context, version int, op
 		_ = c.conn.Close()
 		return routedDHCPJobReplyV4{}, nil, ErrUnavailable
 	}
-	valid := routedDHCPJobValidV4(q, c.metadata, c.sequence-1) || c.servicesEnabled && routedDHCPServiceTreeJobV5(q, c.metadata, c.sequence-1)
+	valid := routedDHCPJobValidV4(q, c.metadata, c.sequence-1) ||
+		c.servicesEnabled && routedDHCPServiceTreeJobV5(q, c.metadata, c.sequence-1) ||
+		c.serverEnabled && routedDHCPServerJobValidV1(q, c.metadata, c.sequence-1)
 	if !valid || c.conn.SetDeadline(deadline) != nil || routedDHCPJobSendV4(c.conn, q, nil) != nil {
 		return fail(nil)
 	}
 	files, err := routedDHCPJobReceiveV4(c.conn, c.peer, &out)
+	if version == 6 && err == nil && ctx.Err() == nil && out.Job == q && out.Unavailable && len(files) == 0 &&
+		out.Binding == nil && out.ServiceCgroupVersion == nil && out.ServiceCgroupIdentity == nil && out.ServiceTree == nil && out.Server == nil {
+		// A LAN business failure preserves the authenticated WAN job channel.
+		return routedDHCPJobReplyV4{}, nil, ErrUnavailable
+	}
 	want := 0
 	if op == "prepare" {
 		want = 4
@@ -385,6 +407,10 @@ func (c *routedDHCPJobClientV4) callVersion(ctx context.Context, version int, op
 		return fail(files)
 	}
 	if (out.ServiceTree != nil) != (version == 5 && op == "service_tree") {
+		return fail(files)
+	}
+	if (out.Server != nil) != (version == 6 && op != "server_stop") ||
+		(out.Server != nil && !out.Server.validV1(op)) {
 		return fail(files)
 	}
 	if out.ServiceTree != nil {

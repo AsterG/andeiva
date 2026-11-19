@@ -203,8 +203,20 @@ func (e *Engine) tableMatches(ctx context.Context, table Table, state TableState
 	return err == nil
 }
 
-func (e *Engine) listenersMatch(ctx context.Context, state TableStateV1, deps DependenciesV1) bool {
-	actual, err := e.listeners.Observe(ctx)
+func (e *Engine) listenersMatch(ctx context.Context, state, routed TableStateV1, deps DependenciesV1) bool {
+	var actual []localpolicy.Listener
+	var err error
+	if observer, ok := e.listeners.(interface {
+		ObserveRouted(context.Context, *routednft.Policy) ([]localpolicy.Listener, error)
+	}); ok {
+		var policy *routednft.Policy
+		if routed.Revision != nil {
+			policy = routed.Revision.Config.Routed
+		}
+		actual, err = observer.ObserveRouted(ctx, policy)
+	} else {
+		actual, err = e.listeners.Observe(ctx)
+	}
 	if err != nil || len(actual) > localnft.MaxBindings*localnft.MaxServices {
 		return false
 	}
@@ -219,6 +231,20 @@ func (e *Engine) listenersMatch(ctx context.Context, state TableStateV1, deps De
 	}
 	result, err := localpolicy.Reconcile(artifact.Revision.Config, localpolicy.Observation{Revision: artifact.Revision.Hash, Rules: artifact.Rules, Listeners: actual})
 	return err == nil && result.Consistent
+}
+
+func (e *Engine) prepareRoutedListeners(ctx context.Context, target TableStateV1) error {
+	listeners, ok := e.listeners.(interface {
+		PrepareRoutedTransition(context.Context, *routednft.Policy) error
+	})
+	if !ok {
+		return nil
+	}
+	var policy *routednft.Policy
+	if target.Revision != nil {
+		policy = target.Revision.Config.Routed
+	}
+	return listeners.PrepareRoutedTransition(ctx, policy)
 }
 
 func (e *Engine) matches(ctx context.Context, owned OwnedV1, deps DependenciesV1) bool {
@@ -246,7 +272,7 @@ func (e *Engine) matches(ctx context.Context, owned OwnedV1, deps DependenciesV1
 			return false
 		}
 	}
-	return e.listenersMatch(ctx, owned.LocalServices, deps)
+	return e.listenersMatch(ctx, owned.LocalServices, owned.RoutedFirewall, deps)
 }
 
 func sameArtifact(a, b any) bool {
@@ -889,6 +915,9 @@ func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBun
 	if e.applyTables(ctx, deny) != nil {
 		return ErrState
 	}
+	if err := e.prepareRoutedListeners(ctx, e.prepared.Target.RoutedFirewall); err != nil {
+		return err
+	}
 	if e.prepared.Dependencies.Version == 2 {
 		if e.applyTables(ctx, tables(e.prepared.Target)) != nil || !e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
 			return ErrState
@@ -900,7 +929,7 @@ func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBun
 		if local == nil {
 			local = deny[2].Revision
 		}
-		if e.listeners.Apply(ctx, *local) != nil || !e.listenersMatch(ctx, e.prepared.Target.LocalServices, e.prepared.Dependencies) || e.network.RestorePrepared(ctx, e.prepared.Dependencies.Prepared) != nil {
+		if e.listeners.Apply(ctx, *local) != nil || !e.listenersMatch(ctx, e.prepared.Target.LocalServices, e.prepared.Target.RoutedFirewall, e.prepared.Dependencies) || e.network.RestorePrepared(ctx, e.prepared.Dependencies.Prepared) != nil {
 			return ErrState
 		}
 		if e.applyTables(ctx, tables(e.prepared.Target)) != nil || !e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
@@ -915,7 +944,7 @@ func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBun
 	} else if e.network.Verify(ctx) != nil {
 		return ErrState
 	}
-	if e.listeners.Apply(ctx, canonical.LocalServices) != nil || !e.listenersMatch(ctx, e.prepared.Target.LocalServices, e.prepared.Dependencies) {
+	if e.listeners.Apply(ctx, canonical.LocalServices) != nil || !e.listenersMatch(ctx, e.prepared.Target.LocalServices, e.prepared.Target.RoutedFirewall, e.prepared.Dependencies) {
 		return ErrState
 	}
 	if e.applyTables(ctx, tables(e.prepared.Target)) != nil || !e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
@@ -1098,6 +1127,10 @@ func (e *Engine) RestoreOwned(ctx context.Context, digest string) error {
 		e.fenced = true
 		return ErrState
 	}
+	if err := e.prepareRoutedListeners(ctx, e.prepared.Before.RoutedFirewall); err != nil {
+		e.fenced = true
+		return err
+	}
 	if e.prepared.Dependencies.Version == 2 {
 		if e.applyTables(ctx, tables(e.prepared.Before)) != nil || !e.matches(ctx, e.prepared.Before, e.prepared.Dependencies) {
 			e.fenced = true
@@ -1117,7 +1150,7 @@ func (e *Engine) RestoreOwned(ctx context.Context, digest string) error {
 	if local == nil {
 		local = deny[2].Revision
 	}
-	if e.listeners.Apply(ctx, *local) != nil || !e.listenersMatch(ctx, e.prepared.Before.LocalServices, e.prepared.Dependencies) {
+	if e.listeners.Apply(ctx, *local) != nil || !e.listenersMatch(ctx, e.prepared.Before.LocalServices, e.prepared.Before.RoutedFirewall, e.prepared.Dependencies) {
 		e.fenced = true
 		return ErrState
 	}
