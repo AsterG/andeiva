@@ -77,7 +77,9 @@ func (s *routedKeaSocketObserverV1) observe(ctx context.Context) (routedKeaSocke
 func serveRoutedKeaSocketProofV1(ctx context.Context, conn *net.UnixConn, peer routedDHCPJobPeerV4, engine *os.File, identity routedKeaEngineIdentityV1) error {
 	defer conn.Close()
 	defer engine.Close()
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	// Interrupt the idle receive without closing the socket during a bounded
+	// reply. Shutdown leaves validation and transport errors distinguishable.
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetReadDeadline(time.Now()) })
 	defer stop()
 	var last uint64
 	for ctx.Err() == nil {
@@ -86,7 +88,7 @@ func serveRoutedKeaSocketProofV1(ctx context.Context, conn *net.UnixConn, peer r
 		for _, f := range files {
 			_ = f.Close()
 		}
-		if errors.Is(err, net.ErrClosed) && ctx.Err() != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) && ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil || len(files) != 0 || q.Version != 1 || last == math.MaxUint64 || q.Sequence != last+1 {
