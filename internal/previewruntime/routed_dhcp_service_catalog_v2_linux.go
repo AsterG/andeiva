@@ -129,7 +129,7 @@ func (c *routedDHCPJobClientV4) verifyWANServiceTreeV2(ctx context.Context, inca
 }
 
 func routedDHCPServiceTreeJobV5(q routedDHCPJobV4, m Metadata, last uint64) bool {
-	return q.Version == 5 && q.Operation == "service_tree" && q.Run == m.RunID && q.Namespace == m.GatewayNamespace &&
+	return q.Version == 5 && q.DeadlineBootNS == 0 && q.Operation == "service_tree" && q.Run == m.RunID && q.Namespace == m.GatewayNamespace &&
 		last != math.MaxUint64 && q.Sequence == last+1 && q.Work == (configpoc.RoutedWorkReferenceV1{})
 }
 

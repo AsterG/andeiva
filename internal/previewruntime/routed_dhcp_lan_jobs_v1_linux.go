@@ -14,6 +14,8 @@ import (
 	"github.com/AsterG/andeiva/internal/configpoc"
 )
 
+const routedDHCPServerReplyMarginV1 = 500 * time.Millisecond
+
 type routedDHCPServerJobProofV1 struct {
 	Version int                               `json:"version"`
 	RolePID int                               `json:"role_pid"`
@@ -58,7 +60,7 @@ func (p *routedDHCPServerJobProofV1) validV1(op string) bool {
 }
 
 func routedDHCPServerJobValidV1(q routedDHCPJobV4, m Metadata, last uint64) bool {
-	if q.Version != 6 {
+	if q.Version != 6 || q.DeadlineBootNS <= 0 {
 		return false
 	}
 	switch q.Operation {
@@ -66,7 +68,7 @@ func routedDHCPServerJobValidV1(q routedDHCPJobV4, m Metadata, last uint64) bool
 	default:
 		return false
 	}
-	q.Version, q.Operation = 4, "prepare"
+	q.Version, q.Operation, q.DeadlineBootNS = 4, "prepare", 0
 	return routedDHCPJobValidV4(q, m, last)
 }
 
@@ -76,6 +78,12 @@ func (b *routedDHCPServerJobsV1) dispatch(ctx context.Context, q routedDHCPJobV4
 	if b == nil || ctx == nil || ctx.Err() != nil || b.lifetime == nil || b.lifetime.Err() != nil {
 		return nil, ErrUnavailable
 	}
+	now, err := routedDHCPOwnerBootNowV3()
+	if err != nil || q.DeadlineBootNS <= now || q.DeadlineBootNS-now > int64(configpoc.IntegrityInspectionDeadlineV1) {
+		return nil, ErrUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(q.DeadlineBootNS-now))
+	defer cancel()
 	if q.Operation == "server_stop" {
 		if b.owner == nil || b.work != q.Work {
 			return nil, ErrIdentity
@@ -100,11 +108,11 @@ func (b *routedDHCPServerJobsV1) dispatch(ctx context.Context, q routedDHCPJobV4
 		b.owner, err = startRoutedDHCPServerSelectedV1(startup, b.lifetime, b.options, q.Work)
 		if err != nil {
 			cancel()
-			return nil, errors.Join(err, b.close())
+			return nil, errors.Join(err, b.stop(ctx))
 		}
 		proof, err := b.proof(ctx, false)
 		if err != nil {
-			return nil, errors.Join(err, b.close())
+			return nil, errors.Join(err, b.stop(ctx))
 		}
 		return proof, nil
 	}
