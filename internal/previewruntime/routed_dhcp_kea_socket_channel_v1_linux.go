@@ -85,6 +85,9 @@ func serveRoutedKeaSocketProofV1(ctx context.Context, conn *net.UnixConn, peer r
 		for _, f := range files {
 			_ = f.Close()
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil || len(files) != 0 || q.Version != 1 || last == math.MaxUint64 || q.Sequence != last+1 {
 			return ErrIdentity
 		}

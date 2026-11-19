@@ -549,6 +549,9 @@ func routedDHCPServerWaitWithInspectionV1(ctx context.Context, cmd *exec.Cmd, ch
 		_ = unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
 		<-done
 	}
+	if inspect != nil && err == context.Canceled && ctx.Err() == context.Canceled {
+		return nil
+	}
 	return err
 }
 
