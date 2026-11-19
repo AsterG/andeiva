@@ -409,11 +409,13 @@ func routedDHCPServerDirectoryV1(path string, uid, gid uint32, mode os.FileMode)
 	}
 	file := os.NewFile(uintptr(fd), "kea-private-directory")
 	defer file.Close()
-	if err := file.Chown(int(uid), int(gid)); err != nil {
-		return routedDHCPServerMountFailureV1("directory_chown", err, ErrUnavailable)
-	}
+	// Apply the mode while root still owns the new inode. The role need not
+	// retain CAP_FOWNER after assigning the dedicated service account.
 	if err := file.Chmod(mode); err != nil {
 		return routedDHCPServerMountFailureV1("directory_chmod", err, ErrUnavailable)
+	}
+	if err := file.Chown(int(uid), int(gid)); err != nil {
+		return routedDHCPServerMountFailureV1("directory_chown", err, ErrUnavailable)
 	}
 	var st unix.Stat_t
 	if unix.Fstat(fd, &st) != nil || st.Mode != unix.S_IFDIR|uint32(mode) || st.Uid != uid || st.Gid != gid || !fenceNoACLV3(file, true) {
