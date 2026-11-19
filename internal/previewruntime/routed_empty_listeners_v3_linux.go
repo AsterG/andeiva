@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"slices"
 	"sync"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
@@ -15,17 +16,19 @@ import (
 	"github.com/AsterG/andeiva/internal/localengine"
 	"github.com/AsterG/andeiva/internal/localobserve"
 	"github.com/AsterG/andeiva/internal/localpolicy"
+	"github.com/AsterG/andeiva/internal/routednft"
 	"golang.org/x/sys/unix"
 )
 
-// This restricted adapter never manages listeners. It supports only disabled
-// local services. The only additional resource view is an authenticated DHCP
-// acquisition service; all other TCP/UDP and packet sockets remain forbidden.
-// Enabling a service requires the separate worker/collector assembly.
+// This restricted adapter supports disabled local services and observes the
+// authenticated WAN acquisition and optional LAN DHCP server. All other
+// TCP/UDP and packet sockets remain forbidden.
 type routedEmptyListenersV3 struct {
-	mu      sync.Mutex
-	kernel  *routedKernelV3
-	service *routedDHCPServiceObservationV1
+	mu         sync.Mutex
+	kernel     *routedKernelV3
+	service    *routedDHCPServiceObservationV1
+	lan        *routedLANServiceObservationV1
+	pendingLAN *routednft.Policy
 }
 
 func newRoutedEmptyListenersV3(m Metadata) (*routedEmptyListenersV3, error) {
@@ -59,7 +62,19 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 	defer runtime.UnlockOSThread()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.observeUnderV1(ctx)
+}
+
+func (l *routedEmptyListenersV3) observeUnderV1(ctx context.Context) ([]localpolicy.Listener, error) {
 	s := l.service
+	var lanBefore *routedKeaSocketProofV1
+	if l.lan != nil {
+		var e error
+		lanBefore, e = l.lan.proof(ctx, "server_observe")
+		if e != nil {
+			return nil, e
+		}
+	}
 	var fact RoutedDHCPOwnerFactV3
 	phase := routedDHCPServicePhaseV1{}
 	if s != nil {
@@ -81,14 +96,25 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 		}
 	}
 	var first routedDHCPSocketCaptureV1
+	var lastComplete routedDHCPSocketCaptureV1
+	var firstLAN routedDHCPServerSocketFactsV1
 	for pass := 0; pass < 2; pass++ {
 		capture, err := l.capture(ctx, active, fact)
 		if err != nil {
 			firewallipc.RecordRoutedDHCPFailureV1("listener_capture", ErrUnavailable, ctx)
 			return nil, err
 		}
+		if l.lan != nil {
+			lastComplete = capture
+			var owned routedDHCPServerSocketFactsV1
+			capture, owned, err = splitRoutedDHCPServerSocketsV1(capture, l.lan.start.Cgroup, l.lan.start.UID, l.lan.bindings, lanBefore.Inodes)
+			if err != nil || pass == 1 && !sameRoutedLANServiceFactsV1(owned, firstLAN) {
+				return nil, ErrUnavailable
+			}
+			firstLAN = owned
+		}
 		if active == nil {
-			if len(capture.tables) != 0 || len(capture.packet) != 0 {
+			if len(capture.tables) != 0 || len(capture.udp) != 0 || len(capture.packet) != 0 {
 				firewallipc.RecordRoutedDHCPFailureV1("listener_foreign", ErrUnavailable, ctx)
 				return nil, ErrUnavailable
 			}
@@ -102,6 +128,17 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 			firewallipc.RecordRoutedDHCPFailureV1("listener_socket_changed", ErrUnavailable, ctx)
 			return nil, ErrUnavailable
 		}
+	}
+	if l.lan != nil {
+		after, err := l.lan.proof(ctx, "server_observe")
+		if err != nil || after.PID != lanBefore.PID || after.Start != lanBefore.Start {
+			return nil, ErrUnavailable
+		}
+		_, last, err := splitRoutedDHCPServerSocketsV1(lastComplete, l.lan.start.Cgroup, l.lan.start.UID, l.lan.bindings, after.Inodes)
+		if err != nil || !sameRoutedLANServiceFactsV1(firstLAN, last) {
+			return nil, ErrUnavailable
+		}
+		l.lan.engine = *after
 	}
 	if active != nil {
 		after, afterPhase, err := active.fact(ctx)
@@ -117,6 +154,9 @@ func (l *routedEmptyListenersV3) Observe(ctx context.Context) ([]localpolicy.Lis
 	if ctx.Err() != nil || !l.kernel.bound() {
 		firewallipc.RecordRoutedDHCPFailureV1("listener_final_context", ErrUnavailable, ctx)
 		return nil, ErrUnavailable
+	}
+	if l.lan != nil {
+		return slices.Clone(l.lan.declared), nil
 	}
 	return []localpolicy.Listener{}, nil
 }
@@ -184,11 +224,13 @@ func (l *routedEmptyListenersV3) capture(ctx context.Context, s *routedDHCPServi
 	if err != nil {
 		return out, ErrUnavailable
 	}
-	if s != nil {
+	if s != nil || l.lan != nil {
 		out.udp, err = dhcpsockets.CaptureIPv4UDP(ctx)
 		if err != nil {
 			return out, ErrUnavailable
 		}
+	}
+	if s != nil {
 		index, present, e := routedDHCPPhysicalWANV1(ctx, s.wan, fact.Fact.Address)
 		if e != nil || index != out.wanIndex || present != out.addressOnWAN {
 			return out, ErrUnavailable

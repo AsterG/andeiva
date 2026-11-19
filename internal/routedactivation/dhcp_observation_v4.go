@@ -57,7 +57,7 @@ func (e *Engine) matchesObservationV4(ctx context.Context, owned OwnedV1, deps D
 			return false, ErrState
 		}
 	}
-	if !e.listenersMatch(ctx, owned.LocalServices, deps) || ctx.Err() != nil {
+	if !e.listenersMatch(ctx, owned.LocalServices, owned.RoutedFirewall, deps) || ctx.Err() != nil {
 		nativeDHCPObservationFailureV4("listeners_or_context")
 		return false, ErrState
 	}
