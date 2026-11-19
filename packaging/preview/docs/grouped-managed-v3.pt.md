@@ -67,6 +67,14 @@ prevista para o Alpha mantém o DHCP da LAN parado até que um administrador o
 reative. A ação administrativa e o acesso pelo endereço estático durante essa
 reversão ainda precisam de validação.
 
+### Conexões estabelecidas no Alpha
+
+Alterar o ID ou o conteúdo de uma regra de firewall pode interromper as
+conexões estabelecidas que correspondem a ela. Os clientes afetados precisam
+reconectar. A revisão antes do Commit mostrará esse aviso quando o fluxo com
+WAN ativa estiver disponível. Uma regra que continua autorizando a mesma
+conexão preserva a marca se o ID e o conteúdo da regra forem mantidos.
+
 No Debian isolado do laboratório, verifique um pacote confiável na raiz
 do repositório com
 `sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PACOTE`.

@@ -68,6 +68,14 @@ The planned Alpha recovery keeps LAN DHCP stopped until an administrator
 reactivates it. The administration action and static LAN management access
 during this rollback have yet to pass qualification.
 
+### Established connections in Alpha
+
+Changing the ID or contents of a matching firewall rule can interrupt its
+established connections. Affected clients must reconnect. The review before
+Commit will show this warning once the active-WAN change path is available.
+A rule that still authorizes the same connection preserves its mark when its
+ID and contents remain unchanged.
+
 On the isolated Debian lab, verify a trusted build from the repository root
 with `sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PACKAGE`.
 The test extracts the package, uses temporary lease storage in a private

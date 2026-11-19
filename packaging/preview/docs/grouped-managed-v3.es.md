@@ -68,6 +68,14 @@ La recuperación prevista para Alpha mantiene DHCP LAN detenido hasta que
 un administrador lo reactive. La acción de administración y el acceso por
 dirección estática durante esta reversión siguen pendientes de calificación.
 
+### Conexiones establecidas en Alpha
+
+Cambiar el ID o el contenido de una regla de firewall puede interrumpir
+las conexiones establecidas que coinciden con ella. Los clientes afectados
+deben reconectarse. La revisión previa a Commit mostrará este aviso cuando
+el flujo con WAN activa esté disponible. Una regla que sigue autorizando
+la misma conexión conserva su marca si su contenido e ID siguen iguales.
+
 En el Debian aislado del laboratorio, comprueba un paquete de confianza
 desde la raíz del repositorio con
 `sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PAQUETE`.

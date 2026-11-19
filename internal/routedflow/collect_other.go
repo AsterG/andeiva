@@ -5,3 +5,7 @@ package routedflow
 import "context"
 
 func Collect(_ context.Context) (Snapshot, error) { return Snapshot{}, ErrUnsupported }
+
+func (p *Retirement) Retire(_ context.Context) (RetirementResult, error) {
+	return RetirementResult{}, ErrUnsupported
+}

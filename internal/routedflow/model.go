@@ -1,5 +1,6 @@
-// Package routedflow observes conntrack in the current network namespace.
-// It never applies policy, changes namespaces or processes userspace packets.
+// Package routedflow observes conntrack and retires policy-owned connections
+// in the helper's selected namespace. It never changes namespaces or processes
+// userspace packets.
 package routedflow
 
 import (
