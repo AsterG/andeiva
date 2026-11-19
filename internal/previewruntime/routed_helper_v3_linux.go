@@ -217,6 +217,7 @@ func assembleRoutedHelperV3(ctx context.Context, m Metadata, ids Identities, o R
 			return nil, e
 		}
 		result.session.dhcpJobs = result.jobs
+		result.session.dhcpServerProfile = o.DHCPJobs.client.serverEnabled
 	}
 	return result, nil
 }

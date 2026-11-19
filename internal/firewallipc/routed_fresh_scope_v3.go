@@ -26,6 +26,12 @@ func (h RoutedHelloV3) HasCapability(name string) bool {
 }
 
 func validRoutedScopeCapabilitiesV3(features []string) bool {
+	if len(features) >= 2 && features[len(features)-1] == RoutedDHCPServerCapabilityV1 {
+		features = features[:len(features)-1]
+		if features[len(features)-1] != RoutedDHCPRenewalCapabilityV4 {
+			return false
+		}
+	}
 	if len(features) > 0 && features[len(features)-1] == RoutedDHCPRenewalCapabilityV4 {
 		base := features[:len(features)-1]
 		return (len(base) == 6 || len(base) == 7) && base[5] == RoutedDHCPCapabilityV3 && validLegacyRoutedScopeCapabilitiesV3(base)
