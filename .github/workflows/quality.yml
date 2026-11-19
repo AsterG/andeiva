@@ -72,14 +72,12 @@ jobs:
         working-directory: frontend
       - name: Verify inherited-descriptor fixture before the full suite
         run: go test ./internal/previewruntime -count=1 -run '^TestRoutedMigrationInspectV3ExtraDescriptors$'
-      - run: bash scripts/check.sh
+      # The full race suite is the single source execution of these tests.
+      - run: bash scripts/check.sh --race
       - name: Offline DHCP installer boundaries without privileged effects
         run: |
           python3 -m unittest discover -s packaging/dhcp-server/offline -p test_build.py
           go test -race ./packaging/dhcp-server/offline/check
-      # The complete package suite exceeds Go's default ten-minute aggregate
-      # budget. This does not alter RPC or persisted transaction deadlines.
-      - run: go test -race -timeout=20m ./cmd/... ./internal/...
       - name: Native diagnostic tag contracts without privileged operations
         run: |
           go test -race -tags=andeiva_native_dhcp_diagnostics -count=1 -timeout=2m ./internal/dhcpclient -run '^TestNativeDiagnostic'
@@ -310,7 +308,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: docker build --target check-go -t andeiva-go-check .
+      - run: docker build --target check-go-container -t andeiva-go-check .
       - run: docker build --target check-web -t andeiva-web-check .
       - run: docker compose config --quiet
       - run: docker compose up --build --wait --wait-timeout 60
