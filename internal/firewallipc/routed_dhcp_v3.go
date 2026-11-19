@@ -14,6 +14,7 @@ import (
 
 const RoutedDHCPCapabilityV3 = "routed_dhcp_selected.v3"
 const RoutedDHCPRenewalCapabilityV4 = "routed_dhcp_same_effective.v4"
+const RoutedDHCPServerCapabilityV1 = "routed_dhcp_server.v1"
 
 // Only the explicitly negotiated renewal profile uses this multi-phase budget.
 // Legacy V3 peers retain their original three-second per-RPC limit.
@@ -134,6 +135,12 @@ func (c *RoutedClientV3) DHCPEnabled() bool { return c != nil && c.dhcp }
 // ConnectRoutedDHCPRenewalV4 opts into the operational same-effective profile.
 // Unknown peers fail the exact handshake; there is no legacy fallback.
 func ConnectRoutedDHCPRenewalV4(ctx context.Context, conn io.ReadWriteCloser, run string, ns uint64, freshScope, rebootScope bool) (*RoutedClientV3, error) {
-	return connectRoutedCapabilitiesRenewalV4(ctx, conn, run, ns, true, true, true, freshScope, rebootScope, true)
+	return connectRoutedCapabilitiesRenewalV4(ctx, conn, run, ns, true, true, true, freshScope, rebootScope, true, false)
 }
 func (c *RoutedClientV3) DHCPRenewalEnabledV4() bool { return c != nil && c.dhcpRenewal }
+
+func ConnectRoutedDHCPServerV1(ctx context.Context, conn io.ReadWriteCloser, run string, ns uint64, freshScope, rebootScope bool) (*RoutedClientV3, error) {
+	return connectRoutedCapabilitiesRenewalV4(ctx, conn, run, ns, true, true, true, freshScope, rebootScope, true, true)
+}
+
+func (c *RoutedClientV3) DHCPServerEnabledV1() bool { return c != nil && c.dhcpServer }

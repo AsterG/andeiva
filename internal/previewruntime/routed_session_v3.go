@@ -41,6 +41,7 @@ type RoutedSessionV3 struct {
 	inventory         func(context.Context) (networkinventory.Snapshot, error)
 	dhcp              *RoutedDHCPRuntimeV3
 	dhcpJobs          routedDHCPJobsSessionV4
+	dhcpServerProfile bool
 	restartInspection bool // Controller-owned until the first complete check.
 	restartLiveProof  bool // First live probe after successful restart inspection.
 }
@@ -134,7 +135,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		return ErrUnavailable
 	}
 	hello, e := firewallipc.DecodeRoutedHelloV3(data, false)
-	if e != nil || s.sameEffectiveRenewalV4() != hello.HasCapability(firewallipc.RoutedDHCPRenewalCapabilityV4) || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil || s.dhcpJobs != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
+	if e != nil || s.sameEffectiveRenewalV4() != hello.HasCapability(firewallipc.RoutedDHCPRenewalCapabilityV4) || s.dhcpServerProfile != hello.HasCapability(firewallipc.RoutedDHCPServerCapabilityV1) || hello.RuntimeRun != runtimeRun || hello.Namespace != identity.Namespace || (s.integrity != nil) != (len(hello.RequiredFeatures) >= 4) || (s.inventory != nil) != (len(hello.RequiredFeatures) >= 5) || (s.dhcp != nil || s.dhcpJobs != nil) != hello.HasCapability(firewallipc.RoutedDHCPCapabilityV3) || (s.freshScope != nil) != hello.HasCapability(firewallipc.RoutedFreshScopeCapabilityV3) || (s.rebootScope != nil) != hello.HasCapability(firewallipc.RoutedRebootScopeCapabilityV4) {
 		return ErrIdentity
 	}
 	s.restartInspection = epoch > 1 && s.dhcpJobs != nil && s.sameEffectiveRenewalV4()

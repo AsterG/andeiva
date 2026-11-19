@@ -123,7 +123,7 @@ func validateRoutedLaunchV3(r RoutedLaunchResourcesV3) error {
 	if (r.DHCPRenewalV4 || r.DHCPServiceSet != nil) && !r.DHCPJobs || r.DHCPJobs && r.IntegrityRoot == nil {
 		return ErrIdentity
 	}
-	if r.dhcpServer != nil && (r.DHCPServiceSet == nil || r.dhcpServer.hostMount == nil ||
+	if r.dhcpServer != nil && (!r.DHCPRenewalV4 || r.DHCPServiceSet == nil || r.dhcpServer.hostMount == nil ||
 		r.dhcpServer.runtime == nil || r.dhcpServer.registry == nil || r.dhcpServer.leases == nil || r.dhcpServer.leaseBudget <= 0) {
 		return ErrIdentity
 	}
@@ -357,7 +357,7 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 func (s *RoutedLaunchSupervisorV3) bootstrap(helper int32, epoch uint64) routedLaunchBootstrapV3 {
 	r := s.resources
 	b := routedLaunchBootstrapV3{DHCPServiceCatalog: r.DHCPServiceSet != nil && helper == 0, DHCPRenewalV4: r.DHCPRenewalV4, DHCPJobs: r.DHCPJobs, LocalOrigin: cloneRoutedLocalOriginV3(r.LocalOrigin), Version: 3, Integrity: r.IntegrityRoot != nil, Management: r.Management != nil, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
-	b.DHCPServerJobs = r.dhcpServer != nil && helper == 0
+	b.DHCPServerJobs = r.dhcpServer != nil
 	if r.FreshScope != nil {
 		b.FreshScope = true
 		if helper == 0 {

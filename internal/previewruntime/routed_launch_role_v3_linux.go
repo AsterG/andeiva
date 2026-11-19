@@ -29,6 +29,7 @@ import (
 // invent a peer identity or open a configuration writer before the V3 factory.
 type RoutedLaunchContextV3 struct {
 	DHCPRenewalV4              bool
+	DHCPServerProfileV1        bool
 	DHCPJobsEnabled            bool
 	dhcpJobs                   *routedDHCPJobClientV4 // Helper only; never inherited by API.
 	RebootScopeEnabled         bool
@@ -339,6 +340,7 @@ func (f *routedLaunchFilesV3) context(b routedLaunchBootstrapV3) RoutedLaunchCon
 	out := RoutedLaunchContextV3{RebootScopeEnabled: b.RebootScope, FreshScopeEnabled: b.FreshScope, LocalOrigin: cloneRoutedLocalOriginV3(b.LocalOrigin), StoreBudget: value, Integrity: b.Integrity, IntegrityRoot: f.integrityRoot, Management: f.managementFile, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Store: f.roots[1], Access: b.Access[0], Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget, Epoch: b.Epoch, PeerPID: b.HelperPID}
 	out.DHCPJobsEnabled = b.DHCPJobs
 	out.DHCPRenewalV4 = b.DHCPRenewalV4
+	out.DHCPServerProfileV1 = b.DHCPServerJobs
 	if f.jobs != nil {
 		out.dhcpJobs = &routedDHCPJobClientV4{servicesEnabled: b.DHCPServiceCatalog, serverEnabled: b.DHCPServerJobs, conn: f.jobs, metadata: b.Metadata, peer: routedDHCPJobPeerV4{pid: b.ParentPID, uid: 0, gid: 0}}
 	}
@@ -386,7 +388,7 @@ func runRoutedAPILaunchV3(ctx context.Context, f *routedLaunchFilesV3, b routedL
 	if e != nil {
 		return e
 	}
-	if o.RoutedDHCPRenewalV4 != b.DHCPRenewalV4 || o.RoutedDHCP != b.DHCPJobs || o.RoutedFreshScope != b.FreshScope || o.RoutedRebootScope != b.RebootScope || o.Store != f.roots[1] || o.Runtime.SharedReader == nil || *o.Runtime.SharedReader != b.Access[0] || o.Runtime.BootID != b.Metadata.BootID || !o.Runtime.GuardDeadlines {
+	if o.RoutedDHCPServerV1 != b.DHCPServerJobs || o.RoutedDHCPRenewalV4 != b.DHCPRenewalV4 || o.RoutedDHCP != b.DHCPJobs || o.RoutedFreshScope != b.FreshScope || o.RoutedRebootScope != b.RebootScope || o.Store != f.roots[1] || o.Runtime.SharedReader == nil || *o.Runtime.SharedReader != b.Access[0] || o.Runtime.BootID != b.Metadata.BootID || !o.Runtime.GuardDeadlines {
 		return ErrIdentity
 	}
 	o.Runtime.RetainDHCPV4 = b.DHCPRenewalV4 && b.Epoch > 1
@@ -625,7 +627,7 @@ func startRoutedLaunchServersV3(ctx context.Context, listeners [2]*net.UnixListe
 
 // The API receives a capability choice, never the root receipt or its binding.
 func validRoutedScopeBootstrapV4(b routedLaunchBootstrapV3, role string) bool {
-	if b.DHCPServerJobs && !b.DHCPServiceCatalog || b.DHCPServiceCatalog && (!b.DHCPJobs || role != RoutedHelperRoleV3) || b.DHCPRenewalV4 && !b.DHCPJobs || b.DHCPJobs && !b.Integrity {
+	if b.DHCPServerJobs && (!b.DHCPRenewalV4 || role == RoutedHelperRoleV3 && !b.DHCPServiceCatalog) || b.DHCPServiceCatalog && (!b.DHCPJobs || role != RoutedHelperRoleV3) || b.DHCPRenewalV4 && !b.DHCPJobs || b.DHCPJobs && !b.Integrity {
 		return false
 	}
 	if role != RoutedHelperRoleV3 && role != RoutedAPIRoleV3 {
