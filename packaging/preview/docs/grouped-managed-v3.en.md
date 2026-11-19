@@ -53,3 +53,9 @@ milestone.
 
 An authorized local operator can inspect the existing service journal with
 `journalctl -u andeiva-preview-grouped.service --boot --no-pager`.
+## Preparing DHCP lease storage
+
+After installing the signed offline engine dependencies, root can run
+`/usr/lib/andeiva-preview/andeiva-preview grouped-dhcp-state` to prepare the
+private lease directory. Running it again preserves the lease files. The
+standard unit keeps the optional DHCP profile inactive.

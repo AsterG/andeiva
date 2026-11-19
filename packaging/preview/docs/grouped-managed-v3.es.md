@@ -53,3 +53,9 @@ después del hito.
 
 El operador autorizado puede consultar el diario desde la consola local con
 `journalctl -u andeiva-preview-grouped.service --boot --no-pager`.
+## Preparación del directorio de concesiones DHCP
+
+Tras instalar las dependencias firmadas del motor sin conexión, root puede
+ejecutar `/usr/lib/andeiva-preview/andeiva-preview grouped-dhcp-state` para
+preparar el directorio privado. Repetir el comando conserva las concesiones.
+La unidad estándar mantiene inactivo el perfil opcional de DHCP.
