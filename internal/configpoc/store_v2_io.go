@@ -527,7 +527,7 @@ func (s *v2Store) publish(state v2State) (result error) {
 		addFeatureV2(&state, v1RoutedDHCPServerFeature)
 	}
 
-	if s.readOnly || (!s.preparingShared && hasFeatureV2(state, v2SharedReaderFeature) != (s.access != nil)) || s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) || !s.preservesRoutedBootBoundaryStateV2(state) {
+	if s.readOnly || (!s.preparingShared && hasFeatureV2(state, v2SharedReaderFeature) != (s.access != nil)) || s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !s.preservesPublishedFeaturesV2(state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) || !s.preservesRoutedBootBoundaryStateV2(state) {
 		return errV2Unavailable
 	}
 	if !validRoutedCompensationPublicationV1(s.state, state, s.selection.Sequence+1) {
