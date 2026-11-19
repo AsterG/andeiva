@@ -211,6 +211,9 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || c.Validate() != nil {
 		return ErrIdentity
 	}
+	if err := dropRoutedSupervisorDHCPNetworkCapsV1(); err != nil {
+		return err
+	}
 	inherited, err := TakeRoutedScopeRecoveryInheritedV3(ctx)
 	if err != nil {
 		return err
