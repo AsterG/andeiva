@@ -21,6 +21,7 @@ type routedDHCPServerSelectedOptionsV1 struct {
 	registry, leases         *os.File
 	leaseBudget              int64
 	services                 *RoutedDHCPServerServiceSetV1
+	socketProof              bool
 	readSelected             func(context.Context, configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error)
 }
 
@@ -120,6 +121,7 @@ func startRoutedDHCPServerSelectedV1(ctx, lifetime context.Context, o routedDHCP
 		Metadata: o.metadata, Gateway: o.gateway, Host: o.host, HostMount: o.hostMount,
 		Configuration: artifact.file, Leases: o.leases, Config: artifact.config, Bindings: artifact.bindings,
 		ServiceCgroups: pins, LeaseBudgetBytes: o.leaseBudget,
+		socketProof: o.socketProof,
 	})
 	if err != nil {
 		return nil, err

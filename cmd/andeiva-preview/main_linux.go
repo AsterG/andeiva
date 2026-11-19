@@ -20,12 +20,15 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == previewruntime.RoutedDHCPServerRoleV1 {
 		return previewruntime.ErrIdentity
 	}
-	if len(args) > 0 && args[0] == previewruntime.RoutedDHCPServerRoleV2 {
+	if len(args) > 0 && (args[0] == previewruntime.RoutedDHCPServerRoleV2 || args[0] == previewruntime.RoutedDHCPServerRoleV3) {
 		if len(args) != 1 {
 			return previewruntime.ErrConfiguration
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer cancel()
+		if args[0] == previewruntime.RoutedDHCPServerRoleV3 {
+			return previewruntime.RunRoutedDHCPServerRoleV3(ctx)
+		}
 		return previewruntime.RunRoutedDHCPServerRoleV2(ctx)
 	}
 	if len(args) > 0 && (args[0] == previewruntime.RoutedDHCPOwnerRoleV3 || args[0] == previewruntime.RoutedDHCPDeferredOwnerRoleV4 || args[0] == previewruntime.RoutedSelectedPreflightRoleV4) {

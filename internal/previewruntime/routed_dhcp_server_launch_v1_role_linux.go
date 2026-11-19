@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"strconv"
@@ -20,13 +21,17 @@ import (
 )
 
 func decodeRoutedDHCPServerBootstrapV2(raw []byte) (routedDHCPServerBootstrapV2, error) {
+	return decodeRoutedDHCPServerBootstrapForRoleV1(raw, 2)
+}
+
+func decodeRoutedDHCPServerBootstrapForRoleV1(raw []byte, version int) (routedDHCPServerBootstrapV2, error) {
 	var b routedDHCPServerBootstrapV2
 	if len(raw) == 0 || len(raw) > routedDHCPServerBootstrapLimitV1 || !jsoncheck.UniqueControlFields(raw) {
 		return b, ErrIdentity
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if d.Decode(&b) != nil || d.Decode(new(any)) != io.EOF || b.Version != 2 || b.ParentPID <= 1 || b.ParentStartTicks == 0 || b.HostMountNamespace == 0 || b.DeadlineBootNS <= 0 || b.Metadata.ValidateRouted() != nil || len(b.Bindings) == 0 || len(b.Bindings) > 64 || len(b.ServiceCgroups) == 0 || len(b.ServiceCgroups) > 2 || b.LeaseBudgetBytes <= 0 || !routedDHCPServerMountWireValidV2(b.MountPins) {
+	if d.Decode(&b) != nil || d.Decode(new(any)) != io.EOF || b.Version != version || (version == 3 && !b.SupervisorLifetime) || b.ParentPID <= 1 || b.ParentStartTicks == 0 || b.HostMountNamespace == 0 || b.DeadlineBootNS <= 0 || b.Metadata.ValidateRouted() != nil || len(b.Bindings) == 0 || len(b.Bindings) > 64 || len(b.ServiceCgroups) == 0 || len(b.ServiceCgroups) > 2 || b.LeaseBudgetBytes <= 0 || !routedDHCPServerMountWireValidV2(b.MountPins) {
 		return routedDHCPServerBootstrapV2{}, ErrIdentity
 	}
 	canonical, err := json.Marshal(b)
@@ -54,7 +59,15 @@ func RunRoutedDHCPServerRoleV1(context.Context) error { return ErrIdentity }
 // The fixed role receives FD3 gateway,4 hostNET,5 hostMNT,6 config,7 leases,
 // 8 sealed bootstrap,9 lifetime control,10/11 detached mounts,12..13 cgroup pins.
 // It never reads an administrative URL, path or shell command.
-func RunRoutedDHCPServerRoleV2(parent context.Context) (result error) {
+func RunRoutedDHCPServerRoleV2(parent context.Context) error {
+	return runRoutedDHCPServerRoleV1(parent, 2)
+}
+
+func RunRoutedDHCPServerRoleV3(parent context.Context) error {
+	return runRoutedDHCPServerRoleV1(parent, 3)
+}
+
+func runRoutedDHCPServerRoleV1(parent context.Context, version int) (result error) {
 	if parent == nil || parent.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return ErrIdentity
 	}
@@ -71,12 +84,24 @@ func RunRoutedDHCPServerRoleV2(parent context.Context) (result error) {
 	if err != nil || n != len(raw) {
 		return ErrIdentity
 	}
-	b, err := decodeRoutedDHCPServerBootstrapV2(raw)
+	b, err := decodeRoutedDHCPServerBootstrapForRoleV1(raw, version)
 	if err != nil {
 		return err
 	}
 	if err := captureRoutedDHCPServerRawFDsV2(b); err != nil {
 		return err
+	}
+	var proof *net.UnixConn
+	if version == 3 {
+		fd := 12 + len(b.ServiceCgroups)
+		unix.CloseOnExec(fd)
+		file := os.NewFile(uintptr(fd), "kea-engine-proof")
+		proof, err = routedDHCPJobSocketV4(file)
+		_ = file.Close()
+		if err != nil {
+			return err
+		}
+		defer proof.Close()
 	}
 	var pins []RoutedDHCPServerCgroupPinV1
 	for i, wire := range b.ServiceCgroups {
@@ -163,6 +188,15 @@ func RunRoutedDHCPServerRoleV2(parent context.Context) (result error) {
 		}
 	}()
 	o := RoutedDHCPServerResourcesV1{Metadata: b.Metadata, Gateway: files[0], Host: files[1], HostMount: files[2], Configuration: files[3], Leases: files[4], Config: b.Config, Bindings: bindings, ServiceCgroups: pins, LeaseBudgetBytes: b.LeaseBudgetBytes, mountPins: mountPins}
+	if proof != nil {
+		o.inspect = func(ctx context.Context, fd, pid int, uid, gid uint32) error {
+			engine, identity, err := routedKeaSocketEngineV1(fd, pid, uid, gid, b.Metadata.GatewayNamespace)
+			if err != nil {
+				return err
+			}
+			return serveRoutedKeaSocketProofV1(ctx, proof, routedDHCPJobPeerV4{pid: b.ParentPID}, engine, identity)
+		}
+	}
 	if b.SupervisorLifetime {
 		return runRoutedDHCPServerComponentScopedV2(ctx, lifetime, b.DeadlineBootNS, o)
 	}

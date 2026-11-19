@@ -243,15 +243,18 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 	o := RoutedDHCPServerResourcesV1{Metadata: Metadata{SchemaVersion: 2, RunID: lanRun, BootID: bootID, HostNamespace: hostID, GatewayNamespace: gwID}, Gateway: gw, Host: host, HostMount: hostMount, Configuration: file, Leases: leases, Config: config, Bindings: bindings, ServiceCgroups: pins, LeaseBudgetBytes: 4 << 20}
 	start := StartRoutedDHCPServerV1
 	cancelStartup := func() {}
+	proveSockets := os.Getenv("ANDEIVA_NATIVE_DHCP_KEA_ACTIVE_PROOF_V3") == "1"
 	selectedWork := os.Getenv("ANDEIVA_NATIVE_DHCP_SERVER_SELECTED_WORK_V1") == "1"
-	selectedLifetime := selectedWork || os.Getenv("ANDEIVA_NATIVE_DHCP_SERVER_SELECTED_LIFETIME_V2") == "1"
+	selectedLifetime := proveSockets || selectedWork || os.Getenv("ANDEIVA_NATIVE_DHCP_SERVER_SELECTED_LIFETIME_V2") == "1"
 	var selectedOwner *routedDHCPServerSelectedLaunchV1
 	if selectedLifetime {
 		start = func(lifetime context.Context, resources RoutedDHCPServerResourcesV1) (*RoutedDHCPServerLaunchV1, error) {
 			call, cancel := context.WithTimeout(lifetime, 10*time.Second)
 			cancelStartup = cancel
+			resources.socketProof = proveSockets
 			if selectedWork {
 				options, work := nativeKeaSelectedFixtureV1(t, root, resources, set)
+				options.socketProof = proveSockets
 				var err error
 				selectedOwner, err = startRoutedDHCPServerSelectedV1(call, lifetime, options, work)
 				if err != nil {
@@ -303,6 +306,12 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 	}
 	ready.Stop()
 	defer engine.fd.Close()
+	if proveSockets {
+		proof, err := launch.inspectSocketsV3(ctx)
+		if err != nil || proof.PID != engine.PID || proof.Start != engine.Start || len(proof.Inodes) == 0 {
+			t.Fatal("could not read live socket holders from the fixed Kea role", err)
+		}
+	}
 	if selectedLifetime {
 		if err := launch.acceptStartupV2(); err != nil {
 			t.Fatal("qualify Kea startup", err)
@@ -359,6 +368,13 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 	nativeKeaReadbackV1(t, ctx, gw, host, lan, routedKeaEngineIdentityV1{
 		pid: engine.PID, parent: launch.PID(), start: engine.Start, namespace: gwID, uid: uid, gid: gid,
 	})
+	if proveSockets {
+		proof, err := launch.inspectSocketsV3(ctx)
+		if err != nil || proof.PID != engine.PID || proof.Start != engine.Start || len(proof.Inodes) == 0 {
+			t.Fatal("fixed Kea proof channel did not outlive startup acknowledgement", err)
+		}
+		t.Log("live Kea descriptor proof succeeded before and after the startup acknowledgement")
+	}
 	if selectedLifetime {
 		t.Log("same Kea process and sockets remained active after cancelling the startup context")
 	}
