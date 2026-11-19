@@ -491,6 +491,11 @@ func (s *v2Store) readSelection() error {
 		}
 	}
 	reader := &v2Store{root: s.root, state: selectedState, access: s.access, readOnly: s.readOnly, recordReader: s.recordReader, objectReader: s.objectReader}
+	if selectedState.RoutedBootMarks != nil {
+		if _, e := loadRoutedBootMarkReservationV1(selectedState.RoutedBootMarks, selectedState.Lineage, reader.readObject); e != nil {
+			return errV2Unavailable
+		}
+	}
 	if validateRoutedBootBoundaryV2(selectedState, reader.readObject) != nil {
 		return errV2Unavailable
 	}

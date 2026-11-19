@@ -13,6 +13,7 @@ const routedBootMarkReservationFeatureV1 = "configuration.routed-boot-mark-reser
 
 type routedBootMarkCursorV1 struct {
 	Boot        v2BootID `json:"boot_id"`
+	Work        string   `json:"work"`
 	BaseIssued  uint32   `json:"base_issued"`
 	Issued      uint32   `json:"issued"`
 	Reservation string   `json:"reservation"`
@@ -75,7 +76,8 @@ func validRoutedBootMarkCursorV1(st v2State) bool {
 		return !hasFeatureV2(st, routedBootMarkReservationFeatureV1)
 	}
 	return hasFeatureV2(st, routedBootMarkReservationFeatureV1) && hasFeatureV2(st, v3RoutedDHCPFeature) &&
-		validBootIDV2(cursor.Boot) && cursor.BaseIssued < cursor.Issued && cursor.Issued <= routedmodel.MaxAdmissionMarks && validHash(cursor.Reservation)
+		validBootIDV2(cursor.Boot) && validHash(cursor.Work) && cursor.BaseIssued <= cursor.Issued &&
+		cursor.Issued <= routedmodel.MaxAdmissionMarks && validHash(cursor.Reservation)
 }
 
 func preservesRoutedBootMarkCursorV1(previous, next v2State) bool {
@@ -84,7 +86,7 @@ func preservesRoutedBootMarkCursorV1(previous, next v2State) bool {
 		return true
 	}
 	if n == nil || previous.RoutedDHCP == nil || previous.RoutedDHCP.Phase != "applied" ||
-		!reflect.DeepEqual(previous.RoutedDHCP, next.RoutedDHCP) {
+		previous.RoutedDHCP.Work != n.Work || !reflect.DeepEqual(previous.RoutedDHCP, next.RoutedDHCP) {
 		return false
 	}
 	if p == nil {
@@ -92,15 +94,15 @@ func preservesRoutedBootMarkCursorV1(previous, next v2State) bool {
 	}
 	// Same-boot recovery and compensation retain the watermark even if the
 	// DHCP Work goes away. No reset is admitted through this publication.
-	return n.Boot == p.Boot && n.BaseIssued == p.Issued && n.Issued > p.Issued
+	return n.Boot == p.Boot && n.BaseIssued == p.Issued && n.Issued >= p.Issued
 }
 
 func loadRoutedBootMarkReservationV1(cursor *routedBootMarkCursorV1, lineage string, load func(string, any) error) (routedBootMarkReservationV1, error) {
 	var record routedBootMarkReservationV1
-	if cursor == nil || load(cursor.Reservation, &record) != nil || !validRoutedIdentityV1(record.Scope) ||
+	if cursor == nil || load(cursor.Reservation, &record) != nil || record.Work != cursor.Work || !validRoutedIdentityV1(record.Scope) ||
 		record.Scope.BootID != string(cursor.Boot) || record.Restored.Issued != cursor.Issued ||
 		record.Applied.Boot != string(cursor.Boot) || record.Restored.Boot != string(cursor.Boot) ||
-		record.BaseIssued != cursor.BaseIssued || record.BaseIssued >= cursor.Issued {
+		record.BaseIssued != cursor.BaseIssued || record.BaseIssued > cursor.Issued {
 		return record, ErrRecovery
 	}
 	work, err := loadRoutedDHCPWorkV3(record.Work, lineage, load)
@@ -159,26 +161,25 @@ func (s *v2Store) reserveRoutedBootMarksLocked(identity networkexecutor.OwnedNam
 	if err != nil {
 		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
 	}
-	if restored.Issued != issued {
-		beforeHash, e := s.object(before)
-		if e != nil {
-			return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, e
-		}
-		targetHash, e := s.object(target)
-		if e != nil {
-			return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, e
-		}
-		reservation, e := s.object(routedBootMarkReservationV1{Work: s.state.RoutedDHCP.Work, Scope: identity,
-			Before: beforeHash, Target: targetHash, BaseIssued: issued, Prior: prior, Applied: applied, Restored: restored})
-		if e != nil {
-			return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, e
-		}
-		next := clone(s.state)
-		next.RoutedBootMarks = &routedBootMarkCursorV1{Boot: boot, BaseIssued: issued, Issued: restored.Issued, Reservation: reservation}
-		addFeatureV2(&next, routedBootMarkReservationFeatureV1)
-		if err = s.publish(next); err != nil {
-			return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
-		}
+	beforeHash, err := s.object(before)
+	if err != nil {
+		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
+	}
+	targetHash, err := s.object(target)
+	if err != nil {
+		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
+	}
+	reservation, err := s.object(routedBootMarkReservationV1{Work: s.state.RoutedDHCP.Work, Scope: identity,
+		Before: beforeHash, Target: targetHash, BaseIssued: issued, Prior: prior, Applied: applied, Restored: restored})
+	if err != nil {
+		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
+	}
+	next := clone(s.state)
+	next.RoutedBootMarks = &routedBootMarkCursorV1{Boot: boot, Work: s.state.RoutedDHCP.Work,
+		BaseIssued: issued, Issued: restored.Issued, Reservation: reservation}
+	addFeatureV2(&next, routedBootMarkReservationFeatureV1)
+	if err = s.publish(next); err != nil {
+		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
 	}
 	// Adoption with no strict source requires closure even when every filter
 	// is unchanged. Never hand a legacy source to the atomic path.

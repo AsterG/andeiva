@@ -69,13 +69,21 @@ func TestRoutedBootMarksReserveRollbackBeforeEffects(t *testing.T) {
 	// Simulate a lost effect reply. A retry using the same source policy and
 	// the persisted cursor consumes fresh marks instead of recycling either
 	// the attempted target or its reserved rollback.
-	s.state = stored
+	if err = s.readSelection(); err != nil {
+		t.Fatal("could not reload the durable reservation", err)
+	}
 	retry, _, _, err := s.reserveRoutedBootMarksLocked(id, &initial, before, target)
 	if err != nil || retry.Bindings[0].Mark <= restored.Bindings[0].Mark {
 		t.Fatal("retry reused a reserved mark", retry, err)
 	}
 	if _, err = reader.ResolveBootMarkPlanV1(context.Background(), hash, stored.RoutedBootMarks.Reservation); !errors.Is(err, ErrRecovery) {
 		t.Fatal("a replaced reservation was still readable as selected", err)
+	}
+	previousCursor := *s.state.RoutedBootMarks
+	if _, _, _, err = s.reserveRoutedBootMarksLocked(id, &initial, before, before); err != nil ||
+		s.state.RoutedBootMarks.Issued != previousCursor.Issued ||
+		s.state.RoutedBootMarks.Reservation == previousCursor.Reservation {
+		t.Fatal("a reservation with unchanged rules used new marks or kept the previous plan", err)
 	}
 	head := s.selector.Current
 	foreign := id
@@ -87,5 +95,17 @@ func TestRoutedBootMarksReserveRollbackBeforeEffects(t *testing.T) {
 	backward.RoutedBootMarks.Issued--
 	if err = s.publish(backward); !errors.Is(err, errV2Unavailable) || s.selector.Current != head {
 		t.Fatal("publication accepted a lower watermark", err)
+	}
+	// A writer reopening a valid selector without its selected reservation
+	// must not bootstrap a fresh allocator from a structurally valid cursor.
+	unavailable := s.state.RoutedBootMarks.Reservation
+	reopening := &v2Store{root: s.root, access: s.access, objectReader: func(hash string, out any) error {
+		if hash == unavailable {
+			return ErrRecovery
+		}
+		return s.readObject(hash, out)
+	}}
+	if err = reopening.readSelection(); !errors.Is(err, errV2Unavailable) || reopening.selector.Current != "" {
+		t.Fatal("writer loaded a cursor without its durable reservation", err)
 	}
 }

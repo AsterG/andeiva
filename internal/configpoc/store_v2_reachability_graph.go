@@ -77,7 +77,11 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error {
 	if state.RoutedBootMarks != nil {
 		cursor := state.RoutedBootMarks
-		if err := r.walk("routed-boot-marks:"+cursor.Reservation, depth+1, func() error {
+		_, cursorHash, err := v2Canonical(cursor)
+		if err != nil {
+			return err
+		}
+		if err := r.walk("routed-boot-marks:"+state.Lineage+":"+cursorHash, depth+1, func() error {
 			_, err := loadRoutedBootMarkReservationV1(cursor, state.Lineage, r.object)
 			return err
 		}); err != nil {
