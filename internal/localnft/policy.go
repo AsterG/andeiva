@@ -10,6 +10,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/localpolicy"
 	"github.com/AsterG/andeiva/internal/networkplan"
+	"github.com/AsterG/andeiva/internal/routedmodel"
 )
 
 const (
@@ -26,6 +27,11 @@ const (
 	MaxBatch             = 384 << 10
 	MaxObservation       = 512 << 10
 )
+
+// Each owned ND interface can emit one DAD per local address, two NS and
+// one NA per local/peer pair, and one multicast NA per peer. Each routed
+// interface adds at most one DHCP control, including WAN acquisition.
+const maxRoutedControlRules = MaxInterfaces*MaxNeighborAddresses*(2+3*MaxNeighborAddresses) + networkplan.MaxInterfaces
 
 var (
 	ErrPolicy      = errors.New("local_nft_policy_invalid")
@@ -47,6 +53,7 @@ type Artifact struct {
 	Neighbors  []NeighborLink              `json:"neighbors"`
 	ControlIDs []string                    `json:"control_ids"`
 	Network    *networkplan.Revision       `json:"network,omitempty"`
+	DHCPPolicy *routedmodel.Revision       `json:"dhcp_policy,omitempty"`
 }
 
 // ValidateManaged limits deployed listeners to the two implemented engines.
@@ -114,6 +121,10 @@ func CompileWithNeighbors(c localpolicy.Config, neighbors []NeighborLink) (Artif
 // CompileForNetwork derives acquisition admission only from the trusted selected
 // network revision. It grants no lease, forwarding or administrative service.
 func CompileForNetwork(c localpolicy.Config, neighbors []NeighborLink, selected *networkplan.Revision) (Artifact, error) {
+	return compileForNetwork(c, neighbors, selected, nil)
+}
+
+func compileForNetwork(c localpolicy.Config, neighbors []NeighborLink, selected *networkplan.Revision, dhcpPolicy *routedmodel.Revision) (Artifact, error) {
 	network, acquisition, err := acquisitionRule(selected)
 	if err != nil {
 		return Artifact{}, err
@@ -137,7 +148,12 @@ func CompileForNetwork(c localpolicy.Config, neighbors []NeighborLink, selected 
 	if acquisition != nil {
 		controls = append(controls, acquisition)
 	}
-	if len(controls) > MaxControlRules {
+	controlLimit := MaxControlRules
+	if dhcpPolicy != nil {
+		controls = append(controls, dhcpServerRules(dhcpPolicy.Policy)...)
+		controlLimit = maxRoutedControlRules
+	}
+	if len(controls) > controlLimit {
 		return Artifact{}, ErrPolicy
 	}
 	ids := make([]string, 0, len(controls))
@@ -181,7 +197,7 @@ func CompileForNetwork(c localpolicy.Config, neighbors []NeighborLink, selected 
 	if err != nil {
 		return Artifact{}, ErrPolicy
 	}
-	return Artifact{Revision: pure.Revision, Digest: hash(digestData), Create: create, Batch: batch, Rules: pure.Rules, Neighbors: links, ControlIDs: ids, Network: network}, nil
+	return Artifact{Revision: pure.Revision, Digest: hash(digestData), Create: create, Batch: batch, Rules: pure.Rules, Neighbors: links, ControlIDs: ids, Network: network, DHCPPolicy: dhcpPolicy}, nil
 }
 
 func hash(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }

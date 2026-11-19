@@ -32,12 +32,18 @@ func VerifyObservation(data []byte, expected Artifact) (Observation, error) {
 	if len(data) == 0 || len(data) > MaxObservation || !nftengine.UniqueJSONFields(data) {
 		return Observation{}, ErrObservation
 	}
-	fresh, err := CompileForNetwork(expected.Revision.Config, expected.Neighbors, expected.Network)
+	var fresh Artifact
+	var err error
+	if expected.DHCPPolicy == nil {
+		fresh, err = CompileForNetwork(expected.Revision.Config, expected.Neighbors, expected.Network)
+	} else {
+		fresh, err = CompileForRoutedPolicy(expected.Revision.Config, expected.Neighbors, *expected.DHCPPolicy)
+	}
 	if err != nil || !equalJSON(fresh, expected) {
 		return Observation{}, ErrObservation
 	}
 	entries, err := decodeObjects(data)
-	if err != nil || len(entries) > MaxRules+MaxControlRules+3 {
+	if err != nil || len(entries) > len(fresh.Rules)+len(fresh.ControlIDs)+3 {
 		return Observation{}, ErrObservation
 	}
 	expectedObjects, err := createObjects(fresh.Create)

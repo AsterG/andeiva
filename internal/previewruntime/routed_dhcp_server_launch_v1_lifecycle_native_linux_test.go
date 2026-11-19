@@ -241,7 +241,18 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := RoutedDHCPServerResourcesV1{Metadata: Metadata{SchemaVersion: 2, RunID: lanRun, BootID: bootID, HostNamespace: hostID, GatewayNamespace: gwID}, Gateway: gw, Host: host, HostMount: hostMount, Configuration: file, Leases: leases, Config: config, Bindings: bindings, ServiceCgroups: pins, LeaseBudgetBytes: 4 << 20}
-	launch, err := StartRoutedDHCPServerV1(ctx, o)
+	start := StartRoutedDHCPServerV1
+	cancelStartup := func() {}
+	selectedLifetime := os.Getenv("ANDEIVA_NATIVE_DHCP_SERVER_SELECTED_LIFETIME_V2") == "1"
+	if selectedLifetime {
+		start = func(lifetime context.Context, resources RoutedDHCPServerResourcesV1) (*RoutedDHCPServerLaunchV1, error) {
+			call, cancel := context.WithTimeout(lifetime, 10*time.Second)
+			cancelStartup = cancel
+			return startRoutedDHCPServerScopedV2(call, lifetime, resources)
+		}
+	}
+	launch, err := start(ctx, o)
+	defer cancelStartup()
 	if err != nil {
 		t.Fatal("launcher", err)
 	}
@@ -280,6 +291,13 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 	}
 	ready.Stop()
 	defer engine.fd.Close()
+	if selectedLifetime {
+		if err := launch.acceptStartupV2(); err != nil {
+			t.Fatal("qualify Kea startup", err)
+		}
+		cancelStartup()
+	}
+
 	pids := serverLifecycleMembersV1(t, lan)
 	if len(pids) != 2 || !((pids[0] == launch.PID() && pids[1] == engine.PID) || (pids[1] == launch.PID() && pids[0] == engine.PID)) {
 		t.Fatal("unexpected process or LFC worker in serving leaf")
@@ -329,6 +347,9 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 	nativeKeaReadbackV1(t, ctx, gw, host, lan, routedKeaEngineIdentityV1{
 		pid: engine.PID, parent: launch.PID(), start: engine.Start, namespace: gwID, uid: uid, gid: gid,
 	})
+	if selectedLifetime {
+		t.Log("same Kea process and sockets remained active after cancelling the startup context")
+	}
 	stopCtx, stop := context.WithTimeout(ctx, 15*time.Second)
 	err = launch.Stop(stopCtx)
 	stop()

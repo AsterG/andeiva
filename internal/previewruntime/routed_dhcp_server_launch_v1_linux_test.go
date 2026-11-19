@@ -22,6 +22,57 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestRoutedDHCPServerStartupCannotHandOffRevokedLifetimeV2(t *testing.T) {
+	for _, test := range []string{"startup canceled", "supervisor canceled", "sealed boot deadline passed", "canceled during handoff"} {
+		t.Run(test, func(t *testing.T) {
+			read, write, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer read.Close()
+			defer write.Close()
+			startup, cancelStartup := context.WithCancel(context.Background())
+			defer cancelStartup()
+			lifetime, cancelLifetime := context.WithCancel(context.Background())
+			defer cancelLifetime()
+			boot, err := routedDHCPOwnerBootNowV3()
+			if err != nil {
+				t.Fatal(err)
+			}
+			launch := &RoutedDHCPServerLaunchV1{
+				control: write, startup: startup, lifetime: lifetime, startupBootNS: boot + int64(time.Minute),
+			}
+			stop := context.AfterFunc(startup, func() { _ = write.Close() })
+			defer stop()
+			launch.stopStartupWatch = stop
+			switch test {
+			case "startup canceled":
+				cancelStartup()
+			case "supervisor canceled":
+				cancelLifetime()
+			case "sealed boot deadline passed":
+				launch.startupBootNS = boot
+			case "canceled during handoff":
+				launch.stopStartupWatch = func() bool {
+					canceled := stop()
+					cancelLifetime()
+					return canceled
+				}
+			}
+			if err := launch.acceptStartupV2(); !errors.Is(err, ErrUnavailable) {
+				t.Fatal("revoked startup transferred lifetime", err)
+			}
+			if err := read.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			var control [1]byte
+			if n, err := read.Read(control[:]); n != 0 || !errors.Is(err, io.EOF) {
+				t.Fatal("revoked startup left the control pipe open", n, err)
+			}
+		})
+	}
+}
+
 func TestRoutedDHCPServerLaunchAliveDescriptorBoundsV1(t *testing.T) {
 	for _, fd := range []int{-1, math.MinInt32, math.MaxInt32, math.MaxInt32 + 1} {
 		if (&RoutedDHCPServerLaunchV1{pidfd: fd}).Alive() {

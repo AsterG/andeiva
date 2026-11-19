@@ -35,7 +35,7 @@ func TestAcquisitionFollowsKnownNetworkWithSameLocalRevision(t *testing.T) {
 	k := &kernelFixture{objects: map[Table][]map[string]any{}}
 	e := &Engine{kernel: k, prepared: PreparationV1{Dependencies: deps}}
 	ctx := context.Background()
-	initial, err := compileTable(LocalTable, before[LocalTable], false, deps, nil)
+	initial, err := compileTable(LocalTable, before[LocalTable], false, deps, localIngress{})
 	if err != nil || k.Apply(ctx, initial) != nil {
 		t.Fatal("baseline", err)
 	}
@@ -69,11 +69,11 @@ func TestAcquisitionFollowsKnownNetworkWithSameLocalRevision(t *testing.T) {
 		if err != nil || actual[RoutedTable].Presence != transition[1][RoutedTable].Presence {
 			t.Fatal("known physical graph", err)
 		}
-		network, err := acquisitionNetwork(transition[1][RoutedTable], deps)
-		if err != nil || !e.tableMatches(ctx, LocalTable, transition[1][LocalTable], deps, network) {
+		ingress, err := routedLocalIngress(transition[1][RoutedTable], deps)
+		if err != nil || !e.tableMatches(ctx, LocalTable, transition[1][LocalTable], deps, ingress) {
 			t.Fatal("exact local readback", err)
 		}
-		wrong, _ := acquisitionNetwork(transition[0][RoutedTable], deps)
+		wrong, _ := routedLocalIngress(transition[0][RoutedTable], deps)
 		if e.tableMatches(ctx, LocalTable, transition[1][LocalTable], deps, wrong) {
 			t.Fatal("stale acquisition rule accepted")
 		}
@@ -92,23 +92,23 @@ func TestAcquisitionFollowsKnownNetworkWithSameLocalRevision(t *testing.T) {
 func TestAcquisitionRejectsUnselectedNetworkAndStaleHashes(t *testing.T) {
 	_, deps, target := artifactFixture(t)
 	state := TableStateV1{Presence: Present, Revision: &target.Firewall}
-	if _, err := acquisitionNetwork(state, deps); err != nil {
+	if _, err := routedLocalIngress(state, deps); err != nil {
 		t.Fatal(err)
 	}
 	state.Revision.Hash += "00"
-	if _, err := acquisitionNetwork(state, deps); err == nil {
+	if _, err := routedLocalIngress(state, deps); err == nil {
 		t.Fatal("stale routed revision accepted")
 	}
 	state.Revision.Hash = target.Firewall.Hash[:64]
 	deps.Network.Hash += "00"
-	if _, err := acquisitionNetwork(state, deps); err == nil {
+	if _, err := routedLocalIngress(state, deps); err == nil {
 		t.Fatal("foreign dependency network accepted")
 	}
-	if _, err := acquisitionNetwork(TableStateV1{Presence: Absent, Revision: state.Revision}, deps); err == nil {
+	if _, err := routedLocalIngress(TableStateV1{Presence: Absent, Revision: state.Revision}, deps); err == nil {
 		t.Fatal("absent table with hidden revision accepted")
 	}
-	n, err := acquisitionNetwork(TableStateV1{Presence: Absent}, deps)
-	if err != nil || n != nil {
+	ingress, err := routedLocalIngress(TableStateV1{Presence: Absent}, deps)
+	if err != nil || (ingress != localIngress{}) {
 		t.Fatal("NoNetwork gained acquisition authority")
 	}
 }
