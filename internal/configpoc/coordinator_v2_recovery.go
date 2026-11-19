@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, origin, lease, subject, kind, result string, generation uint64, at time.Time) (string, error) {
+func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, origin, lease, subject, kind, result string, generation uint64, at time.Time, cleanup ...RoutedConntrackCleanupV1) (string, error) {
 	current := c.store.state.Configuration
 	if current == nil {
 		current = &v2Configuration{}
@@ -15,6 +15,15 @@ func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, ori
 		return "", errV2Limited
 	}
 	record := v2CoordinatorAudit{Format: v2Format, Sequence: current.AuditSequence + 1, Previous: current.AuditTip, Operation: operation, OriginCommit: origin, Lease: lease, Subject: subject, Kind: kind, Result: result, At: at.UTC(), Generation: generation, Running: state.Running.Hash, Startup: state.Startup.Hash}
+	if len(cleanup) != 0 {
+		if len(cleanup) != 1 || cleanup[0].Operation != operation {
+			return "", ErrRecovery
+		}
+		record.Cleanup = &routedConntrackCleanupV1{Retired: cleanup[0].Retired, Partial: cleanup[0].Partial}
+		if !validRoutedConntrackAuditV1(record) {
+			return "", ErrRecovery
+		}
+	}
 	hash, err := c.store.object(record)
 	if err != nil {
 		return "", err
@@ -24,7 +33,7 @@ func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, ori
 	return hash, nil
 }
 
-func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, generation uint64, code, errorCode string, pin bool, at time.Time) (v2Operation, error) {
+func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, generation uint64, code, errorCode string, pin bool, at time.Time, cleanup ...RoutedConntrackCleanupV1) (v2Operation, error) {
 	s := c.store
 	st := clone(s.state)
 	target.Intent = nil
@@ -37,7 +46,13 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 		originID = target.Pending.OriginCommit
 		lease = target.Pending.Lease
 	}
-	audit, err := c.appendAuditLocked(&target, op.ID, originID, lease, op.Subject, op.Request.Kind, code, generation, at)
+	if len(cleanup) != 0 {
+		if op.Domain != "routed" || !hasFeatureV2(s.state, v4RoutedDHCPConfigurationFeature) {
+			return v2Operation{}, ErrRecovery
+		}
+		addFeatureV2(&st, routedConntrackAuditFeatureV1)
+	}
+	audit, err := c.appendAuditLocked(&target, op.ID, originID, lease, op.Subject, op.Request.Kind, code, generation, at, cleanup...)
 	if err != nil {
 		s.blocked = true
 		return v2Operation{}, err

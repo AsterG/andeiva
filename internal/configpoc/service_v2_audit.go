@@ -96,7 +96,7 @@ func (s *ServiceV2) AuditV2(ctx context.Context, binding adminauth.SessionBindin
 		data, err := c.store.readRecordV2(name, auditRecordBytesV2)
 		remaining -= len(data)
 		var record v2CoordinatorAudit
-		if err != nil || checkpointDigest(data) != hash || checkpointDecode(data, &record) != nil || record.Format != v2Format || record.Sequence != sequence || sequence == 0 || record.At.IsZero() || record.Generation == 0 || record.Generation > c.store.state.Generation || !validHash(record.Running) || !validHash(record.Startup) || !clientAuditIDV2(record.Subject) || !clientAuditIDV2(record.Operation) || !clientAuditIDV2(record.Kind) || !clientAuditIDV2(record.Result) || (sequence == 1) != (record.Previous == "") {
+		if err != nil || checkpointDigest(data) != hash || checkpointDecode(data, &record) != nil || !validActionAuditShapeV2(record) || record.Sequence != sequence || record.Generation > c.store.state.Generation || !clientAuditIDV2(record.Subject) || !clientAuditIDV2(record.Operation) || !clientAuditIDV2(record.Kind) || !clientAuditIDV2(record.Result) {
 			c.store.blocked = true
 			return AuditPageV2{}, errV2Unavailable
 		}
