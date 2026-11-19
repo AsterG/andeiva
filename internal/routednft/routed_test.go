@@ -158,7 +158,7 @@ func TestNativeICMPReadbackRetainsEveryPredicate(t *testing.T) {
 	p := LabPolicy()
 	r, _ := Canonical(p)
 	var expected object
-	for _, o := range compiledObjects(r, false) {
+	for _, o := range compiledObjects(r, nil) {
 		if b, ok := o["rule"].(object); ok && b["comment"] == "tcp-test:original:related" {
 			expected = o
 		}

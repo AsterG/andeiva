@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/AsterG/andeiva/internal/nftengine"
+	"github.com/AsterG/andeiva/internal/routedmodel"
 )
 
 type Counter struct {
@@ -22,16 +23,20 @@ type Observation struct {
 // VerifyObservation compares every object, expression and order against a trusted
 // complete revision. Only kernel handles, metadata and counter values may vary.
 func VerifyObservation(data []byte, expected Revision) (Observation, error) {
-	return verifyObservation(data, expected, false)
+	return verifyObservation(data, expected, nil)
 }
 
 // VerifyRetainedWANObservation requires the exact retained-WAN compiler output.
 // It does not accept legacy rules or permit state for a different revision.
-func VerifyRetainedWANObservation(data []byte, expected Revision) (Observation, error) {
-	return verifyObservation(data, expected, true)
+func VerifyRetainedWANObservation(data []byte, expected Revision, assigned routedmodel.AdmissionMarks) (Observation, error) {
+	marks, err := assigned.MarkIndex(expected)
+	if err != nil {
+		return Observation{}, ErrObservation
+	}
+	return verifyObservation(data, expected, marks)
 }
 
-func verifyObservation(data []byte, expected Revision, retainedWAN bool) (Observation, error) {
+func verifyObservation(data []byte, expected Revision, marks map[string]uint32) (Observation, error) {
 	r, e := Canonical(expected.Policy)
 	if e != nil || r.Hash != expected.Hash || len(data) == 0 || len(data) > MaxObservation || !nftengine.UniqueJSONFields(data) {
 		return Observation{}, ErrObservation
@@ -45,7 +50,7 @@ func verifyObservation(data []byte, expected Revision, retainedWAN bool) (Observ
 	if d.Decode(&envelope) != nil || d.Decode(new(any)) != io.EOF {
 		return Observation{}, ErrObservation
 	}
-	wanted := compiledObjects(r, retainedWAN)
+	wanted := compiledObjects(r, marks)
 	if len(envelope.Objects) > len(wanted)+1 {
 		return Observation{}, ErrObservation
 	}

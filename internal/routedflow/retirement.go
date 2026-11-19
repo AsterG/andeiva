@@ -33,9 +33,11 @@ type Retirement struct {
 type RetirementResult struct {
 	Operation string
 	Retired   int
+	Limited   bool
 }
 
-func NewRetirement(operation string, gateway, host uint64, before, target routedmodel.Revision) (*Retirement, error) {
+func NewRetirement(operation string, gateway, host uint64, before, target routedmodel.Revision,
+	previous, assigned routedmodel.AdmissionMarks, highWater uint32) (*Retirement, error) {
 	if len(operation) == 0 || len(operation) > 128 || strings.IndexFunc(operation, func(c rune) bool {
 		return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '-' || c == '_')
 	}) >= 0 || gateway == 0 || host == 0 || gateway == host {
@@ -54,32 +56,27 @@ func NewRetirement(operation string, gateway, host uint64, before, target routed
 	if string(oldNAT) != string(newNAT) {
 		return nil, ErrObservation
 	}
-
-	p := &Retirement{operation: operation, gateway: gateway, host: host,
-		before: retirementRules(prior.Policy.Rules), target: retirementRules(next.Policy.Rules)}
-	previous := make(map[uint32]routedmodel.Rule, len(p.before))
-	for _, old := range p.before {
-		previous[old.mark] = old.rule
+	if err := routedmodel.VerifyAdmissionChange(previous, assigned, highWater, prior, next); err != nil {
+		return nil, ErrObservation
 	}
-	for _, updated := range p.target {
-		if old, sameMark := previous[updated.mark]; sameMark {
-			// Enabled pointers are distinct after canonicalization.
-			l, _ := json.Marshal(old)
-			r, _ := json.Marshal(updated.rule)
-			if string(l) != string(r) {
-				return nil, ErrObservation
-			}
-		}
+	oldMarks, err := previous.MarkIndex(prior)
+	if err != nil {
+		return nil, ErrObservation
 	}
-	return p, nil
+	newMarks, err := assigned.MarkIndex(next)
+	if err != nil {
+		return nil, ErrObservation
+	}
+	return &Retirement{operation: operation, gateway: gateway, host: host,
+		before: retirementRules(prior.Policy.Rules, oldMarks), target: retirementRules(next.Policy.Rules, newMarks)}, nil
 }
 
-func retirementRules(rules []routedmodel.Rule) []retirementRule {
+func retirementRules(rules []routedmodel.Rule, marks map[string]uint32) []retirementRule {
 	out := make([]retirementRule, 0, len(rules))
 	for _, rule := range rules {
 		if rule.IsEnabled() {
 			out = append(out, retirementRule{rule: rule, source: netip.MustParsePrefix(rule.Source),
-				destination: netip.MustParsePrefix(rule.Destination), mark: routedmodel.RuleMark(rule)})
+				destination: netip.MustParsePrefix(rule.Destination), mark: marks[rule.ID]})
 		}
 	}
 	return out
@@ -113,41 +110,46 @@ type retirementEntry struct {
 	id       uint32
 }
 
-func (p *Retirement) selectAffected(snapshot Snapshot) ([]retirementEntry, error) {
+func (p *Retirement) selectAffected(snapshot Snapshot) ([]retirementEntry, bool, error) {
 	if snapshot.SchemaVersion != 1 {
-		return nil, ErrObservation
+		return nil, false, ErrObservation
 	}
 	if len(snapshot.Flows) > MaxFlows {
-		return nil, ErrLimit
+		return nil, false, ErrLimit
 	}
 	var affected []retirementEntry
+	limited := false
 	for _, f := range snapshot.Flows {
-		if f.Mark == nil || *f.Mark&0xff000000 != 0xad000000 {
+		if f.Mark == nil || *f.Mark == 0 {
 			continue
 		}
 		mark := *f.Mark
-		next, exists := ruleWithMark(p.target, mark)
-		if exists && allowsMarkedTuple(p.target, next.rule.Path, f.Original, mark) {
-			// Includes connections admitted since the atomic replacement.
+		prior, exists := ruleWithMark(p.before, mark)
+		if !exists {
+			// Foreign marks and entries retired by earlier changes are not
+			// eligible for this operation, even if still in conntrack.
 			continue
 		}
-		prior, exists := ruleWithMark(p.before, mark)
-		if !exists || !allowsMarkedTuple(p.before, prior.rule.Path, f.Original, mark) || f.ID == nil || *f.ID == 0 {
-			return nil, ErrObservation
+		if _, retained := ruleWithMark(p.target, mark); retained {
+			continue
+		}
+		if !allowsMarkedTuple(p.before, prior.rule.Path, f.Original, mark) || f.ID == nil || *f.ID == 0 {
+			return nil, false, ErrObservation
 		}
 		if len(affected) == MaxRetirements {
-			return nil, ErrLimit
+			limited = true
+			continue
 		}
 		zone := zoneValue(f.Zone)
 		if f.Original.Zone != nil {
 			if f.Zone != nil && *f.Original.Zone != zone {
-				return nil, ErrObservation
+				return nil, false, ErrObservation
 			}
 			zone = *f.Original.Zone
 		}
 		affected = append(affected, retirementEntry{original: f.Original, zone: zone, id: *f.ID})
 	}
-	return affected, nil
+	return affected, limited, nil
 }
 
 func (p *Retirement) run(ctx context.Context, t transport, sequence, port uint32) (RetirementResult, error) {
@@ -156,10 +158,11 @@ func (p *Retirement) run(ctx context.Context, t transport, sequence, port uint32
 	if err != nil {
 		return result, err
 	}
-	affected, err := p.selectAffected(observed)
+	affected, limited, err := p.selectAffected(observed)
 	if err != nil {
 		return result, err
 	}
+	result.Limited = limited
 	for _, entry := range affected {
 		sequence++
 		if err := retireEntry(ctx, t, sequence, port, entry); err != nil {
@@ -167,16 +170,19 @@ func (p *Retirement) run(ctx context.Context, t transport, sequence, port uint32
 		}
 		result.Retired++
 	}
+	if result.Limited {
+		return result, nil
+	}
 	rechecked, err := collect(ctx, t, sequence+1, port)
 	if err != nil {
 		return result, err
 	}
-	remaining, err := p.selectAffected(rechecked)
+	remaining, limited, err := p.selectAffected(rechecked)
 	if err != nil {
 		return result, err
 	}
-	if len(remaining) != 0 {
-		return result, ErrObservation
-	}
+	// A packet evaluated before the swap may finish tracking after the
+	// first dump. Its retired mark has no admission authority.
+	result.Limited = limited || len(remaining) != 0
 	return result, ctx.Err()
 }

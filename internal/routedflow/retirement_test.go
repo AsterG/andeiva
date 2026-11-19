@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"errors"
 	"net/netip"
 	"testing"
 
@@ -24,17 +23,29 @@ func retirementFixture(t *testing.T) (*Retirement, Flow, Flow) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := NewRetirement("fixture.commit", 11, 12, before, target)
+	return retirementMarkFixture(t, before, target)
+}
+
+func retirementMarkFixture(t *testing.T, before, target routedmodel.Revision) (*Retirement, Flow, Flow) {
+	t.Helper()
+	initial, _, err := routedmodel.ReserveAdmissionMarks("8eecf0f0-b75e-4ba4-ae71-1dff6749bd44", 0, nil, routedmodel.Revision{}, before)
 	if err != nil {
 		t.Fatal(err)
 	}
-	affected := retirementFlow(before.Policy.Rules[0], 1)
-	retained := retirementFlow(before.Policy.Rules[1], 2)
+	next, _, err := routedmodel.ReserveAdmissionMarks(initial.Boot, initial.Issued, &initial, before, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewRetirement("fixture.commit", 11, 12, before, target, initial, next, initial.Issued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	affected := retirementFlow(before.Policy.Rules[0], initial.Bindings[0].Mark, 1)
+	retained := retirementFlow(before.Policy.Rules[1], initial.Bindings[1].Mark, 2)
 	return plan, affected, retained
 }
 
-func retirementFlow(rule routedmodel.Rule, id uint32) Flow {
-	mark := routedmodel.RuleMark(rule)
+func retirementFlow(rule routedmodel.Rule, mark, id uint32) Flow {
 	return Flow{
 		ID: &id, Mark: &mark,
 		Original: Tuple{Source: Endpoint{Address: netip.MustParseAddr("198.18.0.2"), Port: 45678},
@@ -48,18 +59,18 @@ func TestRetirementSelectsOnlyAffectedEntries(t *testing.T) {
 	foreign := retained
 	unowned := uint32(0x12345678)
 	foreign.Mark = &unowned
-	got, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{retained, foreign, affected}})
-	if err != nil || len(got) != 1 || got[0].id != *affected.ID || got[0].original != affected.Original {
+	got, limited, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{retained, foreign, affected}})
+	if err != nil || limited || len(got) != 1 || got[0].id != *affected.ID || got[0].original != affected.Original {
 		t.Fatal("retirement selected the wrong entries", err)
 	}
-	unknown := uint32(0xadffffff)
+	unknown := uint32(0xaeffffff)
 	affected.Mark = &unknown
-	if got, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected}}); !errors.Is(err, ErrObservation) || len(got) != 0 {
-		t.Fatal("unproven historical mark did not fail closed", err)
+	if got, _, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected}}); err != nil || len(got) != 0 {
+		t.Fatal("unproven historical mark was selected for deletion", err)
 	}
 }
 
-func TestRetirementRejectsOverBudgetBeforeDeleting(t *testing.T) {
+func TestRetirementSelectsAtMostItsBudget(t *testing.T) {
 	plan, affected, _ := retirementFixture(t)
 	snapshot := Snapshot{SchemaVersion: 1}
 	for i := 0; i <= MaxRetirements; i++ {
@@ -67,8 +78,8 @@ func TestRetirementRejectsOverBudgetBeforeDeleting(t *testing.T) {
 		entry.Original.Source.Port += uint16(i)
 		snapshot.Flows = append(snapshot.Flows, entry)
 	}
-	if got, err := plan.selectAffected(snapshot); !errors.Is(err, ErrLimit) || len(got) != 0 {
-		t.Fatal("over-budget retirement returned a partial list", err)
+	if got, limited, err := plan.selectAffected(snapshot); err != nil || !limited || len(got) != MaxRetirements {
+		t.Fatal("over-budget retirement did not select a bounded partial list", err)
 	}
 }
 
@@ -85,13 +96,8 @@ func TestRetirementUsesFirstMatchingRuleInBothPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := NewRetirement("fixture.commit", 11, 12, before, target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	affected := retirementFlow(before.Policy.Rules[0], 1)
-	retained := retirementFlow(before.Policy.Rules[1], 2)
-	got, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected, retained}})
+	plan, affected, retained := retirementMarkFixture(t, before, target)
+	got, _, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected, retained}})
 	if err != nil || len(got) != 1 || got[0].id != *affected.ID {
 		t.Fatal("an existing rule retained a connection denied by an earlier rule", err)
 	}
@@ -99,7 +105,7 @@ func TestRetirementUsesFirstMatchingRuleInBothPolicies(t *testing.T) {
 
 func TestRetirementRequestRequiresPointIdentity(t *testing.T) {
 	plan, affected, _ := retirementFixture(t)
-	got, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected}})
+	got, _, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected}})
 	if err != nil || len(got) != 1 {
 		t.Fatal(err)
 	}
@@ -118,14 +124,14 @@ func TestRetirementRequestRequiresPointIdentity(t *testing.T) {
 		}
 	}
 	entry.id = 0
-	if raw, err := retireRequest(testSeq, testPort, entry); !errors.Is(err, ErrObservation) || raw != nil {
+	if raw, err := retireRequest(testSeq, testPort, entry); err != ErrObservation || raw != nil {
 		t.Fatal("delete request allowed a missing identity", err)
 	}
 }
 
 func TestRetirementRequiresExactKernelAcknowledgement(t *testing.T) {
 	plan, affected, _ := retirementFixture(t)
-	keys, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected}})
+	keys, _, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected}})
 	if err != nil || len(keys) != 1 {
 		t.Fatal(err)
 	}
@@ -179,48 +185,56 @@ func TestRetirementChecksTheCompleteDumpBeforeAndAfterPointDeletion(t *testing.T
 		name       string
 		initial    int
 		stillThere bool
-		want       error
-		sent       int
+		limited    bool
 	}{
-		{name: "only affected retired", initial: 1, sent: 3},
-		{name: "remaining entry requires recovery", initial: 1, stillThere: true, want: ErrObservation, sent: 3},
-		{name: "limit prevents mutation", initial: MaxRetirements + 1, want: ErrLimit, sent: 1},
+		{name: "only affected retired", initial: 1},
+		{name: "late entry reported as incomplete cleanup", initial: 1, stillThere: true, limited: true},
+		{name: "limit permits partial cleanup", initial: MaxRetirements + 1, limited: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &fakeTransport{}
+			var flows []Flow
 			for i := 0; i < tc.initial; i++ {
 				flow := affected
 				flow.Original.Source.Port += uint16(i)
 				id := uint32(i + 1)
 				flow.ID = &id
+				flows = append(flows, flow)
 				f.packets = append(f.packets, retirementDumpFlow(flow, testSeq))
 			}
 			f.packets = append(f.packets, retirementDumpFlow(retained, testSeq), datagram{data: done()})
-			if tc.sent > 1 {
-				keys, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected}})
-				if err != nil || len(keys) != 1 {
-					t.Fatal("fixture selection", err)
-				}
-				req, err := retireRequest(testSeq+1, testPort, keys[0])
+			keys, _, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: flows})
+			if err != nil || len(keys) != min(tc.initial, MaxRetirements) {
+				t.Fatal("fixture selection", err)
+			}
+			for i, key := range keys {
+				sequence := testSeq + uint32(i+1)
+				req, err := retireRequest(sequence, testPort, key)
 				if err != nil {
 					t.Fatal(err)
 				}
 				ack := message(2, 0x100, join(make([]byte, 4), req[:16]))
-				binary.NativeEndian.PutUint32(ack[8:], testSeq+1)
-				f.packets = append(f.packets, datagram{data: ack}, retirementDumpFlow(retained, testSeq+2))
+				binary.NativeEndian.PutUint32(ack[8:], sequence)
+				f.packets = append(f.packets, datagram{data: ack})
+			}
+			expected := 1 + len(keys)
+			if tc.initial <= MaxRetirements {
+				expected++
+				sequence := testSeq + uint32(len(keys)+1)
+				f.packets = append(f.packets, retirementDumpFlow(retained, sequence))
 				if tc.stillThere {
-					f.packets = append(f.packets, retirementDumpFlow(affected, testSeq+2))
+					f.packets = append(f.packets, retirementDumpFlow(affected, sequence))
 				}
 				end := done()
-				binary.NativeEndian.PutUint32(end[8:], testSeq+2)
+				binary.NativeEndian.PutUint32(end[8:], sequence)
 				f.packets = append(f.packets, datagram{data: end})
 			}
 			result, err := plan.run(context.Background(), f, testSeq, testPort)
-			if !errors.Is(err, tc.want) || len(f.sent) != tc.sent || result.Operation != plan.operation {
+			if err != nil || len(f.sent) != expected || result.Operation != plan.operation || result.Limited != tc.limited {
 				t.Fatalf("result=%+v error=%v messages=%d", result, err, len(f.sent))
 			}
-			if tc.sent > 1 && (result.Retired != 1 || binary.NativeEndian.Uint16(f.sent[1][4:]) != ctDelete) {
-				t.Fatal("expected one acknowledged point deletion between the dumps")
+			if result.Retired != len(keys) || binary.NativeEndian.Uint16(f.sent[1][4:]) != ctDelete {
+				t.Fatal("expected only acknowledged point deletions")
 			}
 		})
 	}

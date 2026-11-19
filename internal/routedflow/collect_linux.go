@@ -100,7 +100,12 @@ func (p *Retirement) Retire(parent context.Context) (RetirementResult, error) {
 		return result, err
 	}
 	defer unix.Close(socket.fd)
-	return p.run(ctx, socket, sequence, port)
+	result, err = p.run(ctx, socket, sequence, port)
+	if parent.Err() == nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrLimit)) {
+		result.Limited = true
+		return result, nil
+	}
+	return result, err
 }
 
 type netlinkSocket struct {
