@@ -212,6 +212,13 @@ func startRoutedDHCPOwnerWithServicesV4(ctx context.Context, o RoutedDHCPOwnerOp
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWNS, Pdeathsig: syscall.SIGKILL, UseCgroupFD: true, CgroupFD: int(service.directory.Fd())}
+	pinnedPIDFD := -1
+	if os.Getenv(routedDHCPRoleProfileEnvV1) == "1" {
+		cmd.SysProcAttr.PidFD = &pinnedPIDFD
+	}
+	if err := setRoutedDHCPChildNetworkCapsV1(cmd.SysProcAttr); err != nil {
+		return nil, err
+	}
 	s := &RoutedDHCPOwnerV3{cmd: cmd, control: controlW, events: eventR, scanner: routedDHCPOwnerScannerV3(eventR), done: make(chan struct{}), profile: profile, service: service, services: services}
 	started := make(chan error, 1)
 	go func() {
@@ -231,6 +238,11 @@ func startRoutedDHCPOwnerWithServicesV4(ctx context.Context, o RoutedDHCPOwnerOp
 	}()
 	if err = <-started; err != nil {
 		return nil, ErrUnavailable
+	}
+	var process *os.File
+	if pinnedPIDFD >= 0 {
+		process = os.NewFile(uintptr(pinnedPIDFD), "routed-wan-child-pidfd")
+		defer process.Close()
 	}
 	failed := true
 	defer func() {
@@ -256,7 +268,18 @@ func startRoutedDHCPOwnerWithServicesV4(ctx context.Context, o RoutedDHCPOwnerOp
 	if pid <= 1 || pid > math.MaxInt32 {
 		return nil, ErrIdentity
 	}
-	s.mount, err = os.Open("/proc/" + strconv.Itoa(pid) + "/ns/mnt")
+	if cmd.SysProcAttr.PidFD != nil {
+		if !routedDHCPOwnerPIDFDAliveV3(process, pid) {
+			return nil, ErrIdentity
+		}
+		observed := readRoutedDHCPPinnedNamespacesV1(process, false)
+		s.mount, err = observed.mount, observed.err
+		if !routedDHCPOwnerPIDFDAliveV3(process, pid) {
+			return nil, ErrIdentity
+		}
+	} else {
+		s.mount, err = os.Open("/proc/" + strconv.Itoa(pid) + "/ns/mnt")
+	}
 	if err != nil {
 		return nil, ErrIdentity
 	}
@@ -293,7 +316,7 @@ func startRoutedDHCPOwnerWithServicesV4(ctx context.Context, o RoutedDHCPOwnerOp
 	if startup.Err() != nil {
 		return nil, ErrUnavailable
 	}
-	roleFD, roleStart, err := routedDHCPOwnerPinV3(pid, os.Getpid(), o.Metadata.GatewayNamespace, mountID)
+	roleFD, roleStart, err := pinRoutedSupervisorDHCPOwnerV1(pid, os.Getpid(), o.Metadata.GatewayNamespace, mountID)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +338,7 @@ func startRoutedDHCPOwnerWithServicesV4(ctx context.Context, o RoutedDHCPOwnerOp
 		if ready.LeasePID <= 1 || ready.LeasePID > math.MaxInt32 {
 			return nil, ErrIdentity
 		}
-		leaseFD, leaseStart, err := routedDHCPOwnerPinV3(ready.LeasePID, pid, o.Metadata.GatewayNamespace, mountID)
+		leaseFD, leaseStart, err := pinRoutedSupervisorDHCPOwnerV1(ready.LeasePID, pid, o.Metadata.GatewayNamespace, mountID)
 		if err != nil {
 			return nil, err
 		}
