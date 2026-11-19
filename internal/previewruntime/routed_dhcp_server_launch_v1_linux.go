@@ -261,6 +261,9 @@ func startRoutedDHCPServerScopedV2(ctx, lifetime context.Context, o RoutedDHCPSe
 	if roleProof != nil {
 		cmd.Args[len(cmd.Args)-1] = RoutedDHCPServerRoleV3
 	}
+	if err := setRoutedDHCPChildNetworkCapsV1(cmd.SysProcAttr); err != nil {
+		return nil, errors.Join(err, controlWrite.Close())
+	}
 	fd, done, err := routedDHCPServerStartV1(cmd)
 	if err != nil {
 		return nil, errors.Join(err, controlWrite.Close())
