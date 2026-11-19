@@ -96,6 +96,7 @@ type v2Operation struct {
 	Retired       bool             `json:"retired"`
 }
 type v2State struct {
+	RoutedBootMarks         *routedBootMarkCursorV1         `json:"routed_boot_marks,omitempty"`
 	RoutedCompensation      *routedCompensationRecordV1     `json:"routed_compensation,omitempty"`
 	RoutedDHCPConfiguration *v4RoutedDHCPConfigurationState `json:"routed_dhcp_configuration,omitempty"`
 	RoutedDHCP              *v3RoutedDHCPState              `json:"routed_dhcp,omitempty"`

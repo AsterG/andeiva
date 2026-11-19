@@ -53,6 +53,9 @@ func routedDHCPConfigurationViewV4Read(h *v4RoutedDHCPConfigurationState, st v2S
 // This bridge is shared by selector verification and checked publication.
 // The next full state is read on demand; historical summaries stay compact.
 func preservesRoutedDHCPConfigurationReadV4(previous v2State, previousHeader *v4RoutedDHCPConfigurationState, next v2State, nextHeader *v4RoutedDHCPConfigurationState, source SelectionReferenceV2, load func(string, any) error, lookup func(string, string) (v2Operation, error), headerOf routedDHCPConfigurationHeaderOfV4) bool {
+	if !preservesRoutedBootMarkCursorV1(previous, next) {
+		return false
+	}
 	if !preservesRoutedCompensationV1(previous, next) {
 		return false
 	}
