@@ -60,6 +60,14 @@ ejecutar `/usr/lib/andeiva-preview/andeiva-preview grouped-dhcp-state` para
 preparar el directorio privado. Repetir el comando conserva las concesiones.
 La unidad estándar mantiene inactivo el perfil opcional de DHCP.
 
+### Reversión de DHCP LAN en Alpha
+
+Si la reversión necesita un servicio DHCP LAN anterior que ya se detuvo,
+la vista previa mantiene la recuperación cerrada.
+La recuperación prevista para Alpha mantiene DHCP LAN detenido hasta que
+un administrador lo reactive. La acción de administración y el acceso por
+dirección estática durante esta reversión siguen pendientes de calificación.
+
 En el Debian aislado del laboratorio, comprueba un paquete de confianza
 desde la raíz del repositorio con
 `sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PAQUETE`.

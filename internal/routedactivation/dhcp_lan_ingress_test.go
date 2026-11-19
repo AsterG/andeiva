@@ -153,6 +153,38 @@ func TestDHCPServerIngressKeepsTableForLeaseOnlyChange(t *testing.T) {
 	}
 }
 
+func TestDHCPServerStoppedPolicyKeepsStaticManagementIngress(t *testing.T) {
+	deps, bundle := lanIngressFixture(t)
+	before := bundle("office", true, 120)
+	conf := before.Firewall.Config
+	projected := lanServerStoppedPolicy(*conf.Routed)
+	conf.Routed = &projected
+	effective, err := configpoc.CanonicalRouted(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := bundle("office", false, 120).Firewall
+	if effective.Hash != want.Hash || !before.Firewall.Config.Routed.DHCPServer.Enabled {
+		t.Fatal("effective policy changed more than the LAN DHCP state or mutated the selected revision")
+	}
+	ingress, err := routedLocalIngress(TableStateV1{Presence: Present, Revision: &effective}, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := ingress.compile(&before.LocalServices, deps.Neighbors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"198.18.0.1", "18443", "andeiva-dhcp-acquisition:v1"} {
+		if !bytes.Contains(local.Create, []byte(value)) {
+			t.Fatalf("stopped service projection dropped %s", value)
+		}
+	}
+	if bytes.Contains(local.Create, []byte("andeiva-dhcp-server:v1:")) {
+		t.Fatal("stopped service projection retained a LAN DHCP rule")
+	}
+}
+
 func TestDHCPServerIngressRequiresLocalTable(t *testing.T) {
 	deps, bundle := lanIngressFixture(t)
 	target := lanIngressTables(bundle("office", true, 120))

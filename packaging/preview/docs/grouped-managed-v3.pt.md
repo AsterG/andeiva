@@ -59,6 +59,14 @@ Após instalar as dependências assinadas do motor offline, root pode executar
 diretório privado. Executar o comando novamente preserva as concessões. A
 unidade padrão mantém o perfil opcional de DHCP inativo.
 
+### Reversão do DHCP da LAN no Alpha
+
+Se a reversão precisar de um serviço DHCP da LAN anterior que já foi parado,
+a versão de prévia mantém a recuperação bloqueada. A recuperação
+prevista para o Alpha mantém o DHCP da LAN parado até que um administrador o
+reative. A ação administrativa e o acesso pelo endereço estático durante essa
+reversão ainda precisam de validação.
+
 No Debian isolado do laboratório, verifique um pacote confiável na raiz
 do repositório com
 `sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PACOTE`.

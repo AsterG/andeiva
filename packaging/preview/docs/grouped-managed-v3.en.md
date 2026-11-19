@@ -60,6 +60,14 @@ After installing the signed offline engine dependencies, root can run
 private lease directory. Running it again preserves the lease files. The
 standard unit keeps the optional DHCP profile inactive.
 
+### LAN DHCP rollback in Alpha
+
+If rollback needs a previously running LAN DHCP service that has already
+stopped, the current preview keeps recovery closed.
+The planned Alpha recovery keeps LAN DHCP stopped until an administrator
+reactivates it. The administration action and static LAN management access
+during this rollback have yet to pass qualification.
+
 On the isolated Debian lab, verify a trusted build from the repository root
 with `sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PACKAGE`.
 The test extracts the package, uses temporary lease storage in a private
