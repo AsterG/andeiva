@@ -177,7 +177,7 @@ func (r *v2ReachabilityReader) actionAuditLeafV2(hash string, sequence, generati
 		if err := r.object(hash, &audit); err != nil {
 			return err
 		}
-		if audit.Format != v2Format || audit.Sequence != sequence || audit.Generation == 0 || audit.Generation > generation || !validHash(audit.Running) || !validHash(audit.Startup) || audit.Operation == "" || audit.At.IsZero() || (audit.Previous == "") != (sequence == 1) || (audit.Previous != "" && !validHash(audit.Previous)) {
+		if !validActionAuditShapeV2(audit) || audit.Sequence != sequence || audit.Generation > generation {
 			return errV2Unavailable
 		}
 		return nil
@@ -185,5 +185,5 @@ func (r *v2ReachabilityReader) actionAuditLeafV2(hash string, sequence, generati
 }
 
 func validActionAuditShapeV2(a v2CoordinatorAudit) bool {
-	return a.Format == v2Format && a.Sequence > 0 && a.Generation > 0 && validHash(a.Running) && validHash(a.Startup) && a.Operation != "" && !a.At.IsZero() && (a.Previous == "") == (a.Sequence == 1) && (a.Previous == "" || validHash(a.Previous))
+	return a.Format == v2Format && a.Sequence > 0 && a.Generation > 0 && validHash(a.Running) && validHash(a.Startup) && a.Operation != "" && !a.At.IsZero() && (a.Previous == "") == (a.Sequence == 1) && (a.Previous == "" || validHash(a.Previous)) && validRoutedConntrackAuditV1(a)
 }
