@@ -1,8 +1,8 @@
-# Active DHCP configuration: read contract v4
+# Active DHCP configuration contract v4
 
-Status: prepared reader contract for ADR-074 phase a. No runtime producer,
-admission exception, factory, API, or network activation is provided by this
-phase. Existing publication and active-DHCP admission guards remain in force.
+The selector and writer share the transition checks for ADR-074. The
+active-DHCP admission guard remains in force. Runtime production, helper
+activation and the public API depend on the remaining phases.
 
 The optional required-feature marker is
 `configuration.routed-dhcp-configuration.v4`. It is sticky once selected and
@@ -64,8 +64,11 @@ header; historical summaries retain two hashes. No cross-request validation
 cache is introduced. R2 claims remain distinct from the source's system claim;
 closing credit is not reused.
 
-The read-only bridge is limited to selector/G1/R2 readers. Generic publication,
-admission, legacy v3 validation and runtime factories are unchanged. Contract
+The writer applies the same edge validation when the continuation header
+changes. It requires the current selector as the source and verifies the
+physical reserve on the prospective state before changing the selector.
+Admission, legacy v3 validation and runtime factories retain their existing
+checks. Contract
 tests construct future-format records with real low-level R2 pool claims;
 these fixtures do not demonstrate product admission or a functioning Commit.
 

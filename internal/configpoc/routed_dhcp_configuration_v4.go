@@ -11,7 +11,8 @@ const v4RoutedDHCPConfigurationFeature = "configuration.routed-dhcp-configuratio
 const v4RoutedDHCPConfigurationLimit = 16 << 10
 
 // A selected continuation binds configuration lineage, not a DHCP grant.
-// Phase a has no producer, runtime capability or admission exception.
+// The coordinator must still authenticate admission and effects before it can
+// construct a continuation.
 type v4RoutedDHCPConfigurationState struct {
 	Version      int    `json:"version"`
 	Continuation string `json:"continuation,omitempty"`
