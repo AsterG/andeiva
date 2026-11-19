@@ -248,42 +248,16 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 		return nil
 	}
 	origin, err := s.lookupRetained(pending.Owner, pending.OriginCommit)
-	if err != nil || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.ConfirmationLease != pending.Lease {
+	if err != nil || !pendingOriginMatchesV2(pending, origin) {
 		return ErrRecovery
 	}
 	var previous v2Configuration
 	if s.readObject(pending.Previous, &previous) != nil || !validV2Configuration(&previous) || previous.Intent != nil {
 		return errV2Unavailable
 	}
-	target := clone(current)
-	target.Pending = nil
-	target.Intent = nil
-	target.Candidate = nil
-	target.RecoveryRequired = false
-	domain := domainSnapshotV2(&target, pending.Domain)
-	prior := domainSnapshotV2(&previous, pending.Domain)
-	domain.Running = prior.Running
-	domain.LastGood = prior.LastGood
-	domain.Candidate = nil
-	if pending.Domain == "routed" {
-		localChanged := target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash || target.LocalServices.LastGood.Hash != previous.LocalServices.LastGood.Hash || target.LocalServices.Candidate != nil
-		target.LocalServices.Running = previous.LocalServices.Running
-		target.LocalServices.LastGood = previous.LocalServices.LastGood
-		target.LocalServices.Candidate = nil
-		target.CandidateGroup = nil
-		if localChanged && target.LocalServices.Generation == ^uint64(0) {
-			return errV2Limited
-		}
-		if localChanged {
-			target.LocalServices.Generation++
-		}
-	}
-	if domain.Generation == ^uint64(0) || s.state.Generation == ^uint64(0) {
-		return errV2Limited
-	}
-	domain.Generation++
-	if target.refresh() != nil {
-		return errV2Invalid
+	target, err := rollbackTargetV2(current, previous, s.state.Generation)
+	if err != nil {
+		return err
 	}
 	s.allowance = v2Budget{Bytes: v2OperationReserveBytes, Inodes: v2OperationReserveInodes}
 	defer func() { s.allowance = v2Budget{} }()
@@ -338,6 +312,46 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 		return err
 	}
 	return c.finishRecoveryLocked(ctx)
+}
+
+// Both the writer and independent continuation reader need the same rollback
+// projection. The projection does not publish or prove physical restoration.
+func rollbackTargetV2(current, previous v2Configuration, generation uint64) (v2Configuration, error) {
+	pending := current.Pending
+	if pending == nil {
+		return v2Configuration{}, ErrRecovery
+	}
+	target := clone(current)
+	target.Pending = nil
+	target.Intent = nil
+	target.Candidate = nil
+	target.RecoveryRequired = false
+	domain := domainSnapshotV2(&target, pending.Domain)
+	prior := domainSnapshotV2(&previous, pending.Domain)
+	domain.Running = prior.Running
+	domain.LastGood = prior.LastGood
+	domain.Candidate = nil
+	if pending.Domain == "routed" {
+		localChanged := target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash || target.LocalServices.LastGood.Hash != previous.LocalServices.LastGood.Hash || target.LocalServices.Candidate != nil
+		target.LocalServices.Running = previous.LocalServices.Running
+		target.LocalServices.LastGood = previous.LocalServices.LastGood
+		target.LocalServices.Candidate = nil
+		target.CandidateGroup = nil
+		if localChanged && target.LocalServices.Generation == ^uint64(0) {
+			return v2Configuration{}, errV2Limited
+		}
+		if localChanged {
+			target.LocalServices.Generation++
+		}
+	}
+	if domain.Generation == ^uint64(0) || generation == ^uint64(0) {
+		return v2Configuration{}, errV2Limited
+	}
+	domain.Generation++
+	if target.refresh() != nil {
+		return v2Configuration{}, errV2Invalid
+	}
+	return target, nil
 }
 
 func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {

@@ -201,6 +201,15 @@ func (s *v2Store) ordinarySlotHashV2(slot uint64) (string, error) {
 	return root, nil
 }
 
+func pendingOriginMatchesV2(pending *v2Confirmation, origin v2Operation) bool {
+	return pending != nil && origin.ID == pending.OriginCommit && origin.Subject == pending.Owner &&
+		origin.Domain == pending.Domain && (origin.Request.Kind == OpCommit || origin.Request.Kind == OpRollback) &&
+		origin.State == "final" && origin.Pinned && !origin.Retired && origin.Outcome != nil &&
+		origin.Outcome.Code == "applied_pending_confirmation" &&
+		origin.Outcome.ConfirmationLease == pending.Lease && origin.Outcome.RunningRevision == pending.Target &&
+		origin.Outcome.ConfirmationDeadline != nil && origin.Outcome.ConfirmationDeadline.Equal(pending.Deadline)
+}
+
 func (s *v2Store) closingOriginLocked(subject, domain, origin, target string, now time.Time) (int, v2Operation, error) {
 	i := closingCreditIndexV2(&s.state, origin)
 	if i < 0 {
@@ -219,7 +228,7 @@ func (s *v2Store) closingOriginLocked(subject, domain, origin, target string, no
 	}
 	if c := s.state.Configuration; c != nil {
 		p := c.Pending
-		if p == nil || p.Owner != subject || p.Domain != domain || p.OriginCommit != origin || p.Target != target || p.Lease != op.Outcome.ConfirmationLease || !p.Deadline.Equal(*op.Outcome.ConfirmationDeadline) || c.Intent != nil || c.RecoveryRequired {
+		if !pendingOriginMatchesV2(p, op) || c.Intent != nil || c.RecoveryRequired {
 			return -1, v2Operation{}, ErrConflict
 		}
 	}
