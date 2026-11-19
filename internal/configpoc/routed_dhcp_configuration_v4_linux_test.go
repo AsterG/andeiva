@@ -253,6 +253,64 @@ func TestRoutedDHCPConfigurationV4AcceptedSourceG1AndR2(t *testing.T) {
 	}
 }
 
+func TestRoutedDHCPConfigurationV4PublicationRequiresSelectedSourceAndPhysicalReserve(t *testing.T) {
+	f := dhcpConfigurationContractFixtureV4(t)
+	f.installObjects(t)
+	s := f.store
+	if err := s.publish(f.source); err != nil {
+		t.Fatal("publish exact accepted fixture", err)
+	}
+	if s.selector.Current != f.x.SourceSelection.Selection {
+		t.Fatal("fixture source differs from actual published selection")
+	}
+	pending := clone(f.source)
+	addFeatureV2(&pending, v4RoutedDHCPConfigurationFeature)
+	transition, err := s.object(f.x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending.RoutedDHCPConfiguration = &v4RoutedDHCPConfigurationState{Version: 4, Transition: transition}
+
+	foreign := f.x
+	altSelection := s.selection
+	altSelection.Previous = strings.Repeat("f", 64)
+	foreign.SourceSelection.Previous = altSelection.Previous
+	foreign.SourceSelection.Selection, err = s.object(altSelection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := s.object(foreign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := clone(pending)
+	invalid.RoutedDHCPConfiguration.Transition = wrong
+	original := s.selector
+	if err = s.publish(invalid); !errors.Is(err, errV2Unavailable) || s.selector != original || s.blocked {
+		t.Fatal("unselected source changed the selector", err)
+	}
+
+	reserves := s.reserves
+	s.reserves = nil
+	err = s.publish(pending)
+	s.reserves = reserves
+	if !errors.Is(err, errV2Unavailable) || s.selector != original || s.blocked {
+		t.Fatal("unverified physical reserve changed the selector", err)
+	}
+	if err = s.publish(pending); err != nil {
+		t.Fatal("publish exact transition", err)
+	}
+	final := clone(f.state)
+	addFeatureV2(&final, v4RoutedDHCPConfigurationFeature)
+	final.RoutedDHCPConfiguration = clone(f.header)
+	if err = s.publish(final); err != nil {
+		t.Fatal("publish exact outcome", err)
+	}
+	if s.state.Generation != f.x.Generation || !reflect.DeepEqual(s.state.RoutedDHCP, f.source.RoutedDHCP) {
+		t.Fatal("publication changed the retained work or selected the wrong generation")
+	}
+}
+
 // Low-level future-format fixture: no producer/admission path is enabled.
 func (f *dhcpConfigurationFixtureV4) installSelected(t *testing.T) v2Selector {
 	t.Helper()

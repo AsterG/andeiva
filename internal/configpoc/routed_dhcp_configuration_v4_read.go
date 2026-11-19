@@ -2,6 +2,18 @@ package configpoc
 
 import "reflect"
 
+func (s *v2Store) preservesPublishedFeaturesV2(next v2State) bool {
+	if reflect.DeepEqual(s.state.RoutedDHCPConfiguration, next.RoutedDHCPConfiguration) {
+		return preservesFeaturesV2(s.state, next)
+	}
+	if s.reserves == nil || !preservesSelectedDHCPConfigurationReadV4(s.state, next, s.selector.Current, s.selection, s.readObject, routedDHCPConfigurationHeaderV4) {
+		return false
+	}
+	// The logical edge is insufficient on the write path. Validate the
+	// selected physical bundles against the prospective state as well.
+	return s.reserves.verifySelected(&v2Store{state: next, objectReader: s.readObject}) == nil
+}
+
 func preservesSelectedDHCPConfigurationReadV4(previous, next v2State, sourceHash string, sourceSelection v2Selection, load func(string, any) error, headerOf routedDHCPConfigurationHeaderOfV4) bool {
 	return preservesRoutedDHCPConfigurationReadV4(previous, headerOf(previous), next, headerOf(next), actualDHCPConfigurationSourceV4(sourceHash, sourceSelection, previous), load, func(subject, id string) (v2Operation, error) {
 		return (&v2Store{state: next, objectReader: load}).lookupRetained(subject, id)
