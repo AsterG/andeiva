@@ -344,10 +344,12 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 		t.Fatal("engine/RAW identity changed during enabled sample", err)
 	}
 	_ = observed.fd.Close()
+	nativeKeaReadbackV1(t, ctx, gw, host, lan, routedKeaEngineIdentityV1{
+		pid: engine.PID, parent: launch.PID(), start: engine.Start, namespace: gwID, uid: uid, gid: gid,
+	})
 	if selectedLifetime {
 		t.Log("same Kea process and sockets remained active after cancelling the startup context")
 	}
-
 	stopCtx, stop := context.WithTimeout(ctx, 15*time.Second)
 	err = launch.Stop(stopCtx)
 	stop()
