@@ -168,7 +168,10 @@ func tables(owned OwnedV1) [3]TableStateV1 {
 
 func tableBytes(state TableStateV1) []byte { data, _ := json.Marshal(state); return data }
 
-func (e *Engine) tableMatches(ctx context.Context, table Table, state TableStateV1, deps DependenciesV1, network *networkplan.Revision) bool {
+func (e *Engine) tableMatches(ctx context.Context, table Table, state TableStateV1, deps DependenciesV1, ingress localIngress) bool {
+	if table == LocalTable && ingress.server != nil && state.Presence != Present {
+		return false
+	}
 	data, exists, err := e.kernel.Observe(ctx, table)
 	if err != nil || len(data) > 512<<10 || exists != (state.Presence == Present) {
 		return false
@@ -189,7 +192,7 @@ func (e *Engine) tableMatches(ctx context.Context, table Table, state TableState
 		}
 		_, err = routednft.VerifyObservation(data, revision)
 	case LocalTable:
-		artifact, compileErr := localnft.CompileForNetwork(*state.Revision.Config.LocalServices, deps.Neighbors, network)
+		artifact, compileErr := ingress.compile(state.Revision, deps.Neighbors)
 		if compileErr != nil {
 			return false
 		}
@@ -234,12 +237,12 @@ func (e *Engine) matches(ctx context.Context, owned OwnedV1, deps DependenciesV1
 	} else if e.network.Verify(ctx) != nil {
 		return false
 	}
-	network, err := acquisitionNetwork(owned.RoutedFirewall, deps)
+	ingress, err := routedLocalIngress(owned.RoutedFirewall, deps)
 	if err != nil {
 		return false
 	}
 	for table, state := range tables(owned) {
-		if !e.tableMatches(ctx, Table(table), state, deps, network) {
+		if !e.tableMatches(ctx, Table(table), state, deps, ingress) {
 			return false
 		}
 	}
@@ -654,7 +657,7 @@ func (e *Engine) remember(table int, state TableStateV1) bool {
 	return true
 }
 
-func compileTable(table Table, state TableStateV1, exists bool, deps DependenciesV1, network *networkplan.Revision) ([]byte, error) {
+func compileTable(table Table, state TableStateV1, exists bool, deps DependenciesV1, ingress localIngress) ([]byte, error) {
 	if state.Presence == Absent {
 		if !exists {
 			return nil, nil
@@ -690,7 +693,7 @@ func compileTable(table Table, state TableStateV1, exists bool, deps Dependencie
 		}
 		create, replace = a.Create, a.Batch
 	case LocalTable:
-		a, err := localnft.CompileForNetwork(*state.Revision.Config.LocalServices, deps.Neighbors, network)
+		a, err := ingress.compile(state.Revision, deps.Neighbors)
 		if err != nil {
 			return nil, err
 		}
@@ -705,21 +708,33 @@ func compileTable(table Table, state TableStateV1, exists bool, deps Dependencie
 }
 
 func (e *Engine) compileChange(actual, desired [3]TableStateV1, deps DependenciesV1) ([]byte, error) {
-	before, err := acquisitionNetwork(actual[RoutedTable], deps)
+	before, err := routedLocalIngress(actual[RoutedTable], deps)
 	if err != nil {
 		return nil, err
 	}
-	after, err := acquisitionNetwork(desired[RoutedTable], deps)
+	after, err := routedLocalIngress(desired[RoutedTable], deps)
 	if err != nil {
 		return nil, err
+	}
+	if after.server != nil && desired[LocalTable].Presence != Present {
+		return nil, ErrState
 	}
 	var combined struct {
 		Commands []json.RawMessage `json:"nftables"`
 	}
 	combined.Commands = []json.RawMessage{}
 	for table, target := range desired {
-		if bytes.Equal(tableBytes(actual[table]), tableBytes(target)) && (Table(table) != LocalTable || sameAcquisitionNetwork(before, after)) {
-			continue
+		if bytes.Equal(tableBytes(actual[table]), tableBytes(target)) {
+			if Table(table) != LocalTable || target.Presence == Absent {
+				continue
+			}
+			same, err := before.sameControls(after, target.Revision, deps.Neighbors)
+			if err != nil {
+				return nil, ErrState
+			}
+			if same {
+				continue
+			}
 		}
 		batch, err := compileTable(Table(table), target, actual[table].Presence == Present, deps, after)
 		if err != nil || len(batch) > MaxBatch {
@@ -750,10 +765,10 @@ func (e *Engine) knownTables(ctx context.Context) ([3]TableStateV1, error) {
 	for table, candidates := range e.known {
 		// RoutedTable precedes LocalTable. Derive admission from the already
 		// verified known routed state, never from an observed comment alone.
-		var network *networkplan.Revision
+		var ingress localIngress
 		if Table(table) == LocalTable {
 			var err error
-			network, err = acquisitionNetwork(actual[RoutedTable], e.prepared.Dependencies)
+			ingress, err = routedLocalIngress(actual[RoutedTable], e.prepared.Dependencies)
 			if err != nil {
 				e.fenced = true
 				return actual, err
@@ -761,7 +776,7 @@ func (e *Engine) knownTables(ctx context.Context) ([3]TableStateV1, error) {
 		}
 		found := false
 		for _, candidate := range candidates {
-			if e.tableMatches(ctx, Table(table), candidate, e.prepared.Dependencies, network) {
+			if e.tableMatches(ctx, Table(table), candidate, e.prepared.Dependencies, ingress) {
 				actual[table], found = candidate, true
 				break
 			}
@@ -806,12 +821,12 @@ func (e *Engine) applyTables(ctx context.Context, desired [3]TableStateV1) error
 	if e.kernel.Apply(ctx, batch) != nil {
 		return ErrState
 	}
-	network, err := acquisitionNetwork(desired[RoutedTable], e.prepared.Dependencies)
+	ingress, err := routedLocalIngress(desired[RoutedTable], e.prepared.Dependencies)
 	if err != nil {
 		return err
 	}
 	for table, target := range desired {
-		if !e.tableMatches(ctx, Table(table), target, e.prepared.Dependencies, network) {
+		if !e.tableMatches(ctx, Table(table), target, e.prepared.Dependencies, ingress) {
 			return ErrState
 		}
 	}
@@ -831,6 +846,13 @@ func denyTablesFor(target configpoc.RoutedActivationBundleV1, dependencies Depen
 		policy = *target.Firewall.Config.Routed
 	}
 	policy.Rules, policy.NAT = []routednft.Rule{}, []routednft.Masquerade{}
+	if policy.DHCPServer != nil && policy.DHCPServer.Enabled {
+		// WAN acquisition follows Network even during deny. LAN server
+		// admission requires the selected target, after L3 verification.
+		server := *policy.DHCPServer
+		server.Enabled = false
+		policy.DHCPServer = &server
+	}
 	fw, err := configpoc.CanonicalRouted(configpoc.Config{SchemaVersion: 6, DefaultAction: "deny", Routed: &policy})
 	if err != nil {
 		return [3]TableStateV1{}, ErrState

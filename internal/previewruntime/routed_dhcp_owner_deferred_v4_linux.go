@@ -116,7 +116,7 @@ func (s *RoutedDHCPDeferredOwnerV4) Activate(parent context.Context) error {
 	if err != nil || event.Acquisition == nil || !event.Acquisition.valid(int64(o.deferred.Owner.PID)) {
 		return o.failDeferredLockedV4()
 	}
-	fd, start, err := routedDHCPOwnerPinV3(int(event.Acquisition.PID), int(o.deferred.Owner.PID), o.deferred.Owner.Namespace, o.deferred.MountNamespace)
+	fd, start, err := pinRoutedSupervisorDHCPOwnerV1(int(event.Acquisition.PID), int(o.deferred.Owner.PID), o.deferred.Owner.Namespace, o.deferred.MountNamespace)
 	if err != nil {
 		return o.failDeferredLockedV4()
 	}

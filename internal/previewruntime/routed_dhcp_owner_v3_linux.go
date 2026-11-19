@@ -107,6 +107,14 @@ func routedDHCPOwnerPollAliveV3(fd int32, poll func([]unix.PollFd, int) (int, er
 	return false
 }
 func routedDHCPOwnerPinV3(pid, parent int, netNS, mountNS uint64) (*os.File, uint64, error) {
+	return pinRoutedDHCPOwnerV1(pid, parent, netNS, mountNS, false)
+}
+
+func pinRoutedSupervisorDHCPOwnerV1(pid, parent int, netNS, mountNS uint64) (*os.File, uint64, error) {
+	return pinRoutedDHCPOwnerV1(pid, parent, netNS, mountNS, os.Getenv(routedDHCPRoleProfileEnvV1) == "1")
+}
+
+func pinRoutedDHCPOwnerV1(pid, parent int, netNS, mountNS uint64, useProcessNamespaces bool) (*os.File, uint64, error) {
 	if pid <= 1 || pid > math.MaxInt32 || parent <= 1 || netNS == 0 || mountNS == 0 {
 		return nil, 0, ErrIdentity
 	}
@@ -120,10 +128,21 @@ func routedDHCPOwnerPinV3(pid, parent int, netNS, mountNS uint64) (*os.File, uin
 	if err != nil || ppid != parent {
 		return fail()
 	}
-	for kind, want := range map[string]uint64{"net": netNS, "mnt": mountNS} {
-		actual, e := namespaceID("/proc/" + strconv.Itoa(pid) + "/ns/" + kind)
-		if e != nil || actual != want {
+	if useProcessNamespaces {
+		namespaces := readRoutedDHCPPinnedNamespacesV1(file, true)
+		if namespaces.err != nil {
 			return fail()
+		}
+		defer namespaces.mount.Close()
+		if namespaces.netID != netNS || !routedDHCPOwnerNamespaceV3(namespaces.mount, unix.CLONE_NEWNS, mountNS) {
+			return fail()
+		}
+	} else {
+		for kind, want := range map[string]uint64{"net": netNS, "mnt": mountNS} {
+			actual, e := namespaceID("/proc/" + strconv.Itoa(pid) + "/ns/" + kind)
+			if e != nil || actual != want {
+				return fail()
+			}
 		}
 	}
 	after, ppid, err := routedDHCPOwnerProcessV3(pid)
