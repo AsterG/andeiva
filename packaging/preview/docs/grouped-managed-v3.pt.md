@@ -52,3 +52,15 @@ do marco.
 
 O operador autorizado pode consultar o diário na consola local com
 `journalctl -u andeiva-preview-grouped.service --boot --no-pager`.
+## Preparação do diretório de concessões DHCP
+
+Após instalar as dependências assinadas do motor offline, root pode executar
+`/usr/lib/andeiva-preview/andeiva-preview grouped-dhcp-state` para preparar o
+diretório privado. Executar o comando novamente preserva as concessões. A
+unidade padrão mantém o perfil opcional de DHCP inativo.
+
+No Debian isolado do laboratório, verifique um pacote confiável na raiz
+do repositório com
+`sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PACOTE`.
+O teste extrai o pacote, utiliza armazenamento temporário em um espaço
+de nomes de montagem privado e verifica a recusa ao executar sem privilégios.

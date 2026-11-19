@@ -43,6 +43,7 @@ root="$stage/package"
 install -d "$root/DEBIAN" "$root/usr/bin" "$root/usr/lib/andeiva-preview" \
   "$root/usr/lib/systemd/system" "$root/etc/andeiva-preview" "$root/usr/share/andeiva-preview/web" \
   "$root/usr/share/doc/andeiva-firewall-preview"
+install -D -m 0644 "$templates/profiles/grouped-dhcp.conf" "$root/usr/lib/andeiva-preview/profiles/grouped-dhcp.conf"
 identity="-X github.com/AsterG/andeiva/internal/productinfo.Version=$version"
 go build -mod=readonly -trimpath -buildvcs=false -ldflags "$identity" -o "$root/usr/lib/andeiva-preview/andeiva-preview" ./cmd/andeiva-preview
 go build -mod=readonly -trimpath -buildvcs=false -ldflags "$identity" -o "$root/usr/bin/andeiva" ./cmd/andeiva
