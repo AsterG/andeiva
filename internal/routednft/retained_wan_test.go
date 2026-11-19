@@ -68,11 +68,10 @@ func TestRetainedWANRequiresCurrentMarkInBothDirections(t *testing.T) {
 	if !bytes.Contains(newConnection, []byte(`"\u0026":[{"payload":{"field":"flags","protocol":"tcp"}},23]},"op":"==","right":2`)) {
 		t.Fatal("a midstream packet could regain admission without a fresh SYN")
 	}
-	retire := retainedRuleExpressions(t, observed, "retire-owned-mark")
-	for _, predicate := range []string{`"right":"established"`, `"right":2902458368`, `"mangle":{"key":{"ct":{"key":"mark"}},"value":0}`, `"drop":null`} {
-		if !bytes.Contains(retire, []byte(predicate)) {
-			t.Fatalf("retirement missing %s", predicate)
-		}
+	// Preserve the rejected entry's identity until the helper can retire it.
+	denied := retainedRuleExpressions(t, observed, "tcp-test:original:unadmitted")
+	if bytes.Contains(denied, []byte("mangle")) || !bytes.Contains(denied, []byte(`"drop":null`)) {
+		t.Fatal("rejected traffic can alter the identity of an entry due for retirement")
 	}
 }
 

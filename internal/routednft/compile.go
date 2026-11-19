@@ -106,11 +106,10 @@ func compileRevision(r Revision, retainedWAN bool) Artifact {
 
 func compiledObjects(r Revision, retainedWAN bool) []object {
 	comment := "andeiva.routed.v1:"
-	drop := object{"drop": nil}
 	if retainedWAN {
 		comment = "andeiva.routed.retained-wan.v1:"
-		drop = object{"jump": object{"target": "retire"}}
 	}
+	drop := object{"drop": nil}
 	objects := []object{
 		{"table": object{"family": "inet", "name": TableName, "comment": comment + r.Hash}},
 		{"chain": object{"family": "inet", "table": TableName, "name": "forward", "type": "filter", "hook": "forward", "prio": 0, "policy": "drop"}},
@@ -118,9 +117,6 @@ func compiledObjects(r Revision, retainedWAN bool) []object {
 	}
 	add := func(chain, comment string, expr []object) {
 		objects = append(objects, object{"rule": object{"family": "inet", "table": TableName, "chain": chain, "expr": expr, "comment": comment}})
-	}
-	if retainedWAN {
-		objects = append(objects, object{"chain": object{"family": "inet", "table": TableName, "name": "retire"}})
 	}
 	interfaces := map[string]string{}
 	for _, i := range r.Policy.Network.Config.Interfaces {
@@ -176,14 +172,6 @@ func compiledObjects(r Revision, retainedWAN bool) []object {
 	add("forward", "default-deny", []object{counter(), drop})
 	for _, n := range r.Policy.NAT {
 		add("postrouting", n.ID+":masquerade", []object{match(meta("nfproto"), "ipv4"), match(meta("iifname"), interfaces[n.Path.FromInterface]), match(meta("oifname"), interfaces[n.Path.ToInterface]), match(object{"payload": object{"protocol": "ip", "field": "saddr"}}, address(n.Source)), counter(), object{"masquerade": nil}})
-	}
-	if retainedWAN {
-		// Touch only an established connection carrying an ANDEIVA admission
-		// mark that just failed the current policy. No rule imports prior marks.
-		add("retire", "retire-owned-mark", []object{match(ct("state"), "established"),
-			match(object{"&": []any{ct("mark"), uint32(0xff000000)}}, uint32(0xad000000)),
-			object{"mangle": object{"key": ct("mark"), "value": 0}}, counter(), object{"drop": nil}})
-		add("retire", "retire-default-deny", []object{counter(), object{"drop": nil}})
 	}
 	return objects
 }
