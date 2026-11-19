@@ -72,6 +72,31 @@ func TestRetirementRejectsOverBudgetBeforeDeleting(t *testing.T) {
 	}
 }
 
+func TestRetirementUsesFirstMatchingRuleInBothPolicies(t *testing.T) {
+	policy := routednft.LabPolicy()
+	before, err := routedmodel.Canonical(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deny := before.Policy.Rules[0]
+	deny.ID, deny.Action = "deny-before-allow", "deny"
+	policy.Rules = append([]routedmodel.Rule{deny}, policy.Rules...)
+	target, err := routedmodel.Canonical(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewRetirement("fixture.commit", 11, 12, before, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	affected := retirementFlow(before.Policy.Rules[0], 1)
+	retained := retirementFlow(before.Policy.Rules[1], 2)
+	got, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected, retained}})
+	if err != nil || len(got) != 1 || got[0].id != *affected.ID {
+		t.Fatal("an existing rule retained a connection denied by an earlier rule", err)
+	}
+}
+
 func TestRetirementRequestRequiresPointIdentity(t *testing.T) {
 	plan, affected, _ := retirementFixture(t)
 	got, err := plan.selectAffected(Snapshot{SchemaVersion: 1, Flows: []Flow{affected}})

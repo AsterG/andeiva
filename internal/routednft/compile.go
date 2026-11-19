@@ -151,7 +151,12 @@ func compiledObjects(r Revision, retainedWAN bool) []object {
 					// expiry. Only a fresh SYN can gain an admission mark.
 					admit = append(admit, match(tcpInitialFlags(), 0x02))
 				}
-				emit("new", append(admit, object{"mangle": object{"key": ct("mark"), "value": ruleMark(rule)}},
+				// Retransmits with the current mark still pass. An old mark
+				// cannot change identity between the helper's dump and delete.
+				mark := ruleMark(rule)
+				emit("new-admitted", append(append([]object{}, admit...), match(ct("mark"), mark),
+					counter(), object{"accept": nil})...)
+				emit("new", append(admit, match(ct("mark"), 0), object{"mangle": object{"key": ct("mark"), "value": mark}},
 					counter(), object{"accept": nil})...)
 			}
 			if reply || retainedWAN {
