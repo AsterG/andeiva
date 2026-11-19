@@ -35,7 +35,8 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 	if err != nil {
 		return nil, nil, err
 	}
-	r := &RoutedDHCPRuntimeV3{identity: id, owner: o.Owner, current: o.Current, reader: routedDHCPSelectedReaderV3{reader}, forward: f}
+	selected := routedDHCPSelectedReaderV3{RoutedSelectionReaderV2: reader, acceptContinuation: o.RenewalProfile == RoutedDHCPSameEffectiveRenewalV4}
+	r := &RoutedDHCPRuntimeV3{identity: id, owner: o.Owner, current: o.Current, reader: selected, forward: f}
 	if err = r.SetRenewalProfileV4(o.RenewalProfile); err != nil {
 		_ = f.Close()
 		return nil, nil, err
@@ -68,7 +69,13 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 			firewallipc.RecordRoutedDHCPFailureV1("policy_observe", e, call)
 			return errors.Join(configpoc.ErrRecovery, e)
 		}
-		if !integrityPhysicalIdleV3(receipt, hash) || hash != p.Running() {
+		policyMatches := integrityPhysicalIdleV3(receipt, hash) && hash == p.Running()
+		if selected.acceptContinuation {
+			if proof, ok := p.(configpoc.RoutedDHCPSelectedV3); ok && proof.PendingPolicyV4() {
+				policyMatches = proof.MatchesPendingPolicyV4(receipt, hash)
+			}
+		}
+		if !policyMatches {
 			firewallipc.RecordRoutedDHCPFailureV1("policy_state", configpoc.ErrRecovery, call)
 			return configpoc.ErrRecovery
 		}

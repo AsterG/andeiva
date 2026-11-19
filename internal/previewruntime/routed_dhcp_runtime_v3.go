@@ -60,9 +60,13 @@ type routedDHCPWorkV3 interface {
 }
 type routedDHCPSelectedReaderV3 struct {
 	*configpoc.RoutedSelectionReaderV2
+	acceptContinuation bool
 }
 
 func (r routedDHCPSelectedReaderV3) Resolve(ctx context.Context, work string) (routedDHCPWorkV3, error) {
+	if r.acceptContinuation {
+		return r.ResolveDHCPLeaseAuthorityV4(ctx, work)
+	}
 	return r.ResolveDHCPCurrentV3(ctx, work)
 }
 
