@@ -59,3 +59,8 @@ After installing the signed offline engine dependencies, root can run
 `/usr/lib/andeiva-preview/andeiva-preview grouped-dhcp-state` to prepare the
 private lease directory. Running it again preserves the lease files. The
 standard unit keeps the optional DHCP profile inactive.
+
+On the isolated Debian lab, verify a trusted build from the repository root
+with `sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PACKAGE`.
+The test extracts the package, uses temporary lease storage in a private
+mount namespace and checks that an unprivileged invocation fails.
