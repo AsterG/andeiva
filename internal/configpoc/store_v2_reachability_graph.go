@@ -68,12 +68,22 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		// retain every decoded state while traversing historical selections.
 		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary), Generation: state.Generation, RoutedDHCP: clone(state.RoutedDHCP), RoutedDHCPLast: state.RoutedDHCPLast, RoutedDHCPConfiguration: clone(state.RoutedDHCPConfiguration)}
 		previousState.RoutedCompensation = clone(state.RoutedCompensation)
+		previousState.RoutedBootMarks = clone(state.RoutedBootMarks)
 		hash = selection.Previous
 	}
 	return errV2InspectionBudget
 }
 
 func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error {
+	if state.RoutedBootMarks != nil {
+		cursor := state.RoutedBootMarks
+		if err := r.walk("routed-boot-marks:"+cursor.Reservation, depth+1, func() error {
+			_, err := loadRoutedBootMarkReservationV1(cursor, state.Lineage, r.object)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
 	if err := r.routedDHCPConfigurationV4(state.RoutedDHCPConfiguration, key, state, depth+1, routedDHCPConfigurationHeaderV4); err != nil {
 		return err
 	}

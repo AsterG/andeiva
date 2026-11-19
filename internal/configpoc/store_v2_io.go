@@ -533,6 +533,13 @@ func (s *v2Store) publish(state v2State) (result error) {
 	if !validRoutedCompensationPublicationV1(s.state, state, s.selection.Sequence+1) {
 		return errV2Unavailable
 	}
+	p, n := s.state.RoutedBootMarks, state.RoutedBootMarks
+	if n != nil && (p == nil || *p != *n) {
+		record, err := loadRoutedBootMarkReservationV1(n, state.Lineage, s.readObject)
+		if err != nil || s.state.RoutedDHCP == nil || s.state.RoutedDHCP.Phase != "applied" || record.Work != s.state.RoutedDHCP.Work {
+			return ErrRecovery
+		}
+	}
 	if validateRoutedBootBoundaryV2(state, s.readObject) != nil {
 		s.blocked = true
 		return errV2Unavailable

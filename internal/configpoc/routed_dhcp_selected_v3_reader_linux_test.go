@@ -21,7 +21,7 @@ func (a dhcpBootAuthorityTestV3) Prepare(ctx context.Context, target RoutedActiv
 	return p, err
 }
 
-func selectedDHCPReaderFixtureV3(t *testing.T) (*RoutedSelectionReaderV2, *v2Coordinator, *boundaryAuthorityFixtureV2, *RoutedDHCPSelectedStoreV3, *dhcpAuthorityFixtureV3) {
+func selectedDHCPReaderFixtureV3(t *testing.T, configure ...func(*Config)) (*RoutedSelectionReaderV2, *v2Coordinator, *boundaryAuthorityFixtureV2, *RoutedDHCPSelectedStoreV3, *dhcpAuthorityFixtureV3) {
 	t.Helper()
 	c, authority, principal, _ := boundaryCoordinatorLocalFixtureV2(t, true)
 	r := sharedBoundaryReaderV2(t, c, authority)
@@ -38,6 +38,9 @@ func selectedDHCPReaderFixtureV3(t *testing.T) (*RoutedSelectionReaderV2, *v2Coo
 	doc, objects := compositeRoutedFixture(t, true)
 	cfg := objects[doc.Domains.Firewall.Revision].Config
 	cfg.Routed.Network = snap.Desired
+	for _, setup := range configure {
+		setup(&cfg)
+	}
 	fw, err := CanonicalRouted(cfg)
 	if err != nil {
 		t.Fatal(err)
