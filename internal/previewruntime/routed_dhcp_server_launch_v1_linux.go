@@ -172,8 +172,13 @@ func startRoutedDHCPServerScopedV2(ctx, lifetime context.Context, o RoutedDHCPSe
 		if closeErr := mountPins.closeV2(); closeErr != nil {
 			result = errors.Join(result, ErrUnavailable, closeErr)
 			if launch != nil {
-				result = errors.Join(result, launch.Stop(ctx))
-				launch = nil
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), routedDHCPServerStopGraceV1)
+				stopErr := launch.Stop(cleanup)
+				cancel()
+				result = errors.Join(result, stopErr)
+				if stopErr == nil || !supervisorLifetime {
+					launch = nil
+				}
 			}
 		}
 	}()
@@ -223,7 +228,13 @@ func startRoutedDHCPServerScopedV2(ctx, lifetime context.Context, o RoutedDHCPSe
 	if ctx.Err() != nil || lifetime.Err() != nil || !routedDHCPServerBeforeBootDeadlineV2(b.DeadlineBootNS) {
 		cleanup, cancel := context.WithTimeout(context.Background(), routedDHCPServerStopGraceV1)
 		defer cancel()
-		return nil, errors.Join(ErrUnavailable, s.Stop(cleanup))
+		stopErr := s.Stop(cleanup)
+		if stopErr != nil && supervisorLifetime {
+			// The selected owner must retain the pidfd until it has drained
+			// the LAN leaf and completed this role's retirement.
+			return s, errors.Join(ErrUnavailable, stopErr)
+		}
+		return nil, errors.Join(ErrUnavailable, stopErr)
 	}
 	return s, nil
 }
