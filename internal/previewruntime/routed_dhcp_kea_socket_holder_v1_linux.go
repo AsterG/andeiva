@@ -120,20 +120,21 @@ func readRoutedKeaEngineFDsV1(identity routedKeaEngineIdentityV1) (_ []uint64, r
 		return nil, ErrUnavailable
 	}
 	var inodes []uint64
+	var link [128]byte
 	for _, entry := range entries {
-		target, err := os.Readlink(path + "/fd/" + entry.Name())
+		length, err := unix.Readlinkat(int(fds.Fd()), entry.Name(), link[:])
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		number, socket := strings.CutPrefix(target, "socket:[")
+		number, socket := strings.CutPrefix(string(link[:length]), "socket:[")
 		if !socket {
 			continue
 		}
 		inode, err := strconv.ParseUint(strings.TrimSuffix(number, "]"), 10, 64)
-		if !strings.HasSuffix(number, "]") || err != nil || inode == 0 {
+		if length == len(link) || !strings.HasSuffix(number, "]") || err != nil || inode == 0 {
 			return nil, ErrIdentity
 		}
 		inodes = append(inodes, inode)
