@@ -22,6 +22,7 @@ type routedDHCPServerSelectedOptionsV1 struct {
 	leaseBudget              int64
 	services                 *RoutedDHCPServerServiceSetV1
 	socketProof              bool
+	requestBoundCleanup      bool
 	readSelected             func(context.Context, configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error)
 }
 
@@ -98,8 +99,12 @@ func startRoutedDHCPServerSelectedV1(ctx, lifetime context.Context, o routedDHCP
 				result = errors.Join(result, artifact.closeV1())
 				return
 			}
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(lifetime), routedDHCPServerStopGraceV1+3*time.Second)
-			defer cancel()
+			cleanup := ctx
+			if !o.requestBoundCleanup {
+				var cancel context.CancelFunc
+				cleanup, cancel = context.WithTimeout(context.WithoutCancel(lifetime), routedDHCPServerStopGraceV1+3*time.Second)
+				defer cancel()
+			}
 			if err := active.stopV1(cleanup); err != nil {
 				// A caller must retain this owner and fence further starts if
 				// the LAN leaf or its config cannot be verified retired.
@@ -128,7 +133,7 @@ func startRoutedDHCPServerSelectedV1(ctx, lifetime context.Context, o routedDHCP
 		Metadata: o.metadata, Gateway: o.gateway, Host: o.host, HostMount: o.hostMount,
 		Configuration: artifact.file, Leases: o.leases, Config: artifact.config, Bindings: artifact.bindings,
 		ServiceCgroups: pins, LeaseBudgetBytes: o.leaseBudget,
-		socketProof: o.socketProof,
+		socketProof: o.socketProof, requestBoundCleanup: o.requestBoundCleanup,
 	})
 	if err != nil {
 		return nil, err
