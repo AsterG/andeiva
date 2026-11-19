@@ -46,13 +46,13 @@ func (e *Engine) matchesObservationV4(ctx context.Context, owned OwnedV1, deps D
 		nativeDHCPObservationFailureV4("network_generic")
 		return false, ErrState
 	}
-	network, err := acquisitionNetwork(owned.RoutedFirewall, deps)
+	ingress, err := routedLocalIngress(owned.RoutedFirewall, deps)
 	if err != nil {
 		nativeDHCPObservationFailureV4("acquisition_network")
 		return false, ErrState
 	}
 	for table, state := range tables(owned) {
-		if !e.tableMatches(ctx, Table(table), state, deps, network) {
+		if !e.tableMatches(ctx, Table(table), state, deps, ingress) {
 			nativeDHCPObservationTableFailureV4(Table(table))
 			return false, ErrState
 		}
