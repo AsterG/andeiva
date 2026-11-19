@@ -374,9 +374,6 @@ func (s *RoutedDHCPServerLaunchV1) Stop(ctx context.Context) error {
 			s.stopWatch()
 		}
 		_ = s.control.Close()
-		if s.socketObserver != nil {
-			_ = s.socketObserver.conn.Close()
-		}
 	})
 	// Revocation is one-shot. Waiting is retryable: a timed-out caller retains
 	// the pidfd until another bounded call observes Wait and closes it once.
@@ -422,6 +419,11 @@ func (s *RoutedDHCPServerLaunchV1) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	// The proof channel stays open until the role consumes lifetime revocation.
+	// Before that, closure signals a failed supervisor connection to the role.
+	if s.socketObserver != nil {
+		_ = s.socketObserver.conn.Close()
+	}
 	s.stopError = unix.Close(s.pidfd)
 	return s.stopError
 }
