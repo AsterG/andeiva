@@ -872,13 +872,9 @@ func denyTablesFor(target configpoc.RoutedActivationBundleV1, dependencies Depen
 		policy = *target.Firewall.Config.Routed
 	}
 	policy.Rules, policy.NAT = []routednft.Rule{}, []routednft.Masquerade{}
-	if policy.DHCPServer != nil && policy.DHCPServer.Enabled {
-		// WAN acquisition follows Network even during deny. LAN server
-		// admission requires the selected target, after L3 verification.
-		server := *policy.DHCPServer
-		server.Enabled = false
-		policy.DHCPServer = &server
-	}
+	// WAN acquisition follows Network even during deny. LAN server
+	// admission requires the selected target, after L3 verification.
+	policy = lanServerStoppedPolicy(policy)
 	fw, err := configpoc.CanonicalRouted(configpoc.Config{SchemaVersion: 6, DefaultAction: "deny", Routed: &policy})
 	if err != nil {
 		return [3]TableStateV1{}, ErrState

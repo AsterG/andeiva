@@ -7,11 +7,24 @@ import (
 	"github.com/AsterG/andeiva/internal/localnft"
 	"github.com/AsterG/andeiva/internal/networkplan"
 	"github.com/AsterG/andeiva/internal/routedmodel"
+	"github.com/AsterG/andeiva/internal/routednft"
 )
 
 type localIngress struct {
 	network *networkplan.Revision
 	server  *routedmodel.Revision
+}
+
+// lanServerStoppedPolicy computes the effective policy used when the LAN
+// service is down. The approved configuration and its pool definitions stay
+// intact. Local-In compilation follows this projection and omits DHCP LAN.
+func lanServerStoppedPolicy(policy routednft.Policy) routednft.Policy {
+	if policy.DHCPServer != nil && policy.DHCPServer.Enabled {
+		server := *policy.DHCPServer
+		server.Enabled = false
+		policy.DHCPServer = &server
+	}
+	return policy
 }
 
 // Local controls follow the exact selected routed table, including the
