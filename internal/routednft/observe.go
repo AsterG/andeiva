@@ -22,6 +22,16 @@ type Observation struct {
 // VerifyObservation compares every object, expression and order against a trusted
 // complete revision. Only kernel handles, metadata and counter values may vary.
 func VerifyObservation(data []byte, expected Revision) (Observation, error) {
+	return verifyObservation(data, expected, false)
+}
+
+// VerifyRetainedWANObservation requires the exact retained-WAN compiler output.
+// It does not accept legacy rules or permit state for a different revision.
+func VerifyRetainedWANObservation(data []byte, expected Revision) (Observation, error) {
+	return verifyObservation(data, expected, true)
+}
+
+func verifyObservation(data []byte, expected Revision, retainedWAN bool) (Observation, error) {
 	r, e := Canonical(expected.Policy)
 	if e != nil || r.Hash != expected.Hash || len(data) == 0 || len(data) > MaxObservation || !nftengine.UniqueJSONFields(data) {
 		return Observation{}, ErrObservation
@@ -32,7 +42,11 @@ func VerifyObservation(data []byte, expected Revision) (Observation, error) {
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 	d.DisallowUnknownFields()
-	if d.Decode(&envelope) != nil || d.Decode(new(any)) != io.EOF || len(envelope.Objects) > MaxRules*6+40 {
+	if d.Decode(&envelope) != nil || d.Decode(new(any)) != io.EOF {
+		return Observation{}, ErrObservation
+	}
+	wanted := compiledObjects(r, retainedWAN)
+	if len(envelope.Objects) > len(wanted)+1 {
 		return Observation{}, ErrObservation
 	}
 	objects := []object{}
@@ -101,7 +115,6 @@ func VerifyObservation(data []byte, expected Revision) (Observation, error) {
 		}
 		objects = append(objects, entry)
 	}
-	wanted := policyObjects(r)
 	if len(objects) != len(wanted) {
 		return Observation{}, ErrObservation
 	}
@@ -189,6 +202,7 @@ func nativeObject(expected object) object {
 	}
 	exprs, _ := rule["expr"].([]any)
 	typedICMP := false
+	typedTCP := false
 	for _, raw := range exprs {
 		expr, _ := raw.(map[string]any)
 		m, _ := expr["match"].(map[string]any)
@@ -196,6 +210,9 @@ func nativeObject(expected object) object {
 		p, _ := left["payload"].(map[string]any)
 		if p["protocol"] == "icmp" && p["field"] == "type" {
 			typedICMP = true
+		}
+		if equal(left, tcpInitialFlags()) && m["right"] == float64(2) {
+			typedTCP = true
 		}
 	}
 	variant := []any{}
@@ -209,7 +226,7 @@ func nativeObject(expected object) object {
 				continue
 			}
 			if selector["key"] == "l4proto" {
-				if typedICMP && m["right"] == "icmp" {
+				if (typedICMP && m["right"] == "icmp") || (typedTCP && m["right"] == "tcp") {
 					continue
 				}
 				switch m["right"] {
@@ -223,6 +240,9 @@ func nativeObject(expected object) object {
 			}
 			if equal(left, object{"&": []any{original("protocol"), 255}}) {
 				m["left"] = ct("protocol")
+			}
+			if typedTCP && equal(left, tcpInitialFlags()) {
+				m["left"] = object{"&": []any{object{"payload": object{"protocol": "tcp", "field": "flags"}}, object{"|": []int{1, 2, 4, 16}}}}
 			}
 			c, _ := left["ct"].(map[string]any)
 			switch c["key"] {
@@ -242,6 +262,8 @@ func nativeObject(expected object) object {
 						m["right"] = 4
 					case "established":
 						m["right"] = 2
+					case "new":
+						m["right"] = 8
 					}
 				}
 			}
