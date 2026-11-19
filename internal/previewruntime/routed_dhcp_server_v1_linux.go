@@ -49,8 +49,12 @@ type RoutedDHCPServerResourcesV1 struct {
 // context must have a deadline; Root owns its execution budget. It preserves
 // lease files and drains its children before returning. The role must then exit
 // to release its private mounts; outer cgroup drainage remains mandatory.
-func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResourcesV1) (result error) {
-	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
+func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResourcesV1) error {
+	return runRoutedDHCPServerComponentScopedV2(ctx, ctx, 0, o)
+}
+
+func runRoutedDHCPServerComponentScopedV2(ctx, lifetime context.Context, startupBootNS int64, o RoutedDHCPServerResourcesV1) (result error) {
+	if ctx == nil || ctx.Err() != nil || lifetime == nil || lifetime.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return ErrIdentity
 	}
 	if _, ok := ctx.Deadline(); !ok {
@@ -123,7 +127,10 @@ func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResou
 	if err = attachRoutedDHCPServerMountV2(&o.mountPins.leases, o.Leases, "/var/lib/kea", false); err != nil {
 		return err
 	}
-	return routedDHCPServerExecV1(ctx, uid, gid, nil)
+	if ctx.Err() != nil || lifetime.Err() != nil || (startupBootNS != 0 && !routedDHCPServerBeforeBootDeadlineV2(startupBootNS)) {
+		return ErrUnavailable
+	}
+	return routedDHCPServerExecV1(lifetime, uid, gid, nil)
 }
 
 func routedDHCPServerAccountV1() (uint32, uint32, error) {
