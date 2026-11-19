@@ -124,6 +124,8 @@ func run(args []string) error {
 		return previewruntime.PrepareRoutedRetirementSlotV3(ctx, c)
 	case "grouped-scope-slot":
 		return previewruntime.PrepareRoutedScopeRecoverySlotV3(ctx, c)
+	case "grouped-dhcp-state":
+		return previewruntime.PrepareRoutedDHCPPackageStateV1(ctx, c)
 	case "grouped-accounts":
 		digest, err := previewruntime.PrepareRoutedAccountsV3(ctx, c)
 		if err != nil {
