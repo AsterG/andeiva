@@ -24,7 +24,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		if err != nil {
 			return err
 		}
-		if !v2ValidState(state) || state.Lineage != selection.Lineage {
+		if !v2ValidState(state) || state.Lineage != selection.Lineage || !validRoutedCompensationSequenceV1(state, selection.Sequence) {
 			release()
 			return errV2Unavailable
 		}
@@ -45,7 +45,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 				return err
 			}
 		}
-		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !featuresPreserved || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
+		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !featuresPreserved || !validRoutedCompensationPublicationV1(state, previousState, previousSelection.Sequence) || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
 			release()
 			return errV2Unavailable
 		}

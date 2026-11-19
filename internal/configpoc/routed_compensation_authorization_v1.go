@@ -20,6 +20,7 @@ const (
 // until a newer Work replaces it. A consumed authorization cannot start work.
 type routedCompensationRecordV1 struct {
 	Version     int                       `json:"version"`
+	Sequence    uint64                    `json:"selection_sequence,string"`
 	Cause       routedCompensationCauseV1 `json:"cause"`
 	Operation   string                    `json:"operation_id"`
 	Scope       RoutedWorkScopeV1         `json:"scope"`
@@ -55,11 +56,38 @@ func validRoutedCompensationRecordV1(st v2State) bool {
 	if a == nil {
 		return true
 	}
-	return marked && a.Version == 1 && (a.Cause == routedCompensationOperationV1 || a.Cause == routedCompensationTimeoutV1) &&
+	return marked && a.Version == 1 && a.Sequence != 0 &&
+		(a.Cause == routedCompensationOperationV1 || a.Cause == routedCompensationTimeoutV1) &&
 		a.Operation != "" && len(a.Operation) <= 128 && a.Scope.Version == 1 &&
 		a.Scope.Lineage == st.Lineage && validRoutedIdentityV1(a.Scope.Identity) &&
 		a.Scope.Generation > 0 && a.Scope.Generation-1 <= st.Generation && validHash(a.Work) && validHash(a.BeforeOwned) &&
-		a.Lease != "" && len(a.Lease) <= 128 && !a.Deadline.IsZero() && a.Deadline.Location() == time.UTC
+		a.Lease != "" && len(a.Lease) <= 128 && !a.Deadline.IsZero() && a.Deadline.Location() == time.UTC &&
+		(a.Consumed || !st.Configuration.RecoveryRequired && a.selectedBy(st.Configuration))
+}
+
+func (a routedCompensationRecordV1) selectedBy(cfg *v2Configuration) bool {
+	if cfg == nil {
+		return false
+	}
+	if in := cfg.Intent; in != nil {
+		return a.Cause == routedCompensationOperationV1 && in.Domain == "routed" && in.Operation == a.Operation && in.RoutedWork == a.Work
+	}
+	p := cfg.Pending
+	return a.Cause == routedCompensationTimeoutV1 && p != nil && p.Domain == "routed" &&
+		p.OriginCommit == a.Operation && p.Lease == a.Lease && p.Deadline.Equal(a.Deadline)
+}
+
+func validRoutedCompensationSequenceV1(state v2State, sequence uint64) bool {
+	a := state.RoutedCompensation
+	return a == nil || a.Sequence <= sequence
+}
+
+func validRoutedCompensationPublicationV1(previous, next v2State, sequence uint64) bool {
+	p, n := previous.RoutedCompensation, next.RoutedCompensation
+	if n != nil && (p == nil || n.Work != p.Work) {
+		return n.Sequence == sequence
+	}
+	return validRoutedCompensationSequenceV1(next, sequence)
 }
 
 func preservesRoutedCompensationV1(previous, next v2State) bool {
@@ -71,7 +99,9 @@ func preservesRoutedCompensationV1(previous, next v2State) bool {
 		return false
 	}
 	if n.Work != p.Work {
-		return p.Consumed && !n.Consumed && n.Scope.Generation > p.Scope.Generation && inspectionQuiescentV1(previous)
+		cfg := previous.Configuration
+		return p.Consumed && !n.Consumed && n.Sequence > p.Sequence &&
+			cfg != nil && !cfg.RecoveryRequired && !p.selectedBy(cfg)
 	}
 	prior := *p
 	prior.Consumed = n.Consumed
@@ -92,8 +122,11 @@ func routedCompensationPlanV1(s *v2Store, identity networkexecutor.OwnedNamespac
 		return zero, ErrRecovery
 	}
 	cfg := s.state.Configuration
+	if !a.selectedBy(cfg) {
+		return zero, ErrRecovery
+	}
 	if a.Cause == routedCompensationTimeoutV1 {
-		if cfg.Intent != nil || cfg.Pending == nil || cfg.Pending.OriginCommit != a.Operation || now.Before(a.Deadline) {
+		if now.Before(a.Deadline) {
 			return zero, ErrRecovery
 		}
 		plan, _, err := selectedPendingReadbackV2(s)
@@ -101,10 +134,6 @@ func routedCompensationPlanV1(s *v2Store, identity networkexecutor.OwnedNamespac
 			return zero, ErrRecovery
 		}
 		return plan, nil
-	}
-	in := cfg.Intent
-	if a.Cause != routedCompensationOperationV1 || in == nil || a.Operation != in.Operation {
-		return zero, ErrRecovery
 	}
 	plan, err := selectedRoutedPlanFromStoreV2(s, identity)
 	if err != nil || !a.matches(plan) || !selectedPurposeV2(s, plan, SelectionRecoverV2) {

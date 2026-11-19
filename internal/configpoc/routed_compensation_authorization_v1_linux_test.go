@@ -33,7 +33,7 @@ func TestRoutedCompensationAuthorizationV1Selected(t *testing.T) {
 	state := clone(store.state)
 	addFeatureV2(&state, routedCompensationFeatureV1)
 	state.RoutedCompensation = &routedCompensationRecordV1{
-		Version: 1, Cause: routedCompensationOperationV1, Operation: operation,
+		Version: 1, Sequence: store.selection.Sequence + 1, Cause: routedCompensationOperationV1, Operation: operation,
 		Scope: plan.Scope(), Work: work.Work, Lease: plan.Lease(), Deadline: plan.Deadline(),
 		BeforeOwned: plan.Transition().BeforeOwned,
 	}
@@ -165,7 +165,7 @@ func TestRoutedCompensationKeepsOriginalConfirmDeadlineV1(t *testing.T) {
 	state := clone(c.store.state)
 	addFeatureV2(&state, routedCompensationFeatureV1)
 	state.RoutedCompensation = &routedCompensationRecordV1{
-		Version: 1, Cause: routedCompensationTimeoutV1, Operation: state.Configuration.Pending.OriginCommit,
+		Version: 1, Sequence: c.store.selection.Sequence + 1, Cause: routedCompensationTimeoutV1, Operation: state.Configuration.Pending.OriginCommit,
 		Scope: plan.Scope(), Work: work, Lease: plan.Lease(), Deadline: deadline,
 		BeforeOwned: plan.Transition().BeforeOwned,
 	}
@@ -183,6 +183,73 @@ func TestRoutedCompensationKeepsOriginalConfirmDeadlineV1(t *testing.T) {
 	state.RoutedCompensation.Deadline = deadline.Add(time.Second)
 	if err := c.store.publish(state); err == nil {
 		t.Fatal("previously selected deadline could be extended")
+	}
+}
+
+func TestRoutedCompensationSuccessiveWorkAtSameGenerationV1(t *testing.T) {
+	_, coordinator, _ := selectedIntentFixtureV2(t)
+	store := coordinator.store
+	plan, err := loadRoutedWorkV2(store.state.Configuration.Intent.RoutedWork, store.state.Lineage, store.readObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := clone(store.state)
+	addFeatureV2(&first, routedCompensationFeatureV1)
+	first.RoutedCompensation = &routedCompensationRecordV1{
+		Version: 1, Sequence: store.selection.Sequence + 1, Cause: routedCompensationOperationV1, Operation: plan.work.Operation,
+		Scope: plan.Scope(), Work: plan.Reference().Work, Lease: plan.Lease(), Deadline: plan.Deadline(),
+		BeforeOwned: plan.Transition().BeforeOwned,
+	}
+	firstConsumed := clone(first)
+	firstConsumed.RoutedCompensation.Consumed = true
+	if !preservesRoutedCompensationV1(first, firstConsumed) {
+		t.Fatal("first authorization could not be consumed")
+	}
+
+	// Exercise both selected headers for a different Work at the same target
+	// generation. An ordinary failed operation need not advance generation.
+	for _, cause := range []routedCompensationCauseV1{routedCompensationOperationV1, routedCompensationTimeoutV1} {
+		t.Run(string(cause), func(t *testing.T) {
+			waiting := clone(firstConsumed)
+			next := *first.RoutedCompensation
+			next.Cause = cause
+			next.Operation, next.Lease = "next-operation", "next-lease"
+			next.Work = checkpointDigest([]byte("next-work"))
+			next.Sequence += 4
+			waiting.Configuration.Intent, waiting.Configuration.Pending = nil, nil
+			if cause == routedCompensationOperationV1 {
+				waiting.Configuration.Intent = &v2CoordinatorIntent{Domain: "routed", Operation: next.Operation, RoutedWork: next.Work}
+			} else {
+				waiting.Configuration.Pending = &v2Confirmation{Domain: "routed", OriginCommit: next.Operation, Lease: next.Lease, Deadline: next.Deadline}
+			}
+			ready := clone(waiting)
+			ready.RoutedCompensation = &next
+			if !validRoutedCompensationRecordV1(ready) ||
+				!preservesRoutedCompensationV1(waiting, ready) ||
+				!validRoutedCompensationPublicationV1(waiting, ready, next.Sequence) {
+				t.Fatal("new selected Work could not receive authorization")
+			}
+			if preservesRoutedCompensationV1(firstConsumed, ready) {
+				t.Fatal("new authorization bypassed an in-flight predecessor")
+			}
+			waiting.Configuration.RecoveryRequired = true
+			if preservesRoutedCompensationV1(waiting, ready) {
+				t.Fatal("closed recovery was bypassed")
+			}
+			if validRoutedCompensationPublicationV1(waiting, ready, next.Sequence+1) {
+				t.Fatal("authorization issued at a different selection")
+			}
+			replayed := clone(ready)
+			replayed.RoutedCompensation = clone(first.RoutedCompensation)
+			if preservesRoutedCompensationV1(ready, replayed) {
+				t.Fatal("earlier Work could be replayed")
+			}
+			foreign := clone(ready)
+			foreign.RoutedCompensation.Operation += "-foreign"
+			if validRoutedCompensationRecordV1(foreign) {
+				t.Fatal("foreign authorization could be stored as ready")
+			}
+		})
 	}
 }
 
