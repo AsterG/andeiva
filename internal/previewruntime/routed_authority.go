@@ -29,6 +29,7 @@ func NewRoutedAuthority(kernel routedactivation.Kernel, network routedactivation
 	}
 	a := &RoutedAuthority{identity: identity}
 	options.ResolvePlan = a.resolveSelected
+	options.ResolveAdmissionMarks = a.resolveAdmissionMarks
 	options.ResolveBaseline = a.resolveBaseline
 	options.ResolveRecoveredIdle = a.resolveRecoveredIdle
 	engine, err := routedactivation.New(kernel, network, listeners, options)
@@ -41,6 +42,17 @@ func NewRoutedAuthority(kernel routedactivation.Kernel, network routedactivation
 	}
 	a.engine, a.group = engine, group
 	return a, nil
+}
+
+func (a *RoutedAuthority) resolveAdmissionMarks(ctx context.Context, transition configpoc.RoutedTransitionV1, deadline time.Time) (*configpoc.RoutedBootMarkPlanV1, networkexecutor.OwnedNamespaceIdentity, error) {
+	a.mu.Lock()
+	selected := a.selected
+	a.mu.Unlock()
+	if ctx.Err() != nil || !selected.Valid() || selected.Transition() != transition ||
+		!deadline.Equal(selected.Deadline()) || selected.Scope().Identity != a.identity {
+		return nil, networkexecutor.OwnedNamespaceIdentity{}, configpoc.ErrRecovery
+	}
+	return selected.ReservedBootMarksV1(), a.identity, nil
 }
 
 func (a *RoutedAuthority) Identity() networkexecutor.OwnedNamespaceIdentity { return a.identity }

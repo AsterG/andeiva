@@ -280,7 +280,7 @@ func (r *RoutedSelectionReaderV2) resolve(ctx context.Context, expectedSelection
 	if !selectedPurposeV2(s, plan, purpose) {
 		return RoutedSelectedPlanV1{}, ErrDenied
 	}
-	if purpose == SelectionApplyV2 && s.state.RoutedBootMarks != nil {
+	if (purpose == SelectionArmV2 || purpose == SelectionApplyV2) && s.state.RoutedBootMarks != nil && s.state.RoutedDHCP != nil {
 		marks, e := selectedRoutedBootMarksForApplyV1(s, plan, reference)
 		if e != nil {
 			return RoutedSelectedPlanV1{}, e

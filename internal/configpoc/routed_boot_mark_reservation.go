@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 
@@ -206,12 +207,14 @@ func (s *v2Store) reserveRoutedBootMarksLocked(identity networkexecutor.OwnedNam
 		issued = cursor.Issued
 	}
 	applied, requiresClosure, err = routedmodel.ReserveAdmissionMarks(string(boot), issued, prior, before, target)
-	if err != nil {
-		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
-	}
 	var restoreClosure bool
-	restored, restoreClosure, err = routedmodel.ReserveAdmissionMarks(string(boot), applied.Issued, &applied, target, before)
+	if err == nil {
+		restored, restoreClosure, err = routedmodel.ReserveAdmissionMarks(string(boot), applied.Issued, &applied, target, before)
+	}
 	if err != nil {
+		if errors.Is(err, routedmodel.ErrAdmissionMarksExhausted) {
+			err = errV2Limited
+		}
 		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
 	}
 	beforeHash, err := s.object(before)

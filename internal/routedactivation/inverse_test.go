@@ -49,6 +49,15 @@ func installOriginalBaseline(t testing.TB, f assembledFixture) configpoc.RoutedA
 
 func armFixtureOperation(t testing.TB, f assembledFixture, id string, previous, target configpoc.RoutedActivationBundleV1) (configpoc.RoutedTransitionV1, nftguardian.State) {
 	t.Helper()
+	plan, state := selectFixtureOperation(t, f, id, previous, target)
+	if err := f.group.ApplyLease(context.Background(), plan, target, state); err != nil {
+		t.Fatal("apply", err)
+	}
+	return plan, state
+}
+
+func selectFixtureOperation(t testing.TB, f assembledFixture, id string, previous, target configpoc.RoutedActivationBundleV1) (configpoc.RoutedTransitionV1, nftguardian.State) {
+	t.Helper()
 	prepared, err := f.engine.Prepare(context.Background(), target)
 	if err != nil {
 		t.Fatal("prepare", err)
@@ -65,8 +74,8 @@ func armFixtureOperation(t testing.TB, f assembledFixture, id string, previous, 
 		t.Fatal("arm", err)
 	}
 	state, _, err := f.group.SnapshotObserved()
-	if err != nil || f.group.ApplyLease(context.Background(), plan, target, state) != nil {
-		t.Fatal("apply", err)
+	if err != nil {
+		t.Fatal("observe", err)
 	}
 	return plan, state
 }

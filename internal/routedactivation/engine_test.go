@@ -20,10 +20,11 @@ import (
 )
 
 type kernelFixture struct {
-	objects        map[Table][]map[string]any
-	batches        [][]byte
-	failAt, lostAt int
-	readFail       bool
+	objects         map[Table][]map[string]any
+	batches         [][]byte
+	failAt, lostAt  int
+	corruptRoutedAt int
+	readFail        bool
 }
 
 func (k *kernelFixture) Check(ctx context.Context, data []byte) error {
@@ -90,6 +91,9 @@ func (k *kernelFixture) Apply(ctx context.Context, data []byte) error {
 	}
 	if k.lostAt == call {
 		return ErrState
+	}
+	if k.corruptRoutedAt == call && len(k.objects[RoutedTable]) > 1 {
+		k.objects[RoutedTable] = k.objects[RoutedTable][:1]
 	}
 	return nil
 }

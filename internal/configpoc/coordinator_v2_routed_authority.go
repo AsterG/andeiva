@@ -53,8 +53,8 @@ type RoutedSelectedPlanV1 struct {
 
 func (p RoutedSelectedPlanV1) Transition() RoutedTransitionV1 { return p.work.Transition }
 
-// ReservedBootMarksV1 is available only on a currently selected marked
-// Apply plan. It does not authorize reusing the mark assignment at recovery.
+// ReservedBootMarksV1 is available to Arm and Apply on a selected marked
+// transition. It does not authorize reusing the assignments at recovery.
 func (p RoutedSelectedPlanV1) ReservedBootMarksV1() *RoutedBootMarkPlanV1 {
 	return clone(p.bootMarks)
 }

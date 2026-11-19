@@ -16,6 +16,8 @@ import (
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
 	"github.com/AsterG/andeiva/internal/nftguardian"
+	"github.com/AsterG/andeiva/internal/routedflow"
+	"github.com/AsterG/andeiva/internal/routedmodel"
 	"github.com/AsterG/andeiva/internal/routednft"
 )
 
@@ -72,9 +74,10 @@ type Options struct {
 	Neighbors []localnft.NeighborLink
 	// ObservedBindings comes from authenticated supervisor inventory, never a
 	// desired L3 plan or administrative request. Only NoNetwork preparation uses it.
-	ObservedBindings []networkplan.Binding
-	ResolvePlan      ResolvePlan
-	ResolveBaseline  func(context.Context, configpoc.RoutedActivationBundleV1) (BaselineV1, error)
+	ObservedBindings      []networkplan.Binding
+	ResolvePlan           ResolvePlan
+	ResolveBaseline       func(context.Context, configpoc.RoutedActivationBundleV1) (BaselineV1, error)
+	ResolveAdmissionMarks func(context.Context, configpoc.RoutedTransitionV1, time.Time) (*configpoc.RoutedBootMarkPlanV1, networkexecutor.OwnedNamespaceIdentity, error)
 	// ResolveRecoveredIdle consumes an opaque token already validated under the
 	// coordinator lock. It must not reenter that lock/store, accept caller flags,
 	// or attest a pending target as confirmed.
@@ -101,6 +104,9 @@ type Engine struct {
 	recoveredDeadline time.Time
 	legacyEpoch       uint64
 	legacyExhausted   bool
+	admission         *routedmodel.AdmissionMarks
+	marked            *markedRoutedTransition
+	retireMarked      func(*routedflow.Retirement, context.Context) (routedflow.RetirementResult, error)
 }
 
 var _ nftguardian.GroupEngine = (*Engine)(nil)
@@ -159,7 +165,8 @@ func New(kernel Kernel, network Network, listeners localengine.Listeners, option
 		return nil, ErrState
 	}
 	return &Engine{kernel: kernel, network: network, listeners: listeners, options: options,
-		initial: [3]TableStateV1{legacy, {Presence: Absent}, local}}, nil
+		initial:      [3]TableStateV1{legacy, {Presence: Absent}, local},
+		retireMarked: (*routedflow.Retirement).Retire}, nil
 }
 
 func tables(owned OwnedV1) [3]TableStateV1 {
@@ -190,7 +197,11 @@ func (e *Engine) tableMatches(ctx context.Context, table Table, state TableState
 		if canonicalErr != nil {
 			return false
 		}
-		_, err = routednft.VerifyObservation(data, revision)
+		if e.admission == nil {
+			_, err = routednft.VerifyObservation(data, revision)
+		} else {
+			_, err = routednft.VerifyRetainedWANObservation(data, revision, *e.admission)
+		}
 	case LocalTable:
 		artifact, compileErr := ingress.compile(state.Revision, deps.Neighbors)
 		if compileErr != nil {
@@ -508,6 +519,10 @@ func (e *Engine) ValidatePlan(ctx context.Context, plan configpoc.RoutedTransiti
 		return ErrState
 	}
 	canonical := PreparationV1{before, after, deps}
+	marked, err := e.resolveMarkedRoutedTransition(ctx, plan, deadline, canonical)
+	if err != nil {
+		return err
+	}
 	actual, _ := json.Marshal(canonical)
 	want, _ := json.Marshal(e.preview)
 	if !bytes.Equal(actual, want) || !e.matches(ctx, before, deps) {
@@ -531,6 +546,7 @@ func (e *Engine) ValidatePlan(ctx context.Context, plan configpoc.RoutedTransiti
 		previous = &detached
 	}
 	e.plan, e.prepared, e.previous, e.target, e.selected = plan, canonical, previous, target, true
+	e.marked = marked
 	e.recovered = false
 	e.known = [3][]TableStateV1{}
 	for i, state := range tables(before) {
@@ -897,6 +913,9 @@ func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBun
 	if err != nil || e.fenced || !e.selected || canonical.Composite.Hash != e.target.Composite.Hash || !e.matches(ctx, e.prepared.Before, e.prepared.Dependencies) {
 		return ErrState
 	}
+	if e.marked != nil {
+		return e.applyMarkedRoutedLocked(ctx, false)
+	}
 	deny, err := denyTablesFor(e.target, e.prepared.Dependencies)
 	if err != nil {
 		return err
@@ -1109,6 +1128,9 @@ func (e *Engine) RestoreOwned(ctx context.Context, digest string) error {
 	defer e.mu.Unlock()
 	if e.fenced || !e.selected || digest != e.plan.BeforeOwned || ctx.Err() != nil {
 		return ErrState
+	}
+	if e.marked != nil {
+		return e.applyMarkedRoutedLocked(ctx, true)
 	}
 	deny, err := denyTablesFor(e.target, e.prepared.Dependencies)
 	if err != nil {
