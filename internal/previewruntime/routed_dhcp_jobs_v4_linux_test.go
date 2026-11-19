@@ -166,7 +166,7 @@ func TestRoutedDHCPJobsV4RejectsChangedSelectionWithoutGrant(t *testing.T) {
 				}
 				return s, nil
 			}, prepare: func(context.Context, networkplan.Revision) (routedDHCPJobOwnerV4, error) { return o, nil }}
-			q := routedDHCPJobV4{4, m.RunID, m.GatewayNamespace, 1, "prepare", work}
+			q := routedDHCPJobV4{Version: 4, Run: m.RunID, Namespace: m.GatewayNamespace, Sequence: 1, Operation: "prepare", Work: work}
 			_, files, err := b.dispatch(context.Background(), q)
 			for _, f := range files {
 				_ = f.Close()
@@ -205,7 +205,7 @@ func TestRoutedDHCPJobsV4CredentialFDAndReplayBoundaries(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { done <- b.serve(ctx, r, m, want) }()
-			q := routedDHCPJobV4{4, m.RunID, m.GatewayNamespace, 1, "prepare", work}
+			q := routedDHCPJobV4{Version: 4, Run: m.RunID, Namespace: m.GatewayNamespace, Sequence: 1, Operation: "prepare", Work: work}
 			switch kind {
 			case "bad frame":
 				_, _ = h.Write([]byte(`{"version":4,"version":4}`))

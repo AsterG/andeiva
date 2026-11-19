@@ -40,9 +40,10 @@ const (
 type RoutedLaunchResourcesV3 struct {
 	DHCPRenewalV4                     bool                          // Trusted B1+C profile; disabled until native qualification.
 	DHCPServiceSet                    *RoutedDHCPServerServiceSetV1 // Trusted shared-service profile, disabled by default.
-	DHCPJobs                          bool                          // Explicit trusted root profile, never an API option.
-	FreshScope                        *RoutedFreshScopeOptionsV3    // Root-opened receipt; helper only.
-	RebootScope                       *RoutedRebootScopeOptionsV4   // Mutually exclusive OS reboot profile.
+	dhcpServer                        *routedDHCPServerSelectedOptionsV1
+	DHCPJobs                          bool                        // Explicit trusted root profile, never an API option.
+	FreshScope                        *RoutedFreshScopeOptionsV3  // Root-opened receipt; helper only.
+	RebootScope                       *RoutedRebootScopeOptionsV4 // Mutually exclusive OS reboot profile.
 	LocalOrigin                       *RoutedLocalOriginV3
 	Metadata                          Metadata
 	Identities                        Identities
@@ -60,6 +61,7 @@ type routedLaunchBootstrapV3 struct {
 	DHCPRenewalV4      bool                              `json:"dhcp_renewal_v4,omitempty"`
 	DHCPJobs           bool                              `json:"dhcp_jobs,omitempty"`
 	DHCPServiceCatalog bool                              `json:"dhcp_service_catalog,omitempty"`
+	DHCPServerJobs     bool                              `json:"dhcp_server_jobs,omitempty"`
 	FreshScope         bool                              `json:"fresh_scope,omitempty"`
 	RebootScope        bool                              `json:"reboot_scope,omitempty"`
 	RebootScopeBinding *RoutedRebootScopeBindingV4       `json:"reboot_scope_binding,omitempty"`
@@ -100,24 +102,29 @@ type routedLaunchChildV3 struct {
 // Done signals helper loss or explicit closure; callers must then release their
 // isolated namespace fixture. It never authorizes physical-host teardown.
 type RoutedLaunchSupervisorV3 struct {
-	mu          sync.Mutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	resources   RoutedLaunchResourcesV3
-	self        string
-	stderr      io.Writer
-	helper, api *routedLaunchChildV3
-	epoch       uint64
-	closed      bool
-	blocked     bool
-	done        chan struct{}
-	jobs        *net.UnixConn
-	jobsFile    *os.File
-	jobsDone    chan struct{}
+	mu           sync.Mutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	resources    RoutedLaunchResourcesV3
+	self         string
+	stderr       io.Writer
+	helper, api  *routedLaunchChildV3
+	epoch        uint64
+	closed       bool
+	blocked      bool
+	done         chan struct{}
+	jobs         *net.UnixConn
+	jobsFile     *os.File
+	jobsDone     chan struct{}
+	jobsCloseErr error
 }
 
 func validateRoutedLaunchV3(r RoutedLaunchResourcesV3) error {
 	if (r.DHCPRenewalV4 || r.DHCPServiceSet != nil) && !r.DHCPJobs || r.DHCPJobs && r.IntegrityRoot == nil {
+		return ErrIdentity
+	}
+	if r.dhcpServer != nil && (r.DHCPServiceSet == nil || r.dhcpServer.hostMount == nil ||
+		r.dhcpServer.runtime == nil || r.dhcpServer.registry == nil || r.dhcpServer.leases == nil || r.dhcpServer.leaseBudget <= 0) {
 		return ErrIdentity
 	}
 	if (r.LocalOrigin != nil && validateRoutedLocalOriginV3(r.LocalOrigin) != nil) || (r.Metadata.SchemaVersion == RoutedMetadataSchemaVersion && r.LocalOrigin == nil) || r.Metadata.ValidateRouted() != nil || r.Identities.Validate() != nil || r.Gateway == nil || r.Host == nil || r.Directory == nil {
@@ -303,10 +310,23 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 		if r.DHCPServiceSet != nil {
 			broker.serviceTree = r.DHCPServiceSet.catalogV2
 		}
+		if r.dhcpServer != nil {
+			options := *r.dhcpServer
+			options.metadata, options.identity = r.Metadata, identity
+			options.gateway, options.host, options.services = r.Gateway, r.Host, r.DHCPServiceSet
+			options.readSelected = func(call context.Context, work configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error) {
+				return ReadRoutedSelectedPreflightV4(call, RoutedSelectedPreflightOptionsV4{
+					Metadata: r.Metadata, Identities: r.Identities, Store: r.Store, Admission: r.Admission, Plan: r.Plan,
+					Emergency: r.Emergency, Budget: r.Budget, Identity: identity, Purpose: RoutedPreflightDHCPServerV1, Work: work,
+				})
+			}
+			broker.server = &routedDHCPServerJobsV1{options: options, lifetime: lifetime}
+		}
 		s.jobsDone = make(chan struct{})
 		go func() {
 			defer close(s.jobsDone)
 			_ = broker.serve(lifetime, s.jobs, r.Metadata, routedDHCPJobPeerV4{pid: s.helper.cmd.Process.Pid, uid: r.Identities.HelperUID, gid: r.Identities.IPCGID})
+			s.jobsCloseErr = broker.lanCloseErr
 			cancel()
 		}()
 	}
@@ -337,6 +357,7 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 func (s *RoutedLaunchSupervisorV3) bootstrap(helper int32, epoch uint64) routedLaunchBootstrapV3 {
 	r := s.resources
 	b := routedLaunchBootstrapV3{DHCPServiceCatalog: r.DHCPServiceSet != nil && helper == 0, DHCPRenewalV4: r.DHCPRenewalV4, DHCPJobs: r.DHCPJobs, LocalOrigin: cloneRoutedLocalOriginV3(r.LocalOrigin), Version: 3, Integrity: r.IntegrityRoot != nil, Management: r.Management != nil, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
+	b.DHCPServerJobs = r.dhcpServer != nil && helper == 0
 	if r.FreshScope != nil {
 		b.FreshScope = true
 		if helper == 0 {
@@ -662,7 +683,7 @@ func (s *RoutedLaunchSupervisorV3) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return s.jobsCloseErr
 	}
 	s.closed = true
 	s.api.stop()
@@ -675,5 +696,5 @@ func (s *RoutedLaunchSupervisorV3) Close() error {
 		<-s.jobsDone
 	}
 	close(s.done)
-	return nil
+	return s.jobsCloseErr
 }
