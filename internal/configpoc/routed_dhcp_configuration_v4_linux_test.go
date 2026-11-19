@@ -253,6 +253,18 @@ func TestRoutedDHCPConfigurationV4AcceptedSourceG1AndR2(t *testing.T) {
 	}
 }
 
+type mismatchedDHCPAdmissionV4 struct {
+	reserveReadPoolV2
+	binding recoveryreserve.BindingV2
+}
+
+func (m mismatchedDHCPAdmissionV4) ReadBound(binding recoveryreserve.BindingV2) ([]byte, error) {
+	if binding == m.binding {
+		return []byte("{}"), nil
+	}
+	return m.reserveReadPoolV2.ReadBound(binding)
+}
+
 func TestRoutedDHCPConfigurationV4PublicationRequiresSelectedSourceAndPhysicalReserve(t *testing.T) {
 	f := dhcpConfigurationContractFixtureV4(t)
 	f.installObjects(t)
@@ -296,6 +308,16 @@ func TestRoutedDHCPConfigurationV4PublicationRequiresSelectedSourceAndPhysicalRe
 	s.reserves = reserves
 	if !errors.Is(err, errV2Unavailable) || s.selector != original || s.blocked {
 		t.Fatal("unverified physical reserve changed the selector", err)
+	}
+	s.reserves = &v2ReserveManager{readers: map[recoveryreserve.RoleV2]reserveReadPoolV2{
+		recoveryreserve.AdmissionV2: mismatchedDHCPAdmissionV4{reserves.admission, f.op.Reserve.Admission},
+		recoveryreserve.PlanV2:      reserves.plan,
+		recoveryreserve.EmergencyV2: reserves.emergency,
+	}}
+	err = s.publish(pending)
+	s.reserves = reserves
+	if !errors.Is(err, errV2Unavailable) || s.selector != original {
+		t.Fatal("mismatched physical binding changed the selector", err)
 	}
 	if err = s.publish(pending); err != nil {
 		t.Fatal("publish exact transition", err)
