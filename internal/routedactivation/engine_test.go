@@ -208,7 +208,7 @@ func assembleFixture(t testing.TB) assembledFixture {
 	t.Helper()
 	before, deps, target := artifactFixture(t)
 	kernel := &kernelFixture{objects: map[Table][]map[string]any{}}
-	batch, err := compileTable(LegacyTable, before.LegacyFirewall, false, deps, nil)
+	batch, err := compileTable(LegacyTable, before.LegacyFirewall, false, deps, localIngress{})
 	if err != nil || kernel.Apply(context.Background(), batch) != nil {
 		t.Fatal("establish actual default deny", err)
 	}
@@ -241,8 +241,12 @@ func assembleFixture(t testing.TB) assembledFixture {
 		if err != nil {
 			return err
 		}
+		ingress, err := routedLocalIngress(deny[RoutedTable], prepared.Dependencies)
+		if err != nil {
+			return err
+		}
 		for table, state := range deny {
-			if !engine.tableMatches(context.Background(), Table(table), state, prepared.Dependencies, &prepared.Dependencies.Network) {
+			if !engine.tableMatches(context.Background(), Table(table), state, prepared.Dependencies, ingress) {
 				return errors.New("L3 effects attempted without real deny readback")
 			}
 		}
