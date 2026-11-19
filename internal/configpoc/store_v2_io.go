@@ -455,7 +455,7 @@ func (s *v2Store) readSelection() error {
 	if !v2ValidSelection(selection) || selection.Previous != selector.Previous {
 		return errV2Unavailable
 	}
-	if err = s.readObject(selection.State, &selectedState); err != nil || !v2ValidState(selectedState) || selectedState.Lineage != selection.Lineage {
+	if err = s.readObject(selection.State, &selectedState); err != nil || !v2ValidState(selectedState) || selectedState.Lineage != selection.Lineage || !validRoutedCompensationSequenceV1(selectedState, selection.Sequence) {
 		return errV2Unavailable
 	}
 	// Verify the bounded active delta segment and previous complete selection.
@@ -467,7 +467,9 @@ func (s *v2Store) readSelection() error {
 			return errV2Unavailable
 		}
 		var state v2State
-		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage || !preservesSelectedDHCPConfigurationReadV4(state, currentState, current.Previous, prior, s.readObject, routedDHCPConfigurationHeaderV4) || !preservesReclamationV2(state, currentState) || !preservesRecoveryReserveV2(state, currentState) {
+		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage ||
+			!validRoutedCompensationSequenceV1(state, prior.Sequence) || !validRoutedCompensationPublicationV1(state, currentState, current.Sequence) ||
+			!preservesSelectedDHCPConfigurationReadV4(state, currentState, current.Previous, prior, s.readObject, routedDHCPConfigurationHeaderV4) || !preservesReclamationV2(state, currentState) || !preservesRecoveryReserveV2(state, currentState) {
 			return errV2Unavailable
 		}
 		if current.Checkpoint {
@@ -526,6 +528,9 @@ func (s *v2Store) publish(state v2State) (result error) {
 	}
 
 	if s.readOnly || (!s.preparingShared && hasFeatureV2(state, v2SharedReaderFeature) != (s.access != nil)) || s.blocked || s.selection.Sequence == ^uint64(0) || !v2ValidState(state) || !preservesFeaturesV2(s.state, state) || !preservesReclamationV2(s.state, state) || !preservesRecoveryReserveV2(s.state, state) || !s.preservesRoutedBootBoundaryStateV2(state) {
+		return errV2Unavailable
+	}
+	if !validRoutedCompensationPublicationV1(s.state, state, s.selection.Sequence+1) {
 		return errV2Unavailable
 	}
 	if validateRoutedBootBoundaryV2(state, s.readObject) != nil {

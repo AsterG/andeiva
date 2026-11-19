@@ -24,7 +24,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		if err != nil {
 			return err
 		}
-		if !v2ValidState(state) || state.Lineage != selection.Lineage {
+		if !v2ValidState(state) || state.Lineage != selection.Lineage || !validRoutedCompensationSequenceV1(state, selection.Sequence) {
 			release()
 			return errV2Unavailable
 		}
@@ -45,7 +45,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 				return err
 			}
 		}
-		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !featuresPreserved || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
+		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !featuresPreserved || !validRoutedCompensationPublicationV1(state, previousState, previousSelection.Sequence) || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
 			release()
 			return errV2Unavailable
 		}
@@ -67,6 +67,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		// Only the preceding feature set is needed by the selection edge. Do not
 		// retain every decoded state while traversing historical selections.
 		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary), Generation: state.Generation, RoutedDHCP: clone(state.RoutedDHCP), RoutedDHCPLast: state.RoutedDHCPLast, RoutedDHCPConfiguration: clone(state.RoutedDHCPConfiguration)}
+		previousState.RoutedCompensation = clone(state.RoutedCompensation)
 		hash = selection.Previous
 	}
 	return errV2InspectionBudget
