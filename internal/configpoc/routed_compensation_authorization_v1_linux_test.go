@@ -44,6 +44,23 @@ func TestRoutedCompensationAuthorizationV1Selected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prepared, err := reader.ResolveCompensationV1(ctx, selected, operation, work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor, err := reader.CaptureColdAnchorV1(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.ResolveCurrent(ctx, work, SelectionRecoverV2); err == nil {
+		t.Fatal("ordinary Recover bypassed the selected typed authorization")
+	}
+	if _, err := reader.ResolveColdContinuationV1(ctx, anchor, work, SelectionRecoverV2); err == nil {
+		t.Fatal("cold Recover bypassed the selected typed authorization")
+	}
+	if _, err := reader.ResolveFencedContinuationV1(ctx, anchor, work, SelectionRecoverV2); err == nil {
+		t.Fatal("fenced Recover bypassed the selected typed authorization")
+	}
 	for _, policy := range []SelectionReaderPolicyV2{SelectionFullHistoryV2, SelectionActionAuthorityV2} {
 		opts := reader.options
 		opts.Policy = policy
@@ -61,6 +78,9 @@ func TestRoutedCompensationAuthorizationV1Selected(t *testing.T) {
 		}
 		if _, err := r.ResolveCompensationV1(ctx, unmarked, operation, work); !errors.Is(err, ErrRecovery) {
 			t.Fatal("stale selection", err)
+		}
+		if _, err := r.ResolveConsumedCompensationV1(ctx, prepared, selected); !errors.Is(err, ErrRecovery) {
+			t.Fatal("unconsumed authorization accepted", err)
 		}
 		foreign := work
 		foreign.Generation++
@@ -90,8 +110,28 @@ func TestRoutedCompensationAuthorizationV1Selected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	accepted, err := reader.ResolveConsumedCompensationV1(ctx, prepared, consumed)
+	if err != nil || accepted.Selection() != consumed || accepted.Reference() != work {
+		t.Fatal("exact durable consumption rejected", err)
+	}
+	if _, err := reader.ResolveConsumedCompensationV1(ctx, accepted, consumed); !errors.Is(err, ErrRecovery) {
+		t.Fatal("consumed authorization could start a second handoff", err)
+	}
+	foreign := prepared
+	foreign.record.Operation += "-foreign"
+	if _, err := reader.ResolveConsumedCompensationV1(ctx, foreign, consumed); !errors.Is(err, ErrRecovery) {
+		t.Fatal("foreign prepared operation accepted", err)
+	}
+	foreign = prepared
+	foreign.record.Scope.Identity.BootID = "80000000-0000-4000-8000-000000000001"
+	if _, err := reader.ResolveConsumedCompensationV1(ctx, foreign, consumed); !errors.Is(err, ErrRecovery) {
+		t.Fatal("foreign prepared boot accepted", err)
+	}
 	if _, err := reader.ResolveCompensationV1(ctx, consumed, operation, work); !errors.Is(err, ErrRecovery) {
 		t.Fatal("consumed authorization could be reused", err)
+	}
+	if _, err := reader.ResolveCurrent(ctx, work, SelectionRecoverV2); err == nil {
+		t.Fatal("ordinary Recover bypassed the consumed typed authorization")
 	}
 	receipt := RoutedReceiptV1{
 		Phase: "expired", ID: plan.Lease(), Deadline: plan.Deadline(),
@@ -138,6 +178,9 @@ func TestRoutedCompensationAuthorizationV1Selected(t *testing.T) {
 	closed, err := reader.Observe(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := reader.ResolveConsumedCompensationV1(ctx, prepared, closed); !errors.Is(err, ErrRecovery) {
+		t.Fatal("closed successor accepted as immediate consumption", err)
 	}
 	if err := reader.VerifyRestoredCompensationV1(ctx, consumed, operation, work, receipt, plan.Transition().BeforeOwned); !errors.Is(err, ErrRecovery) {
 		t.Fatal("readback survived a new recovery selection", err)

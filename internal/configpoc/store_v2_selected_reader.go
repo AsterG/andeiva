@@ -287,6 +287,15 @@ func (r *RoutedSelectionReaderV2) resolve(ctx context.Context, expectedSelection
 }
 
 func selectedPurposeV2(s *v2Store, plan RoutedSelectedPlanV1, purpose RoutedSelectionPurposeV2) bool {
+	if s != nil && s.state.Configuration != nil && purpose == SelectionRecoverV2 {
+		if a := s.state.RoutedCompensation; a != nil && a.inFlight(s.state.Configuration) {
+			return false
+		}
+	}
+	return selectedActionV2(s, plan, purpose)
+}
+
+func selectedActionV2(s *v2Store, plan RoutedSelectedPlanV1, purpose RoutedSelectionPurposeV2) bool {
 	if s == nil || s.state.Configuration == nil || !plan.Valid() {
 		return false
 	}

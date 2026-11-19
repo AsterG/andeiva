@@ -107,14 +107,15 @@ func ValidRoutedIntegrityResultV3(r configpoc.IntegrityResultV1) bool {
 }
 
 type RoutedCommandV3 struct {
-	FreshScope RoutedFreshScopeRequestV3
-	DHCP       RoutedDHCPRequestV3
-	Integrity  RoutedIntegrityV3
-	Verb       string
-	Target     configpoc.RoutedActivationBundleV1
-	Reference  RoutedReferenceV3
-	Side       string
-	Baseline   string
+	Compensation *RoutedCompensationV3
+	FreshScope   RoutedFreshScopeRequestV3
+	DHCP         RoutedDHCPRequestV3
+	Integrity    RoutedIntegrityV3
+	Verb         string
+	Target       configpoc.RoutedActivationBundleV1
+	Reference    RoutedReferenceV3
+	Side         string
+	Baseline     string
 }
 
 func canonicalBundleV3(b configpoc.RoutedActivationBundleV1) bool {
@@ -152,6 +153,10 @@ func DecodeRoutedRequestV3(data []byte, run string, namespace, last uint64) (Rou
 		return r, c, err
 	}
 	switch r.Verb {
+	case "prepare_recover":
+		p, err := decodeRoutedCompensationV3(r.Payload, false)
+		c.Compensation = p
+		return r, c, err
 	case "inspect":
 		var p RoutedIntegrityV3
 		if exactRoutedV3(r.Payload, &p, []string{"mode", "selection"}) != nil || (p.Mode != "attach" && p.Mode != "check") || !ValidRoutedSelectionV3(p.Selection) {
@@ -176,6 +181,11 @@ func DecodeRoutedRequestV3(data []byte, run string, namespace, last uint64) (Rou
 			required = append(required, "side")
 		}
 		if exactRoutedV3(r.Payload, &p, required) != nil || !p.Reference.Valid() {
+			if r.Verb == "recover" {
+				p, err := decodeRoutedCompensationV3(r.Payload, true)
+				c.Compensation = p
+				return r, c, err
+			}
 			return r, RoutedCommandV3{}, ErrChannel
 		}
 		if r.Verb == "match" {
@@ -221,6 +231,7 @@ type RoutedPreparedV3 struct {
 	Preparation configpoc.RoutedPreparationV1 `json:"preparation"`
 }
 type RoutedResultV3 struct {
+	Compensation RoutedCompensationPreparedV3
 	DHCPSelected bool
 	FreshScope   configpoc.RoutedFreshScopeEvidenceV3
 	RebootScope  configpoc.RoutedRebootScopeEvidenceV4
@@ -250,6 +261,11 @@ func DecodeRoutedReplyV3(data []byte, request RoutedRequestV3) (RoutedReplyV3, R
 		return reply, result, err
 	}
 	switch reply.Verb {
+	case "prepare_recover":
+		if _, err := decodeRoutedCompensationV3(request.Payload, false); err != nil ||
+			exactRoutedV3(reply.Payload, &result.Compensation, []string{"ticket"}) != nil || !hashV2(result.Compensation.Ticket) {
+			return reply, RoutedResultV3{}, ErrChannel
+		}
 	case "reboot_scope":
 		var value RoutedRebootScopeResultV4
 		var expected RoutedFreshScopeRequestV3

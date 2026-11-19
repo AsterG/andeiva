@@ -145,6 +145,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 	if write(hello) != nil {
 		return ErrUnavailable
 	}
+	var compensation routedCompensationHandoffV3
 	for {
 		data, e = read(false)
 		if e != nil {
@@ -164,7 +165,7 @@ func (s *RoutedSessionV3) ServeRoutedV3(ctx context.Context, conn io.ReadWriteCl
 		}
 		call, cancel := context.WithTimeout(ctx, timeout)
 		diagnosticStarted := firewallipc.RoutedDHCPDiagnosticStartV1(command.Verb)
-		payload, operationErr := s.dispatch(call, command)
+		payload, operationErr := s.dispatchSessionV3(call, command, &compensation)
 		diagnosticErr := operationErr
 		if diagnosticErr == errRoutedDHCPInitialWaitingV1 {
 			diagnosticErr = firewallipc.ErrRoutedDHCPWaitingV1

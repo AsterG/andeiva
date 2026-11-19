@@ -143,7 +143,7 @@ func routedCompensationPlanV1(s *v2Store, identity networkexecutor.OwnedNamespac
 		return plan, nil
 	}
 	plan, err := selectedRoutedPlanFromStoreV2(s, identity)
-	if err != nil || !a.matches(plan) || !selectedPurposeV2(s, plan, SelectionRecoverV2) {
+	if err != nil || !a.matches(plan) || !selectedActionV2(s, plan, SelectionRecoverV2) {
 		return zero, ErrRecovery
 	}
 	return plan, nil
@@ -154,6 +154,28 @@ func routedCompensationPlanV1(s *v2Store, identity networkexecutor.OwnedNamespac
 // and retain the publication barrier while the restored state is verified.
 func (r *RoutedSelectionReaderV2) ResolveCompensationV1(ctx context.Context, selected SelectionReferenceV2, operation string, work RoutedWorkReferenceV1) (RoutedCompensationAuthorizationV1, error) {
 	return r.readCompensationV1(ctx, selected, operation, work, false)
+}
+
+// ResolveConsumedCompensationV1 links a previously verified authorization to
+// its immediate durable consumption. The caller owns the publication barrier
+// and must enforce single use before invoking an effect.
+func (r *RoutedSelectionReaderV2) ResolveConsumedCompensationV1(ctx context.Context, prepared RoutedCompensationAuthorizationV1, selected SelectionReferenceV2) (RoutedCompensationAuthorizationV1, error) {
+	prior := prepared.selection
+	if prior.Sequence == 0 || prior.Sequence == ^uint64(0) || prepared.record.Consumed ||
+		selected.Sequence != prior.Sequence+1 || selected.Previous != prior.Selection ||
+		selected.Mode != prior.Mode || selected.Generation != prior.Generation {
+		return RoutedCompensationAuthorizationV1{}, ErrRecovery
+	}
+	actual, err := r.readCompensationV1(ctx, selected, prepared.record.Operation, prepared.Reference(), true)
+	if err != nil {
+		return RoutedCompensationAuthorizationV1{}, err
+	}
+	prepared.selection = selected
+	prepared.record.Consumed = true
+	if prepared != actual {
+		return RoutedCompensationAuthorizationV1{}, ErrRecovery
+	}
+	return actual, nil
 }
 
 // VerifyRestoredCompensationV1 checks trusted guardian and owned-state
