@@ -41,6 +41,7 @@ type RoutedDHCPServerResourcesV1 struct {
 	ServiceCgroups                                  []RoutedDHCPServerCgroupPinV1
 	mountPins                                       *routedDHCPServerMountPinsV2
 	socketProof                                     bool
+	requestBoundCleanup                             bool
 	inspect                                         func(context.Context, int, int, uint32, uint32) error
 	// Trusted storage-plan budget for existing lease/LFC files, not a request
 	// option. This preflight bound does not enforce ongoing filesystem quotas.

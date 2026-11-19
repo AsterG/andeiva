@@ -198,13 +198,19 @@ func startRoutedDHCPServerScopedV2(ctx, lifetime context.Context, o RoutedDHCPSe
 	if err != nil {
 		return nil, err
 	}
+	stopLaunch := func(owner *RoutedDHCPServerLaunchV1) error {
+		if o.requestBoundCleanup {
+			return owner.Stop(ctx)
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), routedDHCPServerStopGraceV1)
+		defer cancel()
+		return owner.Stop(cleanup)
+	}
 	defer func() {
 		if closeErr := mountPins.closeV2(); closeErr != nil {
 			result = errors.Join(result, ErrUnavailable, closeErr)
 			if launch != nil {
-				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), routedDHCPServerStopGraceV1)
-				stopErr := launch.Stop(cleanup)
-				cancel()
+				stopErr := stopLaunch(launch)
 				result = errors.Join(result, stopErr)
 				if stopErr == nil || !supervisorLifetime {
 					launch = nil
@@ -283,9 +289,7 @@ func startRoutedDHCPServerScopedV2(ctx, lifetime context.Context, o RoutedDHCPSe
 		s.stopStartupWatch = context.AfterFunc(ctx, func() { _ = s.control.Close() })
 	}
 	if ctx.Err() != nil || lifetime.Err() != nil || !routedDHCPServerBeforeBootDeadlineV2(b.DeadlineBootNS) {
-		cleanup, cancel := context.WithTimeout(context.Background(), routedDHCPServerStopGraceV1)
-		defer cancel()
-		stopErr := s.Stop(cleanup)
+		stopErr := stopLaunch(s)
 		if stopErr != nil && supervisorLifetime {
 			// The selected owner must retain the pidfd until it has drained
 			// the LAN leaf and completed this role's retirement.

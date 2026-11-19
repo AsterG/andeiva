@@ -104,6 +104,7 @@ func (b *routedDHCPServerJobsV1) dispatch(ctx context.Context, q routedDHCPJobV4
 		b.cancelStartup = cancel
 		b.work = q.Work
 		b.options.socketProof = true
+		b.options.requestBoundCleanup = true
 		var err error
 		b.owner, err = startRoutedDHCPServerSelectedV1(startup, b.lifetime, b.options, q.Work)
 		if err != nil {
