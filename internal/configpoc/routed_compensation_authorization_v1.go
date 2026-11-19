@@ -101,11 +101,18 @@ func preservesRoutedCompensationV1(previous, next v2State) bool {
 	if n.Work != p.Work {
 		cfg := previous.Configuration
 		return p.Consumed && !n.Consumed && n.Sequence > p.Sequence &&
-			cfg != nil && !cfg.RecoveryRequired && !p.selectedBy(cfg)
+			cfg != nil && !cfg.RecoveryRequired && !p.inFlight(cfg)
 	}
 	prior := *p
 	prior.Consumed = n.Consumed
 	return (!p.Consumed || n.Consumed) && prior == *n
+}
+
+func (a routedCompensationRecordV1) inFlight(cfg *v2Configuration) bool {
+	// Recovery can replace a pending header with an Intent for the same
+	// original Work and lease. Its change of cause does not end that Work.
+	return cfg.Intent != nil && cfg.Intent.RoutedWork == a.Work ||
+		cfg.Pending != nil && cfg.Pending.Lease == a.Lease && cfg.Pending.Deadline.Equal(a.Deadline)
 }
 
 func (a routedCompensationRecordV1) matches(plan RoutedSelectedPlanV1) bool {

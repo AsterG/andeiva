@@ -232,6 +232,18 @@ func TestRoutedCompensationSuccessiveWorkAtSameGenerationV1(t *testing.T) {
 			if preservesRoutedCompensationV1(firstConsumed, ready) {
 				t.Fatal("new authorization bypassed an in-flight predecessor")
 			}
+			recovering := clone(firstConsumed)
+			recovering.RoutedCompensation.Cause = routedCompensationTimeoutV1
+			recovering.Configuration.Intent = &v2CoordinatorIntent{
+				Domain: "routed", Recovery: true, Operation: "recovery", RoutedWork: first.RoutedCompensation.Work,
+			}
+			recovering.Configuration.Pending = &v2Confirmation{
+				Domain: "routed", OriginCommit: first.RoutedCompensation.Operation,
+				Lease: first.RoutedCompensation.Lease, Deadline: first.RoutedCompensation.Deadline,
+			}
+			if preservesRoutedCompensationV1(recovering, ready) {
+				t.Fatal("a timeout predecessor still had recovery work")
+			}
 			waiting.Configuration.RecoveryRequired = true
 			if preservesRoutedCompensationV1(waiting, ready) {
 				t.Fatal("closed recovery was bypassed")
