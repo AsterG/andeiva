@@ -74,7 +74,7 @@ func readRoutedKeaEngineSocketHoldersV1(process *os.File, identity routedKeaEngi
 // Only call on a dedicated locked thread that will be retired. Read exactly
 // the pinned engine's PID directory and bound concurrent descriptor churn.
 func readRoutedKeaEngineFDsV1(identity routedKeaEngineIdentityV1) (_ []uint64, result error) {
-	if unix.Gettid() == os.Getpid() {
+	if unix.Gettid() == os.Getpid() || identity.pid <= 1 || identity.pid > math.MaxInt32 {
 		return nil, ErrIdentity
 	}
 	hdr := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
@@ -104,16 +104,27 @@ func readRoutedKeaEngineFDsV1(identity routedKeaEngineIdentityV1) (_ []uint64, r
 	if gerr != nil || uerr != nil || ucheck != nil || gcheck != nil || actualUID != int(identity.uid) || actualGID != int(identity.gid) {
 		return nil, ErrIdentity
 	}
-	path := "/proc/" + strconv.Itoa(identity.pid)
+	proc, err := os.Open("/proc")
+	if err != nil {
+		return nil, err
+	}
+	defer proc.Close()
+	var fs unix.Statfs_t
+	if unix.Fstatfs(int(proc.Fd()), &fs) != nil || fs.Type != unix.PROC_SUPER_MAGIC {
+		return nil, ErrIdentity
+	}
+	pid := strconv.Itoa(identity.pid)
+	path := "/proc/" + pid
 	ns, err := namespaceID(path + "/ns/net")
 	profile, profileErr := routedDHCPOwnerReadV3(path+"/attr/current", 4096)
 	if err != nil || ns != identity.namespace || profileErr != nil || strings.TrimSpace(string(profile)) != "kea-dhcp4 (enforce)" {
 		return nil, ErrIdentity
 	}
-	fds, err := os.Open(path + "/fd")
+	fd, err := unix.Openat(int(proc.Fd()), pid+"/fd", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
+	fds := os.NewFile(uintptr(fd), "kea-engine-descriptors")
 	defer fds.Close()
 	entries, err := fds.ReadDir(257)
 	if (err != nil && !errors.Is(err, io.EOF)) || len(entries) > 256 {
