@@ -38,10 +38,11 @@ const (
 // Callers retain every descriptor and own namespace teardown. This opt-in does
 // not provision identities, storage, interfaces, listeners or deployed units.
 type RoutedLaunchResourcesV3 struct {
-	DHCPRenewalV4                     bool                        // Trusted B1+C profile; disabled until native qualification.
-	DHCPJobs                          bool                        // Explicit trusted root profile, never an API option.
-	FreshScope                        *RoutedFreshScopeOptionsV3  // Root-opened receipt; helper only.
-	RebootScope                       *RoutedRebootScopeOptionsV4 // Mutually exclusive OS reboot profile.
+	DHCPRenewalV4                     bool                          // Trusted B1+C profile; disabled until native qualification.
+	DHCPServiceSet                    *RoutedDHCPServerServiceSetV1 // Trusted shared-service profile, disabled by default.
+	DHCPJobs                          bool                          // Explicit trusted root profile, never an API option.
+	FreshScope                        *RoutedFreshScopeOptionsV3    // Root-opened receipt; helper only.
+	RebootScope                       *RoutedRebootScopeOptionsV4   // Mutually exclusive OS reboot profile.
 	LocalOrigin                       *RoutedLocalOriginV3
 	Metadata                          Metadata
 	Identities                        Identities
@@ -58,6 +59,7 @@ type RoutedLaunchResourcesV3 struct {
 type routedLaunchBootstrapV3 struct {
 	DHCPRenewalV4      bool                              `json:"dhcp_renewal_v4,omitempty"`
 	DHCPJobs           bool                              `json:"dhcp_jobs,omitempty"`
+	DHCPServiceCatalog bool                              `json:"dhcp_service_catalog,omitempty"`
 	FreshScope         bool                              `json:"fresh_scope,omitempty"`
 	RebootScope        bool                              `json:"reboot_scope,omitempty"`
 	RebootScopeBinding *RoutedRebootScopeBindingV4       `json:"reboot_scope_binding,omitempty"`
@@ -115,7 +117,7 @@ type RoutedLaunchSupervisorV3 struct {
 }
 
 func validateRoutedLaunchV3(r RoutedLaunchResourcesV3) error {
-	if r.DHCPRenewalV4 && !r.DHCPJobs || r.DHCPJobs && r.IntegrityRoot == nil {
+	if (r.DHCPRenewalV4 || r.DHCPServiceSet != nil) && !r.DHCPJobs || r.DHCPJobs && r.IntegrityRoot == nil {
 		return ErrIdentity
 	}
 	if (r.LocalOrigin != nil && validateRoutedLocalOriginV3(r.LocalOrigin) != nil) || (r.Metadata.SchemaVersion == RoutedMetadataSchemaVersion && r.LocalOrigin == nil) || r.Metadata.ValidateRouted() != nil || r.Identities.Validate() != nil || r.Gateway == nil || r.Host == nil || r.Directory == nil {
@@ -295,8 +297,11 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 				return ReadRoutedSelectedPreflightV4(call, RoutedSelectedPreflightOptionsV4{Metadata: r.Metadata, Identities: r.Identities, Store: r.Store, Admission: r.Admission, Plan: r.Plan, Emergency: r.Emergency, Budget: r.Budget, Identity: identity, Purpose: RoutedPreflightDHCPV4, Work: work})
 			},
 			prepare: func(call context.Context, desired networkplan.Revision) (routedDHCPJobOwnerV4, error) {
-				return PrepareRoutedDHCPDeferredOwnerV4(lifetime, RoutedDHCPOwnerOptionsV3{EarlyRenewalV4: r.DHCPRenewalV4, Metadata: r.Metadata, Gateway: r.Gateway, Host: r.Host, Desired: desired})
+				return prepareRoutedDHCPDeferredWithServicesV4(lifetime, RoutedDHCPOwnerOptionsV3{EarlyRenewalV4: r.DHCPRenewalV4, Metadata: r.Metadata, Gateway: r.Gateway, Host: r.Host, Desired: desired}, r.DHCPServiceSet)
 			},
+		}
+		if r.DHCPServiceSet != nil {
+			broker.serviceTree = r.DHCPServiceSet.catalogV2
 		}
 		s.jobsDone = make(chan struct{})
 		go func() {
@@ -331,7 +336,7 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 
 func (s *RoutedLaunchSupervisorV3) bootstrap(helper int32, epoch uint64) routedLaunchBootstrapV3 {
 	r := s.resources
-	b := routedLaunchBootstrapV3{DHCPRenewalV4: r.DHCPRenewalV4, DHCPJobs: r.DHCPJobs, LocalOrigin: cloneRoutedLocalOriginV3(r.LocalOrigin), Version: 3, Integrity: r.IntegrityRoot != nil, Management: r.Management != nil, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
+	b := routedLaunchBootstrapV3{DHCPServiceCatalog: r.DHCPServiceSet != nil && helper == 0, DHCPRenewalV4: r.DHCPRenewalV4, DHCPJobs: r.DHCPJobs, LocalOrigin: cloneRoutedLocalOriginV3(r.LocalOrigin), Version: 3, Integrity: r.IntegrityRoot != nil, Management: r.Management != nil, Metadata: r.Metadata, Identities: r.Identities, Access: [4]recoveryreserve.ReaderAccessV2{r.Store.Access, r.Admission.Access, r.Plan.Access, r.Emergency.Access}, Profiles: [3]recoveryreserve.ProfileV2{r.Admission.Profile, r.Plan.Profile, r.Emergency.Profile}, Budget: r.Budget, ParentPID: os.Getpid(), HelperPID: helper, Epoch: epoch}
 	if r.FreshScope != nil {
 		b.FreshScope = true
 		if helper == 0 {

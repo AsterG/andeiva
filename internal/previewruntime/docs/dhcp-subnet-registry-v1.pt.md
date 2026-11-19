@@ -12,23 +12,32 @@ IPv4 canônica. Alterar pools ou opções mantém o ID; outra interface, MAC ou
 sub-rede recebe outro uint32 não nulo. A alocação cresce sem reutilização e mantém
 mapeamentos removidos, inclusive ao desabilitar, reabilitar ou reverter a
 configuração. A ordem do lote não altera a atribuição. Limites: 4096 entradas e 1 MiB.
+O registro rejeita o ID 4294967295, reservado pelo Kea.
 
-Flock independente do diretório serializa chamadas. Criação exclusiva sem seguir
-links, fsync do arquivo, rename atômico e fsync do diretório precedem o retorno de
-IDs. Se a persistência falhar, o registro não retorna IDs e o motor não pode
-iniciar. Se o rename estiver visível após uma falha no fsync do diretório, a
-próxima tentativa precisa sincronizar o diretório sob bloqueio para retornar IDs.
-Um arquivo pendente bloqueia as chamadas até a recuperação protegida.
-Cancelamento é cooperativo, sem garantia temporal de disco. O registro nunca
-interrompe o serviço existente.
+Um flock independente do diretório serializa as chamadas. A publicação
+sincroniza o marcador `scope-bindings.v1.pending` e o diretório antes de preparar
+`scope-bindings.v1.publish`. Ambos os arquivos são criados de forma exclusiva
+sem seguir links. O candidato é sincronizado e renomeado de forma atômica. O
+marcador só é removido depois de sincronizar o diretório após o rename. Um
+marcador ou candidato restante bloqueia todas as chamadas. Se a sincronização
+da remoção falhar, a tentativa termina com erro e sem IDs. O manifesto já foi
+sincronizado e, se o marcador reaparecer após reiniciar, continua bloqueando
+chamadas. O registro mantém o serviço que já estava ativo. A E/S de disco pode
+atrasar o cancelamento.
 
-Sem registro, qualquer lease existente impede inicialização. Somente um diretório
-de leases vazio e bloqueado permite inicializar. No limite, chaves existentes
-continuam consultáveis sem escrita; novas alocações falham. Escritas parciais
-incertas bloqueiam resolução até recuperação protegida. Não há reparo automático.
-Restauração ou remoção arbitrária por root não é detectável sem âncora monotônica
-externa; rollback de configuração nunca deve restaurar este registro separado
-de seu histórico de leases.
+O primeiro ID exige um diretório de leases vazio e bloqueado, inclusive quando
+já existe um manifesto com zero entradas. No limite, as consultas existentes
+continuam sem escritas e as novas alocações falham.
+
+Para recuperar, pare o motor e todos os escritores durante manutenção
+autorizada. Preserve juntos os arquivos do registro e o diretório de leases
+como evidência do incidente. Verifique o armazenamento, o histórico completo
+das atribuições e a concordância com os leases preservados. Sincronize o
+manifesto verificado e seu diretório antes de remover o marcador ou o
+candidato. Sincronize o diretório novamente depois. Se faltarem evidências,
+mantenha o bloqueio. Preserve todas as concessões. O rollback de configuração
+nunca deve restaurar o manifesto separado de seu histórico de leases. Detectar
+uma restauração arbitrária por root exige uma âncora monotônica externa.
 
 Linux/WSL, Go 1.27.4:
 

@@ -13,6 +13,7 @@ if [[ $# == 4 ]]; then
       test_name=TestNativeRoutedDHCPEarlyRenewalV4
       test_budget=730s; wrapper_budget=750s ;;
     --warm-restart) test_name=TestNativeRoutedDHCPWarmRestartV4 ;;
+    --shared-wan) test_name=TestNativeRoutedDHCPSharedWANV2 ;;
     --restart-no-store) test_name=TestNativeRoutedDHCPWarmRestartNoStoreV4 ;;
     --restart-no-helper) test_name=TestNativeRoutedDHCPWarmRestartNoHelperV4 ;;
     --restart-no-store-or-helper) test_name=TestNativeRoutedDHCPWarmRestartNoDependenciesV4 ;;

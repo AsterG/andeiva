@@ -79,17 +79,19 @@ func ensureDHCPSubnetIDsWithDirectorySyncV1(ctx context.Context, directory, leas
 			result = ErrRoutedDHCPSubnetRegistryV1
 		}
 	}()
-	var pending unix.Stat_t
-	if err := unix.Fstatat(int(dir.Fd()), routedDHCPSubnetRegistryPendingV1, &pending, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(err, unix.ENOENT) {
-		return nil, ErrRoutedDHCPSubnetRegistryV1
+	for _, name := range [...]string{routedDHCPSubnetRegistryPendingV1, routedDHCPSubnetRegistryPublishV1} {
+		var pending unix.Stat_t
+		if err := unix.Fstatat(int(dir.Fd()), name, &pending, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(err, unix.ENOENT) {
+			return nil, ErrRoutedDHCPSubnetRegistryV1
+		}
 	}
 	r, missing, err := readDHCPSubnetRegistryV1(dir, uid, gid)
 	if err != nil {
 		return nil, err
 	}
-	if missing {
+	if missing || len(r.Entries) == 0 && len(bindings) > 0 {
 		// Lock a fresh description, never the caller's lease lock. An existing
-		// engine or any lease entry prevents creation of unbound mappings.
+		// engine or any lease entry prevents the first association.
 		if unix.Flock(int(leaseDir.Fd()), unix.LOCK_EX|unix.LOCK_NB) != nil {
 			return nil, ErrRoutedDHCPSubnetRegistryV1
 		}
@@ -97,6 +99,8 @@ func ensureDHCPSubnetIDsWithDirectorySyncV1(ctx context.Context, directory, leas
 		if e != io.EOF || len(names) != 0 {
 			return nil, ErrRoutedDHCPSubnetRegistryV1
 		}
+	}
+	if missing {
 		r = routedDHCPSubnetRegistryV1{Version: 1, Entries: []routedDHCPSubnetEntryV1{}}
 	}
 	next, ids, changed, err := allocateDHCPSubnetRegistryV1(r, bindings)
@@ -109,12 +113,6 @@ func ensureDHCPSubnetIDsWithDirectorySyncV1(ctx context.Context, directory, leas
 	if changed || missing {
 		if err := publishDHCPSubnetRegistryV1(ctx, dir, next, uid, gid, syncDirectory); err != nil {
 			return nil, err
-		}
-	} else {
-		// A previous rename may be visible despite a failed directory sync.
-		// Verify durability while still holding the registry lock.
-		if syncDirectory(dir) != nil || ctx.Err() != nil {
-			return nil, ErrRoutedDHCPSubnetRegistryV1
 		}
 	}
 	return ids, nil
@@ -203,37 +201,45 @@ func publishDHCPSubnetRegistryV1(ctx context.Context, dir *os.File, r routedDHCP
 	if ctx.Err() != nil {
 		return ErrRoutedDHCPSubnetRegistryV1
 	}
-	fd, e := unix.Openat(int(dir.Fd()), routedDHCPSubnetRegistryPendingV1, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0600)
+	// Persist the marker before the rename and retain it through the sync
+	// that commits the manifest. A retry cannot clear a prior writeback error.
+	if err := writeDHCPSubnetRegistryFileV1(dir, routedDHCPSubnetRegistryPendingV1, nil, uid, gid); err != nil || syncDirectory(dir) != nil {
+		return ErrRoutedDHCPSubnetRegistryV1
+	}
+	if err := writeDHCPSubnetRegistryFileV1(dir, routedDHCPSubnetRegistryPublishV1, raw, uid, gid); err != nil || ctx.Err() != nil {
+		return ErrRoutedDHCPSubnetRegistryV1
+	}
+	fd := int(dir.Fd())
+	if unix.Renameat(fd, routedDHCPSubnetRegistryPublishV1, fd, routedDHCPSubnetRegistryNameV1) != nil || syncDirectory(dir) != nil {
+		return ErrRoutedDHCPSubnetRegistryV1
+	}
+	// The manifest is already durable. If syncing marker removal fails, a
+	// surviving marker still forces protected recovery after restart.
+	if unix.Unlinkat(fd, routedDHCPSubnetRegistryPendingV1, 0) != nil || syncDirectory(dir) != nil || ctx.Err() != nil {
+		return ErrRoutedDHCPSubnetRegistryV1
+	}
+	return nil
+}
+
+func writeDHCPSubnetRegistryFileV1(dir *os.File, name string, data []byte, uid, gid uint32) (result error) {
+	fd, e := unix.Openat(int(dir.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0600)
 	if e != nil {
 		return ErrRoutedDHCPSubnetRegistryV1
 	}
-	f := os.NewFile(uintptr(fd), "dhcp-subnet-pending")
-	// Never remove a failed publication automatically: the retained file is an
-	// explicit uncertainty fence, not permission to reuse an allocated ID.
+	f := os.NewFile(uintptr(fd), name)
+	defer func() {
+		if f.Close() != nil {
+			result = ErrRoutedDHCPSubnetRegistryV1
+		}
+	}()
 	if f.Chmod(0600) != nil {
-		_ = f.Close()
 		return ErrRoutedDHCPSubnetRegistryV1
 	}
 	if _, e = dhcpRegistryFileV1(f, uid, gid, true); e != nil {
-		_ = f.Close()
 		return e
 	}
-	n, e := f.Write(raw)
-	if e != nil || n != len(raw) {
-		_ = f.Close()
-		return ErrRoutedDHCPSubnetRegistryV1
-	}
-	if f.Sync() != nil {
-		_ = f.Close()
-		return ErrRoutedDHCPSubnetRegistryV1
-	}
-	if f.Close() != nil || ctx.Err() != nil {
-		return ErrRoutedDHCPSubnetRegistryV1
-	}
-	if unix.Renameat(int(dir.Fd()), routedDHCPSubnetRegistryPendingV1, int(dir.Fd()), routedDHCPSubnetRegistryNameV1) != nil {
-		return ErrRoutedDHCPSubnetRegistryV1
-	}
-	if syncDirectory(dir) != nil || ctx.Err() != nil {
+	n, e := f.Write(data)
+	if e != nil || n != len(data) || f.Sync() != nil {
 		return ErrRoutedDHCPSubnetRegistryV1
 	}
 	return nil

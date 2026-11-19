@@ -12,24 +12,32 @@ IPv4 canónica. Cambiar pools u opciones conserva el ID; cambiar interfaz, MAC o
 subred asigna otro uint32 no nulo. La asignación crece sin reutilizar IDs y conserva
 mapeos retirados, incluso al deshabilitar, rehabilitar o revertir configuración.
 El orden del lote no cambia la asignación. Límites: 4096 entradas y 1 MiB.
+El registro rechaza el ID 4294967295, reservado por Kea.
 
-Flock independiente del directorio serializa llamadas. Creación exclusiva sin
-seguir enlaces, fsync del archivo, rename atómico y fsync del directorio preceden
-a devolver IDs. Si falla la persistencia, el registro no entrega IDs y el motor
-queda sin autorización para arrancar. Si el rename es visible tras fallar el
-fsync del directorio, el reintento debe sincronizarlo bajo bloqueo antes de
-entregar IDs. Un archivo pendiente bloquea por incertidumbre y se conserva para
-recuperación protegida. La cancelación es cooperativa, sin garantía temporal
-sobre disco.
-El registro nunca detiene el servicio existente.
+Un flock independiente del directorio serializa las llamadas. La publicación
+sincroniza el marcador `scope-bindings.v1.pending` y el directorio antes de
+preparar `scope-bindings.v1.publish`. La creación de ambos archivos es exclusiva
+y evita seguir enlaces. Se sincroniza y renombra el candidato de forma atómica.
+El marcador se retira sólo después de sincronizar el directorio tras el rename.
+Si queda el marcador o el candidato, se bloquean todas las consultas. Si falla
+la sincronización de la retirada del marcador, el intento devuelve error sin
+IDs. El manifiesto ya está sincronizado, y si el marcador reaparece tras
+reiniciar sigue bloqueando. El registro mantiene el servicio que ya estaba
+activo. La E/S de disco puede demorar la cancelación.
 
-Sin registro, cualquier lease existente impide inicializar. Sólo un directorio
-de leases vacío y bloqueado permite hacerlo. Con el cupo lleno, las claves
-existentes se consultan sin escribir; nuevas asignaciones fallan. Escrituras
-parciales inciertas bloquean resolución hasta recuperación protegida. No hay
-reparación automática. Restauraciones o borrados arbitrarios de root no se pueden
-detectar sin un ancla monotónica externa; rollback de configuración nunca debe
-restaurar este registro independientemente de su historia de leases.
+El primer ID exige un directorio de leases vacío y bloqueado, incluso si ya
+existe un manifiesto de cero entradas. Con el cupo lleno, las consultas
+existentes siguen sin escrituras y fallan las nuevas asignaciones.
+
+Para recuperar, detén el motor y todos los escritores durante mantenimiento
+autorizado. Conserva juntos los archivos del registro y el directorio de leases
+como evidencia del incidente. Verifica el almacenamiento, el historial completo
+de asignaciones y que concuerde con los leases conservados. Sincroniza el
+manifiesto verificado y su directorio antes de retirar el marcador o el
+candidato. Vuelve a sincronizar el directorio después. Si falta evidencia,
+mantén el bloqueo. Conserva todas las concesiones. El rollback de configuración
+no debe restaurar el manifiesto por separado de su historial de leases.
+Detectar una restauración arbitraria por root exige un ancla monotónica externa.
 
 Linux/WSL, Go 1.27.4:
 
