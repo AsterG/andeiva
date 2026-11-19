@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/dhcpkea"
 	"github.com/AsterG/andeiva/internal/dhcpserver"
 	"golang.org/x/sys/unix"
@@ -265,6 +266,9 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 			}
 			return startRoutedDHCPServerScopedV2(call, lifetime, resources)
 		}
+	}
+	if os.Getenv("ANDEIVA_NATIVE_DHCP_SERVER_POST_SPAWN_DEADLINE_V1") == "1" {
+		runNativeDHCPServerPostSpawnDeadlineV1(t, ctx, root, o, set, lan)
 	}
 	launch, err := start(ctx, o)
 	defer cancelStartup()
@@ -591,6 +595,62 @@ func serverLifecycleCommandV1(t *testing.T, ctx context.Context, gw *os.File, ex
 
 func serverLifecycleSocketsV1(t *testing.T, ctx context.Context, gw *os.File) []byte {
 	return serverLifecycleCommandV1(t, ctx, gw, "/usr/bin/ss", "-H", "-a", "-n", "-t", "-u", "-w", "-x", "-0")
+}
+
+func runNativeDHCPServerPostSpawnDeadlineV1(t *testing.T, ctx context.Context, root *os.Root, resources RoutedDHCPServerResourcesV1, set *RoutedDHCPServerServiceSetV1, lan *os.File) {
+	t.Helper()
+	options, work := nativeKeaSelectedFixtureV1(t, root, resources, set)
+	read := options.readSelected
+	reads, launched := 0, false
+	options.readSelected = func(call context.Context, expected configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error) {
+		reads++
+		if reads == 3 {
+			members, err := routedDHCPServiceReadAtV1(lan, "cgroup.procs", 4096)
+			if err != nil {
+				return RoutedSelectedPreflightResultV4{}, err
+			}
+			launched = len(members) != 0
+			<-call.Done()
+			return RoutedSelectedPreflightResultV4{}, call.Err()
+		}
+		return read(call, expected)
+	}
+	broker := &routedDHCPJobBrokerV4{
+		serviceTree: set.catalogV2,
+		server:      &routedDHCPServerJobsV1{options: options, lifetime: ctx},
+	}
+	rootConn, helperConn, peer := jobChannelFixtureV4(t)
+	done := make(chan error, 1)
+	go func() { done <- broker.serve(ctx, rootConn, resources.Metadata, peer) }()
+	client := &routedDHCPJobClientV4{
+		servicesEnabled: true, serverEnabled: true, conn: helperConn, metadata: resources.Metadata, peer: peer,
+	}
+	defer client.Close()
+	request, cancel := context.WithTimeout(ctx, 5*time.Second)
+	_, err := client.callServerV1(request, "server_start", work)
+	expired := request.Err()
+	cancel()
+	if err != ErrUnavailable || expired != nil {
+		t.Fatal("expired launch did not return inside its request budget", err, expired)
+	}
+	if _, err := client.serviceTree(ctx); err != nil {
+		t.Fatal("expired launch closed the shared service channel", err)
+	}
+	if _, err := client.callServerV1(ctx, "server_stop", work); err != nil {
+		t.Fatal("expired launch did not retain the exact owner for Stop", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("broker did not exit after closing its client")
+	}
+	if reads != 3 || !launched || broker.lanCloseErr != nil || len(serverLifecycleMembersV1(t, lan)) != 0 {
+		t.Fatal("post-spawn fault did not leave a verified empty LAN cgroup", reads, launched, broker.lanCloseErr)
+	}
+	t.Log("Expired post-spawn LAN job preserved the shared channel and retired the same owner")
 }
 
 func serverLifecycleMembersV1(t *testing.T, leaf *os.File) []int {
