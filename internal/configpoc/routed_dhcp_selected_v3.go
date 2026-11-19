@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"errors"
 	"reflect"
 
 	"github.com/AsterG/andeiva/internal/networkexecutor"
@@ -36,7 +37,8 @@ func routedDHCPTerminalV3(d *v3RoutedDHCPState) bool {
 }
 
 // RoutedDHCPSelectedV3 has no exported authority fields. Only the selected
-// reader can issue it after checking G1, physical R2 bindings and final selector.
+// reader can issue it after checking active authority, physical R2 bindings and
+// final selector. An action reader relies on its runtime's separate full-G1 gate.
 type RoutedDHCPSelectedV3 struct {
 	work  v3RoutedDHCPWork
 	ref   SelectionReferenceV2
@@ -154,6 +156,10 @@ func validateRoutedDHCPSelectedV3(st v2State, load func(string, any) error) erro
 	return nil
 }
 
+// ErrRoutedDHCPBindingMismatchV4 is a verified contradiction in a readable,
+// revalidated selection. It is also ErrRecovery and grants no actions.
+var ErrRoutedDHCPBindingMismatchV4 = errors.New("ANDEIVA_ROUTED_DHCP_BINDING_MISMATCH")
+
 // ResolveDHCPCurrentV3 never accepts an arbitrary work hash as owner evidence.
 // The caller must retain the publication/owner barrier through kernel effects.
 func (r *RoutedSelectionReaderV2) ResolveDHCPCurrentV3(ctx context.Context, expected string) (out RoutedDHCPSelectedV3, resultErr error) {
@@ -162,7 +168,9 @@ func (r *RoutedSelectionReaderV2) ResolveDHCPCurrentV3(ctx context.Context, expe
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	v, err := r.read(ctx)
+	// This path resolves additional Work dependencies before its single final
+	// validation. No candidate or proof escapes before that validation.
+	v, err := r.readCandidateWithGateV2(ctx, nil)
 	if err != nil {
 		return RoutedDHCPSelectedV3{}, err
 	}
@@ -173,15 +181,24 @@ func (r *RoutedSelectionReaderV2) ResolveDHCPCurrentV3(ctx context.Context, expe
 		}
 	}()
 	d := v.store.state.RoutedDHCP
-	if d == nil || d.Work != expected || validateRoutedDHCPSelectedV3(v.store.state, v.store.readObject) != nil {
+	if d == nil || d.Work != expected || !validRoutedDHCPShapeV3(v.store.state) {
+		if err = r.revalidate(ctx, v); err != nil {
+			return RoutedDHCPSelectedV3{}, err
+		}
+		return RoutedDHCPSelectedV3{}, errors.Join(ErrRecovery, ErrRoutedDHCPBindingMismatchV4)
+	}
+	if validateRoutedDHCPSelectedV3(v.store.state, v.store.readObject) != nil {
 		return RoutedDHCPSelectedV3{}, ErrRecovery
 	}
 	w, err := loadRoutedDHCPWorkV3(d.Work, v.store.state.Lineage, v.store.readObject)
-	if err != nil || w.Snapshot.Identity != r.options.Identity {
+	if err != nil {
 		return RoutedDHCPSelectedV3{}, ErrRecovery
 	}
 	if err = r.revalidate(ctx, v); err != nil {
 		return RoutedDHCPSelectedV3{}, err
+	}
+	if w.Snapshot.Identity != r.options.Identity {
+		return RoutedDHCPSelectedV3{}, errors.Join(ErrRecovery, ErrRoutedDHCPBindingMismatchV4)
 	}
 	ref := v.ref
 	ref.WorkHash = d.Work

@@ -10,12 +10,21 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 COPY scripts/check-go-format.sh scripts/check-go-format.sh
 
-FROM go-source AS check-go
+FROM go-source AS check-go-environment
+COPY packaging/preview/tests/dhcp-b2-native.sh packaging/preview/tests/dhcp-b2-native.sh
 # Permission and reader-identity tests must not inherit root's access bypasses.
 RUN install -d -m 0700 -o 65532 -g 65532 /tmp/andeiva-go-home /tmp/andeiva-go-cache
 ENV HOME=/tmp/andeiva-go-home GOCACHE=/tmp/andeiva-go-cache GOENV=off
 USER 65532:65532
+
+FROM check-go-environment AS check-go
 RUN bash scripts/check-go-format.sh && go vet ./cmd/... ./internal/... && go test -race -timeout=20m ./cmd/... ./internal/...
+
+FROM check-go-environment AS check-go-container
+# Exercise the descriptor and shared-reader boundaries as the container UID.
+# The source job runs the complete Go suite with the race detector.
+RUN go test -race -count=1 -timeout=4m ./internal/configpoc ./internal/previewruntime \
+    -run '^(TestSelectedReaderV2SelectedIntentPurposeAndCorrelation|TestSelectedReaderV2CorruptionPendingAndCancelled|TestRoutedMigrationInspectV3ExtraDescriptors)$'
 
 FROM go-source AS build-go
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -o /out/andeiva ./cmd/andeiva \

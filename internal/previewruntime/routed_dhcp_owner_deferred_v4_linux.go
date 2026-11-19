@@ -4,6 +4,7 @@ package previewruntime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"time"
 
@@ -16,10 +17,15 @@ type RoutedDHCPDeferredOwnerV4 struct{ owner *RoutedDHCPOwnerV3 }
 // root-selected DHCP plan. It neither starts dhcpcd nor authorizes R2. Static or
 // NoNetwork profiles must never invoke this constructor and are rejected.
 func PrepareRoutedDHCPDeferredOwnerV4(ctx context.Context, o RoutedDHCPOwnerOptionsV3) (*RoutedDHCPDeferredOwnerV4, error) {
-	s, err := startRoutedDHCPOwnerProfileV3(ctx, o, 4)
+	return prepareRoutedDHCPDeferredWithServicesV4(ctx, o, nil)
+}
+
+func prepareRoutedDHCPDeferredWithServicesV4(ctx context.Context, o RoutedDHCPOwnerOptionsV3, services *RoutedDHCPServerServiceSetV1) (*RoutedDHCPDeferredOwnerV4, error) {
+	s, err := startRoutedDHCPOwnerWithServicesV4(ctx, o, 4, services)
 	if err != nil {
 		return nil, err
 	}
+	registerNativeDHCPDiagnosticV4(s)
 	return &RoutedDHCPDeferredOwnerV4{s}, nil
 }
 func RunRoutedDHCPDeferredOwnerRoleV4(ctx context.Context) error {
@@ -63,6 +69,13 @@ func (s *RoutedDHCPDeferredOwnerV4) Close() error {
 	return s.owner.Close()
 }
 
+func (s *RoutedDHCPDeferredOwnerV4) RetainedServicePin() (*os.File, RoutedDHCPServiceCgroupIdentityV1, error) {
+	if s == nil || s.owner == nil {
+		return nil, RoutedDHCPServiceCgroupIdentityV1{}, ErrIdentity
+	}
+	return s.owner.RetainedServicePin()
+}
+
 // Activate is root-only and one-shot. The supervisor MUST first prove selected
 // revision, helper integrity readiness, LAN/readback and EmptyListeners. No API
 // boolean or helper request can supply this authority. Successful activation is
@@ -103,7 +116,7 @@ func (s *RoutedDHCPDeferredOwnerV4) Activate(parent context.Context) error {
 	if err != nil || event.Acquisition == nil || !event.Acquisition.valid(int64(o.deferred.Owner.PID)) {
 		return o.failDeferredLockedV4()
 	}
-	fd, start, err := routedDHCPOwnerPinV3(int(event.Acquisition.PID), int(o.deferred.Owner.PID), o.deferred.Owner.Namespace, o.deferred.MountNamespace)
+	fd, start, err := pinRoutedSupervisorDHCPOwnerV1(int(event.Acquisition.PID), int(o.deferred.Owner.PID), o.deferred.Owner.Namespace, o.deferred.MountNamespace)
 	if err != nil {
 		return o.failDeferredLockedV4()
 	}
@@ -169,5 +182,8 @@ func (o *RoutedDHCPOwnerV3) closeDeferredLockedV4() error {
 	case <-time.After(5 * time.Second):
 		_ = o.failDeferredLockedV4()
 	}
+	cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	o.closeErr = errors.Join(o.closeErr, drainRoutedDHCPOwnerServiceV4(cleanup, o.service, o.services))
 	return o.closeErr
 }

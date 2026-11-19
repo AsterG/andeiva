@@ -7,12 +7,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"math"
 	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -23,14 +25,19 @@ import (
 )
 
 type routedDHCPOwnerBootstrapV3 struct {
-	Version            int                  `json:"version"`
-	ParentPID          int                  `json:"parent_pid"`
-	ParentStartTicks   uint64               `json:"parent_start_ticks"`
-	Metadata           Metadata             `json:"metadata"`
-	Desired            networkplan.Revision `json:"desired"`
-	Incarnation        string               `json:"incarnation"`
-	MountNamespace     uint64               `json:"mount_namespace"`
-	HostMountNamespace uint64               `json:"host_mount_namespace"`
+	EarlyRenewalV4       bool                        `json:"early_renewal_v4,omitempty"`
+	Version              int                         `json:"version"`
+	ParentPID            int                         `json:"parent_pid"`
+	ParentStartTicks     uint64                      `json:"parent_start_ticks"`
+	Metadata             Metadata                    `json:"metadata"`
+	Desired              networkplan.Revision        `json:"desired"`
+	Incarnation          string                      `json:"incarnation"`
+	MountNamespace       uint64                      `json:"mount_namespace"`
+	HostMountNamespace   uint64                      `json:"host_mount_namespace"`
+	ServiceCgroupVersion int                         `json:"service_cgroup_version"`
+	ServiceCgroupDevice  uint64                      `json:"service_cgroup_device"`
+	ServiceCgroupInode   uint64                      `json:"service_cgroup_inode"`
+	ServiceCatalog       *routedDHCPServiceCatalogV2 `json:"service_catalog,omitempty"`
 }
 type routedDHCPOwnerReadyV3 struct {
 	Version         int    `json:"version"`
@@ -58,6 +65,8 @@ type RoutedDHCPOwnerV3 struct {
 	acquisitionFD          *os.File
 	producerFD             *os.File
 	activated              bool
+	service                *routedDHCPServiceCgroupV1
+	services               *RoutedDHCPServerServiceSetV1
 }
 
 // Start launches only the current trusted executable's fixed DHCP role. The
@@ -70,11 +79,15 @@ func StartRoutedDHCPOwnerV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3) (_ 
 	return startRoutedDHCPOwnerProfileV3(ctx, o, 3)
 }
 
-func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3, profile int) (_ *RoutedDHCPOwnerV3, result error) {
-	if profile != 3 && profile != 4 {
+func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptionsV3, profile int) (*RoutedDHCPOwnerV3, error) {
+	return startRoutedDHCPOwnerWithServicesV4(ctx, o, profile, nil)
+}
+
+func startRoutedDHCPOwnerWithServicesV4(ctx context.Context, o RoutedDHCPOwnerOptionsV3, profile int, services *RoutedDHCPServerServiceSetV1) (_ *RoutedDHCPOwnerV3, result error) {
+	if profile != 3 && profile != 4 || (o.EarlyRenewalV4 || services != nil) && profile != 4 {
 		return nil, ErrIdentity
 	}
-	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || o.Metadata.ValidateRouted() != nil || !routedDHCPOwnerNamespaceV3(o.Gateway, unix.CLONE_NEWNET, o.Metadata.GatewayNamespace) || !routedDHCPOwnerNamespaceV3(o.Host, unix.CLONE_NEWNET, o.Metadata.HostNamespace) || routedDHCPOwnerCgroupV3() != nil {
+	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || o.Metadata.ValidateRouted() != nil || !routedDHCPOwnerNamespaceV3(o.Gateway, unix.CLONE_NEWNET, o.Metadata.GatewayNamespace) || !routedDHCPOwnerNamespaceV3(o.Host, unix.CLONE_NEWNET, o.Metadata.HostNamespace) || services == nil && routedDHCPOwnerCgroupV3() != nil {
 		return nil, ErrIdentity
 	}
 	current, err := namespaceID("/proc/self/ns/net")
@@ -108,11 +121,55 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 	if err != nil {
 		return nil, err
 	}
-	var nonce [16]byte
-	if _, err = rand.Read(nonce[:]); err != nil {
-		return nil, ErrUnavailable
+	var incarnation string
+	var service *routedDHCPServiceCgroupV1
+	var catalog *routedDHCPServiceCatalogV2
+	serviceVersion := routedDHCPServiceCgroupVersionV1
+	if services == nil {
+		var nonce [16]byte
+		if _, err = rand.Read(nonce[:]); err != nil {
+			return nil, ErrUnavailable
+		}
+		incarnation = hex.EncodeToString(nonce[:])
+		service, err = newRoutedDHCPServiceCgroupV1(ctx, incarnation)
+	} else {
+		current, e := routedDHCPOwnerReadV3("/proc/self/cgroup", 4096)
+		if e != nil || string(current) != "0::"+routedSupervisorCgroupV3+"\n" {
+			return nil, ErrIdentity
+		}
+		tree, e := services.catalogV2(ctx)
+		if e != nil {
+			return nil, e
+		}
+		service, err = services.claimWANV2()
+		if err == nil {
+			incarnation = strings.TrimPrefix(service.name, "dhcp-")
+			catalog = &tree
+			serviceVersion = 2
+		}
 	}
-	incarnation := hex.EncodeToString(nonce[:])
+	if err != nil {
+		return nil, err
+	}
+	serviceTransferred := false
+	defer func() {
+		if !serviceTransferred {
+			cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			result = errors.Join(result, drainRoutedDHCPOwnerServiceV4(cleanup, service, services))
+		}
+	}()
+	var serviceRead *os.File
+	var serviceID RoutedDHCPServiceCgroupIdentityV1
+	if services == nil {
+		serviceRead, serviceID, err = service.readonly()
+	} else {
+		serviceRead, serviceID, err = services.readonlyWANV2(service)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer serviceRead.Close()
 	var pipes []*os.File
 	defer func() {
 		for _, f := range pipes {
@@ -151,16 +208,28 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 		role = RoutedDHCPDeferredOwnerRoleV4
 	}
 	cmd := exec.Command("/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", self, role) // #nosec G204 -- Two fixed profile roles, current root-trusted executable, inherited namespace FD; no caller path or shell.
-	cmd.ExtraFiles = []*os.File{o.Gateway, o.Host, hostMount, bootR, eventW, queryR, replyW, controlR}
+	cmd.ExtraFiles = []*os.File{o.Gateway, o.Host, hostMount, bootR, eventW, queryR, replyW, controlR, serviceRead}
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
-	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWNS, Pdeathsig: syscall.SIGKILL}
-	s := &RoutedDHCPOwnerV3{cmd: cmd, control: controlW, events: eventR, scanner: routedDHCPOwnerScannerV3(eventR), done: make(chan struct{}), profile: profile}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWNS, Pdeathsig: syscall.SIGKILL, UseCgroupFD: true, CgroupFD: int(service.directory.Fd())}
+	pinnedPIDFD := -1
+	if os.Getenv(routedDHCPRoleProfileEnvV1) == "1" {
+		cmd.SysProcAttr.PidFD = &pinnedPIDFD
+	}
+	if err := setRoutedDHCPChildNetworkCapsV1(cmd.SysProcAttr); err != nil {
+		return nil, err
+	}
+	s := &RoutedDHCPOwnerV3{cmd: cmd, control: controlW, events: eventR, scanner: routedDHCPOwnerScannerV3(eventR), done: make(chan struct{}), profile: profile, service: service, services: services}
 	started := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
-		e := cmd.Start()
+		var e error
+		if services == nil {
+			e = cmd.Start()
+		} else {
+			e = services.startWANV2(cmd, service)
+		}
 		started <- e
 		if e == nil {
 			_ = cmd.Wait()
@@ -169,6 +238,11 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 	}()
 	if err = <-started; err != nil {
 		return nil, ErrUnavailable
+	}
+	var process *os.File
+	if pinnedPIDFD >= 0 {
+		process = os.NewFile(uintptr(pinnedPIDFD), "routed-wan-child-pidfd")
+		defer process.Close()
 	}
 	failed := true
 	defer func() {
@@ -194,7 +268,18 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 	if pid <= 1 || pid > math.MaxInt32 {
 		return nil, ErrIdentity
 	}
-	s.mount, err = os.Open("/proc/" + strconv.Itoa(pid) + "/ns/mnt")
+	if cmd.SysProcAttr.PidFD != nil {
+		if !routedDHCPOwnerPIDFDAliveV3(process, pid) {
+			return nil, ErrIdentity
+		}
+		observed := readRoutedDHCPPinnedNamespacesV1(process, false)
+		s.mount, err = observed.mount, observed.err
+		if !routedDHCPOwnerPIDFDAliveV3(process, pid) {
+			return nil, ErrIdentity
+		}
+	} else {
+		s.mount, err = os.Open("/proc/" + strconv.Itoa(pid) + "/ns/mnt")
+	}
 	if err != nil {
 		return nil, ErrIdentity
 	}
@@ -212,7 +297,7 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 	if bootW.SetWriteDeadline(deadline) != nil || eventR.SetReadDeadline(deadline) != nil {
 		return nil, ErrUnavailable
 	}
-	b := routedDHCPOwnerBootstrapV3{profile, os.Getpid(), parentStart, o.Metadata, desired, incarnation, mountID, hostMountID}
+	b := routedDHCPOwnerBootstrapV3{EarlyRenewalV4: o.EarlyRenewalV4, Version: profile, ParentPID: os.Getpid(), ParentStartTicks: parentStart, Metadata: o.Metadata, Desired: desired, Incarnation: incarnation, MountNamespace: mountID, HostMountNamespace: hostMountID, ServiceCgroupVersion: serviceVersion, ServiceCatalog: catalog, ServiceCgroupDevice: serviceID.Device, ServiceCgroupInode: serviceID.Inode}
 	if routedDHCPOwnerWriteV3(bootW, b) != nil {
 		return nil, ErrUnavailable
 	}
@@ -231,7 +316,7 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 	if startup.Err() != nil {
 		return nil, ErrUnavailable
 	}
-	roleFD, roleStart, err := routedDHCPOwnerPinV3(pid, os.Getpid(), o.Metadata.GatewayNamespace, mountID)
+	roleFD, roleStart, err := pinRoutedSupervisorDHCPOwnerV1(pid, os.Getpid(), o.Metadata.GatewayNamespace, mountID)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +338,7 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 		if ready.LeasePID <= 1 || ready.LeasePID > math.MaxInt32 {
 			return nil, ErrIdentity
 		}
-		leaseFD, leaseStart, err := routedDHCPOwnerPinV3(ready.LeasePID, pid, o.Metadata.GatewayNamespace, mountID)
+		leaseFD, leaseStart, err := pinRoutedSupervisorDHCPOwnerV1(ready.LeasePID, pid, o.Metadata.GatewayNamespace, mountID)
 		if err != nil {
 			return nil, err
 		}
@@ -270,6 +355,7 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 	// Successful startup transfers precisely these four pipe endpoints to s.
 	pipes = []*os.File{bootR, bootW, eventW, queryR, replyW, controlR}
 	failed = false
+	serviceTransferred = true
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -278,6 +364,24 @@ func startRoutedDHCPOwnerProfileV3(ctx context.Context, o RoutedDHCPOwnerOptions
 		}
 	}()
 	return s, nil
+}
+
+// RetainedServicePin gives the trusted supervisor an independent readonly pin.
+// The caller owns it across Close until complete socket readback proves absence;
+// this method does not grant listener ownership or transfer a write control FD.
+func (s *RoutedDHCPOwnerV3) RetainedServicePin() (*os.File, RoutedDHCPServiceCgroupIdentityV1, error) {
+	if s == nil {
+		return nil, RoutedDHCPServiceCgroupIdentityV1{}, ErrIdentity
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.service == nil {
+		return nil, RoutedDHCPServiceCgroupIdentityV1{}, ErrUnavailable
+	}
+	if s.services != nil {
+		return s.services.readonlyWANV2(s.service)
+	}
+	return s.service.readonly()
 }
 
 func (s *RoutedDHCPOwnerV3) TakeReaderFiles() (RoutedDHCPOwnerFilesV3, RoutedDHCPOwnerBindingV3, error) {
@@ -298,6 +402,13 @@ func (s *RoutedDHCPOwnerV3) TakeReaderFiles() (RoutedDHCPOwnerFilesV3, RoutedDHC
 	s.transferred = true
 	return f, b, nil
 }
+func drainRoutedDHCPOwnerServiceV4(ctx context.Context, service *routedDHCPServiceCgroupV1, services *RoutedDHCPServerServiceSetV1) error {
+	if services != nil {
+		return services.DrainFeatureV1(ctx, "wan")
+	}
+	return service.drain(ctx)
+}
+
 func (s *RoutedDHCPOwnerV3) Done() <-chan struct{} {
 	if s == nil {
 		ch := make(chan struct{})
@@ -338,5 +449,8 @@ func (s *RoutedDHCPOwnerV3) Close() error {
 		s.closeErr = ErrUnavailable
 		_ = s.cmd.Process.Kill()
 	}
+	cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	s.closeErr = errors.Join(s.closeErr, s.service.drain(cleanup))
 	return s.closeErr
 }

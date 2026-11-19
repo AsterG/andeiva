@@ -208,7 +208,7 @@ func assembleFixture(t testing.TB) assembledFixture {
 	t.Helper()
 	before, deps, target := artifactFixture(t)
 	kernel := &kernelFixture{objects: map[Table][]map[string]any{}}
-	batch, err := compileTable(LegacyTable, before.LegacyFirewall, false, deps)
+	batch, err := compileTable(LegacyTable, before.LegacyFirewall, false, deps, localIngress{})
 	if err != nil || kernel.Apply(context.Background(), batch) != nil {
 		t.Fatal("establish actual default deny", err)
 	}
@@ -241,8 +241,12 @@ func assembleFixture(t testing.TB) assembledFixture {
 		if err != nil {
 			return err
 		}
+		ingress, err := routedLocalIngress(deny[RoutedTable], prepared.Dependencies)
+		if err != nil {
+			return err
+		}
 		for table, state := range deny {
-			if !engine.tableMatches(context.Background(), Table(table), state, prepared.Dependencies) {
+			if !engine.tableMatches(context.Background(), Table(table), state, prepared.Dependencies, ingress) {
 				return errors.New("L3 effects attempted without real deny readback")
 			}
 		}
@@ -273,6 +277,50 @@ func TestGroupEngineDenyFirstAtomicHandoverAndExactRestore(t *testing.T) {
 	}
 	if f.network.active || len(f.listeners.actual) != 0 || f.engine.Current() != "" || !f.engine.matches(context.Background(), f.prepared.Before, f.prepared.Dependencies) {
 		t.Fatal("physical before was not restored")
+	}
+}
+
+type routedTransitionListenersFixture struct {
+	*listenersFixture
+	prepare func(*routednft.Policy) error
+}
+
+func (f routedTransitionListenersFixture) PrepareRoutedTransition(_ context.Context, target *routednft.Policy, pending bool) error {
+	if pending {
+		return ErrState
+	}
+	return f.prepare(target)
+}
+
+func TestGroupEngineRetiresRoutedListenersUnderDenyBeforeRestoringLinks(t *testing.T) {
+	for _, refuse := range []bool{false, true} {
+		f := assembleFixture(t)
+		ctx := context.Background()
+		if err := f.group.BootstrapStartup(ctx, f.plan, f.target, f.started); err != nil {
+			t.Fatal(err)
+		}
+		called := 0
+		f.engine.listeners = routedTransitionListenersFixture{f.listeners, func(target *routednft.Policy) error {
+			called++
+			var wanted *routednft.Policy
+			if revision := f.prepared.Before.RoutedFirewall.Revision; revision != nil {
+				wanted = revision.Config.Routed
+			}
+			denyErr := f.network.before()
+			if target != wanted || !f.network.active || denyErr != nil {
+				t.Fatalf("listener retirement target match=%t, links active=%t, deny=%v", target == wanted, f.network.active, denyErr)
+			}
+			if refuse {
+				return ErrState
+			}
+			return nil
+		}}
+		err := f.engine.RestoreOwned(ctx, f.plan.BeforeOwned)
+		if called != 1 || (err != nil) != refuse || f.network.active != refuse {
+			t.Fatal("unexpected retirement or network restore", called, err, f.network.active)
+		}
+		f.engine.listeners = f.listeners
+		f.group.Close()
 	}
 }
 

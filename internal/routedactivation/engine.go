@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -167,7 +168,10 @@ func tables(owned OwnedV1) [3]TableStateV1 {
 
 func tableBytes(state TableStateV1) []byte { data, _ := json.Marshal(state); return data }
 
-func (e *Engine) tableMatches(ctx context.Context, table Table, state TableStateV1, deps DependenciesV1) bool {
+func (e *Engine) tableMatches(ctx context.Context, table Table, state TableStateV1, deps DependenciesV1, ingress localIngress) bool {
+	if table == LocalTable && ingress.server != nil && state.Presence != Present {
+		return false
+	}
 	data, exists, err := e.kernel.Observe(ctx, table)
 	if err != nil || len(data) > 512<<10 || exists != (state.Presence == Present) {
 		return false
@@ -188,7 +192,7 @@ func (e *Engine) tableMatches(ctx context.Context, table Table, state TableState
 		}
 		_, err = routednft.VerifyObservation(data, revision)
 	case LocalTable:
-		artifact, compileErr := localnft.CompileWithNeighbors(*state.Revision.Config.LocalServices, deps.Neighbors)
+		artifact, compileErr := ingress.compile(state.Revision, deps.Neighbors)
 		if compileErr != nil {
 			return false
 		}
@@ -199,8 +203,20 @@ func (e *Engine) tableMatches(ctx context.Context, table Table, state TableState
 	return err == nil
 }
 
-func (e *Engine) listenersMatch(ctx context.Context, state TableStateV1, deps DependenciesV1) bool {
-	actual, err := e.listeners.Observe(ctx)
+func (e *Engine) listenersMatch(ctx context.Context, state, routed TableStateV1, deps DependenciesV1) bool {
+	var actual []localpolicy.Listener
+	var err error
+	if observer, ok := e.listeners.(interface {
+		ObserveRouted(context.Context, *routednft.Policy) ([]localpolicy.Listener, error)
+	}); ok {
+		var policy *routednft.Policy
+		if routed.Revision != nil {
+			policy = routed.Revision.Config.Routed
+		}
+		actual, err = observer.ObserveRouted(ctx, policy)
+	} else {
+		actual, err = e.listeners.Observe(ctx)
+	}
 	if err != nil || len(actual) > localnft.MaxBindings*localnft.MaxServices {
 		return false
 	}
@@ -215,6 +231,20 @@ func (e *Engine) listenersMatch(ctx context.Context, state TableStateV1, deps De
 	}
 	result, err := localpolicy.Reconcile(artifact.Revision.Config, localpolicy.Observation{Revision: artifact.Revision.Hash, Rules: artifact.Rules, Listeners: actual})
 	return err == nil && result.Consistent
+}
+
+func (e *Engine) prepareRoutedListeners(ctx context.Context, target TableStateV1, pending bool) error {
+	listeners, ok := e.listeners.(interface {
+		PrepareRoutedTransition(context.Context, *routednft.Policy, bool) error
+	})
+	if !ok {
+		return nil
+	}
+	var policy *routednft.Policy
+	if target.Revision != nil {
+		policy = target.Revision.Config.Routed
+	}
+	return listeners.PrepareRoutedTransition(ctx, policy, pending)
 }
 
 func (e *Engine) matches(ctx context.Context, owned OwnedV1, deps DependenciesV1) bool {
@@ -233,12 +263,16 @@ func (e *Engine) matches(ctx context.Context, owned OwnedV1, deps DependenciesV1
 	} else if e.network.Verify(ctx) != nil {
 		return false
 	}
+	ingress, err := routedLocalIngress(owned.RoutedFirewall, deps)
+	if err != nil {
+		return false
+	}
 	for table, state := range tables(owned) {
-		if !e.tableMatches(ctx, Table(table), state, deps) {
+		if !e.tableMatches(ctx, Table(table), state, deps, ingress) {
 			return false
 		}
 	}
-	return e.listenersMatch(ctx, owned.LocalServices, deps)
+	return e.listenersMatch(ctx, owned.LocalServices, owned.RoutedFirewall, deps)
 }
 
 func sameArtifact(a, b any) bool {
@@ -649,7 +683,7 @@ func (e *Engine) remember(table int, state TableStateV1) bool {
 	return true
 }
 
-func compileTable(table Table, state TableStateV1, exists bool, deps DependenciesV1) ([]byte, error) {
+func compileTable(table Table, state TableStateV1, exists bool, deps DependenciesV1, ingress localIngress) ([]byte, error) {
 	if state.Presence == Absent {
 		if !exists {
 			return nil, nil
@@ -685,7 +719,7 @@ func compileTable(table Table, state TableStateV1, exists bool, deps Dependencie
 		}
 		create, replace = a.Create, a.Batch
 	case LocalTable:
-		a, err := localnft.CompileWithNeighbors(*state.Revision.Config.LocalServices, deps.Neighbors)
+		a, err := ingress.compile(state.Revision, deps.Neighbors)
 		if err != nil {
 			return nil, err
 		}
@@ -700,15 +734,35 @@ func compileTable(table Table, state TableStateV1, exists bool, deps Dependencie
 }
 
 func (e *Engine) compileChange(actual, desired [3]TableStateV1, deps DependenciesV1) ([]byte, error) {
+	before, err := routedLocalIngress(actual[RoutedTable], deps)
+	if err != nil {
+		return nil, err
+	}
+	after, err := routedLocalIngress(desired[RoutedTable], deps)
+	if err != nil {
+		return nil, err
+	}
+	if after.server != nil && desired[LocalTable].Presence != Present {
+		return nil, ErrState
+	}
 	var combined struct {
 		Commands []json.RawMessage `json:"nftables"`
 	}
 	combined.Commands = []json.RawMessage{}
 	for table, target := range desired {
 		if bytes.Equal(tableBytes(actual[table]), tableBytes(target)) {
-			continue
+			if Table(table) != LocalTable || target.Presence == Absent {
+				continue
+			}
+			same, err := before.sameControls(after, target.Revision, deps.Neighbors)
+			if err != nil {
+				return nil, ErrState
+			}
+			if same {
+				continue
+			}
 		}
-		batch, err := compileTable(Table(table), target, actual[table].Presence == Present, deps)
+		batch, err := compileTable(Table(table), target, actual[table].Presence == Present, deps, after)
 		if err != nil || len(batch) > MaxBatch {
 			return nil, ErrState
 		}
@@ -735,9 +789,20 @@ func (e *Engine) compileChange(actual, desired [3]TableStateV1, deps Dependencie
 func (e *Engine) knownTables(ctx context.Context) ([3]TableStateV1, error) {
 	var actual [3]TableStateV1
 	for table, candidates := range e.known {
+		// RoutedTable precedes LocalTable. Derive admission from the already
+		// verified known routed state, never from an observed comment alone.
+		var ingress localIngress
+		if Table(table) == LocalTable {
+			var err error
+			ingress, err = routedLocalIngress(actual[RoutedTable], e.prepared.Dependencies)
+			if err != nil {
+				e.fenced = true
+				return actual, err
+			}
+		}
 		found := false
 		for _, candidate := range candidates {
-			if e.tableMatches(ctx, Table(table), candidate, e.prepared.Dependencies) {
+			if e.tableMatches(ctx, Table(table), candidate, e.prepared.Dependencies, ingress) {
 				actual[table], found = candidate, true
 				break
 			}
@@ -782,8 +847,12 @@ func (e *Engine) applyTables(ctx context.Context, desired [3]TableStateV1) error
 	if e.kernel.Apply(ctx, batch) != nil {
 		return ErrState
 	}
+	ingress, err := routedLocalIngress(desired[RoutedTable], e.prepared.Dependencies)
+	if err != nil {
+		return err
+	}
 	for table, target := range desired {
-		if !e.tableMatches(ctx, Table(table), target, e.prepared.Dependencies) {
+		if !e.tableMatches(ctx, Table(table), target, e.prepared.Dependencies, ingress) {
 			return ErrState
 		}
 	}
@@ -803,6 +872,9 @@ func denyTablesFor(target configpoc.RoutedActivationBundleV1, dependencies Depen
 		policy = *target.Firewall.Config.Routed
 	}
 	policy.Rules, policy.NAT = []routednft.Rule{}, []routednft.Masquerade{}
+	// WAN acquisition follows Network even during deny. LAN server
+	// admission requires the selected target, after L3 verification.
+	policy = lanServerStoppedPolicy(policy)
 	fw, err := configpoc.CanonicalRouted(configpoc.Config{SchemaVersion: 6, DefaultAction: "deny", Routed: &policy})
 	if err != nil {
 		return [3]TableStateV1{}, ErrState
@@ -839,6 +911,9 @@ func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBun
 	if e.applyTables(ctx, deny) != nil {
 		return ErrState
 	}
+	if err := e.prepareRoutedListeners(ctx, e.prepared.Target.RoutedFirewall, true); err != nil {
+		return err
+	}
 	if e.prepared.Dependencies.Version == 2 {
 		if e.applyTables(ctx, tables(e.prepared.Target)) != nil || !e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
 			return ErrState
@@ -850,7 +925,7 @@ func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBun
 		if local == nil {
 			local = deny[2].Revision
 		}
-		if e.listeners.Apply(ctx, *local) != nil || !e.listenersMatch(ctx, e.prepared.Target.LocalServices, e.prepared.Dependencies) || e.network.RestorePrepared(ctx, e.prepared.Dependencies.Prepared) != nil {
+		if e.listeners.Apply(ctx, *local) != nil || !e.listenersMatch(ctx, e.prepared.Target.LocalServices, e.prepared.Target.RoutedFirewall, e.prepared.Dependencies) || e.network.RestorePrepared(ctx, e.prepared.Dependencies.Prepared) != nil {
 			return ErrState
 		}
 		if e.applyTables(ctx, tables(e.prepared.Target)) != nil || !e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
@@ -865,7 +940,7 @@ func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBun
 	} else if e.network.Verify(ctx) != nil {
 		return ErrState
 	}
-	if e.listeners.Apply(ctx, canonical.LocalServices) != nil || !e.listenersMatch(ctx, e.prepared.Target.LocalServices, e.prepared.Dependencies) {
+	if e.listeners.Apply(ctx, canonical.LocalServices) != nil || !e.listenersMatch(ctx, e.prepared.Target.LocalServices, e.prepared.Target.RoutedFirewall, e.prepared.Dependencies) {
 		return ErrState
 	}
 	if e.applyTables(ctx, tables(e.prepared.Target)) != nil || !e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
@@ -879,8 +954,14 @@ func (e *Engine) observeOwnedLocked(ctx context.Context) (string, error) {
 		return "", ErrState
 	}
 	if e.selected {
-		if e.matches(ctx, e.prepared.Target, e.prepared.Dependencies) {
+		matched, observationErr := e.matchesObservationV4(ctx, e.prepared.Target, e.prepared.Dependencies)
+		if matched {
 			return e.plan.TargetOwned, nil
+		}
+		if networkexecutor.IsLeaseObservationPendingV4(observationErr) {
+			// No fallback can turn the still-selected pending target into Before
+			// authority. The error preserves only closed reconciliation context.
+			return "", &closedLeaseObservationV4{cause: observationErr, running: e.target.Composite.Hash}
 		}
 		if e.matches(ctx, e.prepared.Before, e.prepared.Dependencies) {
 			return e.plan.BeforeOwned, nil
@@ -893,6 +974,7 @@ func (e *Engine) observeOwnedLocked(ctx context.Context) (string, error) {
 	}
 	if e.selected {
 		e.fenced = true
+		nativeDHCPObservationFailureV4("fence_selected")
 	}
 	return "", ErrState
 }
@@ -904,7 +986,9 @@ func (e *Engine) MatchOwned(ctx context.Context, reference string) error {
 	if e == nil || ctx == nil {
 		return ErrState
 	}
-	e.mu.Lock()
+	if err := e.lockObservation(ctx); err != nil {
+		return err
+	}
 	defer e.mu.Unlock()
 	if e.fenced || !e.selected || ctx.Err() != nil {
 		return ErrState
@@ -939,7 +1023,14 @@ func (e *Engine) Current() string {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	owned, err := e.observeOwnedLocked(ctx)
-	if err != nil || !e.selected {
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	return e.currentForOwnedLocked(owned)
+}
+
+func (e *Engine) currentForOwnedLocked(owned string) string {
+	if !e.selected {
 		return ""
 	}
 	if owned == e.plan.TargetOwned {
@@ -949,6 +1040,65 @@ func (e *Engine) Current() string {
 		return e.previous.Composite.Hash
 	}
 	return ""
+}
+
+// ObserveCurrentOwned derives both identities from one complete fresh physical
+// observation under the same selected-plan lock. Nothing is cached for reuse.
+func (e *Engine) ObserveCurrentOwned(ctx context.Context) (nftguardian.GroupObservationV1, error) {
+	if e == nil || ctx == nil {
+		return nftguardian.GroupObservationV1{}, ErrState
+	}
+	if err := e.lockObservation(ctx); err != nil {
+		return nftguardian.GroupObservationV1{}, err
+	}
+	defer e.mu.Unlock()
+	owned, err := e.observeOwnedLocked(ctx)
+	if err != nil {
+		var witness *closedLeaseObservationV4
+		if errors.As(err, &witness) && witness != nil && ctx.Err() == nil {
+			return nftguardian.GroupObservationV1{Plan: e.plan}, err
+		}
+		return nftguardian.GroupObservationV1{}, err
+	}
+	out := nftguardian.GroupObservationV1{Plan: e.plan, Current: e.currentForOwnedLocked(owned), Owned: owned, MatchingOwned: [2]string{owned, ""}}
+	if e.selected && e.plan.BeforeOwned != e.plan.TargetOwned {
+		// Contextual envelopes may differ, but a second reference is admitted
+		// only for byte-identical canonical predicates under the SAME deps.
+		// No second physical read can introduce an ABA proof here.
+		before, beforeErr := OwnedBytes(e.prepared.Before)
+		target, targetErr := OwnedBytes(e.prepared.Target)
+		if beforeErr != nil || targetErr != nil {
+			return nftguardian.GroupObservationV1{}, ErrState
+		}
+		if bytes.Equal(before, target) {
+			if owned == e.plan.TargetOwned {
+				out.MatchingOwned[1] = e.plan.BeforeOwned
+			} else if owned == e.plan.BeforeOwned {
+				out.MatchingOwned[1] = e.plan.TargetOwned
+			}
+		}
+	}
+	if ctx.Err() != nil {
+		return nftguardian.GroupObservationV1{}, ctx.Err()
+	}
+	return out, nil
+}
+
+func (e *Engine) lockObservation(ctx context.Context) error {
+	for !e.mu.TryLock() {
+		timer := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if ctx.Err() != nil {
+		e.mu.Unlock()
+		return ctx.Err()
+	}
+	return nil
 }
 
 func (e *Engine) RestoreOwned(ctx context.Context, digest string) error {
@@ -973,6 +1123,10 @@ func (e *Engine) RestoreOwned(ctx context.Context, digest string) error {
 		e.fenced = true
 		return ErrState
 	}
+	if err := e.prepareRoutedListeners(ctx, e.prepared.Before.RoutedFirewall, false); err != nil {
+		e.fenced = true
+		return err
+	}
 	if e.prepared.Dependencies.Version == 2 {
 		if e.applyTables(ctx, tables(e.prepared.Before)) != nil || !e.matches(ctx, e.prepared.Before, e.prepared.Dependencies) {
 			e.fenced = true
@@ -992,7 +1146,7 @@ func (e *Engine) RestoreOwned(ctx context.Context, digest string) error {
 	if local == nil {
 		local = deny[2].Revision
 	}
-	if e.listeners.Apply(ctx, *local) != nil || !e.listenersMatch(ctx, e.prepared.Before.LocalServices, e.prepared.Dependencies) {
+	if e.listeners.Apply(ctx, *local) != nil || !e.listenersMatch(ctx, e.prepared.Before.LocalServices, e.prepared.Before.RoutedFirewall, e.prepared.Dependencies) {
 		e.fenced = true
 		return ErrState
 	}

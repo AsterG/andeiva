@@ -84,7 +84,21 @@ func (r *RoutedSelectionReaderV2) read(ctx context.Context) (*selectedViewV2, er
 	return r.readWithGateV2(ctx, nil)
 }
 
-func (r *RoutedSelectionReaderV2) readWithGateV2(ctx context.Context, beforeGraph func(*selectedViewV2) error) (result *selectedViewV2, resultErr error) {
+func (r *RoutedSelectionReaderV2) readWithGateV2(ctx context.Context, beforeGraph func(*selectedViewV2) error) (*selectedViewV2, error) {
+	view, err := r.readCandidateWithGateV2(ctx, beforeGraph)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.revalidate(ctx, view); err != nil {
+		_ = view.graph.closeSelectedV2()
+		return nil, err
+	}
+	return view, nil
+}
+
+// readCandidateWithGateV2 constructs a private candidate, not authority. A caller
+// must revalidate after every dependent read and before returning any proof.
+func (r *RoutedSelectionReaderV2) readCandidateWithGateV2(ctx context.Context, beforeGraph func(*selectedViewV2) error) (result *selectedViewV2, resultErr error) {
 	if ctx == nil || ctx.Err() != nil || r.area == nil || r.options.Access.CheckDirectory(r.area) != nil {
 		return nil, ErrRecovery
 	}
@@ -153,9 +167,6 @@ func (r *RoutedSelectionReaderV2) readWithGateV2(ctx context.Context, beforeGrap
 		return nil, err
 	}
 	view.ref = ref
-	if err := r.revalidate(ctx, view); err != nil {
-		return nil, err
-	}
 	return view, nil
 }
 

@@ -27,6 +27,18 @@ func validBootIntentV2(intent *v2CoordinatorIntent) bool {
 }
 
 func validFeaturesV2(state v2State) bool {
+	if !validRoutedBootMarkCursorV1(state) {
+		return false
+	}
+	if hasFeatureV2(state, routedConntrackAuditFeatureV1) && !hasFeatureV2(state, v4RoutedDHCPConfigurationFeature) {
+		return false
+	}
+	if !validRoutedCompensationRecordV1(state) {
+		return false
+	}
+	if !validRoutedDHCPConfigurationHeaderV4(state.RoutedDHCPConfiguration, state) {
+		return false
+	}
 	if !validDHCPServerFeatureV1(state) {
 		return false
 	}
@@ -38,7 +50,7 @@ func validFeaturesV2(state v2State) bool {
 	}
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != v1RoutedDHCPServerFeature && feature != v4RoutedRebootScopeFeature && feature != v3RoutedFreshScopeFeature && feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
+		if (feature != routedBootMarkReservationFeatureV1 && feature != routedConntrackAuditFeatureV1 && feature != routedCompensationFeatureV1 && feature != v4RoutedDHCPConfigurationFeature && feature != v1RoutedDHCPServerFeature && feature != v4RoutedRebootScopeFeature && feature != v3RoutedFreshScopeFeature && feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
 			return false
 		}
 		last = feature
@@ -98,7 +110,10 @@ func addFeatureV2(state *v2State, feature string) {
 }
 
 func preservesFeaturesV2(previous, next v2State) bool {
-	if !preservesRoutedDHCPV3(previous, next) {
+	if !preservesRoutedBootMarkCursorV1(previous, next) {
+		return false
+	}
+	if !preservesRoutedCompensationV1(previous, next) || !preservesRoutedDHCPV3(previous, next) {
 		return false
 	}
 	if previous.Configuration != nil && next.Configuration != nil {

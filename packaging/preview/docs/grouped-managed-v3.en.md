@@ -42,3 +42,41 @@ journalctl -u andeiva-preview-grouped.service --no-pager
 # After the unit has completed and the result/logs have been retained:
 systemctl stop andeiva-preview-grouped.service
 ```
+
+### Management recovery notice in Alpha
+
+If the helper cannot acknowledge the API handoff, the supervisor writes one
+generic recovery notice for the incident. The immediate record is in the
+supervisor journal. For this failure, Alpha records the incident exclusively in that journal.
+Importing earlier incidents into protected audit is deferred until after the
+milestone.
+
+An authorized local operator can inspect the existing service journal with
+`journalctl -u andeiva-preview-grouped.service --boot --no-pager`.
+## Preparing DHCP lease storage
+
+After installing the signed offline engine dependencies, root can run
+`/usr/lib/andeiva-preview/andeiva-preview grouped-dhcp-state` to prepare the
+private lease directory. Running it again preserves the lease files. The
+standard unit keeps the optional DHCP profile inactive.
+
+### LAN DHCP rollback in Alpha
+
+If rollback needs a previously running LAN DHCP service that has already
+stopped, the current preview keeps recovery closed.
+The planned Alpha recovery keeps LAN DHCP stopped until an administrator
+reactivates it. The administration action and static LAN management access
+during this rollback have yet to pass qualification.
+
+### Established connections in Alpha
+
+Changing the ID or contents of a matching firewall rule can interrupt its
+established connections. Affected clients must reconnect. The review before
+Commit will show this warning once the active-WAN change path is available.
+A rule that still authorizes the same connection preserves its mark when its
+ID and contents remain unchanged.
+
+On the isolated Debian lab, verify a trusted build from the repository root
+with `sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PACKAGE`.
+The test extracts the package, uses temporary lease storage in a private
+mount namespace and checks that an unprivileged invocation fails.

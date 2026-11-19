@@ -9,6 +9,8 @@ import (
 	"net/netip"
 
 	"github.com/AsterG/andeiva/internal/localpolicy"
+	"github.com/AsterG/andeiva/internal/networkplan"
+	"github.com/AsterG/andeiva/internal/routedmodel"
 )
 
 const (
@@ -25,6 +27,11 @@ const (
 	MaxBatch             = 384 << 10
 	MaxObservation       = 512 << 10
 )
+
+// Each owned ND interface can emit one DAD per local address, two NS and
+// one NA per local/peer pair, and one multicast NA per peer. Each routed
+// interface adds at most one DHCP control, including WAN acquisition.
+const maxRoutedControlRules = MaxInterfaces*MaxNeighborAddresses*(2+3*MaxNeighborAddresses) + networkplan.MaxInterfaces
 
 var (
 	ErrPolicy      = errors.New("local_nft_policy_invalid")
@@ -45,6 +52,8 @@ type Artifact struct {
 	Rules      []localpolicy.EffectiveRule `json:"rules"`
 	Neighbors  []NeighborLink              `json:"neighbors"`
 	ControlIDs []string                    `json:"control_ids"`
+	Network    *networkplan.Revision       `json:"network,omitempty"`
+	DHCPPolicy *routedmodel.Revision       `json:"dhcp_policy,omitempty"`
 }
 
 // ValidateManaged limits deployed listeners to the two implemented engines.
@@ -106,6 +115,20 @@ func bounded(c localpolicy.Config) error {
 func Compile(c localpolicy.Config) (Artifact, error) { return CompileWithNeighbors(c, nil) }
 
 func CompileWithNeighbors(c localpolicy.Config, neighbors []NeighborLink) (Artifact, error) {
+	return CompileForNetwork(c, neighbors, nil)
+}
+
+// CompileForNetwork derives acquisition admission only from the trusted selected
+// network revision. It grants no lease, forwarding or administrative service.
+func CompileForNetwork(c localpolicy.Config, neighbors []NeighborLink, selected *networkplan.Revision) (Artifact, error) {
+	return compileForNetwork(c, neighbors, selected, nil)
+}
+
+func compileForNetwork(c localpolicy.Config, neighbors []NeighborLink, selected *networkplan.Revision, dhcpPolicy *routedmodel.Revision) (Artifact, error) {
+	network, acquisition, err := acquisitionRule(selected)
+	if err != nil {
+		return Artifact{}, err
+	}
 	if err := bounded(c); err != nil {
 		return Artifact{}, err
 	}
@@ -122,7 +145,15 @@ func CompileWithNeighbors(c localpolicy.Config, neighbors []NeighborLink) (Artif
 		{"add": object{"chain": object{"family": "inet", "table": TableName, "name": "input", "type": "filter", "hook": "input", "prio": localpolicy.InputPriority, "policy": "drop"}}},
 	}
 	controls := neighborRules(pure.Revision.Config, links)
-	if len(controls) > MaxControlRules {
+	if acquisition != nil {
+		controls = append(controls, acquisition)
+	}
+	controlLimit := MaxControlRules
+	if dhcpPolicy != nil {
+		controls = append(controls, dhcpServerRules(dhcpPolicy.Policy)...)
+		controlLimit = maxRoutedControlRules
+	}
+	if len(controls) > controlLimit {
 		return Artifact{}, ErrPolicy
 	}
 	ids := make([]string, 0, len(controls))
@@ -166,7 +197,7 @@ func CompileWithNeighbors(c localpolicy.Config, neighbors []NeighborLink) (Artif
 	if err != nil {
 		return Artifact{}, ErrPolicy
 	}
-	return Artifact{Revision: pure.Revision, Digest: hash(digestData), Create: create, Batch: batch, Rules: pure.Rules, Neighbors: links, ControlIDs: ids}, nil
+	return Artifact{Revision: pure.Revision, Digest: hash(digestData), Create: create, Batch: batch, Rules: pure.Rules, Neighbors: links, ControlIDs: ids, Network: network, DHCPPolicy: dhcpPolicy}, nil
 }
 
 func hash(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }

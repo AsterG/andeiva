@@ -20,6 +20,7 @@ type RoutedSelectedPreflightPurposeV4 string
 const (
 	RoutedPreflightRetirementV4 RoutedSelectedPreflightPurposeV4 = "retirement"
 	RoutedPreflightDHCPV4       RoutedSelectedPreflightPurposeV4 = "dhcp"
+	RoutedPreflightDHCPServerV1 RoutedSelectedPreflightPurposeV4 = "dhcp-server-v1"
 )
 
 // A result is correlation from a private root-launched reader, not a portable
@@ -86,7 +87,7 @@ func routedPreflightResultV4(result RoutedSelectedPreflightResultV4, purpose Rou
 		if work != (configpoc.RoutedWorkReferenceV1{}) || result.Work != work || result.Resolution != "" || !reflect.DeepEqual(result.Bundle, configpoc.RoutedActivationBundleV1{}) {
 			return ErrIdentity
 		}
-	case RoutedPreflightDHCPV4:
+	case RoutedPreflightDHCPV4, RoutedPreflightDHCPServerV1:
 		if result.Work != work || !routedPrivateHashV4(work.Work) || work.Lineage != result.Reference.Lineage || work.Work != result.Reference.WorkHash || work.Generation == 0 || (result.Resolution != "" && result.Resolution != "target") {
 			return ErrIdentity
 		}
@@ -94,7 +95,13 @@ func routedPreflightResultV4(result RoutedSelectedPreflightResultV4, purpose Rou
 		if err != nil || !reflect.DeepEqual(canonical, result.Bundle) || canonical.Firewall.Config.Routed == nil {
 			return ErrIdentity
 		}
-		if _, err = networkexecutor.CanonicalLANBootstrapPlanV3(canonical.Firewall.Config.Routed.Network); err != nil {
+		policy := canonical.Firewall.Config.Routed
+		if purpose == RoutedPreflightDHCPServerV1 {
+			// Intent and pending plans are not sufficient for this readback.
+			if result.Reference.Mode != "active" || result.Resolution != "target" || policy.SchemaVersion != 2 || policy.DHCPServer == nil || !policy.DHCPServer.Enabled {
+				return ErrIdentity
+			}
+		} else if _, err = networkexecutor.CanonicalLANBootstrapPlanV3(policy.Network); err != nil {
 			return ErrIdentity
 		}
 	default:

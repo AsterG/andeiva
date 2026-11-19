@@ -24,7 +24,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		if err != nil {
 			return err
 		}
-		if !v2ValidState(state) || state.Lineage != selection.Lineage {
+		if !v2ValidState(state) || state.Lineage != selection.Lineage || !validRoutedCompensationSequenceV1(state, selection.Sequence) {
 			release()
 			return errV2Unavailable
 		}
@@ -37,7 +37,19 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 			release()
 			return errV2Unavailable
 		}
-		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !preservesFeaturesV2(state, previousState) || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
+		featuresPreserved := true
+		if i > 0 {
+			if !validRoutedBootMarkSourceV1(state, previousState, hash) {
+				release()
+				return ErrRecovery
+			}
+			featuresPreserved, err = r.preservesFeaturesConfigurationReadV4(state, previousState, selection, hash, previousSelection, routedDHCPConfigurationHeaderV4)
+			if err != nil {
+				release()
+				return err
+			}
+		}
+		if i > 0 && (selection.Sequence+1 != previousSelection.Sequence || !featuresPreserved || !validRoutedCompensationPublicationV1(state, previousState, previousSelection.Sequence) || !preservesReclamationV2(state, previousState) || !preservesRecoveryReserveV2(state, previousState) || (!previousSelection.Checkpoint && selection.Segment+1 != previousSelection.Segment) || (previousSelection.Checkpoint && selection.Segment != 64)) {
 			release()
 			return errV2Unavailable
 		}
@@ -58,13 +70,31 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		previousSelection = selection
 		// Only the preceding feature set is needed by the selection edge. Do not
 		// retain every decoded state while traversing historical selections.
-		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary), Generation: state.Generation, RoutedDHCP: clone(state.RoutedDHCP), RoutedDHCPLast: state.RoutedDHCPLast}
+		previousState = v2State{RequiredFeatures: state.RequiredFeatures, ReclamationVersion: state.ReclamationVersion, RecoveryReserveVersion: state.RecoveryReserveVersion, ReserveArchiveRoot: state.ReserveArchiveRoot, Configuration: reserveFreezeSummaryV2(state.Configuration), RoutedBootBoundary: clone(state.RoutedBootBoundary), Generation: state.Generation, RoutedDHCP: clone(state.RoutedDHCP), RoutedDHCPLast: state.RoutedDHCPLast, RoutedDHCPConfiguration: clone(state.RoutedDHCPConfiguration)}
+		previousState.RoutedCompensation = clone(state.RoutedCompensation)
+		previousState.RoutedBootMarks = clone(state.RoutedBootMarks)
 		hash = selection.Previous
 	}
 	return errV2InspectionBudget
 }
 
 func (r *v2ReachabilityReader) state(key string, state v2State, depth int) error {
+	if state.RoutedBootMarks != nil {
+		cursor := state.RoutedBootMarks
+		_, cursorHash, err := v2Canonical(cursor)
+		if err != nil {
+			return err
+		}
+		if err := r.walk("routed-boot-marks:"+state.Lineage+":"+cursorHash, depth+1, func() error {
+			_, err := loadRoutedBootMarkReservationV1(cursor, state.Lineage, r.object)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	if err := r.routedDHCPConfigurationV4(state.RoutedDHCPConfiguration, key, state, depth+1, routedDHCPConfigurationHeaderV4); err != nil {
+		return err
+	}
 	if validateRoutedBootBoundaryV2(state, r.object) != nil {
 		return errV2Unavailable
 	}

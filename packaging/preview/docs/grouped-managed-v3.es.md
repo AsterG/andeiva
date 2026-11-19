@@ -42,3 +42,43 @@ journalctl -u andeiva-preview-grouped.service --no-pager
 # After the unit has completed and the result/logs have been retained:
 systemctl stop andeiva-preview-grouped.service
 ```
+
+### Aviso de recuperación de gestión en Alpha
+
+Si el helper no confirma el traspaso de la API, el supervisor registra un único
+aviso genérico del incidente. El registro inmediato queda en el diario del
+supervisor. Para este fallo, Alpha registra el incidente exclusivamente en ese diario.
+La incorporación de incidentes anteriores a la auditoría protegida queda para
+después del hito.
+
+El operador autorizado puede consultar el diario desde la consola local con
+`journalctl -u andeiva-preview-grouped.service --boot --no-pager`.
+## Preparación del directorio de concesiones DHCP
+
+Tras instalar las dependencias firmadas del motor sin conexión, root puede
+ejecutar `/usr/lib/andeiva-preview/andeiva-preview grouped-dhcp-state` para
+preparar el directorio privado. Repetir el comando conserva las concesiones.
+La unidad estándar mantiene inactivo el perfil opcional de DHCP.
+
+### Reversión de DHCP LAN en Alpha
+
+Si la reversión necesita un servicio DHCP LAN anterior que ya se detuvo,
+la vista previa mantiene la recuperación cerrada.
+La recuperación prevista para Alpha mantiene DHCP LAN detenido hasta que
+un administrador lo reactive. La acción de administración y el acceso por
+dirección estática durante esta reversión siguen pendientes de calificación.
+
+### Conexiones establecidas en Alpha
+
+Cambiar el ID o el contenido de una regla de firewall puede interrumpir
+las conexiones establecidas que coinciden con ella. Los clientes afectados
+deben reconectarse. La revisión previa a Commit mostrará este aviso cuando
+el flujo con WAN activa esté disponible. Una regla que sigue autorizando
+la misma conexión conserva su marca si su contenido e ID siguen iguales.
+
+En el Debian aislado del laboratorio, comprueba un paquete de confianza
+desde la raíz del repositorio con
+`sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PAQUETE`.
+La prueba extrae el paquete, usa almacenamiento temporal en un espacio
+de nombres de montaje privado y verifica que una cuenta sin privilegios
+reciba un rechazo.

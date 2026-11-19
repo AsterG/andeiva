@@ -2,6 +2,7 @@ package previewruntime
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -102,6 +103,9 @@ func (r *RoutedRemoteIntegrityV3) Attach(ctx context.Context, expected configpoc
 	result, err := r.client.Call(ctx, "inspect", firewallipc.RoutedIntegrityV3{Mode: "attach", Selection: expected})
 	if err != nil {
 		return err
+	}
+	if result.Integrity.State == configpoc.IntegrityUnavailableV1 || result.Integrity.State == configpoc.IntegrityCancelledV1 {
+		return errors.Join(configpoc.ErrRecovery, configpoc.ErrRetainedStartupUnavailableV4)
 	}
 	if result.Integrity.Selection != expected || result.Integrity.State != configpoc.IntegrityCompleteV1 {
 		return configpoc.ErrRecovery

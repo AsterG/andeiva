@@ -8,8 +8,10 @@ import (
 	"net"
 	"net/http"
 	"syscall"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/adminapi"
+	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/firewalladmin"
 	"github.com/AsterG/andeiva/internal/firewallipc"
@@ -34,6 +36,9 @@ func (r *RoutedOperationsRuntimeV3) Close() error {
 	}
 	if r.integrityScheduler != nil {
 		r.integrityScheduler.Close()
+	}
+	if r.DHCP != nil {
+		r.DHCP.closeSchedulerV4()
 	}
 	var se, re, le error
 	if r.Service != nil {
@@ -72,7 +77,7 @@ func openRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identities,
 		}
 		return nil, ErrIdentity
 	}
-	if o.RoutedFreshScope && o.RoutedRebootScope || ((o.RoutedDHCP || o.RoutedFreshScope || o.RoutedRebootScope) && (!integrity || !o.RoutedInventory)) || (o.RoutedInventory && (!integrity || o.NetworkInventory != nil)) || ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.ValidateRouted() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
+	if o.RoutedDHCPServerV1 && !o.RoutedDHCPRenewalV4 || o.RoutedDHCPRenewalV4 && !o.RoutedDHCP || o.RoutedFreshScope && o.RoutedRebootScope || ((o.RoutedDHCP || o.RoutedFreshScope || o.RoutedRebootScope) && (!integrity || !o.RoutedInventory)) || (o.RoutedInventory && (!integrity || o.NetworkInventory != nil)) || ctx == nil || ctx.Err() != nil || routed == nil || legacy == nil || !distinctRoutedChannelsV3(routed, legacy) || m.ValidateRouted() != nil || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
 		return fail()
 	}
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}
@@ -146,6 +151,16 @@ func connectRoutedOperationsModeV3(ctx context.Context, m Metadata, ids Identiti
 			return ConnectInheritedRoutedRebootScopeV4(ctx, c, uid, gid, pid, run, ns, o.RoutedDHCP)
 		}
 	}
+	if o.RoutedDHCPRenewalV4 {
+		connect = func(call context.Context, conn *net.UnixConn, uid, gid uint32, pid int32, run string, ns uint64) (*firewallipc.RoutedClientV3, error) {
+			return ConnectInheritedRoutedDHCPRenewalV4(call, conn, uid, gid, pid, run, ns, o.RoutedFreshScope, o.RoutedRebootScope)
+		}
+	}
+	if o.RoutedDHCPServerV1 {
+		connect = func(call context.Context, conn *net.UnixConn, uid, gid uint32, pid int32, run string, ns uint64) (*firewallipc.RoutedClientV3, error) {
+			return connectInheritedRoutedDHCPServerV1(call, conn, uid, gid, pid, run, ns, o.RoutedFreshScope, o.RoutedRebootScope)
+		}
+	}
 	client, e := connect(ctx, routed, ids.HelperUID, ids.IPCGID, routedPID, m.RunID, m.GatewayNamespace)
 	if e != nil {
 		if legacy != nil {
@@ -174,7 +189,7 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 			}
 		}
 	}()
-	if ctx == nil || client == nil || client.FreshScopeEnabled() != o.RoutedFreshScope || o.Runtime.FreshScope != nil || client.RebootScopeEnabled() != o.RoutedRebootScope || o.Runtime.RebootScope != nil || o.RoutedFreshScope && o.RoutedRebootScope || client.DHCPEnabled() != o.RoutedDHCP || o.Runtime.DHCPRecovery != nil || (client.InventoryEnabled() != o.RoutedInventory) || (o.RoutedInventory && o.NetworkInventory != nil) || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
+	if ctx == nil || client == nil || client.DHCPServerEnabledV1() != o.RoutedDHCPServerV1 || client.DHCPRenewalEnabledV4() != o.RoutedDHCPRenewalV4 || client.FreshScopeEnabled() != o.RoutedFreshScope || o.Runtime.FreshScope != nil || client.RebootScopeEnabled() != o.RoutedRebootScope || o.Runtime.RebootScope != nil || o.RoutedFreshScope && o.RoutedRebootScope || client.DHCPEnabled() != o.RoutedDHCP || o.Runtime.DHCPRecovery != nil || (client.InventoryEnabled() != o.RoutedInventory) || (o.RoutedInventory && o.NetworkInventory != nil) || legacy == nil || o.Store == nil || o.Auth == nil || o.Runtime.Integrity != nil || o.Runtime.Routed != nil || o.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{}) || o.Runtime.SharedReader == nil || !o.Runtime.GuardDeadlines || o.Runtime.BootID != identity.BootID || o.Runtime.Pools.Admission == nil || o.Runtime.Pools.Plan == nil || o.Runtime.Pools.Emergency == nil {
 		return nil, ErrIdentity
 	}
 	authority, e := NewRoutedRemoteAuthority(client, identity)
@@ -209,7 +224,25 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 	if client.RebootScopeEnabled() {
 		runtimeOptions.RebootScope = &routedRebootScopeRemoteV4{client}
 	}
-	service, e := configpoc.OpenRuntimeServiceV2(ctx, o.Store, o.Budget, o.Auth, []configpoc.Engine{guard}, o.Local, runtimeOptions)
+	startupUnavailable := o.routedStartupUnavailable
+	recordIncident := func(outcome string) error {
+		if !startupUnavailable || o.routedRecoveryAudit == nil {
+			return nil
+		}
+		startupUnavailable = false
+		return o.routedRecoveryAudit(adminauth.Event{At: time.Now().UTC(), Actor: "system", Action: "management_recovery", Result: outcome})
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, recordIncident("unavailable"))
+		}
+	}()
+	var service *configpoc.ServiceV2
+	e = retryRetainedStartupV4(ctx, o.Runtime.RetainDHCPV4, func() error {
+		service, e = configpoc.OpenRuntimeServiceV2(ctx, o.Store, o.Budget, o.Auth, []configpoc.Engine{guard}, o.Local, runtimeOptions)
+		startupUnavailable = startupUnavailable || (runtimeOptions.RetainDHCPV4 && errors.Is(e, configpoc.ErrRetainedStartupUnavailableV4))
+		return e
+	})
 	if e != nil {
 		return nil, e
 	}
@@ -223,14 +256,42 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 	result = &RoutedOperationsRuntimeV3{Handler: handler, Service: service, routed: client, legacy: legacy}
 	if client.DHCPEnabled() {
 		result.DHCP, e = newRoutedDHCPControllerV3(service, client, identity)
+		if e == nil && o.Runtime.RetainDHCPV4 {
+			e = result.DHCP.restoreRetainedWorkV4(ctx)
+		}
 		if e != nil {
 			return nil, errors.Join(e, service.Close())
 		}
 	}
+	if e = recordIncident("recovered"); e != nil {
+		return nil, errors.Join(e, service.Close())
+	}
 	if client.IntegrityEnabled() {
-		result.integrityScheduler = startRoutedIntegritySchedulerV3(service)
+		if result.DHCP != nil {
+			result.integrityScheduler = result.DHCP.startIntegritySchedulerV4(service)
+		} else {
+			result.integrityScheduler = startRoutedIntegritySchedulerV3(service)
+		}
 	}
 	return result, nil
+}
+
+// This is one API process and one helper epoch. Each unsuccessful inspection
+// has returned and its writer has closed the store before the next check.
+func retryRetainedStartupV4(ctx context.Context, retained bool, check func() error) error {
+	for attempt := 1; ; attempt++ {
+		err := check()
+		if !retained || !errors.Is(err, configpoc.ErrRetainedStartupUnavailableV4) || attempt == routedAPIRestartAttemptsV3 {
+			return err
+		}
+		timer := time.NewTimer(routedAPIRestartDelayV3)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // Duplicated descriptors do not constitute two independently framed channels.

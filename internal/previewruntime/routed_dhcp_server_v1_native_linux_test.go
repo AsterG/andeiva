@@ -151,6 +151,16 @@ func TestNativeRoutedDHCPServerV1(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := RoutedDHCPServerResourcesV1{Metadata: Metadata{SchemaVersion: 2, RunID: hex.EncodeToString(nonce[:]), BootID: bootID, HostNamespace: ids[0], GatewayNamespace: ns}, Gateway: gw, Host: pins[0], HostMount: pins[1], Configuration: config, Leases: leaseDir, Config: c, Bindings: b, LeaseBudgetBytes: 4 << 20}
+	mountPins, _, err := prepareRoutedDHCPServerMountPinsV2(config, leaseDir)
+	if err != nil {
+		t.Fatal("prepared mount pins", err)
+	}
+	defer func() {
+		if err := mountPins.closeV2(); err != nil {
+			t.Error("mount pin cleanup", err)
+		}
+	}()
+	o.mountPins = mountPins
 	sig, cancelSignal := signal.NotifyContext(context.Background(), unix.SIGTERM)
 	defer cancelSignal()
 	ctx, cancel := context.WithTimeout(sig, 120*time.Second)

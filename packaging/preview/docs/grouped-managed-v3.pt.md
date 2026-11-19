@@ -41,3 +41,42 @@ journalctl -u andeiva-preview-grouped.service --no-pager
 # After the unit has completed and the result/logs have been retained:
 systemctl stop andeiva-preview-grouped.service
 ```
+
+### Aviso de recuperação da gestão em Alpha
+
+Se o helper não confirmar a transferência da API, o supervisor registra um
+único aviso genérico do incidente. O registro imediato fica no diário do
+supervisor. Para essa falha, Alpha registra o incidente exclusivamente nesse diário.
+A incorporação de incidentes anteriores à auditoria protegida fica para depois
+do marco.
+
+O operador autorizado pode consultar o diário na consola local com
+`journalctl -u andeiva-preview-grouped.service --boot --no-pager`.
+## Preparação do diretório de concessões DHCP
+
+Após instalar as dependências assinadas do motor offline, root pode executar
+`/usr/lib/andeiva-preview/andeiva-preview grouped-dhcp-state` para preparar o
+diretório privado. Executar o comando novamente preserva as concessões. A
+unidade padrão mantém o perfil opcional de DHCP inativo.
+
+### Reversão do DHCP da LAN no Alpha
+
+Se a reversão precisar de um serviço DHCP da LAN anterior que já foi parado,
+a versão de prévia mantém a recuperação bloqueada. A recuperação
+prevista para o Alpha mantém o DHCP da LAN parado até que um administrador o
+reative. A ação administrativa e o acesso pelo endereço estático durante essa
+reversão ainda precisam de validação.
+
+### Conexões estabelecidas no Alpha
+
+Alterar o ID ou o conteúdo de uma regra de firewall pode interromper as
+conexões estabelecidas que correspondem a ela. Os clientes afetados precisam
+reconectar. A revisão antes do Commit mostrará esse aviso quando o fluxo com
+WAN ativa estiver disponível. Uma regra que continua autorizando a mesma
+conexão preserva a marca se o ID e o conteúdo da regra forem mantidos.
+
+No Debian isolado do laboratório, verifique um pacote confiável na raiz
+do repositório com
+`sudo bash packaging/preview/tests/dhcp-package-state-native.sh --isolated-lab PACOTE`.
+O teste extrai o pacote, utiliza armazenamento temporário em um espaço
+de nomes de montagem privado e verifica a recusa ao executar sem privilégios.

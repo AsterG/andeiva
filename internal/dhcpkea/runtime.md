@@ -5,6 +5,27 @@ configuration writer calls it. `RunRoutedDHCPServerComponentV1` lives beside the
 existing supervisor and reuses its namespace, executable, ACL, pidfd, cgroup and
 descendant-drain primitives. [Español](docs/runtime.es.md) · [Português](docs/runtime.pt.md).
 
+`StartRoutedDHCPServerV1` provides the confined fixed-role launch path to
+`RunRoutedDHCPServerComponentV1`. It is not yet called by the product dispatcher
+or selected-policy controller. Root passes configuration/bootstrap and namespace/
+service pins as inherited descriptors, never caller-supplied paths. The bounded
+bootstrap is sealed against writing, resizing and unsealing. Lifetime EOF revokes
+the role; shutdown signals only a retained pidfd. Its handle proves a process,
+not service readiness or packet permission.
+
+The optional LAN profile accepts only the exact pinned WAN/LAN cgroup leaf set
+(at most two). Renamed, replaced, additional or missing children fail closed;
+there is no prefix allowance. Root must coordinate the complete set with WAN
+authority before concurrent activation/removal. The original empty-supervisor
+profile is unchanged without a set. API/Kea receive no writable cgroup capability.
+
+Dispatcher, shared lifecycle, RAW-aware selected-policy boundary and native
+coexistence qualification remain pending. Launching Kea alone does not enable
+`SupportsDHCPServerV1`. Disabled configuration must skip launch entirely; that
+path creates no exclusive process, pipe or timer. Root may retain an empty LAN cgroup slot as shared incarnation infrastructure; its kernel cost still requires measurement. No new dependency,
+persistent format or Docker/EKS unit is added. New resource measurements remain
+pending: local subprocess/kernel-control tests are not milestone acceptance.
+
 Trusted Root assembly must enter a dedicated process into the owned gateway and
 a different mount namespace before calling it. It supplies actual host/gateway
 namespace FDs, a readonly compiled-config FD (root:`_kea`, exactly 0440), a dedicated

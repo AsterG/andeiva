@@ -136,3 +136,17 @@ de CPU y 29.634.560 bytes de memoria pico; el escenario cliente duró 12,66 segu
 Son observaciones del ensayo, no garantías de capacidad o latencia de corte.
 Recuperación DHCP real, selección durable, suspensión e Internet/SNAT requieren
 validaciones independientes.
+
+### Retirada terminal después de renovar
+
+Un cambio de concesión cierra el permiso de reenvío anterior y bloquea esa
+instancia de forma permanente. La lectura completa puede demostrar el cierre
+físico sin rehabilitarla. La retirada exige además reenvío desactivado, el estado
+L3 original y la instantánea exacta del trabajo retirado y persistido. Si falla
+la liberación de recursos, se conservan las referencias de recuperación y se
+impide reconstruir la instancia.
+
+La nueva instancia recupera la secuencia archivada antes de admitir una
+concesión seleccionada posterior; nunca recrea el permiso anterior ni amplía su
+plazo. Este cambio de fuente no acredita recuperación nativa de renovación,
+readquisición tras retirar L3 ni rendimiento. Esas validaciones siguen pendientes.
