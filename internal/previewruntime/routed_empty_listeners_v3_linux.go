@@ -16,6 +16,7 @@ import (
 	"github.com/AsterG/andeiva/internal/localengine"
 	"github.com/AsterG/andeiva/internal/localobserve"
 	"github.com/AsterG/andeiva/internal/localpolicy"
+	"github.com/AsterG/andeiva/internal/routednft"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,10 +24,11 @@ import (
 // authenticated WAN acquisition and optional LAN DHCP server. All other
 // TCP/UDP and packet sockets remain forbidden.
 type routedEmptyListenersV3 struct {
-	mu      sync.Mutex
-	kernel  *routedKernelV3
-	service *routedDHCPServiceObservationV1
-	lan     *routedLANServiceObservationV1
+	mu         sync.Mutex
+	kernel     *routedKernelV3
+	service    *routedDHCPServiceObservationV1
+	lan        *routedLANServiceObservationV1
+	pendingLAN *routednft.Policy
 }
 
 func newRoutedEmptyListenersV3(m Metadata) (*routedEmptyListenersV3, error) {

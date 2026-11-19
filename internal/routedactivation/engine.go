@@ -233,9 +233,9 @@ func (e *Engine) listenersMatch(ctx context.Context, state, routed TableStateV1,
 	return err == nil && result.Consistent
 }
 
-func (e *Engine) prepareRoutedListeners(ctx context.Context, target TableStateV1) error {
+func (e *Engine) prepareRoutedListeners(ctx context.Context, target TableStateV1, pending bool) error {
 	listeners, ok := e.listeners.(interface {
-		PrepareRoutedTransition(context.Context, *routednft.Policy) error
+		PrepareRoutedTransition(context.Context, *routednft.Policy, bool) error
 	})
 	if !ok {
 		return nil
@@ -244,7 +244,7 @@ func (e *Engine) prepareRoutedListeners(ctx context.Context, target TableStateV1
 	if target.Revision != nil {
 		policy = target.Revision.Config.Routed
 	}
-	return listeners.PrepareRoutedTransition(ctx, policy)
+	return listeners.PrepareRoutedTransition(ctx, policy, pending)
 }
 
 func (e *Engine) matches(ctx context.Context, owned OwnedV1, deps DependenciesV1) bool {
@@ -915,7 +915,7 @@ func (e *Engine) Apply(ctx context.Context, target configpoc.RoutedActivationBun
 	if e.applyTables(ctx, deny) != nil {
 		return ErrState
 	}
-	if err := e.prepareRoutedListeners(ctx, e.prepared.Target.RoutedFirewall); err != nil {
+	if err := e.prepareRoutedListeners(ctx, e.prepared.Target.RoutedFirewall, true); err != nil {
 		return err
 	}
 	if e.prepared.Dependencies.Version == 2 {
@@ -1127,7 +1127,7 @@ func (e *Engine) RestoreOwned(ctx context.Context, digest string) error {
 		e.fenced = true
 		return ErrState
 	}
-	if err := e.prepareRoutedListeners(ctx, e.prepared.Before.RoutedFirewall); err != nil {
+	if err := e.prepareRoutedListeners(ctx, e.prepared.Before.RoutedFirewall, false); err != nil {
 		e.fenced = true
 		return err
 	}

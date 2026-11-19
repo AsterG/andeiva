@@ -204,19 +204,20 @@ func (h *routedDHCPJobsHelperV4) startLANV1(ctx context.Context, source RoutedSe
 		return err
 	}
 	start, err := h.assembly.client.callServerV1(ctx, "server_start", source.Work)
-	if err != nil {
-		return err
-	}
-	lan, err := newRoutedLANServiceObservationV1(ctx, h.assembly.client, source, plan, start)
+	installed := false
 	if err == nil {
-		err = h.assembly.listeners.installLANV1(ctx, lan)
+		var lan *routedLANServiceObservationV1
+		lan, err = newRoutedLANServiceObservationV1(ctx, h.assembly.client, source, plan, start)
+		if err == nil {
+			installed, err = h.assembly.listeners.installLANV1(ctx, lan)
+		}
 	}
 	if err == nil {
 		return nil
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), routedDHCPServerStopGraceV1+3*time.Second)
 	defer cancel()
-	if lan == nil {
+	if !installed {
 		_, stopErr := h.assembly.client.callServerV1(cleanup, "server_stop", source.Work)
 		return errors.Join(err, stopErr)
 	}

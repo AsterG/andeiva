@@ -285,7 +285,10 @@ type routedTransitionListenersFixture struct {
 	prepare func(*routednft.Policy) error
 }
 
-func (f routedTransitionListenersFixture) PrepareRoutedTransition(_ context.Context, target *routednft.Policy) error {
+func (f routedTransitionListenersFixture) PrepareRoutedTransition(_ context.Context, target *routednft.Policy, pending bool) error {
+	if pending {
+		return ErrState
+	}
 	return f.prepare(target)
 }
 

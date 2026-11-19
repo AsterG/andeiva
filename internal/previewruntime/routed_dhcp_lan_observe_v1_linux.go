@@ -62,7 +62,7 @@ func newRoutedLANServiceObservationV1(ctx context.Context, client *routedDHCPJob
 }
 
 // Called under verified deny before the grouped engine mutates owned links.
-func (l *routedEmptyListenersV3) PrepareRoutedTransition(ctx context.Context, target *routednft.Policy) error {
+func (l *routedEmptyListenersV3) PrepareRoutedTransition(ctx context.Context, target *routednft.Policy, pending bool) error {
 	if l == nil || l.kernel == nil || ctx == nil || ctx.Err() != nil {
 		return ErrUnavailable
 	}
@@ -70,14 +70,27 @@ func (l *routedEmptyListenersV3) PrepareRoutedTransition(ctx context.Context, ta
 	defer runtime.UnlockOSThread()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.lan == nil || l.lan.matches(target) {
-		return nil
+	if l.lan != nil && !l.lan.matches(target) {
+		if err := l.releaseLANUnderV1(ctx); err != nil {
+			return err
+		}
 	}
-	return l.releaseLANUnderV1(ctx)
+	l.pendingLAN = nil
+	if l.lan == nil && enabledRoutedLANV1(target) {
+		if !pending {
+			return ErrUnavailable
+		}
+		l.pendingLAN = target
+	}
+	return nil
 }
 
 func (s *routedLANServiceObservationV1) matches(policy *routednft.Policy) bool {
-	return !s.stopped && policy != nil && policy.Network.Hash == s.network && reflect.DeepEqual(policy.DHCPServer, s.config)
+	return !s.stopped && enabledRoutedLANV1(policy) && policy.Network.Hash == s.network && reflect.DeepEqual(policy.DHCPServer, s.config)
+}
+
+func enabledRoutedLANV1(policy *routednft.Policy) bool {
+	return policy != nil && policy.DHCPServer != nil && policy.DHCPServer.Enabled
 }
 
 func (s *routedLANServiceObservationV1) proof(ctx context.Context, op string) (*routedKeaSocketProofV1, error) {
@@ -121,8 +134,15 @@ func (l *routedEmptyListenersV3) ObserveRouted(ctx context.Context, policy *rout
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	actual, err := l.observeUnderV1(ctx)
-	if err != nil || len(actual) == 0 {
-		return actual, err
+	if err != nil {
+		return nil, err
+	}
+	if len(actual) == 0 {
+		if enabledRoutedLANV1(policy) && (!enabledRoutedLANV1(l.pendingLAN) ||
+			policy.Network.Hash != l.pendingLAN.Network.Hash || !reflect.DeepEqual(policy.DHCPServer, l.pendingLAN.DHCPServer)) {
+			return nil, ErrUnavailable
+		}
+		return nil, nil
 	}
 	if l.lan == nil || !l.lan.matches(policy) {
 		return nil, ErrIdentity
@@ -130,16 +150,16 @@ func (l *routedEmptyListenersV3) ObserveRouted(ctx context.Context, policy *rout
 	return nil, nil
 }
 
-func (l *routedEmptyListenersV3) installLANV1(ctx context.Context, lan *routedLANServiceObservationV1) error {
+func (l *routedEmptyListenersV3) installLANV1(ctx context.Context, lan *routedLANServiceObservationV1) (bool, error) {
 	if l == nil || l.kernel == nil || ctx == nil || ctx.Err() != nil || lan == nil {
-		return ErrIdentity
+		return false, ErrIdentity
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.lan != nil || !l.kernel.bound() {
-		return ErrIdentity
+	if l.lan != nil || !l.kernel.bound() || !lan.matches(l.pendingLAN) {
+		return false, ErrIdentity
 	}
 	l.lan = lan
 	wait := time.NewTicker(100 * time.Millisecond)
@@ -147,15 +167,18 @@ func (l *routedEmptyListenersV3) installLANV1(ctx context.Context, lan *routedLA
 	for ctx.Err() == nil {
 		if _, err := l.observeUnderV1(ctx); err == nil {
 			_, err := lan.proof(ctx, "server_accept")
-			return err
+			if err == nil {
+				l.pendingLAN = nil
+			}
+			return true, err
 		}
 		select {
 		case <-ctx.Done():
-			return ErrUnavailable
+			return true, ErrUnavailable
 		case <-wait.C:
 		}
 	}
-	return ErrUnavailable
+	return true, ErrUnavailable
 }
 
 func (l *routedEmptyListenersV3) releaseLANV1(ctx context.Context) error {
