@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"math"
 )
 
 const ctDelete = 0x102
+const retirementRequestSize = 88
 
 func appendAttribute(dst []byte, kind uint16, value []byte) []byte {
+	size := len(value) + 4
+	if size < 4 || size > math.MaxUint16 {
+		return nil
+	}
 	start := len(dst)
-	size := 4 + len(value)
 	dst = append(dst, make([]byte, aligned(size))...)
 	binary.NativeEndian.PutUint16(dst[start:], uint16(size))
 	binary.NativeEndian.PutUint16(dst[start+2:], kind)
@@ -47,7 +52,10 @@ func retireRequest(sequence, port uint32, e retirementEntry) ([]byte, error) {
 	req = appendAttribute(req, nestedFlag|1, tuple) // CTA_TUPLE_ORIG, required for point deletion.
 	req = appendAttribute(req, 12, binary.BigEndian.AppendUint32(nil, e.id))
 	req = appendAttribute(req, 18, binary.BigEndian.AppendUint16(nil, e.zone))
-	binary.NativeEndian.PutUint32(req, uint32(len(req)))
+	if len(req) != retirementRequestSize {
+		return nil, ErrObservation
+	}
+	binary.NativeEndian.PutUint32(req, retirementRequestSize)
 	binary.NativeEndian.PutUint16(req[4:], ctDelete)
 	binary.NativeEndian.PutUint16(req[6:], 0x5) // Request and ACK. No dump, filter or flush.
 	binary.NativeEndian.PutUint32(req[8:], sequence)
@@ -72,7 +80,7 @@ func retireEntry(ctx context.Context, t transport, sequence, port uint32, e reti
 		return ctx.Err()
 	}
 	if reply.peerPort != 0 || reply.peerGroups != 0 || reply.truncated || len(data) < 36 ||
-		binary.NativeEndian.Uint32(data) != uint32(len(data)) || binary.NativeEndian.Uint16(data[4:]) != 2 ||
+		int64(binary.NativeEndian.Uint32(data)) != int64(len(data)) || binary.NativeEndian.Uint16(data[4:]) != 2 ||
 		binary.NativeEndian.Uint16(data[6:])&^uint16(0x100) != 0 ||
 		binary.NativeEndian.Uint32(data[8:]) != sequence || binary.NativeEndian.Uint32(data[12:]) != port ||
 		!bytes.Equal(data[20:36], req[:16]) {
