@@ -244,12 +244,25 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 	start := StartRoutedDHCPServerV1
 	cancelStartup := func() {}
 	proveSockets := os.Getenv("ANDEIVA_NATIVE_DHCP_KEA_ACTIVE_PROOF_V3") == "1"
-	selectedLifetime := proveSockets || os.Getenv("ANDEIVA_NATIVE_DHCP_SERVER_SELECTED_LIFETIME_V2") == "1"
+	selectedWork := os.Getenv("ANDEIVA_NATIVE_DHCP_SERVER_SELECTED_WORK_V1") == "1"
+	selectedLifetime := proveSockets || selectedWork || os.Getenv("ANDEIVA_NATIVE_DHCP_SERVER_SELECTED_LIFETIME_V2") == "1"
+	var selectedOwner *routedDHCPServerSelectedLaunchV1
 	if selectedLifetime {
 		start = func(lifetime context.Context, resources RoutedDHCPServerResourcesV1) (*RoutedDHCPServerLaunchV1, error) {
 			call, cancel := context.WithTimeout(lifetime, 10*time.Second)
 			cancelStartup = cancel
 			resources.socketProof = proveSockets
+			if selectedWork {
+				options, work := nativeKeaSelectedFixtureV1(t, root, resources, set)
+				options.socketProof = proveSockets
+				var err error
+				selectedOwner, err = startRoutedDHCPServerSelectedV1(call, lifetime, options, work)
+				if err != nil {
+					return nil, err
+				}
+				file = selectedOwner.artifact.file
+				return selectedOwner.launch, nil
+			}
 			return startRoutedDHCPServerScopedV2(call, lifetime, resources)
 		}
 	}
@@ -371,6 +384,20 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 	if err != nil {
 		t.Fatal("bounded stop", err)
 	}
+	if selectedOwner != nil {
+		workDir := selectedOwner.artifact.directory
+		workName := selectedOwner.artifact.name
+		cleanup, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := selectedOwner.stopV1(cleanup)
+		cancel()
+		if err != nil {
+			t.Fatal("retire selected Kea owner", err)
+		}
+		if _, err := workDir.Stat(workName); !os.IsNotExist(err) {
+			t.Fatal("selected state retained a runtime config after disable", err)
+		}
+		t.Log("selected Work launched Kea with the observed LAN and durable subnet IDs, then retired the owned artifact")
+	}
 	drainCtx, drainStop := context.WithTimeout(ctx, 3*time.Second)
 	err = set.DrainFeatureV1(drainCtx, "lan")
 	drainStop()
@@ -393,8 +420,10 @@ func TestNativeRoutedDHCPServerLaunchLifecycleV1(t *testing.T) {
 	}
 	// The role's mount namespace has no live process and no observer holds its
 	// namespace FD. Close/unlink only generated runtime input; retain leases.
-	if err = file.Close(); err != nil {
-		t.Fatal(err)
+	if selectedOwner == nil {
+		if err = file.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err = root.Remove("runtime-config.json"); err != nil {
 		t.Fatal(err)
