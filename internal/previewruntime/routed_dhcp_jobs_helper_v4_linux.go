@@ -76,6 +76,10 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 	if err != nil {
 		return false, err
 	}
+	server := bundle.Firewall.Config.Routed.DHCPServer
+	if server != nil && server.Enabled && (!dhcp || !h.assembly.client.serverEnabled || plan.Resolution() != "target") {
+		return false, ErrUnavailable
+	}
 	if !dhcp {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -97,6 +101,14 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 		if h.runtime != nil {
 			if h.desired != desired.Hash {
 				return ErrIdentity
+			}
+			if server != nil && server.Enabled {
+				actual, err := h.assembly.listeners.Observe(ctx)
+				if err != nil || len(actual) != len(server.Scopes) {
+					return ErrUnavailable
+				}
+			} else if h.assembly.client.serverEnabled {
+				return h.assembly.listeners.releaseLANV1(ctx)
 			}
 			return nil // Reader and actual LAN/lease were revalidated above.
 		}
@@ -165,6 +177,14 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 			h.failed = true
 			return e
 		}
+		if server != nil && server.Enabled {
+			source := RoutedSelectedPreflightResultV4{Identity: plan.Scope().Identity, Reference: selection,
+				Work: plan.Reference(), Bundle: bundle, Resolution: plan.Resolution()}
+			if e := h.startLANV1(ctx, source); e != nil {
+				h.failed = true
+				return e
+			}
+		}
 		after, e := h.reader.Observe(ctx)
 		if e != nil || after != selection {
 			h.failed = true
@@ -176,6 +196,32 @@ func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpo
 		return nil
 	})
 	return err == nil, err
+}
+
+func (h *routedDHCPJobsHelperV4) startLANV1(ctx context.Context, source RoutedSelectedPreflightResultV4) error {
+	plan, err := routedDHCPServerBindingPlanFromSelectedV1(source, h.authority.Identity(), source.Work)
+	if err != nil {
+		return err
+	}
+	start, err := h.assembly.client.callServerV1(ctx, "server_start", source.Work)
+	installed := false
+	if err == nil {
+		var lan *routedLANServiceObservationV1
+		lan, err = newRoutedLANServiceObservationV1(ctx, h.assembly.client, source, plan, start)
+		if err == nil {
+			installed, err = h.assembly.listeners.installLANV1(ctx, lan)
+		}
+	}
+	if err == nil {
+		return nil
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), routedDHCPServerStopGraceV1+3*time.Second)
+	defer cancel()
+	if !installed {
+		_, stopErr := h.assembly.client.callServerV1(cleanup, "server_stop", source.Work)
+		return errors.Join(err, stopErr)
+	}
+	return errors.Join(err, h.assembly.listeners.releaseLANV1(cleanup))
 }
 
 func (h *routedDHCPJobsHelperV4) SameEffectiveRenewalV4() bool { return h != nil && h.assembly.renewal }
@@ -302,6 +348,12 @@ func (h *routedDHCPJobsHelperV4) stopBeforeRestore(ctx context.Context) error {
 	r.mu.Unlock()
 	if err != nil {
 		return err
+	}
+	if h.assembly.client.serverEnabled {
+		if err = h.assembly.listeners.releaseLANV1(ctx); err != nil {
+			h.failed = true
+			return err
+		}
 	}
 	h.assembly.listeners.revokeService()
 	if _, _, err = h.assembly.client.call(ctx, "stop", h.work); err != nil {
