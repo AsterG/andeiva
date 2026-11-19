@@ -21,12 +21,13 @@ import (
 const routedDHCPJobFrameV4 = 16384
 
 type routedDHCPJobV4 struct {
-	Version   int                             `json:"version"`
-	Run       string                          `json:"run"`
-	Namespace uint64                          `json:"namespace"`
-	Sequence  uint64                          `json:"sequence"`
-	Operation string                          `json:"operation"`
-	Work      configpoc.RoutedWorkReferenceV1 `json:"work"`
+	Version        int                             `json:"version"`
+	Run            string                          `json:"run"`
+	Namespace      uint64                          `json:"namespace"`
+	Sequence       uint64                          `json:"sequence"`
+	Operation      string                          `json:"operation"`
+	Work           configpoc.RoutedWorkReferenceV1 `json:"work"`
+	DeadlineBootNS int64                           `json:"deadline_boot_ns,string,omitempty"`
 }
 type routedDHCPJobReplyV4 struct {
 	Job                   routedDHCPJobV4                    `json:"job"`
@@ -43,7 +44,7 @@ type routedDHCPJobPeerV4 struct {
 }
 
 func routedDHCPJobValidV4(q routedDHCPJobV4, m Metadata, last uint64) bool {
-	return q.Version == 4 && q.Run == m.RunID && q.Namespace == m.GatewayNamespace && last != math.MaxUint64 && q.Sequence == last+1 && (q.Operation == "prepare" || q.Operation == "activate" || q.Operation == "stop") && routedPrivateHashV4(q.Work.Work) && q.Work.Lineage != "" && len(q.Work.Lineage) <= 128 && q.Work.Generation > 0
+	return q.Version == 4 && q.DeadlineBootNS == 0 && q.Run == m.RunID && q.Namespace == m.GatewayNamespace && last != math.MaxUint64 && q.Sequence == last+1 && (q.Operation == "prepare" || q.Operation == "activate" || q.Operation == "stop") && routedPrivateHashV4(q.Work.Work) && q.Work.Lineage != "" && len(q.Work.Lineage) <= 128 && q.Work.Generation > 0
 }
 
 func routedDHCPJobSocketV4(f *os.File) (*net.UnixConn, error) {
@@ -116,6 +117,14 @@ func routedDHCPJobSendV4(c *net.UnixConn, value any, files []*os.File) error {
 }
 
 func routedDHCPJobReceiveV4(c *net.UnixConn, peer routedDHCPJobPeerV4, out any) (files []*os.File, result error) {
+	files, err := receiveRoutedDHCPJobFrameV4(c, peer, out)
+	if err != nil {
+		return nil, ErrIdentity
+	}
+	return files, nil
+}
+
+func receiveRoutedDHCPJobFrameV4(c *net.UnixConn, peer routedDHCPJobPeerV4, out any) (files []*os.File, result error) {
 	if c == nil || peer.pid <= 1 {
 		return nil, ErrIdentity
 	}
@@ -155,7 +164,10 @@ func routedDHCPJobReceiveV4(c *net.UnixConn, peer routedDHCPJobPeerV4, out any) 
 			parseErr = ErrIdentity
 		}
 	}
-	if err != nil || parseErr != nil || !credentials || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n == 0 || n > routedDHCPJobFrameV4 || len(files) > 4 || routedPrivateDecodeV4(raw[:n], out) != nil {
+	if err != nil {
+		return files, err
+	}
+	if parseErr != nil || !credentials || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n == 0 || n > routedDHCPJobFrameV4 || len(files) > 4 || routedPrivateDecodeV4(raw[:n], out) != nil {
 		return files, ErrIdentity
 	}
 	return files, nil
@@ -173,6 +185,7 @@ type routedDHCPJobOwnerV4 interface {
 // supplies Desired. Requests carry correlation, never configuration or PIDs.
 type routedDHCPJobBrokerV4 struct {
 	server      *routedDHCPServerJobsV1
+	lanCloseErr error
 	serviceTree func(context.Context) (routedDHCPServiceCatalogV2, error)
 	preflight   func(context.Context, configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error)
 	prepare     func(context.Context, networkplan.Revision) (routedDHCPJobOwnerV4, error)
@@ -290,7 +303,7 @@ func (b *routedDHCPJobBrokerV4) dispatch(ctx context.Context, q routedDHCPJobV4)
 func (b *routedDHCPJobBrokerV4) serve(ctx context.Context, c *net.UnixConn, m Metadata, peer routedDHCPJobPeerV4) error {
 	defer c.Close()
 	defer func() {
-		_ = b.server.close()
+		b.lanCloseErr = b.server.close()
 		if b.owner != nil {
 			_ = b.owner.Close()
 		}
@@ -353,6 +366,20 @@ func (c *routedDHCPJobClientV4) callVersion(ctx context.Context, version int, op
 		(version != 4 && !(version == 5 && c.servicesEnabled) && !(version == 6 && c.serverEnabled)) {
 		return out, nil, ErrUnavailable
 	}
+	deadline := time.Now().Add(configpoc.IntegrityInspectionDeadlineV1)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	q := routedDHCPJobV4{Version: version, Run: c.metadata.RunID, Namespace: c.metadata.GatewayNamespace, Sequence: c.sequence + 1, Operation: op, Work: work}
+	if version == 6 {
+		now, err := routedDHCPOwnerBootNowV3()
+		remaining := int64(time.Until(deadline) - routedDHCPServerReplyMarginV1)
+		if err != nil || remaining <= 0 || now > math.MaxInt64-remaining {
+			return out, nil, ErrUnavailable
+		}
+		q.DeadlineBootNS = now + remaining
+	}
+	c.sequence++
 	callbackDone := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() {
 		defer close(callbackDone)
@@ -373,12 +400,6 @@ func (c *routedDHCPJobClientV4) callVersion(ctx context.Context, version int, op
 			reply, returned, result = routedDHCPJobReplyV4{}, nil, ErrUnavailable
 		}
 	}()
-	c.sequence++
-	q := routedDHCPJobV4{version, c.metadata.RunID, c.metadata.GatewayNamespace, c.sequence, op, work}
-	deadline := time.Now().Add(configpoc.IntegrityInspectionDeadlineV1)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
 	fail := func(files []*os.File) (routedDHCPJobReplyV4, []*os.File, error) {
 		for _, f := range files {
 			_ = f.Close()

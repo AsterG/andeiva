@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/configpoc"
 )
 
 func TestRoutedDHCPServiceCatalogV2PrivateChannel(t *testing.T) {
@@ -34,9 +36,11 @@ func TestRoutedDHCPServiceCatalogV2PrivateChannel(t *testing.T) {
 		client    bool
 		malformed bool
 		lan       bool
+		slowLAN   bool
 	}{
 		{name: "authenticated", broker: true, client: true},
 		{name: "LAN business failure preserves the shared channel", broker: true, client: true, lan: true},
+		{name: "LAN preflight deadline preserves the shared channel", broker: true, client: true, lan: true, slowLAN: true},
 		{name: "old client", broker: true},
 		{name: "old broker", client: true},
 		{name: "reused inode", client: true, broker: true, malformed: true},
@@ -44,7 +48,7 @@ func TestRoutedDHCPServiceCatalogV2PrivateChannel(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			m, work, _ := jobSourceFixtureV4(t, newJobOwnerFixtureV4(t).binding)
+			m, work, selected := jobSourceFixtureV4(t, newJobOwnerFixtureV4(t).binding)
 			root, helper, peer := jobChannelFixtureV4(t)
 			b := &routedDHCPJobBrokerV4{}
 			if test.broker {
@@ -61,12 +65,34 @@ func TestRoutedDHCPServiceCatalogV2PrivateChannel(t *testing.T) {
 			if test.lan {
 				b.server = &routedDHCPServerJobsV1{lifetime: ctx}
 			}
+			readSelected := make(chan struct{}, 1)
+			if test.slowLAN {
+				selected.Identity.RunID, selected.Identity.BootID = m.RunID, m.BootID
+				selected.Identity.Namespace, selected.Identity.Host = m.GatewayNamespace, m.HostNamespace
+				b.server.options = routedDHCPServerSelectedOptionsV1{metadata: m, identity: selected.Identity,
+					services: &RoutedDHCPServerServiceSetV1{},
+					readSelected: func(call context.Context, _ configpoc.RoutedWorkReferenceV1) (RoutedSelectedPreflightResultV4, error) {
+						readSelected <- struct{}{}
+						<-call.Done()
+						return RoutedSelectedPreflightResultV4{}, call.Err()
+					},
+				}
+			}
 			done := make(chan error, 1)
 			go func() { done <- b.serve(ctx, root, m, peer) }()
 			client := &routedDHCPJobClientV4{conn: helper, metadata: m, peer: peer, servicesEnabled: test.client, serverEnabled: test.lan}
 			if test.lan {
 				if proof, err := client.callServerV1(ctx, "server_stop", work); err != ErrUnavailable || proof != nil {
 					t.Fatal("stopping an unowned LAN job received an unexpected result", err)
+				}
+			}
+			if test.slowLAN {
+				short, stop := context.WithTimeout(ctx, time.Second)
+				proof, err := client.callServerV1(short, "server_start", work)
+				timedOut := short.Err() != nil
+				stop()
+				if err != ErrUnavailable || proof != nil || timedOut || len(readSelected) != 1 || client.failed {
+					t.Fatal("bounded LAN failure exceeded its exchange or broke the shared channel", err)
 				}
 			}
 			got, err := client.serviceTree(ctx)

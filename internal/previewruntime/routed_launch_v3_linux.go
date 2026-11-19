@@ -102,20 +102,21 @@ type routedLaunchChildV3 struct {
 // Done signals helper loss or explicit closure; callers must then release their
 // isolated namespace fixture. It never authorizes physical-host teardown.
 type RoutedLaunchSupervisorV3 struct {
-	mu          sync.Mutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	resources   RoutedLaunchResourcesV3
-	self        string
-	stderr      io.Writer
-	helper, api *routedLaunchChildV3
-	epoch       uint64
-	closed      bool
-	blocked     bool
-	done        chan struct{}
-	jobs        *net.UnixConn
-	jobsFile    *os.File
-	jobsDone    chan struct{}
+	mu           sync.Mutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	resources    RoutedLaunchResourcesV3
+	self         string
+	stderr       io.Writer
+	helper, api  *routedLaunchChildV3
+	epoch        uint64
+	closed       bool
+	blocked      bool
+	done         chan struct{}
+	jobs         *net.UnixConn
+	jobsFile     *os.File
+	jobsDone     chan struct{}
+	jobsCloseErr error
 }
 
 func validateRoutedLaunchV3(r RoutedLaunchResourcesV3) error {
@@ -325,6 +326,7 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 		go func() {
 			defer close(s.jobsDone)
 			_ = broker.serve(lifetime, s.jobs, r.Metadata, routedDHCPJobPeerV4{pid: s.helper.cmd.Process.Pid, uid: r.Identities.HelperUID, gid: r.Identities.IPCGID})
+			s.jobsCloseErr = broker.lanCloseErr
 			cancel()
 		}()
 	}
@@ -681,7 +683,7 @@ func (s *RoutedLaunchSupervisorV3) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return s.jobsCloseErr
 	}
 	s.closed = true
 	s.api.stop()
@@ -694,5 +696,5 @@ func (s *RoutedLaunchSupervisorV3) Close() error {
 		<-s.jobsDone
 	}
 	close(s.done)
-	return nil
+	return s.jobsCloseErr
 }
