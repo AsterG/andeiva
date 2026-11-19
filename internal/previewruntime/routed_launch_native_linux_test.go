@@ -448,7 +448,7 @@ func nativeFactoriesV3() RoutedLaunchFactoriesV3 {
 					return out, cleanup, err
 				}
 			}
-			out = OperationsRuntimeOptionsV2{RoutedDHCP: c.DHCPJobsEnabled, RoutedDHCPRenewalV4: c.DHCPRenewalV4, RoutedInventory: c.FreshScopeEnabled || c.DHCPJobsEnabled, RoutedFreshScope: c.FreshScopeEnabled, Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
+			out = OperationsRuntimeOptionsV2{RoutedDHCP: c.DHCPJobsEnabled, RoutedDHCPRenewalV4: c.DHCPRenewalV4, RoutedDHCPServerV1: c.DHCPServerProfileV1, RoutedInventory: c.FreshScopeEnabled || c.DHCPJobsEnabled, RoutedFreshScope: c.FreshScopeEnabled, Store: c.Store, Budget: nativeBudgetV3(), Auth: manager, Local: []configpoc.Engine{local}, Origin: "https://127.0.0.1:9443", Runtime: configpoc.RuntimeOptionsV2{SharedReader: &c.Access, GuardDeadlines: true, BootID: c.Metadata.BootID, Pools: configpoc.RuntimePoolsV2{Admission: pools[0], Plan: pools[1], Emergency: pools[2]}}}
 			fmt.Fprintln(os.Stderr, "ANDEIVA_NATIVE_STEP api-options-prepared")
 			return out, cleanup, nil
 		},

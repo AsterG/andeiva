@@ -121,7 +121,7 @@ func (r *routedDeploymentResourcesV3) Close() error {
 	if r == nil {
 		return nil
 	}
-	var result error
+	result := r.retireDHCPPackageProfileV1()
 	for _, root := range r.roots {
 		result = errors.Join(result, root.Close())
 	}
@@ -436,6 +436,9 @@ func runRoutedSupervisorWithManagementV3(ctx context.Context, c Config, manageme
 	resources, err := openRoutedDeploymentWithManagementV3(ctx, c, management)
 	if err != nil {
 		return err
+	}
+	if err := resources.attachDHCPPackageProfileV1(ctx); err != nil {
+		return errors.Join(err, resources.Close())
 	}
 	return runRoutedSupervisorResourcesV3(ctx, resources)
 }

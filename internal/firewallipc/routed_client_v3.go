@@ -29,6 +29,7 @@ type RoutedClientV3 struct {
 	inventory           bool
 	dhcp                bool
 	dhcpRenewal         bool
+	dhcpServer          bool
 	freshScope          bool
 	rebootScope         bool
 	publicationAllowed  atomic.Bool
@@ -54,9 +55,9 @@ func connectRoutedFeaturesV3(parent context.Context, conn io.ReadWriteCloser, ru
 	return connectRoutedCapabilitiesV3(parent, conn, runtimeRun, namespace, integrity, inventory, false, false, false)
 }
 func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp, freshScope, rebootScope bool) (*RoutedClientV3, error) {
-	return connectRoutedCapabilitiesRenewalV4(parent, conn, runtimeRun, namespace, integrity, inventory, dhcp, freshScope, rebootScope, false)
+	return connectRoutedCapabilitiesRenewalV4(parent, conn, runtimeRun, namespace, integrity, inventory, dhcp, freshScope, rebootScope, false, false)
 }
-func connectRoutedCapabilitiesRenewalV4(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp, freshScope, rebootScope, renewal bool) (*RoutedClientV3, error) {
+func connectRoutedCapabilitiesRenewalV4(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp, freshScope, rebootScope, renewal, dhcpServer bool) (*RoutedClientV3, error) {
 	if parent == nil || conn == nil {
 		if conn != nil {
 			_ = conn.Close()
@@ -81,6 +82,9 @@ func connectRoutedCapabilitiesRenewalV4(parent context.Context, conn io.ReadWrit
 	}
 	if renewal {
 		h.RequiredFeatures = append(h.RequiredFeatures, RoutedDHCPRenewalCapabilityV4)
+	}
+	if dhcpServer {
+		h.RequiredFeatures = append(h.RequiredFeatures, RoutedDHCPServerCapabilityV1)
 	}
 	data, _ := json.Marshal(h)
 	if _, e := DecodeRoutedHelloV3(data, false); e != nil || parent.Err() != nil {
@@ -110,7 +114,7 @@ func connectRoutedCapabilitiesRenewalV4(parent context.Context, conn io.ReadWrit
 			_ = conn.Close()
 			return nil, ErrChannel
 		}
-		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory, dhcp: dhcp, dhcpRenewal: renewal, freshScope: freshScope, rebootScope: rebootScope}, nil
+		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory, dhcp: dhcp, dhcpRenewal: renewal, dhcpServer: dhcpServer, freshScope: freshScope, rebootScope: rebootScope}, nil
 	case <-ctx.Done():
 		_ = conn.Close()
 		return nil, ErrChannel
