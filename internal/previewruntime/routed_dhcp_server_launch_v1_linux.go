@@ -192,6 +192,9 @@ func StartRoutedDHCPServerV1(ctx context.Context, o RoutedDHCPServerResourcesV1)
 		files = append(files, pin.Directory)
 	}
 	cmd := routedDHCPServerRoleCommandV1(self, files, int(own.Fd()))
+	if err := setRoutedDHCPChildNetworkCapsV1(cmd.SysProcAttr); err != nil {
+		return nil, errors.Join(err, controlWrite.Close())
+	}
 	fd, done, err := routedDHCPServerStartV1(cmd)
 	if err != nil {
 		return nil, errors.Join(err, controlWrite.Close())
