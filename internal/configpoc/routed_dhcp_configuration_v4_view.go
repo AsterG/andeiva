@@ -53,6 +53,9 @@ func routedDHCPConfigurationViewV4Read(h *v4RoutedDHCPConfigurationState, st v2S
 // Read-only bridge: generic publication/admission guards do not call this.
 // The next full state is read on demand; historical summaries stay compact.
 func preservesRoutedDHCPConfigurationReadV4(previous v2State, previousHeader *v4RoutedDHCPConfigurationState, next v2State, nextHeader *v4RoutedDHCPConfigurationState, source SelectionReferenceV2, load func(string, any) error, lookup func(string, string) (v2Operation, error), headerOf routedDHCPConfigurationHeaderOfV4) bool {
+	if !preservesRoutedCompensationV1(previous, next) {
+		return false
+	}
 	legacy := preservesFeaturesV2(previous, next)
 	if reflect.DeepEqual(previousHeader, nextHeader) {
 		return legacy

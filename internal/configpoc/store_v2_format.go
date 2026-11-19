@@ -96,6 +96,7 @@ type v2Operation struct {
 	Retired       bool             `json:"retired"`
 }
 type v2State struct {
+	RoutedCompensation      *routedCompensationRecordV1     `json:"routed_compensation,omitempty"`
 	RoutedDHCPConfiguration *v4RoutedDHCPConfigurationState `json:"routed_dhcp_configuration,omitempty"`
 	RoutedDHCP              *v3RoutedDHCPState              `json:"routed_dhcp,omitempty"`
 	RoutedDHCPLast          string                          `json:"routed_dhcp_last,omitempty"`
