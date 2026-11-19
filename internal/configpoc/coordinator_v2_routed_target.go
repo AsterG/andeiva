@@ -98,7 +98,7 @@ func routedTargetV2(s *v2Store, op v2Operation, state v2Configuration, now time.
 			return target, false, ErrConflict
 		}
 		origin, err := s.lookupRetained(op.Subject, pending.OriginCommit)
-		if err != nil || origin.Domain != "routed" || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.Code != "applied_pending_confirmation" || origin.Outcome.ConfirmationLease != pending.Lease || origin.Outcome.RunningRevision != pending.Target || origin.Outcome.ConfirmationDeadline == nil || !origin.Outcome.ConfirmationDeadline.Equal(pending.Deadline) {
+		if err != nil || !pendingOriginMatchesV2(pending, origin) {
 			return target, false, ErrConflict
 		}
 		target.Firewall.LastGood, target.LocalServices.LastGood = clone(state.Firewall.Running), clone(state.LocalServices.Running)
