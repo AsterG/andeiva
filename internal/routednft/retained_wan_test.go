@@ -136,6 +136,10 @@ func TestRetainedWANChangeRefusesDifferentNetworkOrNAT(t *testing.T) {
 	if _, _, err := CompileRetainedWANChange(before, changed, marks, marks.Issued); err == nil {
 		t.Fatal("atomic policy branch admitted a NAT change")
 	}
+	guarded, needsClosure, err := routedmodel.ReserveAdmissionMarks(marks.Boot, marks.Issued, &marks, before, changed)
+	if err != nil || !needsClosure || guarded.Issued != marks.Issued+uint32(len(marks.Bindings)) {
+		t.Fatal("changed NAT context retained marks", guarded, err)
+	}
 	policy = before.Policy
 	policy.Network.Config.DefaultRoute.Metric++
 	policy.Network, err = networkplan.Canonical(policy.Network.Config)

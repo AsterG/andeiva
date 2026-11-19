@@ -79,8 +79,15 @@ func ReserveAdmissionMarks(boot string, highWater uint32, prior *AdmissionMarks,
 		if err != nil || boot != prior.Boot || highWater < prior.Issued {
 			return AdmissionMarks{}, false, ErrPolicy
 		}
-		for i, rule := range before.Policy.Rules {
-			oldIndexes[rule.ID] = i
+		// A different route or NAT context has no unchanged rule scope,
+		// even if the filters' text is identical.
+		if before.Policy.Network.Hash != policy.Policy.Network.Hash || !slices.Equal(before.Policy.NAT, policy.Policy.NAT) {
+			needsClosure = true
+			clear(oldMarks)
+		} else {
+			for i, rule := range before.Policy.Rules {
+				oldIndexes[rule.ID] = i
+			}
 		}
 	}
 	next = AdmissionMarks{Boot: boot, Revision: target.Hash, Issued: highWater, Bindings: []AdmissionMark{}}
