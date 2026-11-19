@@ -505,7 +505,7 @@ func routedDHCPServerWaitV1(ctx context.Context, cmd *exec.Cmd, check bool) erro
 	return routedDHCPServerWaitWithInspectionV1(ctx, cmd, check, nil)
 }
 
-func routedDHCPServerWaitWithInspectionV1(ctx context.Context, cmd *exec.Cmd, check bool, inspect func(context.Context, int, int) error) error {
+func routedDHCPServerWaitWithInspectionV1(ctx context.Context, cmd *exec.Cmd, check bool, inspect func(context.Context, int, int) error) (result error) {
 	if ctx == nil || ctx.Err() != nil {
 		return ErrUnavailable
 	}
@@ -523,7 +523,10 @@ func routedDHCPServerWaitWithInspectionV1(ctx context.Context, cmd *exec.Cmd, ch
 		defer func() {
 			cancel()
 			if inspector != nil {
-				<-inspector
+				inspectionErr := <-inspector
+				if inspectionErr != nil && inspectionErr != context.Canceled {
+					result = errors.Join(result, inspectionErr)
+				}
 			}
 		}()
 	}

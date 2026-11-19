@@ -115,6 +115,14 @@ func routedDHCPJobSendV4(c *net.UnixConn, value any, files []*os.File) error {
 }
 
 func routedDHCPJobReceiveV4(c *net.UnixConn, peer routedDHCPJobPeerV4, out any) (files []*os.File, result error) {
+	files, err := receiveRoutedDHCPJobFrameV4(c, peer, out)
+	if err != nil {
+		return nil, ErrIdentity
+	}
+	return files, nil
+}
+
+func receiveRoutedDHCPJobFrameV4(c *net.UnixConn, peer routedDHCPJobPeerV4, out any) (files []*os.File, result error) {
 	if c == nil || peer.pid <= 1 {
 		return nil, ErrIdentity
 	}
@@ -154,7 +162,10 @@ func routedDHCPJobReceiveV4(c *net.UnixConn, peer routedDHCPJobPeerV4, out any) 
 			parseErr = ErrIdentity
 		}
 	}
-	if err != nil || parseErr != nil || !credentials || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n == 0 || n > routedDHCPJobFrameV4 || len(files) > 4 || routedPrivateDecodeV4(raw[:n], out) != nil {
+	if err != nil {
+		return files, err
+	}
+	if parseErr != nil || !credentials || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n == 0 || n > routedDHCPJobFrameV4 || len(files) > 4 || routedPrivateDecodeV4(raw[:n], out) != nil {
 		return files, ErrIdentity
 	}
 	return files, nil

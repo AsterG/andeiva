@@ -4,6 +4,7 @@ package previewruntime
 
 import (
 	"context"
+	"errors"
 	"math"
 	"net"
 	"os"
@@ -81,21 +82,27 @@ func serveRoutedKeaSocketProofV1(ctx context.Context, conn *net.UnixConn, peer r
 	var last uint64
 	for ctx.Err() == nil {
 		var q routedKeaSocketQueryV1
-		files, err := routedDHCPJobReceiveV4(conn, peer, &q)
+		files, err := receiveRoutedDHCPJobFrameV4(conn, peer, &q)
 		for _, f := range files {
 			_ = f.Close()
 		}
-		if ctx.Err() != nil {
+		if errors.Is(err, net.ErrClosed) && ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil || len(files) != 0 || q.Version != 1 || last == math.MaxUint64 || q.Sequence != last+1 {
 			return ErrIdentity
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		last = q.Sequence
 		inodes, err := readRoutedKeaEngineSocketHoldersV1(engine, identity)
 		proof := routedKeaSocketProofV1{Query: q, Unavailable: err != nil}
 		if err == nil {
 			proof.PID, proof.Start, proof.Inodes = identity.pid, identity.start, inodes
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		if conn.SetWriteDeadline(time.Now().Add(routedDHCPOwnerCallV3)) != nil || routedDHCPJobSendV4(conn, proof, nil) != nil {
 			return ErrUnavailable

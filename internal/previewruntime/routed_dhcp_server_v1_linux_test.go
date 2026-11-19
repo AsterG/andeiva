@@ -290,6 +290,23 @@ func TestRoutedDHCPServerCancellationV1(t *testing.T) {
 	}
 }
 
+func TestRoutedDHCPServerInspectionResultSurvivesRevocationV3(t *testing.T) {
+	for _, inspectionErr := range []error{context.Canceled, ErrIdentity} {
+		ctx, cancel := context.WithCancel(context.Background())
+		cmd := routedDHCPServerTestCommandV1(t, "wait")
+		err := routedDHCPServerWaitWithInspectionV1(ctx, cmd, false, func(context.Context, int, int) error {
+			cancel()
+			return inspectionErr
+		})
+		if inspectionErr == context.Canceled && err != nil || inspectionErr == ErrIdentity && !errors.Is(err, ErrIdentity) {
+			t.Fatalf("inspection %v produced %v", inspectionErr, err)
+		}
+		if cmd.ProcessState == nil {
+			t.Fatal("engine not reaped")
+		}
+	}
+}
+
 func TestRoutedDHCPServerBlockedOutputCancellationV1(t *testing.T) {
 	outR, outW, err := os.Pipe()
 	if err != nil {
