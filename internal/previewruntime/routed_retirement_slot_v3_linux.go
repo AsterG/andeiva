@@ -227,11 +227,7 @@ func openRoutedRetirementResourceV3(metadata Metadata, ids Identities) (*routedR
 		return nil, nil // Preallocated first activation; no prior retirement proof.
 	}
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: metadata.GatewayNamespace, Host: metadata.HostNamespace, BootID: metadata.BootID, RunID: metadata.RunID}
-	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if err != nil {
-		return nil, ErrIdentity
-	}
-	actualBoot, err := canonicalBoot(boot)
+	actualBoot, err := readRoutedKernelBootID()
 	if err != nil || actualBoot != identity.BootID {
 		return nil, ErrIdentity
 	}

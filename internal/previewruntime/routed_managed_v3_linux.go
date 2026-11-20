@@ -156,11 +156,7 @@ func prepareRoutedManagedScopeV3(ctx context.Context, area *os.Root, node routed
 	if err != nil {
 		return nil, err
 	}
-	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if err != nil {
-		return nil, err
-	}
-	bootID, err := canonicalBoot(boot)
+	bootID, err := readRoutedKernelBootID()
 	if err != nil {
 		return nil, err
 	}

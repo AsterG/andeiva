@@ -263,11 +263,7 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 	if e != nil || host != r.Metadata.HostNamespace {
 		return nil, ErrIdentity
 	}
-	boot, e := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if e != nil {
-		return nil, ErrIdentity
-	}
-	actual, e := canonicalBoot(boot)
+	actual, e := readRoutedKernelBootID()
 	if e != nil || actual != r.Metadata.BootID {
 		return nil, ErrIdentity
 	}

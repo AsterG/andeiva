@@ -290,11 +290,7 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 	} else if actual != b.Metadata.HostNamespace || checkPrivileges(b.Identities, false) != nil {
 		return fail()
 	}
-	boot, e := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if e != nil {
-		return fail()
-	}
-	actualBoot, e := canonicalBoot(boot)
+	actualBoot, e := readRoutedKernelBootID()
 	if e != nil || actualBoot != b.Metadata.BootID {
 		return fail()
 	}
