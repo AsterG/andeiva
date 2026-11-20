@@ -270,6 +270,9 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 	if restartMode == "rules" {
 		initialLease = []uint32{600}
 	}
+	if restartMode == nativeRulesOverlapProfileV4 {
+		initialLease = []uint32{nativeRulesOverlapLeaseV4}
+	}
 	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs, initialLease...)
 	defer stopServer()
 	var b2Diagnostic nativeDHCPB2DiagnosticsV4
@@ -327,8 +330,8 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata, &logs)
 	bound := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "bound")
 	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], bound.Grant.Snapshot)
-	if restartMode == "rules" {
-		nativeDHCPRulesRootV4(t, ctx, namespaces, supervisor, &logs, bound)
+	if restartMode == "rules" || restartMode == nativeRulesOverlapProfileV4 {
+		nativeDHCPRulesRootV4(t, ctx, namespaces, supervisor, &logs, bound, restartMode == nativeRulesOverlapProfileV4)
 		return
 	}
 	if b2 != 0 {
@@ -453,7 +456,7 @@ func nativeDHCPJobsServerV4(t *testing.T, ctx context.Context, base string, wan 
 		t.Fatal("trusted busybox udhcpd test dependency missing")
 	}
 	leaseSeconds := uint32(120)
-	if len(initial) > 1 || len(initial) == 1 && initial[0] != 71 && initial[0] != 600 {
+	if len(initial) > 1 || len(initial) == 1 && initial[0] != 71 && initial[0] != 600 && initial[0] != nativeRulesOverlapLeaseV4 {
 		t.Fatal("invalid fixed initial lab lease")
 	}
 	if len(initial) == 1 {
@@ -752,7 +755,8 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 	if err != nil {
 		return err
 	}
-	warm := profile != "" && profile != "rules"
+	rules := profile == "rules" || profile == nativeRulesOverlapProfileV4
+	warm := profile != "" && !rules
 	if !launch.DHCPJobsEnabled || !launch.Integrity || profile != "" && !launch.DHCPRenewalV4 || launch.Epoch < 1 || launch.Epoch > 2 || launch.DHCPRenewalV4 && launch.Epoch != 1 && !warm || r.DHCP == nil || !r.Service.RuntimeIntegrityReadyV1() {
 		return errors.New("native DHCP profile/readiness differs")
 	}
@@ -811,8 +815,8 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 		if err = nativeDHCPJobsReportEmitV4("bound", current.Global.Running, first); err != nil {
 			return err
 		}
-		if profile == "rules" {
-			return nativeDHCPRulesServeV4(ctx, r, binding, current.Global.Running, first, flowReady)
+		if rules {
+			return nativeDHCPRulesServeV4(ctx, r, binding, current.Global.Running, first, flowReady, profile == nativeRulesOverlapProfileV4)
 		}
 		if warm {
 			<-ctx.Done()

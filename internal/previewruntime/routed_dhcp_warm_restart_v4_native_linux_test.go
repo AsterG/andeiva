@@ -57,7 +57,7 @@ func nativeDHCPScenarioProfileV4() (string, error) {
 		return "", err
 	}
 	switch string(data) {
-	case "healthy", "store", "helper", "both", "shared", "rules":
+	case "healthy", "store", "helper", "both", "shared", "rules", nativeRulesOverlapProfileV4:
 		return string(data), nil
 	default:
 		return "", ErrIdentity

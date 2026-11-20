@@ -24,7 +24,19 @@ func TestNativeRoutedDHCPRetainedRulesV4(t *testing.T) {
 	nativeRunRoutedDHCPScenarioV4(t, true, 0, "rules")
 }
 
-func nativeDHCPRulesRootV4(t *testing.T, ctx context.Context, ns [3]*os.File, supervisor *RoutedLaunchSupervisorV3, logs *nativeLogV3, bound nativeDHCPJobsReportV4) {
+const (
+	nativeRulesOverlapProfileV4 = "overlap"
+	nativeRulesOverlapLeaseV4   = 180
+	// With the current B1 schedule, expiry occurs just after DHCP has closed
+	// its gate for the first real renewal. Kernel traces verify the overlap.
+	nativeRulesOverlapConfirmV4 = 76
+)
+
+func TestNativeRoutedDHCPRetainedRulesOverlapV4(t *testing.T) {
+	nativeRunRoutedDHCPScenarioV4(t, true, 0, nativeRulesOverlapProfileV4)
+}
+
+func nativeDHCPRulesRootV4(t *testing.T, ctx context.Context, ns [3]*os.File, supervisor *RoutedLaunchSupervisorV3, logs *nativeLogV3, bound nativeDHCPJobsReportV4, overlap bool) {
 	t.Helper()
 	defer func() {
 		if t.Failed() {
@@ -41,17 +53,31 @@ func nativeDHCPRulesRootV4(t *testing.T, ctx context.Context, ns [3]*os.File, su
 	if err != nil {
 		t.Fatal(err)
 	}
+	var ready unix.Timespec
+	if err = unix.ClockGettime(unix.CLOCK_BOOTTIME, &ready); err != nil {
+		t.Fatal(err)
+	}
 	supervisor.mu.Lock()
 	err = supervisor.api.cmd.Process.Signal(syscall.SIGUSR2)
 	supervisor.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, phase := range []string{"rules-confirmed", "rules-reverted"} {
+	phases := []string{"rules-confirmed", "rules-reverted"}
+	if overlap {
+		phases = []string{"rules-reverted"}
+	}
+	latest := bound.Grant
+	for _, phase := range phases {
 		report := nativeDHCPJobsWaitReportV4(t, ctx, logs, phase)
-		if !reflect.DeepEqual(report.Grant, bound.Grant) || report.Running == bound.Running {
+		if overlap {
+			if !sameRenewalGrantV4(bound.Grant, report.Grant) || report.Running != bound.Running {
+				t.Fatal("overlap did not restore the original policy with a verified same-WAN renewal")
+			}
+		} else if !reflect.DeepEqual(report.Grant, bound.Grant) || report.Running == bound.Running {
 			t.Fatalf("%s did not preserve the original WAN grant and select the expected firewall lineage", phase)
 		}
+		latest = report.Grant
 		sysctl := exec.CommandContext(ctx, "/usr/bin/nsenter", "--net=/proc/self/fd/3", "--", "/usr/sbin/sysctl", "-n", "net.ipv4.ip_forward")
 		sysctl.ExtraFiles = []*os.File{ns[0]}
 		sysctl.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
@@ -82,13 +108,39 @@ func nativeDHCPRulesRootV4(t *testing.T, ctx context.Context, ns [3]*os.File, su
 	if err != nil || traffic.TCPAccepted != 1 || traffic.TCPDisconnects != 0 || traffic.UDPTupleChanges != 0 {
 		t.Fatalf("retained connection evidence invalid: %v", err)
 	}
-	nativeDHCPJobsKernelV4(t, ctx, ns[0], bound.Grant.Snapshot)
+	nativeDHCPJobsKernelV4(t, ctx, ns[0], latest.Snapshot)
 	helper, _ := supervisor.PIDs()
+	if overlap {
+		nativeDHCPRulesOverlapEvidenceV4(t, logs.String(), helper, ready.Nano())
+		return
+	}
 	nativeDHCPRulesCutEvidenceV4(t, logs.String(), helper)
 	t.Log("Both cycles retained the original DHCP grant and used one persistent TCP connection and UDP flow")
 }
 
 func nativeDHCPRulesCutEvidenceV4(t *testing.T, log string, helper int) {
+	t.Helper()
+	spans := nativeDHCPRulesHoldSpansV4(t, log, helper)
+	cycles := []string{"commit_confirmed", "commit_expired", "rollback_timeout"}
+	if len(spans) != 3*len(cycles) {
+		t.Fatalf("missing forwarding barrier evidence: %d spans", len(spans))
+	}
+	const alphaForwardingPauseLimit = 500 * time.Millisecond
+	for i, operation := range cycles {
+		close, replace, release := spans[i*3], spans[i*3+1], spans[i*3+2]
+		upper := release.End - close.Start
+		t.Logf("ANDEIVA_NATIVE_RULE_CUT operation=%s lower_ms=%.3f upper_ms=%.3f close_ms=%.3f before_readback_ms=%.3f replace_ms=%.3f target_readback_ms=%.3f release_ms=%.3f",
+			operation, nativeRuleMilliseconds(release.Start-close.End), nativeRuleMilliseconds(upper),
+			nativeRuleMilliseconds(close.End-close.Start), nativeRuleMilliseconds(replace.Start-close.End),
+			nativeRuleMilliseconds(replace.End-replace.Start), nativeRuleMilliseconds(release.Start-replace.End),
+			nativeRuleMilliseconds(release.End-release.Start))
+		if time.Duration(upper) > alphaForwardingPauseLimit {
+			t.Errorf("%s forwarding pause exceeded the provisional Alpha limit of %s", operation, alphaForwardingPauseLimit)
+		}
+	}
+}
+
+func nativeDHCPRulesHoldSpansV4(t *testing.T, log string, helper int) []nativeLeaseSpanEvidenceV4 {
 	t.Helper()
 	phases := []string{"rule_hold_close", "rule_hold_replace", "rule_hold_release"}
 	var spans []nativeLeaseSpanEvidenceV4
@@ -107,28 +159,30 @@ func nativeDHCPRulesCutEvidenceV4(t *testing.T, log string, helper int) {
 		}
 		spans = append(spans, span)
 	}
-	cycles := []string{"commit_confirmed", "commit_expired", "rollback_timeout"}
-	if len(spans) != len(phases)*len(cycles) {
-		t.Fatalf("missing forwarding barrier evidence: %d spans", len(spans))
+	return spans
+}
+
+func nativeDHCPRulesOverlapEvidenceV4(t *testing.T, log string, helper int, ready int64) {
+	t.Helper()
+	cuts, err := nativeDHCPCutsV4(log, helper, ready)
+	if err != nil || len(cuts) != 1 {
+		t.Fatalf("expected one verified DHCP close/open cycle, got %d: %v", len(cuts), err)
 	}
-	const alphaForwardingPauseLimit = 500 * time.Millisecond
-	for i, operation := range cycles {
-		close, replace, release := spans[i*3], spans[i*3+1], spans[i*3+2]
-		upper := release.End - close.Start
-		t.Logf("ANDEIVA_NATIVE_RULE_CUT operation=%s lower_ms=%.3f upper_ms=%.3f close_ms=%.3f before_readback_ms=%.3f replace_ms=%.3f target_readback_ms=%.3f release_ms=%.3f",
-			operation, nativeRuleMilliseconds(release.Start-close.End), nativeRuleMilliseconds(upper),
-			nativeRuleMilliseconds(close.End-close.Start), nativeRuleMilliseconds(replace.Start-close.End),
-			nativeRuleMilliseconds(replace.End-replace.Start), nativeRuleMilliseconds(release.Start-replace.End),
-			nativeRuleMilliseconds(release.End-release.Start))
-		if time.Duration(upper) > alphaForwardingPauseLimit {
-			t.Errorf("%s forwarding pause exceeded the provisional Alpha limit of %s", operation, alphaForwardingPauseLimit)
-		}
+	spans := nativeDHCPRulesHoldSpansV4(t, log, helper)
+	if len(spans) != 6 {
+		t.Fatalf("expected one Commit and one rollback, got %d rule barrier spans", len(spans))
 	}
+	cut := cuts[0]
+	if spans[2].End > cut.CloseStart || cut.Closed > spans[3].Start || cut.OpenStart < spans[5].End {
+		t.Fatal("kernel traces do not place the entire rollback inside the verified DHCP closure")
+	}
+	t.Logf("ANDEIVA_NATIVE_RULE_RENEWAL_OVERLAP lower_ms=%.3f upper_ms=%.3f rollback_ms=%.3f",
+		nativeRuleMilliseconds(cut.LowerNS), nativeRuleMilliseconds(cut.UpperNS), nativeRuleMilliseconds(spans[5].End-spans[3].Start))
 }
 
 func nativeRuleMilliseconds(ns int64) float64 { return float64(ns) / float64(time.Millisecond) }
 
-func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, binding adminauth.SessionBinding, initial string, grant configpoc.RoutedDHCPGrantV3, acks <-chan os.Signal) error {
+func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, binding adminauth.SessionBinding, initial string, grant configpoc.RoutedDHCPGrantV3, acks <-chan os.Signal, overlap bool) error {
 	select {
 	case <-acks:
 	case <-ctx.Done():
@@ -143,12 +197,16 @@ func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 		}
 		return nativeDHCPJobsReportEmitV4(phase, revision, latest)
 	}
-	for _, confirm := range []bool{true, false} {
+	cycles := []bool{true, false}
+	if overlap {
+		cycles = []bool{false}
+	}
+	for _, confirm := range cycles {
 		candidate, err := nativeDHCPJobsCandidateV4()
 		if err != nil {
 			return err
 		}
-		if confirm {
+		if confirm || overlap {
 			rule := candidate.Config.Routed.Rules[0]
 			rule.ID, rule.Action = "retained-rules-deny", "deny"
 			rule.DestinationPorts.From, rule.DestinationPorts.To = 18083, 18083
@@ -160,6 +218,9 @@ func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 			}
 		}
 		seconds := uint64(30)
+		if overlap {
+			seconds = nativeRulesOverlapConfirmV4
+		}
 		committed, err := nativeDHCPJobsOperationV4(ctx, r, binding, configpoc.OperationRequestV2{Kind: configpoc.OpCommit, ConfirmSeconds: &seconds}, true)
 		if err != nil || committed.Current.Confirmation == nil {
 			return errors.Join(err, errors.New("native rules Commit lacks its pending confirmation"))
@@ -193,15 +254,37 @@ func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 		retry := time.NewTicker(200 * time.Millisecond)
 		defer retry.Stop()
 		for {
-			err = nativeDHCPJobsInspectV4(closed, r)
+			if overlap {
+				// Only observe. Manual inspection or Reconcile could hide a
+				// failure of the normal rollback/renewal schedulers.
+				err = configpoc.ErrRecovery
+				if r.Service.RuntimeIntegrityReadyV1() {
+					err = nil
+				}
+			} else {
+				err = nativeDHCPJobsInspectV4(closed, r)
+			}
 			status, readErr := r.Service.Status(binding)
 			if err == nil && readErr == nil && status.Confirmation == nil && status.RunningRevision == initial && !status.RecoveryRequired {
-				if err = publish("rules-reverted", status.RunningRevision); err != nil {
-					return err
+				if overlap {
+					r.DHCP.mu.Lock()
+					latest := r.DHCP.grant
+					r.DHCP.mu.Unlock()
+					if sameRenewalGrantV4(grant, latest) {
+						if err = nativeDHCPJobsReportEmitV4("rules-reverted", status.RunningRevision, latest); err != nil {
+							return err
+						}
+						<-ctx.Done()
+						return nil
+					}
+				} else {
+					if err = publish("rules-reverted", status.RunningRevision); err != nil {
+						return err
+					}
+					// Keep the gateway alive while the parent checks the same sockets.
+					<-ctx.Done()
+					return nil
 				}
-				// Keep the gateway alive while the parent checks the same sockets.
-				<-ctx.Done()
-				return nil
 			}
 			select {
 			case <-closed.Done():
