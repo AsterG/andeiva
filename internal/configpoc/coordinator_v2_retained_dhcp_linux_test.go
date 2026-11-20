@@ -119,6 +119,9 @@ func testRoutedCoordinatorRetainedDHCP(t *testing.T, confirm bool) {
 			admitted.ID, committed.Operation.State, store.blocked, store.state.Configuration.Intent, milestones, err)
 	}
 	pending := committed.Current.Pending
+	if err = wan.WithStableWorkV4(ctx, work, verify); err == nil || reads != 1 {
+		t.Fatal("helper verification raced an independently expiring Confirm window", err)
+	}
 	oldIntegrity := coordinator.options.Integrity
 	coordinator.options.Integrity = &testIntegrityV1{inspect: func(context.Context, SelectionReferenceV2) (IntegrityResultV1, error) {
 		t.Fatal("inspection dispatched while retained rules await Confirm")
