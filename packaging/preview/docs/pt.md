@@ -165,3 +165,28 @@ No Debian de laboratório recuperável, execute o teste nativo do pacote com
 metadados e política efetiva do kernel, compara seis testes reais TCP/UDP e
 reinicia a administração. Uma falha tenta restaurar a administração. Não valida
 a intenção da política, migração, reinicialização ou routing.
+
+### Pausa no encaminhamento durante alterações do firewall na versão Alpha
+
+Com DHCP ativo na WAN e a configuração completa de rede inalterada, aplicar
+ou reverter regras do firewall pausa temporariamente o encaminhamento. A Web,
+a CLI e a API avisam antes do Commit. Conexões afetadas por uma regra alterada
+podem precisar ser restabelecidas.
+
+O limite provisório para qualificar a versão Alpha no laboratório Debian
+isolado é de 500 ms por Commit ou rollback. Antes de sair da versão Alpha,
+repita essas medições e as da renovação DHCP da WAN no perfil mínimo de 2 GB.
+
+O gateway de laboratório com Debian 13 usou duas vCPUs e 3,79 GiB de RAM.
+A tabela mostra limites superiores da pausa de encaminhamento do kernel em
+milissegundos.
+
+| Operação | Amostras | Mínimo | Mediana | Máximo |
+| --- | ---: | ---: | ---: | ---: |
+| Commit seguido de Confirm | 10 | 72,518 | 94,251 | 112,015 |
+| Commit seguido do vencimento de Confirm | 10 | 71,814 | 85,830 | 103,687 |
+| Rollback após o vencimento de Confirm | 10 | 84,534 | 115,486 | 129,301 |
+
+Cada ciclo preservou a concessão WAN, a mesma conexão TCP e o mesmo fluxo UDP
+nas regras intactas. As medições usaram uma concessão estável no perfil de
+laboratório ensaiado.

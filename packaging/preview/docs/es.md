@@ -165,3 +165,27 @@ En Debian de laboratorio recuperable, ejecuta el arnés nativo del paquete con
 metadatos y política efectiva del kernel sin cambios; compara seis pruebas reales
 TCP/UDP y reinicia la administración. Si falla una comprobación, intenta restaurar
 la administración. No valida la intención de la política, migración, reinicio ni routing.
+
+### Pausa del reenvío durante cambios de firewall en Alpha
+
+Con WAN por DHCP activa y la configuración completa de red idéntica, aplicar
+o revertir reglas del firewall pausa temporalmente el reenvío. Web, CLI y API
+avisan antes de Commit. Puede ser necesario restablecer las conexiones
+afectadas por una regla modificada.
+
+El máximo provisional para calificar Alpha en el laboratorio Debian aislado
+es de 500 ms por Commit o rollback. Antes de salir de Alpha, hay que repetir
+estas mediciones y las de renovación DHCP WAN en el perfil mínimo de 2 GB.
+
+El gateway de laboratorio con Debian 13 usó dos vCPU y 3,79 GiB de RAM. La
+tabla muestra cotas superiores de la pausa de reenvío del kernel en milisegundos.
+
+| Operación | Muestras | Mínimo | Mediana | Máximo |
+| --- | ---: | ---: | ---: | ---: |
+| Commit seguido de Confirm | 10 | 72,518 | 94,251 | 112,015 |
+| Commit seguido del vencimiento de Confirm | 10 | 71,814 | 85,830 | 103,687 |
+| Rollback tras el vencimiento de Confirm | 10 | 84,534 | 115,486 | 129,301 |
+
+Cada ciclo conservó la concesión WAN, la misma conexión TCP y el mismo flujo
+UDP para las reglas intactas. Las mediciones usaron una concesión estable en
+el perfil de laboratorio ensayado.

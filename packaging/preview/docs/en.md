@@ -173,3 +173,27 @@ unchanged helper/namespace processes, metadata and effective kernel policy,
 compares six actual TCP/UDP probe outcomes, and restarts administration. A cleanup
 trap attempts management recovery if an assertion fails. It does not prove that
 those outcomes match an intended policy, or qualify migration, reboot or routing.
+
+### Forwarding pause during firewall changes in Alpha
+
+With WAN DHCP active and the complete network configuration unchanged, applying
+or reverting firewall rules temporarily pauses forwarding. Web, CLI and API
+provide a warning before Commit. A connection affected by a changed rule may
+need to reconnect.
+
+The provisional Alpha qualification limit is 500 ms per Commit or rollback in
+the isolated Debian laboratory. Before leaving Alpha, repeat these measurements
+and the WAN DHCP renewal measurements on the minimum 2 GB hardware profile.
+
+The Debian 13 laboratory gateway used two vCPUs and 3.79 GiB of RAM. These are
+upper bounds on the kernel forwarding pause, in milliseconds.
+
+| Operation | Samples | Minimum | Median | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Commit followed by Confirm | 10 | 72.518 | 94.251 | 112.015 |
+| Commit followed by Confirm expiry | 10 | 71.814 | 85.830 | 103.687 |
+| Rollback after Confirm expiry | 10 | 84.534 | 115.486 | 129.301 |
+
+Every cycle retained the WAN lease, the same TCP connection and the same UDP
+flow on unchanged rules. The measurements used a stable lease in the tested
+laboratory profile.
