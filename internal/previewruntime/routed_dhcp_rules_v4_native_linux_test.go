@@ -111,13 +111,18 @@ func nativeDHCPRulesCutEvidenceV4(t *testing.T, log string, helper int) {
 	if len(spans) != len(phases)*len(cycles) {
 		t.Fatalf("missing forwarding barrier evidence: %d spans", len(spans))
 	}
+	const alphaForwardingPauseLimit = 500 * time.Millisecond
 	for i, operation := range cycles {
 		close, replace, release := spans[i*3], spans[i*3+1], spans[i*3+2]
+		upper := release.End - close.Start
 		t.Logf("ANDEIVA_NATIVE_RULE_CUT operation=%s lower_ms=%.3f upper_ms=%.3f close_ms=%.3f before_readback_ms=%.3f replace_ms=%.3f target_readback_ms=%.3f release_ms=%.3f",
-			operation, nativeRuleMilliseconds(release.Start-close.End), nativeRuleMilliseconds(release.End-close.Start),
+			operation, nativeRuleMilliseconds(release.Start-close.End), nativeRuleMilliseconds(upper),
 			nativeRuleMilliseconds(close.End-close.Start), nativeRuleMilliseconds(replace.Start-close.End),
 			nativeRuleMilliseconds(replace.End-replace.Start), nativeRuleMilliseconds(release.Start-replace.End),
 			nativeRuleMilliseconds(release.End-release.Start))
+		if time.Duration(upper) > alphaForwardingPauseLimit {
+			t.Errorf("%s forwarding pause exceeded the provisional Alpha limit of %s", operation, alphaForwardingPauseLimit)
+		}
 	}
 }
 
