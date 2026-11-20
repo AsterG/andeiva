@@ -177,9 +177,12 @@ El máximo provisional para calificar Alpha en el laboratorio Debian aislado
 es de 500 ms por Commit o rollback. Antes de salir de Alpha, hay que repetir
 estas mediciones y las de renovación DHCP WAN en el perfil mínimo de 2 GB.
 
-En la versión de calificación Alpha, si una renovación DHCP de la WAN coincide
-con el vencimiento de Confirm, el reenvío puede quedar cerrado con un aviso de
-recuperación requerida. El corte total en ese caso se mide por separado.
+Si una renovación DHCP de la WAN coincide con el vencimiento de Confirm, el
+reenvío vuelve tras verificar la concesión y las reglas restauradas. En Debian
+aislado, el corte combinado de una ejecución aprobada quedó entre 11,350 y
+11,680 s, medido por separado. Si se agota el presupuesto de traspaso, el reenvío
+queda cerrado y el equipo avisa que requiere recuperación. La recuperación
+manual desde ese estado sigue pendiente de calificación.
 
 El gateway de laboratorio con Debian 13 usó dos vCPU y 3,79 GiB de RAM. La
 tabla muestra cotas superiores de la pausa de reenvío del kernel en milisegundos.

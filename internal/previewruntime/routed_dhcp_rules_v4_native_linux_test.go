@@ -17,6 +17,7 @@ import (
 
 	"github.com/AsterG/andeiva/internal/adminauth"
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/dhcpclient"
 	"golang.org/x/sys/unix"
 )
 
@@ -25,18 +26,23 @@ func TestNativeRoutedDHCPRetainedRulesV4(t *testing.T) {
 }
 
 const (
-	nativeRulesOverlapProfileV4 = "overlap"
-	nativeRulesOverlapLeaseV4   = 180
+	nativeRulesOverlapProfileV4   = "overlap"
+	nativeRulesNoRenewalProfileV4 = "noack"
+	nativeRulesOverlapLeaseV4     = 180
 	// With the current B1 schedule, expiry occurs just after DHCP has closed
 	// its gate for the first real renewal. Kernel traces verify the overlap.
-	nativeRulesOverlapConfirmV4 = 76
+	nativeRulesOverlapConfirmV4 = 72
 )
 
 func TestNativeRoutedDHCPRetainedRulesOverlapV4(t *testing.T) {
 	nativeRunRoutedDHCPScenarioV4(t, true, 0, nativeRulesOverlapProfileV4)
 }
 
-func nativeDHCPRulesRootV4(t *testing.T, ctx context.Context, ns [3]*os.File, supervisor *RoutedLaunchSupervisorV3, logs *nativeLogV3, bound nativeDHCPJobsReportV4, overlap bool) {
+func TestNativeRoutedDHCPRetainedRulesNoRenewalV4(t *testing.T) {
+	nativeRunRoutedDHCPScenarioV4(t, true, 0, nativeRulesNoRenewalProfileV4)
+}
+
+func nativeDHCPRulesRootV4(t *testing.T, ctx context.Context, ns [3]*os.File, supervisor *RoutedLaunchSupervisorV3, logs *nativeLogV3, bound nativeDHCPJobsReportV4, profile string, stopServer func()) {
 	t.Helper()
 	defer func() {
 		if t.Failed() {
@@ -57,12 +63,49 @@ func nativeDHCPRulesRootV4(t *testing.T, ctx context.Context, ns [3]*os.File, su
 	if err = unix.ClockGettime(unix.CLOCK_BOOTTIME, &ready); err != nil {
 		t.Fatal(err)
 	}
+	if profile == nativeRulesNoRenewalProfileV4 {
+		stopServer()
+	}
 	supervisor.mu.Lock()
 	err = supervisor.api.cmd.Process.Signal(syscall.SIGUSR2)
 	supervisor.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if profile == nativeRulesNoRenewalProfileV4 {
+		nativeDHCPJobsWaitReportV4(t, ctx, logs, "rules-recovery-required")
+		if err := nativeDHCPB2ClosedKernelV4(ctx, ns[0]); err != nil {
+			t.Fatalf("forwarding did not remain closed after Confirm expired without a new grant: %v", err)
+		}
+		var verified unix.Timespec
+		if err := unix.ClockGettime(unix.CLOCK_BOOTTIME, &verified); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Second):
+		}
+		traffic, err := flow.Stop()
+		if err != nil || traffic.TCPLastEchoBootNS <= 0 || traffic.TCPLastEchoBootNS >= verified.Nano() {
+			t.Fatalf("expected established TCP to stop receiving data under closed recovery: %v", err)
+		}
+		probes := 0
+		for seq, at := range traffic.UDPSendStartBootNS {
+			if at >= verified.Nano() && traffic.UDPSentSet.has(uint64(seq)) {
+				probes++
+				if traffic.UDPSinkReceivedSet.has(uint64(seq)) {
+					t.Fatal("UDP reached the WAN after closed recovery was verified")
+				}
+			}
+		}
+		if probes == 0 {
+			t.Fatal("no UDP probes during verified closed recovery")
+		}
+		t.Log("Confirm expired without a new grant. Recovery is required with kernel forwarding and the DHCP permit closed.")
+		return
+	}
+	overlap := profile == nativeRulesOverlapProfileV4
 	phases := []string{"rules-confirmed", "rules-reverted"}
 	if overlap {
 		phases = []string{"rules-reverted"}
@@ -182,7 +225,7 @@ func nativeDHCPRulesOverlapEvidenceV4(t *testing.T, log string, helper int, read
 
 func nativeRuleMilliseconds(ns int64) float64 { return float64(ns) / float64(time.Millisecond) }
 
-func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, binding adminauth.SessionBinding, initial string, grant configpoc.RoutedDHCPGrantV3, acks <-chan os.Signal, overlap bool) error {
+func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, binding adminauth.SessionBinding, initial string, grant configpoc.RoutedDHCPGrantV3, acks <-chan os.Signal, profile string) error {
 	select {
 	case <-acks:
 	case <-ctx.Done():
@@ -198,7 +241,9 @@ func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 		return nativeDHCPJobsReportEmitV4(phase, revision, latest)
 	}
 	cycles := []bool{true, false}
-	if overlap {
+	overlap := profile == nativeRulesOverlapProfileV4
+	noRenewal := profile == nativeRulesNoRenewalProfileV4
+	if overlap || noRenewal {
 		cycles = []bool{false}
 	}
 	for _, confirm := range cycles {
@@ -206,7 +251,7 @@ func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 		if err != nil {
 			return err
 		}
-		if confirm || overlap {
+		if confirm || overlap || noRenewal {
 			rule := candidate.Config.Routed.Rules[0]
 			rule.ID, rule.Action = "retained-rules-deny", "deny"
 			rule.DestinationPorts.From, rule.DestinationPorts.To = 18083, 18083
@@ -220,6 +265,10 @@ func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 		seconds := uint64(30)
 		if overlap {
 			seconds = nativeRulesOverlapConfirmV4
+		}
+		if noRenewal {
+			// The lost response has time to close the permit before expiry.
+			seconds = 84
 		}
 		committed, err := nativeDHCPJobsOperationV4(ctx, r, binding, configpoc.OperationRequestV2{Kind: configpoc.OpCommit, ConfirmSeconds: &seconds}, true)
 		if err != nil || committed.Current.Confirmation == nil {
@@ -248,6 +297,9 @@ func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timer.C:
+		}
+		if noRenewal {
+			return nativeDHCPRulesWaitClosedV4(ctx, r, binding)
 		}
 		closed, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
@@ -294,4 +346,23 @@ func nativeDHCPRulesServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, b
 		}
 	}
 	return errors.New("native rules test did not exercise Confirm expiry")
+}
+
+func nativeDHCPRulesWaitClosedV4(ctx context.Context, r *RoutedOperationsRuntimeV3, binding adminauth.SessionBinding) error {
+	timer := time.NewTimer(dhcpclient.EarlyRenewalAlphaAdoptionBudgetV4)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	status, err := r.Service.Status(binding)
+	if err != nil || !status.RecoveryRequired {
+		return errors.Join(err, errors.New("expired Confirm did not expose the recovery-required state"))
+	}
+	if err = nativeDHCPJobsReportEmitV4("rules-recovery-required", status.RunningRevision, configpoc.RoutedDHCPGrantV3{}); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return nil
 }

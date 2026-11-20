@@ -185,9 +185,12 @@ The provisional Alpha qualification limit is 500 ms per Commit or rollback in
 the isolated Debian laboratory. Before leaving Alpha, repeat these measurements
 and the WAN DHCP renewal measurements on the minimum 2 GB hardware profile.
 
-In the Alpha qualification build, a WAN DHCP renewal that overlaps Confirm
-expiry can leave forwarding closed with a recovery-required status. The total
-outage in this case is measured separately from ordinary rule changes.
+If WAN DHCP renewal overlaps Confirm expiry, verify the lease and restored
+rules before forwarding resumes. The successful Debian lab run bounded this
+combined outage at 11.350–11.680 s, measured separately from ordinary rule
+changes. If the handover budget is exhausted, forwarding stays closed and the
+appliance reports that recovery is required. Manual recovery from this state
+still requires qualification.
 
 The Debian 13 laboratory gateway used two vCPUs and 3.79 GiB of RAM. These are
 upper bounds on the kernel forwarding pause, in milliseconds.

@@ -177,9 +177,12 @@ O limite provisório para qualificar a versão Alpha no laboratório Debian
 isolado é de 500 ms por Commit ou rollback. Antes de sair da versão Alpha,
 repita essas medições e as da renovação DHCP da WAN no perfil mínimo de 2 GB.
 
-Na versão de qualificação Alpha, se a renovação DHCP da WAN coincidir com o
-fim do prazo de Confirm, o encaminhamento pode permanecer fechado com um aviso
-de recuperação necessária. A interrupção total nesse caso é medida à parte.
+Se a renovação DHCP da WAN coincidir com o fim do prazo de Confirm, o
+encaminhamento volta após verificar a concessão e as regras restauradas. Em
+uma execução aprovada no Debian isolado, a interrupção total ficou entre
+11,350 e 11,680 s, medida à parte. Se o tempo previsto para a renovação se
+esgotar, o encaminhamento permanece fechado e o equipamento informa que a
+recuperação é necessária. A recuperação manual ainda precisa ser qualificada.
 
 O gateway de laboratório com Debian 13 usou duas vCPUs e 3,79 GiB de RAM.
 A tabela mostra limites superiores da pausa de encaminhamento do kernel em

@@ -270,7 +270,7 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 	if restartMode == "rules" {
 		initialLease = []uint32{600}
 	}
-	if restartMode == nativeRulesOverlapProfileV4 {
+	if restartMode == nativeRulesOverlapProfileV4 || restartMode == nativeRulesNoRenewalProfileV4 {
 		initialLease = []uint32{nativeRulesOverlapLeaseV4}
 	}
 	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs, initialLease...)
@@ -330,8 +330,8 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata, &logs)
 	bound := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "bound")
 	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], bound.Grant.Snapshot)
-	if restartMode == "rules" || restartMode == nativeRulesOverlapProfileV4 {
-		nativeDHCPRulesRootV4(t, ctx, namespaces, supervisor, &logs, bound, restartMode == nativeRulesOverlapProfileV4)
+	if restartMode == "rules" || restartMode == nativeRulesOverlapProfileV4 || restartMode == nativeRulesNoRenewalProfileV4 {
+		nativeDHCPRulesRootV4(t, ctx, namespaces, supervisor, &logs, bound, restartMode, stopServer)
 		return
 	}
 	if b2 != 0 {
@@ -755,7 +755,7 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 	if err != nil {
 		return err
 	}
-	rules := profile == "rules" || profile == nativeRulesOverlapProfileV4
+	rules := profile == "rules" || profile == nativeRulesOverlapProfileV4 || profile == nativeRulesNoRenewalProfileV4
 	warm := profile != "" && !rules
 	if !launch.DHCPJobsEnabled || !launch.Integrity || profile != "" && !launch.DHCPRenewalV4 || launch.Epoch < 1 || launch.Epoch > 2 || launch.DHCPRenewalV4 && launch.Epoch != 1 && !warm || r.DHCP == nil || !r.Service.RuntimeIntegrityReadyV1() {
 		return errors.New("native DHCP profile/readiness differs")
@@ -816,7 +816,7 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 			return err
 		}
 		if rules {
-			return nativeDHCPRulesServeV4(ctx, r, binding, current.Global.Running, first, flowReady, profile == nativeRulesOverlapProfileV4)
+			return nativeDHCPRulesServeV4(ctx, r, binding, current.Global.Running, first, flowReady, profile)
 		}
 		if warm {
 			<-ctx.Done()
