@@ -36,9 +36,8 @@ func newRoutedRebootScopeV4(m Metadata, o RoutedRebootScopeOptionsV4, reader *co
 	if reader == nil || authority == nil || o.Binding.NewIdentity != authority.Identity() || m.BootID != o.Binding.NewIdentity.BootID || validateRetirementFileV3(o.Receipt) != nil {
 		return nil, ErrIdentity
 	}
-	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	actual, e := canonicalBoot(boot)
-	if err != nil || e != nil || actual != o.Binding.NewIdentity.BootID {
+	actual, err := readRoutedKernelBootID()
+	if err != nil || actual != o.Binding.NewIdentity.BootID {
 		return nil, ErrIdentity
 	}
 	fd, err := unix.FcntlInt(o.Receipt.Fd(), unix.F_DUPFD_CLOEXEC, 3)
