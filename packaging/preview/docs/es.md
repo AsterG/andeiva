@@ -102,6 +102,7 @@ conserva el target, helper y namespaces. La caída del helper cierra todo el pre
 Detenga el target, espere que API, socket, helper y namespaces estén inactivos y
 luego inícielo; no suponga que `restart target` es atómico. Un reinicio de servicio
 en el mismo boot restaura Running; reiniciar la VM selecciona Startup guardado.
+Al seleccionar Startup, se pierden los cambios confirmados que no se guardaron.
 Un journal incierto bloquea la publicación de revisiones.
 
 Si se agota el límite de reinicios de API, API/socket pueden quedar fallidos
@@ -181,8 +182,10 @@ Si una renovación DHCP de la WAN coincide con el vencimiento de Confirm, el
 reenvío vuelve tras verificar la concesión y las reglas restauradas. En Debian
 aislado, el corte combinado de una ejecución aprobada quedó entre 11,350 y
 11,680 s, medido por separado. Si se agota el presupuesto de traspaso, el reenvío
-queda cerrado y el equipo avisa que requiere recuperación. La recuperación
-manual desde ese estado sigue pendiente de calificación.
+queda cerrado y el equipo avisa que requiere recuperación. El registro del
+rollback pendiente impide el reinicio normal del servicio y la selección de
+Startup al reiniciar el equipo en este estado de Alpha. Sigue pendiente un
+procedimiento para recuperarse de este estado.
 
 El gateway de laboratorio con Debian 13 usó dos vCPU y 3,79 GiB de RAM. La
 tabla muestra cotas superiores de la pausa de reenvío del kernel en milisegundos.

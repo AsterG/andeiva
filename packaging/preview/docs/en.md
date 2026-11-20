@@ -109,6 +109,7 @@ the target, helper and namespaces. Losing the helper closes the entire
 preview. Stop the target, wait for all four service/socket units to be inactive,
 then start it; do not assume `restart target` is an atomic replacement. A restart
 in the same OS boot restores Running; a VM reboot selects saved Startup.
+When Startup is selected, confirmed changes that were never saved are lost.
 Uncertain journal state blocks rather than publishing an unverified revision.
 
 Exhausting the API restart budget can leave API/socket failed while the target,
@@ -189,8 +190,9 @@ If WAN DHCP renewal overlaps Confirm expiry, verify the lease and restored
 rules before forwarding resumes. The successful Debian lab run bounded this
 combined outage at 11.350–11.680 s, measured separately from ordinary rule
 changes. If the handover budget is exhausted, forwarding stays closed and the
-appliance reports that recovery is required. Manual recovery from this state
-still requires qualification.
+appliance reports that recovery is required. The pending rollback record blocks
+the normal service restart and selection of Startup on reboot in this Alpha
+state. A recovery procedure for this state is still pending.
 
 The Debian 13 laboratory gateway used two vCPUs and 3.79 GiB of RAM. These are
 upper bounds on the kernel forwarding pause, in milliseconds.

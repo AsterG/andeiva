@@ -102,8 +102,9 @@ A recuperação automática da API preserva o prazo do helper. Parar API/socket
 preserva target, helper e namespaces. A falha do helper encerra todo o
 preview. Pare o target, espere API, socket, helper e namespaces ficarem inativos
 e depois inicie; não presuma que `restart target` seja atômico. Reinício de serviço
-no mesmo boot restaura Running; reiniciar a VM seleciona Startup salvo. Journal
-incerto bloqueia a publicação de revisões.
+no mesmo boot restaura Running; reiniciar a VM seleciona Startup salvo. Ao
+selecionar Startup, as alterações confirmadas que não foram salvas são perdidas.
+Um journal incerto bloqueia a publicação de revisões.
 
 Ao esgotar o limite de reinicializações da API, API/socket podem ficar em falha
 enquanto target, helper e namespaces mantêm a última política verificada.
@@ -182,7 +183,9 @@ encaminhamento volta após verificar a concessão e as regras restauradas. Em
 uma execução aprovada no Debian isolado, a interrupção total ficou entre
 11,350 e 11,680 s, medida à parte. Se o tempo previsto para a renovação se
 esgotar, o encaminhamento permanece fechado e o equipamento informa que a
-recuperação é necessária. A recuperação manual ainda precisa ser qualificada.
+recuperação é necessária. O registro do rollback pendente impede a reinicialização
+normal do serviço e a seleção de Startup ao reiniciar o equipamento nesse estado
+da versão Alpha. O procedimento de recuperação desse estado segue pendente.
 
 O gateway de laboratório com Debian 13 usou duas vCPUs e 3,79 GiB de RAM.
 A tabela mostra limites superiores da pausa de encaminhamento do kernel em
