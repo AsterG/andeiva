@@ -46,8 +46,9 @@ type RoutedConfirmationV2 struct {
 	Deadline time.Time `json:"confirmation_deadline"`
 }
 type ObservationV2 struct {
-	Operation OperationV2
-	Current   CurrentV2
+	Operation     OperationV2
+	Current       CurrentV2
+	ForwardingCut bool
 }
 type OperationPageV2 struct {
 	Operations []OperationV2
@@ -131,6 +132,7 @@ func (s *ServiceV2) AdmitObserved(binding adminauth.SessionBinding, namespace st
 		if err != nil {
 			return err
 		}
+		result.ForwardingCut = store.retainedDHCPCommitAllowedV4(op)
 		result.Current, err = s.currentLocked(result.Operation.Domain)
 		return err
 	})

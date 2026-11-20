@@ -20,10 +20,11 @@ import (
 )
 
 type kernelFixture struct {
-	objects        map[Table][]map[string]any
-	batches        [][]byte
-	failAt, lostAt int
-	readFail       bool
+	objects         map[Table][]map[string]any
+	batches         [][]byte
+	failAt, lostAt  int
+	corruptRoutedAt int
+	readFail        bool
 }
 
 func (k *kernelFixture) Check(ctx context.Context, data []byte) error {
@@ -73,6 +74,16 @@ func (k *kernelFixture) Apply(ctx context.Context, data []byte) error {
 					delete(k.objects, table)
 					continue
 				}
+				if verb == "delete" && kind == "chain" && body["name"] == routednft.ForwardHoldChain {
+					for i, candidate := range k.objects[table] {
+						chain, _ := candidate["chain"].(map[string]any)
+						if chain["name"] == routednft.ForwardHoldChain {
+							k.objects[table] = append(k.objects[table][:i], k.objects[table][i+1:]...)
+							break
+						}
+					}
+					continue
+				}
 				if verb != "add" {
 					return ErrState
 				}
@@ -90,6 +101,9 @@ func (k *kernelFixture) Apply(ctx context.Context, data []byte) error {
 	}
 	if k.lostAt == call {
 		return ErrState
+	}
+	if k.corruptRoutedAt == call && len(k.objects[RoutedTable]) > 1 {
+		k.objects[RoutedTable] = k.objects[RoutedTable][:1]
 	}
 	return nil
 }

@@ -41,6 +41,7 @@ type RoutedAuthorityV1 interface {
 // Every accessor detaches data; a plan is issued only after selected-object and
 // reservation verification under the coordinator writer lock.
 type RoutedSelectedPlanV1 struct {
+	bootMarks   *RoutedBootMarkPlanV1
 	work        v2RoutedWork
 	preparation RoutedPreparationV1
 	previous    RoutedActivationBundleV1
@@ -51,9 +52,15 @@ type RoutedSelectedPlanV1 struct {
 }
 
 func (p RoutedSelectedPlanV1) Transition() RoutedTransitionV1 { return p.work.Transition }
-func (p RoutedSelectedPlanV1) Lease() string                  { return p.work.Lease }
-func (p RoutedSelectedPlanV1) Deadline() time.Time            { return p.work.Deadline }
-func (p RoutedSelectedPlanV1) Cold() bool                     { return p.work.Cold }
+
+// ReservedBootMarksV1 is available to Arm and Apply on a selected marked
+// transition. It does not authorize reusing the assignments at recovery.
+func (p RoutedSelectedPlanV1) ReservedBootMarksV1() *RoutedBootMarkPlanV1 {
+	return clone(p.bootMarks)
+}
+func (p RoutedSelectedPlanV1) Lease() string       { return p.work.Lease }
+func (p RoutedSelectedPlanV1) Deadline() time.Time { return p.work.Deadline }
+func (p RoutedSelectedPlanV1) Cold() bool          { return p.work.Cold }
 func (p RoutedSelectedPlanV1) Bundles() (*RoutedActivationBundleV1, RoutedActivationBundleV1) {
 	if p.work.Cold {
 		return nil, clone(p.target)

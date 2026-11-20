@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/routedmodel"
 )
 
 const v3RoutedDHCPFeature = "configuration.routed-dhcp-selected.v3"
@@ -40,9 +42,13 @@ func routedDHCPTerminalV3(d *v3RoutedDHCPState) bool {
 // reader can issue it after checking active authority, physical R2 bindings and
 // final selector. An action reader relies on its runtime's separate full-G1 gate.
 type RoutedDHCPSelectedV3 struct {
-	work  v3RoutedDHCPWork
-	ref   SelectionReferenceV2
-	phase string
+	work         v3RoutedDHCPWork
+	ref          SelectionReferenceV2
+	phase        string
+	running      string
+	pending      bool
+	confirmation *RoutedReceiptV1
+	baseline     *routedmodel.AdmissionMarks
 }
 
 func (p RoutedDHCPSelectedV3) Reference() SelectionReferenceV2 { return p.ref }
@@ -51,7 +57,23 @@ func (p RoutedDHCPSelectedV3) Snapshot() networkexecutor.LeaseSelectedSnapshotV3
 }
 func (p RoutedDHCPSelectedV3) Epoch() uint64   { return p.work.Epoch }
 func (p RoutedDHCPSelectedV3) Phase() string   { return p.phase }
-func (p RoutedDHCPSelectedV3) Running() string { return p.work.Running }
+func (p RoutedDHCPSelectedV3) Running() string { return p.running }
+
+func (p RoutedDHCPSelectedV3) PendingPolicyV4() bool { return p.pending }
+
+// BaselineAdmissionMarksV4 is issued only for the initial selected grant.
+func (p RoutedDHCPSelectedV3) BaselineAdmissionMarksV4() *routedmodel.AdmissionMarks {
+	return clone(p.baseline)
+}
+
+// MatchesPendingPolicyV4 must be paired with a physical observation made by
+// the helper. Only a selected, successful grouped Commit can arm this proof.
+func (p RoutedDHCPSelectedV3) MatchesPendingPolicyV4(receipt RoutedReceiptV1, running string) bool {
+	want := p.confirmation
+	return p.pending && want != nil && receipt.Phase == "pending" && receipt.ID == want.ID &&
+		receipt.Previous == want.Previous && receipt.Target == want.Target &&
+		running == p.running && receipt.Deadline.Equal(want.Deadline) && time.Now().Before(want.Deadline)
+}
 
 func validRoutedDHCPShapeV3(st v2State) bool {
 	if st.RoutedDHCPLast != "" && (!validHash(st.RoutedDHCPLast) || !hasFeatureV2(st, v3RoutedDHCPFeature) || st.RecoveryReserveVersion != 1) {
@@ -162,7 +184,17 @@ var ErrRoutedDHCPBindingMismatchV4 = errors.New("ANDEIVA_ROUTED_DHCP_BINDING_MIS
 
 // ResolveDHCPCurrentV3 never accepts an arbitrary work hash as owner evidence.
 // The caller must retain the publication/owner barrier through kernel effects.
-func (r *RoutedSelectionReaderV2) ResolveDHCPCurrentV3(ctx context.Context, expected string) (out RoutedDHCPSelectedV3, resultErr error) {
+func (r *RoutedSelectionReaderV2) ResolveDHCPCurrentV3(ctx context.Context, expected string) (RoutedDHCPSelectedV3, error) {
+	return r.resolveDHCPLeaseAuthority(ctx, expected, false)
+}
+
+// ResolveDHCPLeaseAuthorityV4 retains the original grant and its reserve
+// scope while reporting the revision proven by the current selection.
+func (r *RoutedSelectionReaderV2) ResolveDHCPLeaseAuthorityV4(ctx context.Context, expected string) (RoutedDHCPSelectedV3, error) {
+	return r.resolveDHCPLeaseAuthority(ctx, expected, true)
+}
+
+func (r *RoutedSelectionReaderV2) resolveDHCPLeaseAuthority(ctx context.Context, expected string, acceptContinuation bool) (out RoutedDHCPSelectedV3, resultErr error) {
 	if r == nil || !validHash(expected) {
 		return RoutedDHCPSelectedV3{}, ErrRecovery
 	}
@@ -180,19 +212,48 @@ func (r *RoutedSelectionReaderV2) ResolveDHCPCurrentV3(ctx context.Context, expe
 			resultErr = ErrRecovery
 		}
 	}()
-	d := v.store.state.RoutedDHCP
-	if d == nil || d.Work != expected || !validRoutedDHCPShapeV3(v.store.state) {
+	st := v.store.state
+	d := st.RoutedDHCP
+	if d == nil || d.Work != expected || !validRoutedDHCPShapeV3(st) {
 		if err = r.revalidate(ctx, v); err != nil {
 			return RoutedDHCPSelectedV3{}, err
 		}
 		return RoutedDHCPSelectedV3{}, errors.Join(ErrRecovery, ErrRoutedDHCPBindingMismatchV4)
 	}
-	if validateRoutedDHCPSelectedV3(v.store.state, v.store.readObject) != nil {
-		return RoutedDHCPSelectedV3{}, ErrRecovery
+	var header *v4RoutedDHCPConfigurationState
+	if acceptContinuation {
+		header = st.RoutedDHCPConfiguration
 	}
-	w, err := loadRoutedDHCPWorkV3(d.Work, v.store.state.Lineage, v.store.readObject)
+	var confirmation *RoutedReceiptV1
+	if header == nil {
+		if validateRoutedDHCPSelectedV3(st, v.store.readObject) != nil {
+			return out, ErrRecovery
+		}
+	} else {
+		view, e := routedDHCPConfigurationViewV4Read(header, st, v.store.readObject, v.store.lookupRetained, routedDHCPConfigurationHeaderV4)
+		if e != nil {
+			return out, ErrRecovery
+		}
+		if current := view.current; view.pending == nil && current != nil && current.transition.Kind == "grouped" {
+			if pending := current.target.Pending; pendingOriginMatchesV2(pending, current.operation) {
+				confirmation = &RoutedReceiptV1{ID: pending.Lease, Previous: current.before.Running.Hash,
+					Target: current.target.Running.Hash, Deadline: pending.Deadline}
+			}
+		}
+	}
+	w, err := loadRoutedDHCPWorkV3(d.Work, st.Lineage, v.store.readObject)
 	if err != nil {
 		return RoutedDHCPSelectedV3{}, ErrRecovery
+	}
+	var baseline *routedmodel.AdmissionMarks
+	if acceptContinuation && header == nil && d.Phase == "applied" && st.RoutedBootMarks != nil {
+		verified, e := loadRoutedBootMarkReservationV1(st.RoutedBootMarks, st.Lineage, v.store.readObject)
+		if e != nil || verified.Work != d.Work || verified.Scope != w.Snapshot.Identity ||
+			verified.Operation != retainedDHCPBaselineMarksV4 || verified.Before != verified.Target ||
+			!sameRoutedAdmissionMarksV1(verified.Applied, verified.Restored) {
+			return out, ErrRecovery
+		}
+		baseline = &verified.Applied
 	}
 	if err = r.revalidate(ctx, v); err != nil {
 		return RoutedDHCPSelectedV3{}, err
@@ -202,5 +263,11 @@ func (r *RoutedSelectionReaderV2) ResolveDHCPCurrentV3(ctx context.Context, expe
 	}
 	ref := v.ref
 	ref.WorkHash = d.Work
-	return RoutedDHCPSelectedV3{work: w, ref: ref, phase: d.Phase}, nil
+	running := w.Running
+	if header != nil {
+		ref.Mode = "dhcp-configuration-v4"
+		running = st.Configuration.Running.Hash
+	}
+	return RoutedDHCPSelectedV3{work: w, ref: ref, phase: d.Phase, running: running,
+		pending: header != nil && st.Configuration.Pending != nil, confirmation: confirmation, baseline: baseline}, nil
 }

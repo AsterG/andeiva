@@ -81,6 +81,9 @@ func (c *RoutedDHCPControllerV3) startIntegritySchedulerV4(service routedIntegri
 		defer c.mu.Unlock()
 		err := service.InspectRuntimeV1(call)
 		c.afterInspectionV4(err, c.remote.client.DHCPSelectedV4())
+		if errors.Is(err, configpoc.ErrRetainedDHCPInspectionDeferredV4) {
+			return nil // Observe the publication that finishes the deferred operation.
+		}
 		return err
 	})
 	if c.remote.client.DHCPRenewalEnabledV4() {
@@ -113,6 +116,9 @@ func (c *RoutedDHCPControllerV3) wakeClosedInspectionV4(ctx context.Context, got
 
 // Caller holds c.mu, as in the production and native full-inspection callbacks.
 func (c *RoutedDHCPControllerV3) afterInspectionV4(err error, selected bool) {
+	if errors.Is(err, configpoc.ErrRetainedDHCPInspectionDeferredV4) {
+		return
+	}
 	if !c.remote.client.DHCPRenewalEnabledV4() {
 		c.recoveryOnly = false
 		c.scheduleV4(err == nil && selected)
@@ -248,6 +254,14 @@ func (c *RoutedDHCPControllerV3) Reconcile(ctx context.Context) error {
 	return c.reconcileLocked(ctx)
 }
 
+func (c *RoutedDHCPControllerV3) verifyStableWorkV4(ctx context.Context, verify func() error) error {
+	writer, ok := c.writer.(*configpoc.RoutedDHCPSelectedStoreV3)
+	if !ok || !c.remote.client.DHCPRenewalEnabledV4() {
+		return verify()
+	}
+	return writer.WithStableWorkV4(ctx, c.work, verify)
+}
+
 // Caller holds c.mu and supplies the original bounded operation context.
 func (c *RoutedDHCPControllerV3) reconcileLocked(ctx context.Context) error {
 	if ctx.Err() != nil {
@@ -279,7 +293,10 @@ func (c *RoutedDHCPControllerV3) reconcileLocked(ctx context.Context) error {
 			if c.recoveryOnly && c.remote.client.DHCPRenewalEnabledV4() {
 				return configpoc.ErrRecovery // Already requested closure before Current.
 			}
-			_, err = c.remote.client.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: c.work})
+			err = c.verifyStableWorkV4(ctx, func() error {
+				_, err := c.remote.client.Call(ctx, "dhcp_live", firewallipc.RoutedDHCPRequestV3{Work: c.work})
+				return err
+			})
 			if err == nil {
 				return nil
 			}
@@ -303,7 +320,13 @@ func (c *RoutedDHCPControllerV3) reconcileLocked(ctx context.Context) error {
 			}
 		}
 		if err == nil && c.remote.client.DHCPRenewalEnabledV4() && sameRenewalGrantV4(c.grant, got) {
-			if err = c.remote.RenewSameEffective(ctx, c.work, got, c.recoveryOnly); err != nil {
+			renew := func() error { return c.remote.RenewSameEffective(ctx, c.work, got, c.recoveryOnly) }
+			if c.recoveryOnly {
+				err = renew()
+			} else {
+				err = c.verifyStableWorkV4(ctx, renew)
+			}
+			if err != nil {
 				if c.recoveryOnly && errors.Is(err, configpoc.ErrRecovery) {
 					return c.wakeClosedInspectionV4(ctx, got)
 				}

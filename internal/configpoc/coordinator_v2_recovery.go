@@ -112,6 +112,9 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 		s.blocked = true
 		return v2Operation{}, err
 	}
+	if err = s.finishRetainedDHCPConfigurationV4(&st, op); err != nil {
+		return v2Operation{}, err
+	}
 	if err = s.publish(st); err != nil {
 		return v2Operation{}, err
 	}
@@ -453,6 +456,9 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 	v2Release(&st, origin)
 	if err = s.putOperation(&st, origin); err != nil {
 		s.blocked = true
+		return err
+	}
+	if err = s.finishRetainedDHCPClosingV4(&st, hash); err != nil {
 		return err
 	}
 	if err = s.publish(st); err != nil {

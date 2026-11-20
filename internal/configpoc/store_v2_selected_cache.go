@@ -191,18 +191,10 @@ func (r *v2ReachabilityReader) selectedRoutedWorkV2(hash, lineage string) (Route
 	}
 	// Charge the complete represented payload, not just its small root struct.
 	// ActiveBytes bounds payloads; as elsewhere it is not a Go heap/RSS quota.
-	encoded, err := json.Marshal(struct {
-		Work             v2RoutedWork
-		Preparation      RoutedPreparationV1
-		Previous, Target RoutedActivationBundleV1
-		Baseline         *RoutedBaselineV1
-		Resolution       string
-		BootRecord       *v2RecoveryRecord
-	}{plan.work, plan.preparation, plan.previous, plan.target, plan.baseline, plan.resolution, plan.bootRecord})
+	n, err := selectedRoutedPlanPayloadBytesV2(plan)
 	if err != nil {
 		return RoutedSelectedPlanV1{}, err
 	}
-	n := uint64(len(encoded))
 	if r.cache.planBytes > r.budget.ActiveBytes/4 || n > r.budget.ActiveBytes/4-r.cache.planBytes || r.active > r.budget.ActiveBytes || n > r.budget.ActiveBytes-r.active {
 		return plan, nil
 	}
@@ -213,6 +205,22 @@ func (r *v2ReachabilityReader) selectedRoutedWorkV2(hash, lineage string) (Route
 	}
 	r.cache.plans[key] = plan
 	return plan, nil
+}
+
+func selectedRoutedPlanPayloadBytesV2(plan RoutedSelectedPlanV1) (uint64, error) {
+	encoded, err := json.Marshal(struct {
+		Work             v2RoutedWork
+		Preparation      RoutedPreparationV1
+		Previous, Target RoutedActivationBundleV1
+		Baseline         *RoutedBaselineV1
+		Resolution       string
+		BootRecord       *v2RecoveryRecord
+		BootMarks        *RoutedBootMarkPlanV1
+	}{plan.work, plan.preparation, plan.previous, plan.target, plan.baseline, plan.resolution, plan.bootRecord, plan.bootMarks})
+	if err != nil {
+		return 0, err
+	}
+	return uint64(len(encoded)), nil
 }
 
 func selectedCacheFilesForLimitV2(limit uint64) int {

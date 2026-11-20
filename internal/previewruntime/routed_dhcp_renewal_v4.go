@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/dhcpclient"
 	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 )
@@ -146,24 +148,13 @@ func (r *RoutedDHCPRuntimeV3) renewSameEffectiveModeV4(ctx context.Context, work
 			result = errors.Join(result, r.closeUnder(ctx))
 		}
 	}()
-	if !sameRenewalGrantV4(r.grant, next) {
-		return reject("renew_effective_tuple", configpoc.ErrRecovery)
-	}
-	lease, ok := r.lease.(routedDHCPLeaseRenewalV4)
-	if !ok {
-		return reject("renew_lease_capability", configpoc.ErrRecovery)
-	}
 	p, err := r.selected(ctx, work)
-	if err != nil || p.Phase() != "applied" || !r.selectedGrantV4(p, r.grant) || !r.selectedGrantV4(p, next) {
+	if err != nil {
 		return reject("renew_selected", err)
 	}
-	if r.forward.VerifyClosed(ctx) != nil || r.gate.VerifyClosedSelectedV3(ctx) != nil || r.sameOwner(ctx, next) != nil {
-		return reject("renew_closed_authority", configpoc.ErrRecovery)
+	if err = r.refreshClosedGrantV4(ctx, p, next); err != nil {
+		return out, err
 	}
-	if err = lease.RefreshSameEffectiveSelectedV4(ctx, r.grant.Snapshot, next.Snapshot); err != nil {
-		return reject("renew_selected_proof", err)
-	}
-	r.grant = next
 	if refreshOnly || ctx.Err() != nil || r.fenced() || r.ready() != nil {
 		// Refresh changes only retained evidence under a verified closed gate.
 		// Full inspection, not this operational lane, must restore readiness.
@@ -174,6 +165,55 @@ func (r *RoutedDHCPRuntimeV3) renewSameEffectiveModeV4(ctx context.Context, work
 	}
 	r.renewalWaiting = false
 	return next, nil
+}
+
+// Caller holds runtime.mu and has revoked the old permit. Only the retained
+// lease evidence can change here. Opening still requires a separate policy proof.
+func (r *RoutedDHCPRuntimeV3) refreshClosedGrantV4(ctx context.Context, p routedDHCPWorkV3, next configpoc.RoutedDHCPGrantV3) error {
+	reject := func(stage string, cause error) error {
+		firewallipc.RecordRoutedDHCPFailureV1(stage, cause, ctx)
+		return configpoc.ErrRecovery
+	}
+	if !sameRenewalGrantV4(r.grant, next) {
+		return reject("renew_effective_tuple", configpoc.ErrRecovery)
+	}
+	lease, ok := r.lease.(routedDHCPLeaseRenewalV4)
+	if !ok {
+		return reject("renew_lease_capability", configpoc.ErrRecovery)
+	}
+	if p.Phase() != "applied" || !r.selectedGrantV4(p, r.grant) || !r.selectedGrantV4(p, next) {
+		return reject("renew_selected", configpoc.ErrRecovery)
+	}
+	if r.forward.VerifyClosed(ctx) != nil || r.gate.VerifyClosedSelectedV3(ctx) != nil || r.sameOwner(ctx, next) != nil {
+		return reject("renew_closed_authority", configpoc.ErrRecovery)
+	}
+	if err := lease.RefreshSameEffectiveSelectedV4(ctx, r.grant.Snapshot, next.Snapshot); err != nil {
+		return reject("renew_selected_proof", err)
+	}
+	r.grant = next
+	return nil
+}
+
+func (r *RoutedDHCPRuntimeV3) refreshPendingRollbackV4(ctx context.Context, next configpoc.RoutedDHCPGrantV3) {
+	if r.adoptionClock == nil || r.hookEpoch != next.Epoch || r.hookBootNS <= 0 ||
+		r.refreshReady == nil || !r.refreshReady() || r.gate == nil || r.forward == nil {
+		return
+	}
+	now, err := r.adoptionClock()
+	if err != nil || now < r.hookBootNS {
+		return
+	}
+	remaining := dhcpclient.EarlyRenewalAlphaAdoptionBudgetV4 - time.Duration(now-r.hookBootNS)
+	if remaining <= 0 {
+		return
+	}
+	call, cancel := context.WithTimeout(ctx, remaining)
+	defer cancel()
+	selected, err := r.selected(call, r.work)
+	proof, ok := selected.(configpoc.RoutedDHCPSelectedV3)
+	if err == nil && ok && proof.PendingPolicyV4() {
+		_ = r.refreshClosedGrantV4(call, proof, next)
+	}
 }
 
 // The watchdog never opens a token. A fresh same-effective renewal closes the
@@ -205,6 +245,9 @@ func (r *RoutedDHCPRuntimeV3) watchLeaseV4(ctx context.Context) {
 		if err == nil && sameRenewalGrantV4(r.grant, next) {
 			if r.closeUnder(ctx) == nil {
 				r.renewalWaiting = true
+				// The independent rule guardian can now verify the fresh lease
+				// even while the API cannot renew through a pending Commit.
+				r.refreshPendingRollbackV4(ctx, next)
 			}
 			return
 		}

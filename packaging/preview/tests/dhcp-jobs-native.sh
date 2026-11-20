@@ -19,6 +19,9 @@ if [[ $# == 4 ]]; then
     --restart-no-store-or-helper) test_name=TestNativeRoutedDHCPWarmRestartNoDependenciesV4 ;;
     --b2-70) test_name=TestNativeRoutedDHCPB2Natural70V4 ;;
     --b2-71) test_name=TestNativeRoutedDHCPB2Natural71V4 ;;
+    --retained-rules-v4) test_name=TestNativeRoutedDHCPRetainedRulesV4 ;;
+    --retained-rules-renewal-overlap-v4) test_name=TestNativeRoutedDHCPRetainedRulesOverlapV4 ;;
+    --retained-rules-no-renewal-v4) test_name=TestNativeRoutedDHCPRetainedRulesNoRenewalV4 ;;
     *) exit 64 ;;
   esac
 fi

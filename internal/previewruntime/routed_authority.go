@@ -29,6 +29,7 @@ func NewRoutedAuthority(kernel routedactivation.Kernel, network routedactivation
 	}
 	a := &RoutedAuthority{identity: identity}
 	options.ResolvePlan = a.resolveSelected
+	options.ResolveAdmissionMarks = a.resolveAdmissionMarks
 	options.ResolveBaseline = a.resolveBaseline
 	options.ResolveRecoveredIdle = a.resolveRecoveredIdle
 	engine, err := routedactivation.New(kernel, network, listeners, options)
@@ -43,7 +44,26 @@ func NewRoutedAuthority(kernel routedactivation.Kernel, network routedactivation
 	return a, nil
 }
 
+func (a *RoutedAuthority) resolveAdmissionMarks(ctx context.Context, transition configpoc.RoutedTransitionV1, deadline time.Time) (*configpoc.RoutedBootMarkPlanV1, networkexecutor.OwnedNamespaceIdentity, error) {
+	a.mu.Lock()
+	selected := a.selected
+	a.mu.Unlock()
+	if ctx.Err() != nil || !selected.Valid() || selected.Transition() != transition ||
+		!deadline.Equal(selected.Deadline()) || selected.Scope().Identity != a.identity {
+		return nil, networkexecutor.OwnedNamespaceIdentity{}, configpoc.ErrRecovery
+	}
+	return selected.ReservedBootMarksV1(), a.identity, nil
+}
+
 func (a *RoutedAuthority) Identity() networkexecutor.OwnedNamespaceIdentity { return a.identity }
+
+func (a *RoutedAuthority) selectDHCPAdmissionBaselineV4(ctx context.Context, p configpoc.RoutedDHCPSelectedV3) error {
+	marks := p.BaselineAdmissionMarksV4()
+	if marks == nil || p.Snapshot().Identity != a.identity || marks.Boot != a.identity.BootID || p.Phase() != "applied" {
+		return configpoc.ErrRecovery
+	}
+	return a.engine.SelectBaselineAdmission(ctx, p.Running(), *marks)
+}
 
 func (a *RoutedAuthority) resolveBaseline(ctx context.Context, target configpoc.RoutedActivationBundleV1) (routedactivation.BaselineV1, error) {
 	a.mu.Lock()

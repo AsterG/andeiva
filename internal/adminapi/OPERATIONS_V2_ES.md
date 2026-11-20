@@ -71,3 +71,13 @@ La memoria cgroup no equivale a RSS ni al consumo del servicio de producción.
 Esto no acredita 5.000 ciclos con motores reales, capacidad física/retención,
 cortes de energía, reclamación protegida, paridad Web/CLI/API o cutover. Los gates
 de almacenamiento y activación de rutas continúan pendientes.
+
+## Aviso de reenvío en Alpha
+
+Antes de ejecutar un Commit de reglas con WAN por DHCP activa y la misma
+revisión de red, compruebe si la respuesta de admisión incluye
+`Andeiva-Commit-Warning: ANDEIVA_COMMIT_FORWARDING_CUT`. Decodifique el texto
+porcentual de `Andeiva-Commit-Warning-Text` y muéstrelo en el idioma indicado por
+`Andeiva-Commit-Warning-Language`. Envíe `Accept-Language` con inglés, español o
+portugués. Aplicar o revertir el cambio pausa el reenvío. Las conexiones
+afectadas por reglas modificadas pueden requerir reconexión.

@@ -60,9 +60,13 @@ type routedDHCPWorkV3 interface {
 }
 type routedDHCPSelectedReaderV3 struct {
 	*configpoc.RoutedSelectionReaderV2
+	acceptContinuation bool
 }
 
 func (r routedDHCPSelectedReaderV3) Resolve(ctx context.Context, work string) (routedDHCPWorkV3, error) {
+	if r.acceptContinuation {
+		return r.ResolveDHCPLeaseAuthorityV4(ctx, work)
+	}
 	return r.ResolveDHCPCurrentV3(ctx, work)
 }
 
@@ -76,6 +80,8 @@ type RoutedDHCPRuntimeV3 struct {
 	current                   func(context.Context) (RoutedDHCPOwnerFactV3, error)
 	reader                    routedDHCPReaderV3
 	policy                    func(context.Context, routedDHCPWorkV3) error
+	selectAdmissionBaseline   func(context.Context, configpoc.RoutedDHCPSelectedV3) error
+	baselineAdmissionSelected bool
 	ready                     func() error
 	refreshReady              func() bool
 	baseline                  func(context.Context) error
@@ -478,6 +484,14 @@ func (r *RoutedDHCPRuntimeV3) open(ctx context.Context, work string) error {
 	if err != nil || p.Phase() != "applied" || !r.selectedGrantV4(p, r.grant) {
 		firewallipc.RecordRoutedDHCPFailureV1("open_selected", configpoc.ErrRecovery, ctx)
 		return configpoc.ErrRecovery
+	}
+	if r.selectAdmissionBaseline != nil && !r.baselineAdmissionSelected {
+		baseline, ok := p.(configpoc.RoutedDHCPSelectedV3)
+		if !ok || r.verifyClosed(ctx, r.grant.Snapshot.Hash, networkexecutor.LeaseSelectedTargetV3) != nil ||
+			r.selectAdmissionBaseline(ctx, baseline) != nil {
+			return configpoc.ErrRecovery
+		}
+		r.baselineAdmissionSelected = true
 	}
 	if err := r.sameOwner(ctx, r.grant); err != nil {
 		firewallipc.RecordRoutedDHCPFailureV1("open_owner", err, ctx)

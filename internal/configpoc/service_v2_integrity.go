@@ -2,11 +2,16 @@ package configpoc
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
 	"github.com/AsterG/andeiva/internal/adminauth"
 )
+
+// ErrRetainedDHCPInspectionDeferredV4 describes a quiescence deferral before
+// any helper dispatch. It carries no new proof or forwarding permission.
+var ErrRetainedDHCPInspectionDeferredV4 = errors.New("retained WAN inspection deferred")
 
 // RuntimeIntegrityV1 is a trusted controller dependency, never a user request.
 // Inspection returns only after its helper dispatch has completed or the
@@ -126,7 +131,16 @@ func (s *ServiceV2) inspectRuntimeV1(ctx context.Context, retainedStartup bool) 
 	defer c.integrity.inspecting.Store(false)
 	c.store.mu.Lock()
 	defer c.store.mu.Unlock()
-	if c.closed || c.store.blocked || c.integrity.fenced || !inspectionQuiescentV1(c.store.state) {
+	if c.closed || c.store.blocked || c.integrity.fenced || ctx.Err() != nil {
+		return ErrRecovery
+	}
+	st := c.store.state
+	if !inspectionQuiescentV1(st) {
+		if cfg := st.Configuration; c.store.retainDHCPV4 && cfg != nil && cfg.Intent == nil &&
+			!cfg.RecoveryRequired && cfg.Pending != nil && cfg.Pending.Domain == "routed" &&
+			st.RoutedDHCPConfiguration != nil && st.RoutedDHCP != nil && st.RoutedDHCP.Phase == "applied" {
+			return errors.Join(ErrRecovery, ErrRetainedDHCPInspectionDeferredV4)
+		}
 		return ErrRecovery
 	}
 	c.integrity.ready = false

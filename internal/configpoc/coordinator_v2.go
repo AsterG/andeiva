@@ -12,21 +12,22 @@ import (
 )
 
 type v2CoordinatorOptions struct {
-	RebootScope       RoutedRebootScopeAuthorityV4
-	FreshScope        RoutedFreshScopeAuthorityV3
-	DHCPRecovery      RoutedDHCPRecoveryV3
-	RetainDHCPV4      bool
-	integrityAttached bool // Set only after the trusted pre-coordinator Attach.
-	Integrity         RuntimeIntegrityV1
-	SharedReader      *recoveryreserve.ReaderAccessV2
-	Routed            RoutedAuthorityV1
-	RoutedIdentity    networkexecutor.OwnedNamespaceIdentity
-	GuardDeadlines    bool
-	Reserves          *v2ReserveManager
-	LocalPolicy       LocalPolicyV2
-	BootID            *v2BootID
-	Now               func() time.Time
-	Hook              func(string) error
+	RebootScope          RoutedRebootScopeAuthorityV4
+	FreshScope           RoutedFreshScopeAuthorityV3
+	DHCPRecovery         RoutedDHCPRecoveryV3
+	RetainDHCPV4         bool
+	CommitRetainedDHCPV4 bool
+	integrityAttached    bool // Set only after the trusted pre-coordinator Attach.
+	Integrity            RuntimeIntegrityV1
+	SharedReader         *recoveryreserve.ReaderAccessV2
+	Routed               RoutedAuthorityV1
+	RoutedIdentity       networkexecutor.OwnedNamespaceIdentity
+	GuardDeadlines       bool
+	Reserves             *v2ReserveManager
+	LocalPolicy          LocalPolicyV2
+	BootID               *v2BootID
+	Now                  func() time.Time
+	Hook                 func(string) error
 	// Tests may drive deadlines explicitly; appliance integration must not opt
 	// out of the independent timeout worker. There is no runtime caller yet.
 	ManualTimeout bool
@@ -75,6 +76,7 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.dhcpServerSupported = false
+	store.retainDHCPV4 = options.CommitRetainedDHCPV4
 	if support, ok := options.Routed.(RoutedDHCPServerSupportV1); ok {
 		store.dhcpServerSupported = support.SupportsDHCPServerV1()
 	}
@@ -426,8 +428,10 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	if op.State != "accepted" {
 		return result(op), nil
 	}
+	retainedMetadata := s.retainedDHCPMetadataAllowedV4(op) && s.retainedDHCPMetadataRetryV4(op)
+	retainedCommit := s.retainedDHCPCommitAllowedV4(op)
 	if s.reserves != nil && op.ClosingCredit == "" {
-		if err = s.reserveMaintenanceReadyV2(""); err != nil {
+		if err = s.reserveMaintenanceWithDHCPV4("", retainedMetadata || retainedCommit); err != nil {
 			return result(op), err
 		}
 	}
@@ -533,7 +537,11 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 		return result(op), err
 	}
 	defer closingRestore()
-	target, changed, err := c.targetLocked(op, state, now)
+	projectedAt := now
+	if retainedMetadata {
+		projectedAt = op.Accepted
+	}
+	target, changed, err := c.targetLocked(op, state, projectedAt)
 	if err != nil {
 		return result(op), err
 	}
@@ -555,6 +563,15 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	if err = c.absoluteGuardPreflightV2(op, state, target); err != nil {
 		return result(op), err
+	}
+	if retainedMetadata {
+		final, e := c.executeRetainedDHCPMetadataV4(op, state, target, changed, now)
+		return result(final), e
+	}
+	if retainedCommit {
+		if err = s.reserveRetainedDHCPCommitV4(op, state, target); err != nil {
+			return result(op), err
+		}
 	}
 	if err = c.persistRevisions(target); err != nil {
 		s.blocked = true
@@ -585,6 +602,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	st.Clock = now
 	st.Configuration.Intent = &v2CoordinatorIntent{Operation: op.ID, Subject: op.Subject, Domain: op.Domain, Kind: op.Request.Kind, Previous: previousHash, Target: targetHash, TargetGeneration: generation}
+	if retainedCommit {
+		st.Configuration.Intent.Lease = target.Pending.Lease
+	}
 	if op.Request.Kind == OpReplaceCandidate || op.Request.Kind == OpDiscardCandidate {
 		addFeatureV2(&st, v2OwnedCandidateFeature)
 	}
@@ -607,6 +627,11 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	if err = s.putOperation(&st, op); err != nil {
 		s.blocked = true
 		return result(op), err
+	}
+	if retainedCommit {
+		if err = s.selectRetainedDHCPCommitV4(&st, op); err != nil {
+			return result(op), err
+		}
 	}
 	consume = true
 	if err = s.publish(st); err != nil {

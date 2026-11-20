@@ -5,6 +5,7 @@ package configpoc
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/AsterG/andeiva/internal/networkexecutor"
@@ -46,6 +47,23 @@ func TestRoutedBootMarksReserveRollbackBeforeEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("exhaustion rejects before durable or runtime effects", func(t *testing.T) {
+		for _, issued := range []uint32{routedmodel.MaxAdmissionMarks - 1, routedmodel.MaxAdmissionMarks} {
+			original := s.state.RoutedBootMarks.Issued
+			s.state.RoutedBootMarks.Issued = issued
+			state := clone(s.state)
+			head, selection, used := s.selector, s.selection, s.used
+			applied, restored, close, err := s.reserveRoutedBootMarksLocked(id, "exhausted-commit", &initial, before, target)
+			if err != errV2Limited || err.Error() != "ANDEIVA_OPERATION_LIMITED" || applied.Issued != 0 || restored.Issued != 0 || close ||
+				s.blocked || !reflect.DeepEqual(state, s.state) || head != s.selector || selection != s.selection || used != s.used {
+				t.Fatalf("mark exhaustion at %d did not reject before effects: %v", issued, err)
+			}
+			s.state.RoutedBootMarks.Issued = original
+			if _, err = reader.ResolveBootMarkPlanV1(context.Background(), hash, s.state.RoutedBootMarks.Reservation, "adopt"); err != nil {
+				t.Fatal("existing selection became unavailable after rejection", err)
+			}
+		}
+	})
 	applied, restored, closed, err := s.reserveRoutedBootMarksLocked(id, "group-commit", &initial, before, target)
 	if err != nil || closed || len(applied.Bindings) == 0 || applied.Issued <= initial.Issued ||
 		restored.Issued <= applied.Issued || restored.Bindings[0].Mark <= applied.Bindings[0].Mark {

@@ -13,6 +13,26 @@ type Artifact struct {
 	Create, Batch []byte
 }
 
+const ForwardHoldChain = "configuration_hold"
+
+func forwardHoldChain() object {
+	return object{"family": "inet", "table": TableName, "name": ForwardHoldChain,
+		"type": "filter", "hook": "forward", "prio": -50, "policy": "drop"}
+}
+
+// ForwardHold changes only the fixed forwarding barrier in the owned table.
+// DHCP acquisition, local ingress and the independent lease gate are untouched.
+func ForwardHold(enable bool) []byte {
+	verb := "add"
+	body := forwardHoldChain()
+	if !enable {
+		verb = "delete"
+		body = object{"family": "inet", "table": TableName, "name": ForwardHoldChain}
+	}
+	data, _ := json.Marshal(object{"nftables": []object{{verb: object{"chain": body}}}})
+	return data
+}
+
 func match(left, right any) object {
 	return object{"match": object{"op": "==", "left": left, "right": right}}
 }
@@ -95,6 +115,14 @@ func CompileRetainedWANChange(before, target Revision, previous routedmodel.Admi
 // CompileMarkedPolicy compiles an authenticated selection, including startup
 // and guarded rollback. Legacy marked entries cannot gain authority here.
 func CompileMarkedPolicy(revision Revision, assigned routedmodel.AdmissionMarks) (Artifact, error) {
+	return compileMarkedPolicy(revision, assigned, false)
+}
+
+func CompileHeldMarkedPolicy(revision Revision, assigned routedmodel.AdmissionMarks) (Artifact, error) {
+	return compileMarkedPolicy(revision, assigned, true)
+}
+
+func compileMarkedPolicy(revision Revision, assigned routedmodel.AdmissionMarks, hold bool) (Artifact, error) {
 	marks, err := assigned.MarkIndex(revision)
 	if err != nil {
 		return Artifact{}, err
@@ -103,14 +131,21 @@ func CompileMarkedPolicy(revision Revision, assigned routedmodel.AdmissionMarks)
 	if err != nil {
 		return Artifact{}, err
 	}
-	return compileRevision(canonical, marks), nil
+	return compileRevisionWithHold(canonical, marks, hold), nil
 }
 
 func compileRevision(r Revision, marks map[string]uint32) Artifact {
+	return compileRevisionWithHold(r, marks, false)
+}
+
+func compileRevisionWithHold(r Revision, marks map[string]uint32, hold bool) Artifact {
 	objects := compiledObjects(r, marks)
 	create := make([]object, 0, len(objects))
 	for _, o := range objects {
 		create = append(create, object{"add": o})
+	}
+	if hold {
+		create = append(create, object{"add": object{"chain": forwardHoldChain()}})
 	}
 	batch := append([]object{{"delete": object{"table": object{"family": "inet", "name": TableName}}}}, create...)
 	a, _ := json.Marshal(object{"nftables": create})

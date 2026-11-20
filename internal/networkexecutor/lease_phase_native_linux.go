@@ -178,12 +178,14 @@ func StartNativeLeaseSpanV4(phase string) func() {
 	}
 	switch phase {
 	case "renew_total", "runtime_close", "current_evidence", "selected_authority", "verify_owner", "refresh_evidence", "runtime_open", "gate_stage", "gate_open", "rpc_wait":
+	case "rule_hold_close", "rule_hold_replace", "rule_hold_release":
 	default:
 		return nil
 	}
 	// Routine live checks outside an interruption are not part of its phase
 	// breakdown. Keep parent close/renew spans to include their leading edge.
-	if phase != "runtime_close" && phase != "renew_total" && !nativeLeaseSpanClosedV4.Load() {
+	if phase != "runtime_close" && phase != "renew_total" && phase != "rule_hold_close" &&
+		phase != "rule_hold_replace" && phase != "rule_hold_release" && !nativeLeaseSpanClosedV4.Load() {
 		return nil
 	}
 	id := nativeLeaseSpanCountV4.Add(1)

@@ -2,7 +2,7 @@ package configpoc
 
 func (c *v2Coordinator) validateReferencesLocked() error {
 	s := c.store
-	if validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+	if validateRoutedDHCPConfigurationSelectionV4(s.state.RoutedDHCPConfiguration, s.state, s.readObject, s.lookupRetained, routedDHCPConfigurationHeaderV4) != nil {
 		return ErrRecovery
 	}
 	state := s.state.Configuration

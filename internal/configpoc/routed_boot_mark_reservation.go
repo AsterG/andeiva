@@ -2,6 +2,7 @@ package configpoc
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 
@@ -36,8 +37,35 @@ type routedBootMarkReservationV1 struct {
 // RoutedBootMarkPlanV1 supplies the exact persisted assignments to trusted
 // helper assembly. The selected operation must bind this reservation hash.
 type RoutedBootMarkPlanV1 struct {
-	Applied  routedmodel.AdmissionMarks
-	Restored routedmodel.AdmissionMarks
+	Prior      *routedmodel.AdmissionMarks
+	Applied    routedmodel.AdmissionMarks
+	Restored   routedmodel.AdmissionMarks
+	BaseIssued uint32
+}
+
+func selectedRoutedBootMarksForApplyV1(s *v2Store, plan RoutedSelectedPlanV1, reference SelectionReferenceV2) (RoutedBootMarkPlanV1, error) {
+	state := s.state
+	if reference.Mode != "intent" || reference.WorkHash != plan.Reference().Work ||
+		state.RoutedBootMarks == nil || state.RoutedDHCPConfiguration == nil ||
+		state.RoutedDHCPConfiguration.Transition == "" || state.Configuration == nil {
+		return RoutedBootMarkPlanV1{}, ErrRecovery
+	}
+	view, err := routedDHCPConfigurationViewV4Read(state.RoutedDHCPConfiguration, state, s.readObject, s.lookupRetained, routedDHCPConfigurationHeaderV4)
+	if err != nil || view.pending == nil || view.pending.operation.State != "pending" {
+		return RoutedBootMarkPlanV1{}, ErrRecovery
+	}
+	transition := view.pending.transition
+	group := transition.Group
+	if group == nil || group.Side != "target" || group.Work != reference.WorkHash ||
+		transition.Operation != plan.Transition().Operation || group.MarkReservation != state.RoutedBootMarks.Reservation {
+		return RoutedBootMarkPlanV1{}, ErrRecovery
+	}
+	record, err := loadRoutedBootMarkReservationV1(state.RoutedBootMarks, state.Lineage, s.readObject)
+	if err != nil || record.Scope != plan.Scope().Identity || record.Work != transition.SourceWork ||
+		record.Operation != transition.Operation {
+		return RoutedBootMarkPlanV1{}, ErrRecovery
+	}
+	return RoutedBootMarkPlanV1{Prior: record.Prior, Applied: record.Applied, Restored: record.Restored, BaseIssued: record.BaseIssued}, nil
 }
 
 // ResolveBootMarkPlanV1 releases no allocation before independently validating
@@ -70,7 +98,7 @@ func (r *RoutedSelectionReaderV2) ResolveBootMarkPlanV1(ctx context.Context, wor
 	if err = r.revalidate(ctx, v); err != nil {
 		return out, err
 	}
-	return RoutedBootMarkPlanV1{Applied: record.Applied, Restored: record.Restored}, nil
+	return RoutedBootMarkPlanV1{Prior: record.Prior, Applied: record.Applied, Restored: record.Restored, BaseIssued: record.BaseIssued}, nil
 }
 
 func validRoutedBootMarkCursorV1(st v2State) bool {
@@ -178,12 +206,7 @@ func (s *v2Store) reserveRoutedBootMarksLocked(identity networkexecutor.OwnedNam
 		}
 		issued = cursor.Issued
 	}
-	applied, requiresClosure, err = routedmodel.ReserveAdmissionMarks(string(boot), issued, prior, before, target)
-	if err != nil {
-		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
-	}
-	var restoreClosure bool
-	restored, restoreClosure, err = routedmodel.ReserveAdmissionMarks(string(boot), applied.Issued, &applied, target, before)
+	applied, restored, requiresClosure, err = reserveRoutedMarkPairV1(string(boot), issued, prior, before, target)
 	if err != nil {
 		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
 	}
@@ -209,5 +232,21 @@ func (s *v2Store) reserveRoutedBootMarksLocked(identity networkexecutor.OwnedNam
 	}
 	// Adoption with no strict source requires closure even when every filter
 	// is unchanged. Never hand a legacy source to the atomic path.
-	return applied, restored, requiresClosure || restoreClosure || prior == nil, nil
+	return applied, restored, requiresClosure, nil
+}
+
+func reserveRoutedMarkPairV1(boot string, issued uint32, prior *routedmodel.AdmissionMarks, before, target routedmodel.Revision) (applied, restored routedmodel.AdmissionMarks, close bool, err error) {
+	applied, close, err = routedmodel.ReserveAdmissionMarks(boot, issued, prior, before, target)
+	if err == nil {
+		var restoreClosure bool
+		restored, restoreClosure, err = routedmodel.ReserveAdmissionMarks(boot, applied.Issued, &applied, target, before)
+		close = close || restoreClosure || prior == nil
+	}
+	if errors.Is(err, routedmodel.ErrAdmissionMarksExhausted) {
+		err = errV2Limited
+	}
+	if err != nil {
+		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
+	}
+	return applied, restored, close, nil
 }

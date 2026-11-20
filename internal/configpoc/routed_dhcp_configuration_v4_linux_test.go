@@ -484,8 +484,45 @@ func TestRoutedDHCPConfigurationV4OpaqueReaderSeparatesGenerations(t *testing.T)
 	if _, err = r.ResolveDHCPCurrentV3(context.Background(), f.x.SourceWork); err == nil {
 		t.Fatal("legacy resolver interpreted a continued source as current v3")
 	}
+	live, err := r.ResolveDHCPLeaseAuthorityV4(context.Background(), f.x.SourceWork)
+	if err != nil || live.Reference() != selected.Reference() || live.Phase() != "applied" ||
+		live.Running() != selected.CurrentRunning() || live.Snapshot().Hash != selected.Snapshot().Hash || live.Epoch() != selected.Epoch() {
+		t.Fatal("renewal lost the selected Work or the current configuration proof", err)
+	}
+	if live.PendingPolicyV4() || live.MatchesPendingPolicyV4(RoutedReceiptV1{Phase: "pending", Target: live.Running(), Deadline: time.Now().Add(time.Minute)}, live.Running()) {
+		t.Fatal("metadata continuation granted pending effect authority")
+	}
 	if _, err = r.ResolveDHCPConfigurationCurrentV4(context.Background(), strings.Repeat("f", 64)); err == nil {
 		t.Fatal("foreign source accepted")
+	}
+}
+
+func TestRoutedDHCPConfigurationV4PendingPhysicalProof(t *testing.T) {
+	deadline := time.Now().Add(time.Minute).UTC()
+	receipt := RoutedReceiptV1{Phase: "pending", ID: "original-lease", Previous: "before", Target: "after", Deadline: deadline}
+	proof := RoutedDHCPSelectedV3{running: receipt.Target, pending: true, confirmation: &receipt}
+	if !proof.MatchesPendingPolicyV4(receipt, receipt.Target) {
+		t.Fatal("original deadline and physical pending policy rejected")
+	}
+	for _, changed := range []RoutedReceiptV1{
+		{Phase: "idle", ID: receipt.ID, Previous: receipt.Previous, Target: receipt.Target, Deadline: deadline},
+		{Phase: "pending", ID: "foreign", Previous: receipt.Previous, Target: receipt.Target, Deadline: deadline},
+		{Phase: "pending", ID: receipt.ID, Previous: "wrong", Target: receipt.Target, Deadline: deadline},
+		{Phase: "pending", ID: receipt.ID, Previous: receipt.Previous, Target: "wrong", Deadline: deadline},
+		{Phase: "pending", ID: receipt.ID, Previous: receipt.Previous, Target: receipt.Target, Deadline: deadline.Add(time.Second)},
+	} {
+		if proof.MatchesPendingPolicyV4(changed, receipt.Target) {
+			t.Fatal("different physical receipt accepted", changed)
+		}
+	}
+	if proof.MatchesPendingPolicyV4(receipt, receipt.Previous) {
+		t.Fatal("wrong physical running revision accepted")
+	}
+	expired := receipt
+	expired.Deadline = time.Now().Add(-time.Second)
+	proof.confirmation = &expired
+	if proof.MatchesPendingPolicyV4(expired, receipt.Target) {
+		t.Fatal("expired receipt accepted")
 	}
 }
 

@@ -22,18 +22,19 @@ type RuntimePoolsV2 struct {
 	Emergency *recoveryreserve.PoolV2
 }
 type RuntimeOptionsV2 struct {
-	FreshScope     RoutedFreshScopeAuthorityV3
-	RebootScope    RoutedRebootScopeAuthorityV4
-	DHCPRecovery   RoutedDHCPRecoveryV3
-	RetainDHCPV4   bool // Only the trusted same-helper API restart can request this.
-	Integrity      RuntimeIntegrityV1
-	SharedReader   *recoveryreserve.ReaderAccessV2
-	Routed         RoutedAuthorityV1
-	RoutedIdentity networkexecutor.OwnedNamespaceIdentity
-	Pools          RuntimePoolsV2
-	GuardDeadlines bool
-	BootID         string
-	LocalPolicy    LocalPolicyV2
+	FreshScope           RoutedFreshScopeAuthorityV3
+	RebootScope          RoutedRebootScopeAuthorityV4
+	DHCPRecovery         RoutedDHCPRecoveryV3
+	RetainDHCPV4         bool // Only the trusted same-helper API restart can request this.
+	CommitRetainedDHCPV4 bool // Only trusted assembly of the V4 DHCP profile.
+	Integrity            RuntimeIntegrityV1
+	SharedReader         *recoveryreserve.ReaderAccessV2
+	Routed               RoutedAuthorityV1
+	RoutedIdentity       networkexecutor.OwnedNamespaceIdentity
+	Pools                RuntimePoolsV2
+	GuardDeadlines       bool
+	BootID               string
+	LocalPolicy          LocalPolicyV2
 }
 
 // OpenRuntimeServiceV2 consumes only the selected v2 store. It never opens a
@@ -45,7 +46,7 @@ func OpenRuntimeServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, a
 	if options.Integrity != nil && (options.Routed == nil || options.SharedReader == nil || options.BootID == "") {
 		return nil, ErrInvalid
 	}
-	if options.RetainDHCPV4 && (options.Integrity == nil || options.DHCPRecovery == nil) {
+	if (options.RetainDHCPV4 || options.CommitRetainedDHCPV4) && (options.Integrity == nil || options.DHCPRecovery == nil) {
 		return nil, ErrInvalid
 	}
 	manager, err := newReserveManagerV2(options.Pools.Admission, options.Pools.Plan, options.Pools.Emergency)
@@ -58,6 +59,7 @@ func OpenRuntimeServiceV2(ctx context.Context, area *os.Root, budget BudgetV2, a
 	trusted := v2CoordinatorOptions{Integrity: options.Integrity, SharedReader: options.SharedReader, Reserves: manager, GuardDeadlines: true, LocalPolicy: options.LocalPolicy, Routed: options.Routed, RoutedIdentity: options.RoutedIdentity}
 	trusted.DHCPRecovery = options.DHCPRecovery
 	trusted.RetainDHCPV4 = options.RetainDHCPV4
+	trusted.CommitRetainedDHCPV4 = options.CommitRetainedDHCPV4
 	trusted.FreshScope = options.FreshScope
 	trusted.RebootScope = options.RebootScope
 	if options.BootID != "" {

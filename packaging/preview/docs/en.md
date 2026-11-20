@@ -109,6 +109,7 @@ the target, helper and namespaces. Losing the helper closes the entire
 preview. Stop the target, wait for all four service/socket units to be inactive,
 then start it; do not assume `restart target` is an atomic replacement. A restart
 in the same OS boot restores Running; a VM reboot selects saved Startup.
+When Startup is selected, confirmed changes that were never saved are lost.
 Uncertain journal state blocks rather than publishing an unverified revision.
 
 Exhausting the API restart budget can leave API/socket failed while the target,
@@ -173,3 +174,35 @@ unchanged helper/namespace processes, metadata and effective kernel policy,
 compares six actual TCP/UDP probe outcomes, and restarts administration. A cleanup
 trap attempts management recovery if an assertion fails. It does not prove that
 those outcomes match an intended policy, or qualify migration, reboot or routing.
+
+### Forwarding pause during firewall changes in Alpha
+
+With WAN DHCP active and the complete network configuration unchanged, applying
+or reverting firewall rules temporarily pauses forwarding. Web, CLI and API
+provide a warning before Commit. A connection affected by a changed rule may
+need to reconnect.
+
+The provisional Alpha qualification limit is 500 ms per Commit or rollback in
+the isolated Debian laboratory. Before leaving Alpha, repeat these measurements
+and the WAN DHCP renewal measurements on the minimum 2 GB hardware profile.
+
+If WAN DHCP renewal overlaps Confirm expiry, verify the lease and restored
+rules before forwarding resumes. The successful Debian lab run bounded this
+combined outage at 11.350–11.680 s, measured separately from ordinary rule
+changes. If the handover budget is exhausted, forwarding stays closed and the
+appliance reports that recovery is required. The pending rollback record blocks
+the normal service restart and selection of Startup on reboot in this Alpha
+state. A recovery procedure for this state is still pending.
+
+The Debian 13 laboratory gateway used two vCPUs and 3.79 GiB of RAM. These are
+upper bounds on the kernel forwarding pause, in milliseconds.
+
+| Operation | Samples | Minimum | Median | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Commit followed by Confirm | 10 | 72.518 | 94.251 | 112.015 |
+| Commit followed by Confirm expiry | 10 | 71.814 | 85.830 | 103.687 |
+| Rollback after Confirm expiry | 10 | 84.534 | 115.486 | 129.301 |
+
+Every cycle retained the WAN lease, the same TCP connection and the same UDP
+flow on unchanged rules. The measurements used a stable lease in the tested
+laboratory profile.
