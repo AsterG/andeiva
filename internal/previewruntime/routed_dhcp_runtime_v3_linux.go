@@ -52,6 +52,9 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 	}
 	r.fenced = func() bool { integrity.mu.Lock(); defer integrity.mu.Unlock(); return integrity.blockedLocked() }
 	if o.RenewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
+		if a, ok := authority.(*RoutedAuthority); ok {
+			r.selectAdmissionBaseline = a.selectDHCPAdmissionBaselineV4
+		}
 		r.adoptionClock = routedDHCPOwnerBootNowV3
 		r.refreshReady = func() bool {
 			integrity.mu.Lock()

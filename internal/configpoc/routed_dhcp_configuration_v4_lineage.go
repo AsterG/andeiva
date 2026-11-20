@@ -20,6 +20,7 @@ type routedDHCPConfigurationContextV4 struct {
 	before, target     v2Configuration
 	operation          v2Operation
 	finalConfiguration string
+	closing            *v4RoutedDHCPClosing
 }
 
 // Object/catalogue callbacks are read-only. The G1 caller additionally visits
@@ -197,6 +198,11 @@ func routedDHCPConfigurationContinuationV4Read(hash string, st v2State, load fun
 	}
 	c.target = final
 	c.finalConfiguration = receipt.Configuration
+	if receipt.Closing != nil {
+		if err = readRetainedDHCPClosingV4(&c, receipt.Closing, st, load); err != nil {
+			return c, err
+		}
+	}
 	return c, nil
 }
 

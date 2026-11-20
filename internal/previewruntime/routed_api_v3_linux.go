@@ -208,6 +208,7 @@ func assembleRoutedOperationsV3(ctx context.Context, client *firewallipc.RoutedC
 		return nil, e
 	}
 	runtimeOptions := o.Runtime
+	runtimeOptions.CommitRetainedDHCPV4 = client.DHCPRenewalEnabledV4()
 	if client.IntegrityEnabled() {
 		runtimeOptions.Integrity, e = NewRoutedRemoteIntegrityV3(client)
 		if e != nil {

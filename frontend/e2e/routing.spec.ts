@@ -179,6 +179,37 @@ test('preserved historical Candidate remains visible but cannot validate or appl
   expect(calls.some((call) => call.path.endsWith('/admit') || call.path.endsWith('/execute'))).toBe(false);
 });
 
+for (const locale of ['en', 'es', 'pt'] as const) test(`WAN DHCP forwarding warning precedes Commit in ${locale}`, async ({ page }, testInfo) => {
+  const calls = await setup(page), value = structuredClone(fixtures.routed), c = value.current;
+  const running = c.snapshot.running;
+  running.config.routed.network.config.interfaces.find((iface: { role: string }) => iface.role === 'wan').ipv4 = { mode: 'dhcp' };
+  const candidate = structuredClone(running);
+  candidate.hash = 'c'.repeat(64);
+  candidate.config.routed.rules[0].action = 'deny';
+  c.snapshot.candidate = { owner: 'subject', base: running.hash, revision: candidate };
+  c.routed.local_services.candidate = { owner: 'subject', base: c.routed.local_services.running.hash, revision: structuredClone(c.routed.local_services.running) };
+  c.routed.candidate = structuredClone(c.routed.running);
+  c.routed.candidate.hash = 'd'.repeat(64);
+  c.routed.candidate.config.domains.firewall.revision = candidate.hash;
+  c.routed.candidate_group = { stage_operation_id: 'rules-stage', owner: 'subject', base: c.global.running_revision, domains: ['firewall', 'local_services'] };
+  await page.route('**/api/v2/config/current', (route) => route.fulfill({ json: value }));
+  await page.goto('/firewall#rules');
+  await selectLocale(page, locale);
+  const copy = workspaceMessages[locale];
+  for (const theme of ['light', 'dark'] as const) {
+    await selectTheme(page, theme);
+    await page.getByRole('button', { name: copy.commit, exact: true }).click();
+    const review = page.getByRole('dialog', { name: copy.review, exact: true });
+    await expect(review.getByText(copy.forwardingCut, { exact: true })).toBeVisible();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    const results = await new AxeBuilder({ page }).include('.ds-dialog').withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
+    expect(results.violations).toEqual([]);
+    await review.screenshot({ path: testInfo.outputPath(`forwarding-warning-${locale}-${theme}.png`) });
+    await page.keyboard.press('Escape');
+    await expect(review).toBeHidden();
+  }
+});
+
 test('viewer cannot open network, rule or NAT editors', async ({ page }) => {
   await setup(page, 'viewer');
   for (const view of ['network', 'rules', 'nat']) {

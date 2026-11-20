@@ -264,8 +264,11 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 		}
 	}
 	var initialLease []uint32
-	if b2 != 0 || restartMode != "" && restartMode != "healthy" && restartMode != "shared" {
+	if b2 != 0 || restartMode != "" && restartMode != "healthy" && restartMode != "shared" && restartMode != "rules" {
 		initialLease = []uint32{71}
+	}
+	if restartMode == "rules" {
+		initialLease = []uint32{600}
 	}
 	stopServer := nativeDHCPJobsServerV4(t, ctx, base, namespaces[2], &logs, initialLease...)
 	defer stopServer()
@@ -324,6 +327,10 @@ func nativeRunRoutedDHCPScenarioV4(t *testing.T, early bool, b2 uint32, restartM
 	nativeDHCPJobsPrivilegesV4(t, helper, api, metadata, &logs)
 	bound := nativeDHCPJobsWaitReportV4(t, ctx, &logs, "bound")
 	nativeDHCPJobsKernelV4(t, ctx, namespaces[0], bound.Grant.Snapshot)
+	if restartMode == "rules" {
+		nativeDHCPRulesRootV4(t, ctx, namespaces, supervisor, &logs, bound)
+		return
+	}
 	if b2 != 0 {
 		nativeDHCPB2RootV4(t, ctx, b2, base, namespaces, supervisor, &logs, bound, &b2Diagnostic, &b2Pause, stopServer, stopDiagnostic)
 		return
@@ -446,7 +453,7 @@ func nativeDHCPJobsServerV4(t *testing.T, ctx context.Context, base string, wan 
 		t.Fatal("trusted busybox udhcpd test dependency missing")
 	}
 	leaseSeconds := uint32(120)
-	if len(initial) > 1 || len(initial) == 1 && initial[0] != 71 {
+	if len(initial) > 1 || len(initial) == 1 && initial[0] != 71 && initial[0] != 600 {
 		t.Fatal("invalid fixed initial lab lease")
 	}
 	if len(initial) == 1 {
@@ -741,11 +748,12 @@ func nativeDHCPJobsKernelV4(t *testing.T, ctx context.Context, gateway *os.File,
 // Called only by nativeFactoriesV3 for the authenticated DHCPJobs launch profile.
 // Uses the real Service and existing private controller; no local grant source.
 func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, ready func() error, binding adminauth.SessionBinding, authenticate func() (adminauth.SessionBinding, error), launch RoutedLaunchContextV3) error {
-	warm, err := nativeDHCPWarmProfileV4()
+	profile, err := nativeDHCPScenarioProfileV4()
 	if err != nil {
 		return err
 	}
-	if !launch.DHCPJobsEnabled || !launch.Integrity || warm && !launch.DHCPRenewalV4 || launch.Epoch < 1 || launch.Epoch > 2 || launch.DHCPRenewalV4 && launch.Epoch != 1 && !warm || r.DHCP == nil || !r.Service.RuntimeIntegrityReadyV1() {
+	warm := profile != "" && profile != "rules"
+	if !launch.DHCPJobsEnabled || !launch.Integrity || profile != "" && !launch.DHCPRenewalV4 || launch.Epoch < 1 || launch.Epoch > 2 || launch.DHCPRenewalV4 && launch.Epoch != 1 && !warm || r.DHCP == nil || !r.Service.RuntimeIntegrityReadyV1() {
 		return errors.New("native DHCP profile/readiness differs")
 	}
 	flowReady := make(chan os.Signal, 1)
@@ -802,6 +810,9 @@ func nativeDHCPJobsServeV4(ctx context.Context, r *RoutedOperationsRuntimeV3, re
 	if launch.Epoch == 1 {
 		if err = nativeDHCPJobsReportEmitV4("bound", current.Global.Running, first); err != nil {
 			return err
+		}
+		if profile == "rules" {
+			return nativeDHCPRulesServeV4(ctx, r, binding, current.Global.Running, first, flowReady)
 		}
 		if warm {
 			<-ctx.Done()

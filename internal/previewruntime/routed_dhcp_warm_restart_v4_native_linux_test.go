@@ -29,38 +29,38 @@ func TestNativeRoutedDHCPWarmRestartV4(t *testing.T) {
 	nativeRunRoutedDHCPScenarioV4(t, true, 0, "healthy")
 }
 
-func nativeDHCPWarmProfileV4() (bool, error) {
+func nativeDHCPScenarioProfileV4() (string, error) {
 	base, err := os.Open("/proc/self/fd/5/..")
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	defer base.Close()
 	var parent unix.Stat_t
 	if unix.Fstat(int(base.Fd()), &parent) != nil || parent.Uid != 0 || parent.Mode&unix.S_IFMT != unix.S_IFDIR || parent.Mode&0022 != 0 {
-		return false, ErrIdentity
+		return "", ErrIdentity
 	}
 	fd, err := unix.Openat(int(base.Fd()), nativeDHCPWarmMarkerV4, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if errors.Is(err, unix.ENOENT) {
-		return false, nil
+		return "", nil
 	}
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	file := os.NewFile(uintptr(fd), nativeDHCPWarmMarkerV4)
 	defer file.Close()
 	var marker unix.Stat_t
 	if unix.Fstat(fd, &marker) != nil || marker.Uid != 0 || marker.Mode != unix.S_IFREG|0444 || marker.Nlink != 1 || marker.Size < 4 || marker.Size > 7 {
-		return false, ErrIdentity
+		return "", ErrIdentity
 	}
 	data, err := io.ReadAll(io.LimitReader(file, 8))
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	switch string(data) {
-	case "healthy", "store", "helper", "both", "shared":
-		return true, nil
+	case "healthy", "store", "helper", "both", "shared", "rules":
+		return string(data), nil
 	default:
-		return false, ErrIdentity
+		return "", ErrIdentity
 	}
 }
 

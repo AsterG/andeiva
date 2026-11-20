@@ -195,6 +195,9 @@ func (s *v2Store) admitLocked(subject, namespace string, expected uint64, reques
 	if configHasDHCPServerV1(request.Config) && !s.dhcpServerSupported {
 		return v2Operation{}, ErrDenied
 	}
+	if err := s.preflightRetainedDHCPCommitV4(subject, ns.Domain, expected, request); err != nil {
+		return v2Operation{}, err
+	}
 	if err := s.reserveBeforeAdmissionV2(); err != nil {
 		return v2Operation{}, err
 	}

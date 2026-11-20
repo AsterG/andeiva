@@ -71,3 +71,13 @@ Memória cgroup não equivale a RSS nem ao consumo do serviço de produção. N�
 qualifica 5.000 ciclos com motores reais, capacidade física/retenção, falhas de
 energia, recuperação de espaço protegido, paridade Web/CLI/API ou cutover. Os
 gates de armazenamento e ativação das rotas permanecem pendentes.
+
+## Aviso de encaminhamento na versão Alpha
+
+Antes de executar um Commit de regras com WAN por DHCP ativa e a mesma
+revisão de rede, verifique se a resposta de admissão contém
+`Andeiva-Commit-Warning: ANDEIVA_COMMIT_FORWARDING_CUT`. Decodifique o texto
+percentual de `Andeiva-Commit-Warning-Text` e mostre-o no idioma indicado por
+`Andeiva-Commit-Warning-Language`. Envie `Accept-Language` com inglês, espanhol
+ou português. Aplicar ou reverter a alteração pausa o encaminhamento.
+Conexões afetadas por regras alteradas podem precisar ser restabelecidas.

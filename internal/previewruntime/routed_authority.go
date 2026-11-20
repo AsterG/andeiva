@@ -57,6 +57,14 @@ func (a *RoutedAuthority) resolveAdmissionMarks(ctx context.Context, transition 
 
 func (a *RoutedAuthority) Identity() networkexecutor.OwnedNamespaceIdentity { return a.identity }
 
+func (a *RoutedAuthority) selectDHCPAdmissionBaselineV4(ctx context.Context, p configpoc.RoutedDHCPSelectedV3) error {
+	marks := p.BaselineAdmissionMarksV4()
+	if marks == nil || p.Snapshot().Identity != a.identity || marks.Boot != a.identity.BootID || p.Phase() != "applied" {
+		return configpoc.ErrRecovery
+	}
+	return a.engine.SelectBaselineAdmission(ctx, p.Running(), *marks)
+}
+
 func (a *RoutedAuthority) resolveBaseline(ctx context.Context, target configpoc.RoutedActivationBundleV1) (routedactivation.BaselineV1, error) {
 	a.mu.Lock()
 	baseline := a.baseline

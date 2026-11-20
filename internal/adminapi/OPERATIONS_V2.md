@@ -72,3 +72,13 @@ Cgroup memory is not process RSS or production service overhead. These checks do
 not qualify 5,000 real-engine cycles, physical capacity/retention, power loss,
 protected reclamation, Web/CLI/API parity or runtime cutover. Storage release
 gates remain open. Public routing and activation require their separate gates.
+
+## Alpha forwarding warning
+
+Before executing a rule-only Commit with active WAN DHCP and an identical
+network revision, check the admission response for `ANDEIVA_COMMIT_FORWARDING_CUT`
+in the `Andeiva-Commit-Warning` header. Display `Andeiva-Commit-Warning-Text`, after
+percent-decoding, in the language indicated by
+`Andeiva-Commit-Warning-Language`. Send `Accept-Language` with English,
+Spanish or Portuguese. Applying or reversing the rule change pauses
+forwarding. Connections affected by changed rules can require reconnection.

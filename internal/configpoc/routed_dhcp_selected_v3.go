@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/routedmodel"
 )
 
 const v3RoutedDHCPFeature = "configuration.routed-dhcp-selected.v3"
@@ -47,6 +48,7 @@ type RoutedDHCPSelectedV3 struct {
 	running      string
 	pending      bool
 	confirmation *RoutedReceiptV1
+	baseline     *routedmodel.AdmissionMarks
 }
 
 func (p RoutedDHCPSelectedV3) Reference() SelectionReferenceV2 { return p.ref }
@@ -58,6 +60,11 @@ func (p RoutedDHCPSelectedV3) Phase() string   { return p.phase }
 func (p RoutedDHCPSelectedV3) Running() string { return p.running }
 
 func (p RoutedDHCPSelectedV3) PendingPolicyV4() bool { return p.pending }
+
+// BaselineAdmissionMarksV4 is issued only for the initial selected grant.
+func (p RoutedDHCPSelectedV3) BaselineAdmissionMarksV4() *routedmodel.AdmissionMarks {
+	return clone(p.baseline)
+}
 
 // MatchesPendingPolicyV4 must be paired with a physical observation made by
 // the helper. Only a selected, successful grouped Commit can arm this proof.
@@ -238,6 +245,16 @@ func (r *RoutedSelectionReaderV2) resolveDHCPLeaseAuthority(ctx context.Context,
 	if err != nil {
 		return RoutedDHCPSelectedV3{}, ErrRecovery
 	}
+	var baseline *routedmodel.AdmissionMarks
+	if acceptContinuation && header == nil && d.Phase == "applied" && st.RoutedBootMarks != nil {
+		verified, e := loadRoutedBootMarkReservationV1(st.RoutedBootMarks, st.Lineage, v.store.readObject)
+		if e != nil || verified.Work != d.Work || verified.Scope != w.Snapshot.Identity ||
+			verified.Operation != retainedDHCPBaselineMarksV4 || verified.Before != verified.Target ||
+			!sameRoutedAdmissionMarksV1(verified.Applied, verified.Restored) {
+			return out, ErrRecovery
+		}
+		baseline = &verified.Applied
+	}
 	if err = r.revalidate(ctx, v); err != nil {
 		return RoutedDHCPSelectedV3{}, err
 	}
@@ -252,5 +269,5 @@ func (r *RoutedSelectionReaderV2) resolveDHCPLeaseAuthority(ctx context.Context,
 		running = st.Configuration.Running.Hash
 	}
 	return RoutedDHCPSelectedV3{work: w, ref: ref, phase: d.Phase, running: running,
-		pending: header != nil && st.Configuration.Pending != nil, confirmation: confirmation}, nil
+		pending: header != nil && st.Configuration.Pending != nil, confirmation: confirmation, baseline: baseline}, nil
 }

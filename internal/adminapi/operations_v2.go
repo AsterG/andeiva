@@ -19,6 +19,31 @@ const operationsV2Path = "/api/v2/config/operations"
 const namespacesV2Path = "/api/v2/config/operation-namespaces"
 const operationV2Limit = 1024 * 1024
 
+const ForwardingCutWarningV2 = "ANDEIVA_COMMIT_FORWARDING_CUT"
+
+func ForwardingCutMessageV2(locale string) string {
+	switch locale {
+	case "es":
+		return "En Alpha, aplicar o revertir estas reglas con WAN por DHCP pausa el reenvío. Puede ser necesario restablecer las conexiones afectadas por una regla modificada."
+	case "pt":
+		return "Na versão Alpha, aplicar ou reverter estas regras com WAN por DHCP pausa o encaminhamento. Conexões afetadas por uma regra alterada podem precisar ser restabelecidas."
+	default:
+		return "In Alpha, applying or reverting these rules with WAN DHCP pauses forwarding. Connections affected by a changed rule may need to reconnect."
+	}
+}
+
+func forwardingWarningLocaleV2(value string) string {
+	first, _, _ := strings.Cut(value, ",")
+	first, _, _ = strings.Cut(first, ";")
+	language, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(first)), "-")
+	switch language {
+	case "es", "pt":
+		return language
+	default:
+		return "en"
+	}
+}
+
 // NewOperationsV2 is the explicit runtime assembly. A single v2 coordinator
 // owns writes; no legacy backend is opened or consulted by this router.
 func NewOperationsV2(options Options, service *configpoc.ServiceV2) (http.Handler, error) {
@@ -206,6 +231,12 @@ func (h *handler) operationsV2(w http.ResponseWriter, r *http.Request, ctx conte
 		if e != nil {
 			h.operationErrorV2(w, e)
 			return
+		}
+		if result.ForwardingCut {
+			locale := forwardingWarningLocaleV2(r.Header.Get("Accept-Language"))
+			w.Header().Set("Andeiva-Commit-Warning", ForwardingCutWarningV2)
+			w.Header().Set("Andeiva-Commit-Warning-Language", locale)
+			w.Header().Set("Andeiva-Commit-Warning-Text", url.PathEscape(ForwardingCutMessageV2(locale)))
 		}
 		h.writeV2(w, 201, OperationResponseV2{SchemaVersion: 2, Operation: operationDTOv2(result.Operation), Current: currentDTOv2(result.Current)})
 	case path == operationsV2Path:

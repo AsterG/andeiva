@@ -3,7 +3,124 @@ package configpoc
 import (
 	"reflect"
 	"time"
+
+	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/routedmodel"
 )
+
+const retainedDHCPBaselineMarksV4 = "retained-wan-baseline"
+
+func (s *v2Store) reserveRetainedDHCPBaselineV4(identity networkexecutor.OwnedNamespaceIdentity) error {
+	cfg := s.state.Configuration.Firewall.Running.Config.Routed
+	if cfg == nil {
+		return ErrRecovery
+	}
+	rev, err := routedmodel.Canonical(*cfg)
+	if err != nil {
+		return err
+	}
+	_, _, _, err = s.reserveRoutedBootMarksLocked(identity, retainedDHCPBaselineMarksV4, nil, rev, rev)
+	return err
+}
+
+func (s *v2Store) retainedDHCPCommitAllowedV4(op v2Operation) bool {
+	cfg := s.state.Configuration
+	return s.retainDHCPV4 && op.Domain == "routed" && op.Request.Kind == OpCommit &&
+		s.state.RoutedDHCP != nil && s.state.RoutedDHCP.Phase == "applied" &&
+		cfg != nil && cfg.Intent == nil && cfg.Pending == nil && !cfg.RecoveryRequired &&
+		cfg.CandidateGroup != nil && cfg.CandidateGroup.Owner == op.Subject &&
+		cfg.Firewall.Candidate != nil && cfg.LocalServices.Candidate != nil &&
+		cfg.LocalServices.Candidate.Revision.Hash == cfg.LocalServices.Running.Hash &&
+		cfg.Firewall.Candidate.Revision.Hash != cfg.Firewall.Running.Hash &&
+		retainedDHCPRuleEditV4(cfg.Firewall.Running, cfg.Firewall.Candidate.Revision) &&
+		(s.state.RoutedDHCPConfiguration == nil || s.state.RoutedDHCPConfiguration.Transition == "")
+}
+
+func (s *v2Store) retainedDHCPConfirmAllowedV4(op v2Operation) bool {
+	cfg := s.state.Configuration
+	return s.retainDHCPV4 && op.Domain == "routed" && op.Request.Kind == OpConfirm && op.ClosingCredit != "" &&
+		s.state.RoutedDHCP != nil && s.state.RoutedDHCP.Phase == "applied" &&
+		cfg != nil && cfg.Intent == nil && cfg.Pending != nil && !cfg.RecoveryRequired &&
+		cfg.Pending.OriginCommit == op.Request.Origin && cfg.Pending.Owner == op.Subject &&
+		s.state.RoutedDHCPConfiguration != nil && s.state.RoutedDHCPConfiguration.Transition == ""
+}
+
+func (s *v2Store) currentRetainedDHCPMarksV4(before routedmodel.Revision) (*routedmodel.AdmissionMarks, error) {
+	if s.state.RoutedBootMarks == nil || s.state.RoutedActive == nil {
+		return nil, ErrRecovery
+	}
+	reservation, err := loadRoutedBootMarkReservationV1(s.state.RoutedBootMarks, s.state.Lineage, s.readObject)
+	if err != nil || reservation.Work != s.state.RoutedDHCP.Work {
+		return nil, ErrRecovery
+	}
+	active, err := loadRoutedWorkV2(s.state.RoutedActive.Work, s.state.Lineage, s.readObject)
+	if err != nil || active.Scope().Identity != reservation.Scope {
+		return nil, ErrRecovery
+	}
+	var marks *routedmodel.AdmissionMarks
+	switch {
+	case active.Transition().Operation == reservation.Operation && s.state.RoutedActive.Side == "target":
+		marks = &reservation.Applied
+	case active.Transition().Operation == reservation.Operation && s.state.RoutedActive.Side == "before":
+		marks = &reservation.Restored
+	case reservation.Before == reservation.Target && sameRoutedAdmissionMarksV1(reservation.Applied, reservation.Restored):
+		marks = &reservation.Applied
+	default:
+		marks = reservation.Prior
+	}
+	if marks == nil {
+		return nil, ErrRecovery
+	}
+	if _, err = marks.MarkIndex(before); err != nil {
+		return nil, ErrRecovery
+	}
+	return marks, nil
+}
+
+func (s *v2Store) reserveRetainedDHCPCommitV4(op v2Operation, before, target v2Configuration) error {
+	if !s.retainedDHCPCommitAllowedV4(op) || target.Pending == nil || target.Pending.OriginCommit != op.ID {
+		return ErrRecovery
+	}
+	start, err := routedmodel.Canonical(*before.Firewall.Running.Config.Routed)
+	if err != nil {
+		return err
+	}
+	end, err := routedmodel.Canonical(*target.Firewall.Running.Config.Routed)
+	if err != nil {
+		return err
+	}
+	prior, err := s.currentRetainedDHCPMarksV4(start)
+	if err != nil {
+		return err
+	}
+	work, err := loadRoutedDHCPWorkV3(s.state.RoutedDHCP.Work, s.state.Lineage, s.readObject)
+	if err != nil {
+		return err
+	}
+	_, _, _, err = s.reserveRoutedBootMarksLocked(work.Snapshot.Identity, op.ID, prior, start, end)
+	return err
+}
+
+func (s *v2Store) preflightRetainedDHCPCommitV4(subject, domain string, expected uint64, request v2Request) error {
+	if expected != s.state.Generation || !s.retainedDHCPCommitAllowedV4(v2Operation{Subject: subject, Domain: domain, Request: request}) {
+		return nil
+	}
+	cfg := s.state.Configuration
+	before, err := routedmodel.Canonical(*cfg.Firewall.Running.Config.Routed)
+	if err != nil {
+		return ErrRecovery
+	}
+	target, err := routedmodel.Canonical(*cfg.Firewall.Candidate.Revision.Config.Routed)
+	if err != nil {
+		return ErrRecovery
+	}
+	prior, err := s.currentRetainedDHCPMarksV4(before)
+	if err != nil {
+		return err
+	}
+	_, _, _, err = reserveRoutedMarkPairV1(prior.Boot, s.state.RoutedBootMarks.Issued, prior, before, target)
+	return err
+}
 
 func retainedDHCPRuleEditV4(before, target Revision) bool {
 	if before.Config.Routed == nil || target.Config.Routed == nil {
@@ -102,10 +219,44 @@ func (c *v2Coordinator) selectRetainedDHCPMetadataV4(op v2Operation, before, tar
 	return s.publish(next)
 }
 
+func (s *v2Store) selectRetainedDHCPCommitV4(next *v2State, op v2Operation) error {
+	in := next.Configuration.Intent
+	if in == nil || s.state.RoutedBootMarks == nil {
+		return ErrRecovery
+	}
+	ref := actualDHCPConfigurationSourceV4(s.selector.Current, s.selection, s.state)
+	group := &v4RoutedDHCPConfigurationGroup{Work: in.RoutedWork, Side: "target", MarkReservation: s.state.RoutedBootMarks.Reservation}
+	transition, err := s.object(v4RoutedDHCPConfiguration{
+		Version: 4, Lineage: ref.Lineage, Kind: "grouped", Impact: "preserve",
+		SourceWork: ref.WorkHash, SourceSelection: ref, Operation: op.ID, Subject: op.Subject,
+		Namespace: op.Namespace, Fingerprint: op.Fingerprint, Expected: op.Expected, Generation: in.TargetGeneration,
+		Before: in.Previous, Target: in.Target, Group: group,
+	})
+	if err != nil {
+		return err
+	}
+	if next.RoutedDHCPConfiguration == nil {
+		next.RoutedDHCPConfiguration = &v4RoutedDHCPConfigurationState{Version: 4}
+	}
+	next.RoutedDHCPConfiguration.Transition = transition
+	addFeatureV2(next, v4RoutedDHCPConfigurationFeature)
+	return nil
+}
+
 func (s *v2Store) finishRetainedDHCPConfigurationV4(next *v2State, op v2Operation) error {
 	h := next.RoutedDHCPConfiguration
-	if h == nil || h.Transition == "" {
+	if h == nil {
 		return nil
+	}
+	if h.Transition == "" {
+		if op.Request.Kind != OpConfirm || op.Outcome == nil || op.Outcome.Code != "applied" {
+			return ErrRecovery
+		}
+		receipt, err := s.object(op)
+		if err != nil {
+			return err
+		}
+		return s.finishRetainedDHCPClosingV4(next, receipt)
 	}
 	var transition v4RoutedDHCPConfiguration
 	if s.readObject(h.Transition, &transition) != nil || op.ID != transition.Operation {
@@ -123,5 +274,24 @@ func (s *v2Store) finishRetainedDHCPConfigurationV4(next *v2State, op v2Operatio
 	if err == nil {
 		h.Transition = ""
 	}
+	return err
+}
+
+func (s *v2Store) finishRetainedDHCPClosingV4(next *v2State, result string) error {
+	h := next.RoutedDHCPConfiguration
+	if h == nil {
+		return nil
+	}
+	intent := s.state.Configuration.Intent
+	var current v4RoutedDHCPConfigurationContinuation
+	if h.Transition != "" || intent == nil || s.readObject(h.Continuation, &current) != nil || current.Closing != nil {
+		return ErrRecovery
+	}
+	cfg, err := s.object(*next.Configuration)
+	if err != nil {
+		return err
+	}
+	current.Closing = &v4RoutedDHCPClosing{Intent: *intent, Result: result, Final: cfg}
+	h.Continuation, err = s.object(current)
 	return err
 }

@@ -224,7 +224,13 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 		operation, err = client.OperationV2(ctx, options["--operation-id"])
 		result = operation
 	} else if command == "execute" {
-		operation, err = client.ExecuteV2(ctx, options["--operation-id"])
+		operation, err = client.OperationV2(ctx, options["--operation-id"])
+		if err == nil {
+			if operation.Operation.State == "accepted" {
+				printCommitForwardingWarning(stderr, locale, operation)
+			}
+			operation, err = client.ExecuteV2(ctx, operation.Operation.ID)
+		}
 		result = operation
 	} else {
 		var current adminapi.CurrentV2
@@ -240,6 +246,7 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 				if err == nil {
 					// Emit the durable ID before execution so an interrupted caller can query it.
 					fmt.Fprintln(stderr, "ANDEIVA_OPERATION_ACCEPTED:", operation.Operation.ID)
+					printCommitForwardingWarning(stderr, locale, operation)
 					operation, err = client.ExecuteV2(ctx, operation.Operation.ID)
 					result = operation
 				}
@@ -271,4 +278,24 @@ func runConfigurationV2(args []string, locale string, stdin io.Reader, stdout, s
 		return 3
 	}
 	return 0
+}
+
+func printCommitForwardingWarning(w io.Writer, locale string, operation adminapi.OperationResponseV2) {
+	if operation.Operation.Kind != configpoc.OpCommit || operation.Current.Domain != "routed" {
+		return
+	}
+	snapshot := operation.Current.Snapshot
+	if snapshot.Running.Config.Routed == nil || snapshot.Candidate == nil || snapshot.Candidate.Revision.Config.Routed == nil {
+		return
+	}
+	running, candidate := snapshot.Running.Config.Routed.Network, snapshot.Candidate.Revision.Config.Routed.Network
+	if running.Hash != candidate.Hash {
+		return
+	}
+	for _, iface := range running.Config.Interfaces {
+		if iface.Role == networkplan.WAN && iface.IPv4.Mode == "dhcp" {
+			fmt.Fprintln(w, adminapi.ForwardingCutMessageV2(locale))
+			return
+		}
+	}
 }

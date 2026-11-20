@@ -53,10 +53,19 @@ type v4RoutedDHCPConfiguration struct {
 // Finality is separate from the transition selected before Intent/effects.
 // The transition never points back to this receipt or the final operation.
 type v4RoutedDHCPConfigurationContinuation struct {
-	Version       int    `json:"version"`
-	Transition    string `json:"transition"`
-	Operation     string `json:"operation"`
-	Configuration string `json:"configuration"`
+	Version       int                  `json:"version"`
+	Transition    string               `json:"transition"`
+	Operation     string               `json:"operation"`
+	Configuration string               `json:"configuration"`
+	Closing       *v4RoutedDHCPClosing `json:"closing,omitempty"`
+}
+
+// Closing retains the immutable original Commit and adds its verified
+// terminal result. It never grants a new lease or re-arms the deadline.
+type v4RoutedDHCPClosing struct {
+	Intent v2CoordinatorIntent `json:"intent"`
+	Result string              `json:"result"`
+	Final  string              `json:"final"`
 }
 
 func validRoutedDHCPConfigurationShapeV4(x v4RoutedDHCPConfiguration) bool {

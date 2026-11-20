@@ -64,6 +64,27 @@ func (w *RoutedDHCPSelectedStoreV3) RetainedWorkV4(ctx context.Context) (string,
 	return d.Work, RoutedDHCPGrantV3{Epoch: work.Epoch, Snapshot: work.Snapshot}, nil
 }
 
+// WithStableWorkV4 holds the existing writer barrier during a helper proof.
+// The callback uses the independent reader and must not call the store writer.
+func (w *RoutedDHCPSelectedStoreV3) WithStableWorkV4(ctx context.Context, work string, verify func() error) error {
+	if w == nil || ctx == nil || ctx.Err() != nil || verify == nil {
+		return ErrRecovery
+	}
+	c := w.c
+	c.store.mu.Lock()
+	defer c.store.mu.Unlock()
+	st := c.store.state
+	if ctx.Err() != nil || c.closed || c.store.blocked || st.Configuration == nil ||
+		st.Configuration.Intent != nil || st.Configuration.RecoveryRequired ||
+		st.RoutedDHCP == nil || st.RoutedDHCP.Phase != "applied" || st.RoutedDHCP.Work != work {
+		return ErrRecovery
+	}
+	if pending := st.Configuration.Pending; pending != nil && !c.now().Before(pending.Deadline) {
+		return ErrRecovery
+	}
+	return verify()
+}
+
 func (w *RoutedDHCPSelectedStoreV3) ready(ctx context.Context) error {
 	if ctx == nil || ctx.Err() != nil || w.c.closed || w.c.store.blocked || w.c.store.readOnly {
 		return ErrRecovery
@@ -256,6 +277,9 @@ func (w *RoutedDHCPSelectedStoreV3) transitionLocked(ctx context.Context, hash s
 	}
 	if withdrawn {
 		return s.reserves.archiveTerminal(s, v2ActiveReserve{Work: reserveWorkV2(d.Bundle), Bundle: clone(d.Bundle), CanonicalHeld: true})
+	}
+	if s.retainDHCPV4 {
+		return s.reserveRetainedDHCPBaselineV4(w.identity)
 	}
 	return nil
 }

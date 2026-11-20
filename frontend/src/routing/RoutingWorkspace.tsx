@@ -58,6 +58,11 @@ export function RoutingWorkspace({ locale, session, page, product, onProductRefr
   const candidateStale = !!current?.snapshot.candidate && (current.snapshot.candidate.base !== current.snapshot.running.hash || current.routed.candidate_group?.base !== current.global.running_revision);
   const writable = admin && !!current && !busy && !current.snapshot.recovery_required && !uncertainID && !stale;
   const editable = writable && !current?.snapshot.pending;
+  const runningConfig = current?.snapshot.running.config;
+  const candidateConfig = current?.snapshot.candidate?.revision.config;
+  const forwardingCut = runningConfig?.schema_version === 6 && candidateConfig?.schema_version === 6
+    && runningConfig.routed.network.hash === candidateConfig.routed.network.hash
+    && runningConfig.routed.network.config.interfaces.some((iface) => iface.role === 'wan' && iface.ipv4.mode === 'dhcp');
   const verified = !!current && effective?.consistent === true && effective.generation === current.global.generation && effective.running_revision === current.global.running_revision && effective.observed_revision === current.global.running_revision;
   function accept(next: ConfigurationCurrent, reset: boolean) {
     setCurrent(next);
@@ -230,6 +235,11 @@ export function RoutingWorkspace({ locale, session, page, product, onProductRefr
       if (!editable || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(id) || !source || !selectedPath || draft.routed.nat.some((rule) => rule.id === id)) { setError('ANDEIVA_ROUTED_INVALID_POLICY'); return; }
       edit({ ...draft, routed: { ...draft.routed, nat: [...draft.routed.nat, { id, path: selectedPath, source }] } });
     }}><Field id={`${prefix}-nat-name`} label={copy.name}><TextInput id={`${prefix}-nat-name`} name="name" required maxLength={64} /></Field><Field id={`${prefix}-nat-source`} label={copy.sourceNetwork}><TextInput id={`${prefix}-nat-source`} name="source" required maxLength={18} /></Field>{([{ key: 'from', label: copy.from }, { key: 'to', label: copy.to }] as const).map((field) => <Field key={field.key} id={`${prefix}-nat-${field.key}`} label={field.label}><select id={`${prefix}-nat-${field.key}`} className="ds-select" name={field.key}>{paths.map((iface) => <option key={iface.id} value={iface.id}>{iface.binding.name} · {iface.zone}</option>)}</select></Field>)}<Button type="submit" disabled={!editable}>{copy.localDraft}</Button></form></Dialog>}
-    <Dialog open={!!review} title={copy.review} closeLabel={copy.cancel} onClose={() => setReview(null)}><p>{copy.reviewHint}</p><p>{review && copy[review.operation]}</p>{review && ['replace_candidate', 'discard_candidate'].includes(review.operation) && <p>{copy.ownedCandidateHint}</p>}<Button disabled={!writable} onClick={() => { if (review) void transact(review); }}>{copy.proceed}</Button></Dialog>
+    <Dialog open={!!review} title={copy.review} closeLabel={copy.cancel} onClose={() => setReview(null)}>
+      <p>{copy.reviewHint}</p><p>{review && copy[review.operation]}</p>
+      {review?.operation === 'commit' && forwardingCut && <p>{copy.forwardingCut}</p>}
+      {review && ['replace_candidate', 'discard_candidate'].includes(review.operation) && <p>{copy.ownedCandidateHint}</p>}
+      <Button disabled={!writable} onClick={() => { if (review) void transact(review); }}>{copy.proceed}</Button>
+    </Dialog>
   </div>;
 }

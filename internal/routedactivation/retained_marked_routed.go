@@ -33,6 +33,45 @@ func sameOptionalAdmissionMarks(a, b *routedmodel.AdmissionMarks) bool {
 	return equalAdmissionMarks(*a, *b)
 }
 
+// SelectBaselineAdmission expects the managed lease gate to remain closed
+// through the first DHCP Open. No established WAN connection is re-marked.
+func (e *Engine) SelectBaselineAdmission(ctx context.Context, running string, marks routedmodel.AdmissionMarks) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.fenced || !e.selected || ctx.Err() != nil {
+		return ErrState
+	}
+	owned, bundle, err := e.currentOwned(ctx)
+	if err != nil || bundle == nil || bundle.Composite.Hash != running || owned.NetworkState != Configured ||
+		bundle.Firewall.Config.Routed == nil {
+		return ErrState
+	}
+	if e.admission != nil {
+		if !equalAdmissionMarks(*e.admission, marks) {
+			return ErrState
+		}
+		return nil
+	}
+	policy, err := routedmodel.Canonical(*bundle.Firewall.Config.Routed)
+	if err != nil {
+		return ErrState
+	}
+	compiled, err := routednft.CompileMarkedPolicy(policy, marks)
+	if err != nil || e.kernel.Check(ctx, compiled.Batch) != nil {
+		return ErrState
+	}
+	if e.kernel.Apply(ctx, compiled.Batch) != nil {
+		e.fenced = true
+		return ErrState
+	}
+	e.admission = &marks
+	if !e.matches(ctx, owned, e.prepared.Dependencies) {
+		e.fenced = true
+		return ErrState
+	}
+	return nil
+}
+
 func (e *Engine) resolveMarkedRoutedTransition(ctx context.Context, transition configpoc.RoutedTransitionV1, deadline time.Time, prepared PreparationV1) (*markedRoutedTransition, error) {
 	if e.options.ResolveAdmissionMarks == nil {
 		return nil, nil
@@ -113,10 +152,10 @@ func (e *Engine) applyMarkedRoutedLocked(ctx context.Context, restore bool) erro
 		}
 		return ErrState
 	}
-	if e.kernel.Apply(ctx, hold) != nil || !e.markedForwardHeld(ctx, before, previous) {
+	if e.applyRuleHoldBatch(ctx, "rule_hold_close", hold) != nil || !e.markedForwardHeld(ctx, before, previous) {
 		return e.closeMarkedRoutedLocked(m)
 	}
-	if e.kernel.Apply(ctx, batch) != nil || !e.markedForwardHeld(ctx, target, &assigned) {
+	if e.applyRuleHoldBatch(ctx, "rule_hold_replace", batch) != nil || !e.markedForwardHeld(ctx, target, &assigned) {
 		return e.closeMarkedRoutedLocked(m)
 	}
 	// Keep the independent DHCP gate intact. If its owner is renewing or
@@ -126,7 +165,7 @@ func (e *Engine) applyMarkedRoutedLocked(ctx context.Context, restore bool) erro
 		return e.closeMarkedRoutedLocked(m)
 	}
 	release := routednft.ForwardHold(false)
-	if e.kernel.Check(ctx, release) != nil || e.kernel.Apply(ctx, release) != nil {
+	if e.kernel.Check(ctx, release) != nil || e.applyRuleHoldBatch(ctx, "rule_hold_release", release) != nil {
 		return e.closeMarkedRoutedLocked(m)
 	}
 	e.admission = &assigned
@@ -135,6 +174,13 @@ func (e *Engine) applyMarkedRoutedLocked(ctx context.Context, restore bool) erro
 	}
 	m.applied = !restore
 	return nil
+}
+
+func (e *Engine) applyRuleHoldBatch(ctx context.Context, phase string, batch []byte) error {
+	if done := networkexecutor.StartNativeLeaseSpanV4(phase); done != nil {
+		defer done()
+	}
+	return e.kernel.Apply(ctx, batch)
 }
 
 func (e *Engine) markedForwardHeld(ctx context.Context, revision routedmodel.Revision, marks *routedmodel.AdmissionMarks) bool {

@@ -15,7 +15,11 @@ func routedDHCPConfigurationViewV4Read(h *v4RoutedDHCPConfigurationState, st v2S
 	}
 	if h.Continuation != "" {
 		c, err := routedDHCPConfigurationContinuationV4Read(h.Continuation, st, load)
-		if err != nil || !validRoutedDHCPOriginalScopeV4(st, c.sourceWork) || st.Generation != c.transition.Generation {
+		generation := c.transition.Generation
+		if c.closing != nil {
+			generation = c.closing.Intent.TargetGeneration
+		}
+		if err != nil || !validRoutedDHCPOriginalScopeV4(st, c.sourceWork) || st.Generation != generation {
 			return bad()
 		}
 		out.current = &c
@@ -45,7 +49,19 @@ func routedDHCPConfigurationViewV4Read(h *v4RoutedDHCPConfigurationState, st v2S
 		}
 		out.pending = &c
 	} else if out.current == nil || !reflect.DeepEqual(*st.Configuration, out.current.target) {
-		return bad()
+		if out.current == nil || !retainedDHCPClosingPendingV4(*out.current, *st.Configuration, load) {
+			return bad()
+		}
+		if in := st.Configuration.Intent; !in.Recovery {
+			op, err := lookup(in.Subject, in.Operation)
+			pending := out.current.target.Pending
+			if err != nil || op.State != "pending" && op.State != "uncertain" ||
+				op.Request.Kind != OpConfirm || op.Request.Origin != pending.OriginCommit || op.Request.Target != pending.Target ||
+				op.Expected != st.Generation || op.ClosingCredit == "" || op.Reserve == nil || op.Reserve.PlanIntent == nil ||
+				!reflect.DeepEqual(*op.Reserve.PlanIntent, *in) {
+				return bad()
+			}
+		}
 	}
 	return out, nil
 }
@@ -86,6 +102,15 @@ func preservesRoutedDHCPConfigurationReadV4(previous v2State, previousHeader *v4
 		return false
 	}
 	if previousHeader == nil || previousHeader.Transition == "" {
+		if previousHeader != nil && nextHeader.Transition == "" && v.current != nil && v.current.closing != nil {
+			var prior, closed v4RoutedDHCPConfigurationContinuation
+			return previous.Configuration != nil && previous.Configuration.Intent != nil &&
+				load(previousHeader.Continuation, &prior) == nil && prior.Closing == nil &&
+				load(nextHeader.Continuation, &closed) == nil && closed.Closing != nil &&
+				*previous.Configuration.Intent == closed.Closing.Intent &&
+				previous.Generation != ^uint64(0) && next.Generation == previous.Generation+1 &&
+				prior.Transition == closed.Transition && prior.Operation == closed.Operation && prior.Configuration == closed.Configuration
+		}
 		if !legacy || nextHeader.Transition == "" || v.pending == nil {
 			return false
 		}

@@ -133,6 +133,7 @@ func (m *v2ReserveManager) prepareAdmission(s *v2Store, st *v2State, op *v2Opera
 	}
 	allowDHCP := s.retainedDHCPMetadataAllowedV4(*op) &&
 		(s.state.RoutedDHCPConfiguration == nil || s.state.RoutedDHCPConfiguration.Transition == "")
+	allowDHCP = allowDHCP || s.retainedDHCPCommitAllowedV4(*op) || s.retainedDHCPConfirmAllowedV4(*op)
 	if err := s.reserveMaintenanceWithDHCPV4(op.Request.Origin, allowDHCP); err != nil {
 		return err
 	}

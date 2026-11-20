@@ -458,6 +458,9 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 		s.blocked = true
 		return err
 	}
+	if err = s.finishRetainedDHCPClosingV4(&st, hash); err != nil {
+		return err
+	}
 	if err = s.publish(st); err != nil {
 		return err
 	}
