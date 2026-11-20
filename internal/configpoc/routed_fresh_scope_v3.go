@@ -84,6 +84,16 @@ func (r *RoutedSelectionReaderV2) ObserveFreshScopeV3(ctx context.Context, work 
 	return r.observeScopeV4(ctx, work, false, observe)
 }
 
+func inspectSelectedRoutedScopeIntent(in *v2CoordinatorIntent, reboot bool) bool {
+	if in == nil || in.Domain != "routed" || !validHash(in.RoutedWork) {
+		return false
+	}
+	if in.Kind == v2BootKind {
+		return true
+	}
+	return reboot && (in.Recovery || in.Kind == OpCommit || in.Kind == OpRollback || in.Kind == OpConfirm)
+}
+
 func (r *RoutedSelectionReaderV2) observeScopeV4(ctx context.Context, work string, reboot bool, observe func(RoutedFreshScopeSourceV3, RoutedPrepareViewV2) error) (out RoutedFreshScopeSourceV3, result error) {
 	if r == nil || r.options.Policy != SelectionFullHistoryV2 || work != "" && !validHash(work) || observe == nil {
 		return out, ErrRecovery
@@ -100,15 +110,15 @@ func (r *RoutedSelectionReaderV2) observeScopeV4(ctx context.Context, work strin
 		}
 	}()
 	s := v.store
+	cfg := s.state.Configuration
+	if cfg == nil {
+		return out, ErrRecovery
+	}
 	if work == "" {
-		cfg := s.state.Configuration
-		if cfg == nil {
-			return out, ErrRecovery
-		}
 		if d := s.state.RoutedDHCP; d != nil {
 			work = d.Work
-		} else if in := cfg.Intent; in != nil && in.Kind == v2BootKind && in.Domain == "routed" {
-			work = in.RoutedWork
+		} else if inspectSelectedRoutedScopeIntent(cfg.Intent, reboot) {
+			work = cfg.Intent.RoutedWork
 		} else if p := cfg.Pending; p != nil && p.Domain == "routed" {
 			op, e := s.lookupRetained(p.Owner, p.OriginCommit)
 			if e != nil || op.Reserve == nil || op.Reserve.PlanIntent == nil {
@@ -125,17 +135,24 @@ func (r *RoutedSelectionReaderV2) observeScopeV4(ctx context.Context, work strin
 	var old networkexecutor.OwnedNamespaceIdentity
 	if d := s.state.RoutedDHCP; d != nil && d.Work == work {
 		w, e := loadRoutedDHCPWorkV3(work, s.state.Lineage, s.readObject)
-		if e != nil || validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+		if e != nil {
+			return out, ErrRecovery
+		}
+		// The V4 retained-transition reader verifies the exact original DHCP
+		// work and reservation even when the current policy generation advanced.
+		if reboot {
+			e = validateRoutedDHCPConfigurationSelectionV4(s.state.RoutedDHCPConfiguration, s.state, s.readObject, s.lookupRetained, routedDHCPConfigurationHeaderV4)
+		} else {
+			e = validateRoutedDHCPSelectedV3(s.state, s.readObject)
+		}
+		if e != nil {
 			return out, ErrRecovery
 		}
 		old = w.Snapshot.Identity
 	} else {
 		selected := false
-		cfg := s.state.Configuration
-		if cfg == nil {
-			return out, ErrRecovery
-		}
-		if in := cfg.Intent; in != nil && in.Kind == v2BootKind && in.Domain == "routed" && in.RoutedWork == work {
+		fromIntent := inspectSelectedRoutedScopeIntent(cfg.Intent, reboot) && cfg.Intent.RoutedWork == work
+		if fromIntent {
 			selected = true
 		} else if p := cfg.Pending; p != nil && p.Domain == "routed" && cfg.Intent == nil {
 			op, e := s.lookupRetained(p.Owner, p.OriginCommit)
@@ -147,7 +164,7 @@ func (r *RoutedSelectionReaderV2) observeScopeV4(ctx context.Context, work strin
 			return out, ErrRecovery
 		}
 		p, e := loadRoutedWorkV2(work, s.state.Lineage, s.readObject)
-		if e != nil {
+		if e != nil || fromIntent && validateRoutedWorkIntentV2(cfg.Intent, p, s.readObject) != nil {
 			return out, ErrRecovery
 		}
 		old = p.Scope().Identity

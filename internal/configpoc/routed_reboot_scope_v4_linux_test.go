@@ -4,6 +4,7 @@ package configpoc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,71 @@ import (
 
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 )
+
+func TestRoutedRebootScopeV4ReadsInterruptedTransaction(t *testing.T) {
+	for _, interrupted := range []string{OpCommit, "timeout"} {
+		t.Run(interrupted, func(t *testing.T) {
+			ctx := context.Background()
+			c, old, principal, cfg := boundaryCoordinatorFixtureV2(t)
+			original := sharedBoundaryReaderV2(t, c, old)
+			if _, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpStage, Config: &cfg}); err != nil {
+				t.Fatal(err)
+			}
+			checkpoint := "after_intent"
+			if interrupted == "timeout" {
+				checkpoint = "after_recovery_intent"
+			}
+			c.options.Hook = func(point string) error {
+				if point == checkpoint {
+					return ErrInterrupted
+				}
+				return nil
+			}
+			seconds := uint64(90)
+			_, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+			if interrupted == "timeout" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = c.revertLocked(ctx, "timeout")
+			}
+			if !errors.Is(err, ErrInterrupted) {
+				t.Fatal("expected a selected interrupted transaction", err)
+			}
+			state := c.store.state.Configuration
+			work := state.Intent.RoutedWork
+			if !validHash(work) {
+				t.Fatal("interrupted operation does not have a selected work reference")
+			}
+			fresh := freshBoundaryAuthorityV2(old)
+			options := original.options
+			options.Identity = fresh.identity
+			r, err := NewRoutedSelectionReaderV2(original.area, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view, err := r.PrepareRebootScopeViewV4(ctx, old.identity)
+			if err != nil || view.Work != work || view.Target.Composite.Hash != state.Startup.Hash {
+				t.Fatal("reboot reader did not identify the exact work and saved Startup", err)
+			}
+			call := false
+			if _, err = r.ObserveRebootScopeV4(ctx, strings.Repeat("d", 64), func(RoutedFreshScopeSourceV3, RoutedPrepareViewV2) error { call = true; return nil }); err == nil || call {
+				t.Fatal("unselected work reached the proof callback", err)
+			}
+			options.Identity.BootID, options.Identity.Host = old.identity.BootID, old.identity.Host
+			hot, err := NewRoutedSelectionReaderV2(original.area, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = hot.PrepareRebootScopeViewV4(ctx, old.identity); err == nil {
+				t.Fatal("same-boot restart got a reboot view")
+			}
+			if _, err = hot.PrepareServiceRestartViewV3(ctx, old.identity); err == nil {
+				t.Fatal("service restart accepted a durable interrupted transaction")
+			}
+		})
+	}
+}
 
 // Physical authority is explicitly doubled. Selected files, G1/R2, retained
 // work, archive/CAS, and coordinator open are real; this is not native reboot.
