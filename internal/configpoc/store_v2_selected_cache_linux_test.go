@@ -7,6 +7,8 @@ import (
 	"os"
 	"reflect"
 	"testing"
+
+	"github.com/AsterG/andeiva/internal/routedmodel"
 )
 
 func selectedCacheFixtureV2(t *testing.T) (*v2ReachabilityReader, *v2Coordinator, string) {
@@ -240,8 +242,21 @@ func TestSelectedCacheV2WorkClosureAndLineage(t *testing.T) {
 	}
 	// Keep the complete represented-payload accounting in sync with private
 	// fields; adding a field requires an explicit accounting review.
-	if reflect.TypeFor[RoutedSelectedPlanV1]().NumField() != 7 {
+	if reflect.TypeFor[RoutedSelectedPlanV1]().NumField() != 8 {
 		t.Fatal("plan representation changed; review memo payload accounting")
+	}
+	baseBytes, err := selectedRoutedPlanPayloadBytesV2(plan)
+	if err != nil || baseBytes != r.cache.planBytes {
+		t.Fatalf("memo retained %d bytes, expected exactly %d: %v", r.cache.planBytes, baseBytes, err)
+	}
+	withMarks := plan
+	withMarks.bootMarks = &RoutedBootMarkPlanV1{
+		Applied:  routedmodel.AdmissionMarks{Bindings: []routedmodel.AdmissionMark{{Rule: "target-rule", Mark: 0xae000001}}},
+		Restored: routedmodel.AdmissionMarks{Bindings: []routedmodel.AdmissionMark{{Rule: "restored-rule", Mark: 0xae000002}}},
+	}
+	markedBytes, err := selectedRoutedPlanPayloadBytesV2(withMarks)
+	if err != nil || markedBytes <= baseBytes {
+		t.Fatalf("boot marks were not charged: unmarked %d, marked %d, err %v", baseBytes, markedBytes, err)
 	}
 	if _, err = reader.ResolveCurrent(context.Background(), plan.Reference(), SelectionArmV2); err != nil {
 		t.Fatal(err)

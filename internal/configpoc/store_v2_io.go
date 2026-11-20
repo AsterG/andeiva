@@ -19,6 +19,7 @@ type v2Store struct {
 	objectReader        func(string, any) error
 	preparingShared     bool
 	dhcpServerSupported bool // Trusted routed authority capability; never wire input.
+	retainDHCPV4        bool // Trusted lifecycle profile; never persisted authority.
 	guardDeadlines      bool // Trusted opt-in assembly only; never persisted authority.
 	reserves            *v2ReserveManager
 	mu                  sync.Mutex

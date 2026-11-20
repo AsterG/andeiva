@@ -74,6 +74,16 @@ func (k *kernelFixture) Apply(ctx context.Context, data []byte) error {
 					delete(k.objects, table)
 					continue
 				}
+				if verb == "delete" && kind == "chain" && body["name"] == routednft.ForwardHoldChain {
+					for i, candidate := range k.objects[table] {
+						chain, _ := candidate["chain"].(map[string]any)
+						if chain["name"] == routednft.ForwardHoldChain {
+							k.objects[table] = append(k.objects[table][:i], k.objects[table][i+1:]...)
+							break
+						}
+					}
+					continue
+				}
 				if verb != "add" {
 					return ErrState
 				}

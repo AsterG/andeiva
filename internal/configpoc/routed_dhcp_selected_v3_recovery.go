@@ -19,7 +19,7 @@ func (c *v2Coordinator) retainRoutedDHCPAtOpenV4() error {
 	if d == nil || d.Phase != "applied" || !c.options.integrityAttached || c.options.BootID == nil ||
 		!inspectionQuiescentV1(s.state) || cfg.LastCompletedBoot == "" || s.state.RoutedBootBoundary != nil ||
 		s.state.SystemBundle != nil || len(s.state.ActiveReserves) != 0 || s.reserves == nil ||
-		validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+		validateRoutedDHCPConfigurationSelectionV4(s.state.RoutedDHCPConfiguration, s.state, s.readObject, s.lookupRetained, routedDHCPConfigurationHeaderV4) != nil {
 		return ErrRecovery
 	}
 	var boot v2RecoveryRecord

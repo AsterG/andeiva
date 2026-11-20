@@ -8,7 +8,6 @@ import (
 
 	"github.com/AsterG/andeiva/internal/configpoc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
-	"github.com/AsterG/andeiva/internal/routedflow"
 	"github.com/AsterG/andeiva/internal/routedmodel"
 	"github.com/AsterG/andeiva/internal/routednft"
 )
@@ -16,13 +15,11 @@ import (
 var errMarkedClosureUnverified = errors.New("marked forwarding closure could not be verified")
 
 type markedRoutedTransition struct {
-	plan                          configpoc.RoutedBootMarkPlanV1
-	scope                         networkexecutor.OwnedNamespaceIdentity
-	before, target                routedmodel.Revision
-	forward, undo                 routednft.Artifact
-	closeForForward, closeForUndo bool
-	applied                       bool
-	applyCleanup, undoCleanup     *configpoc.RoutedConntrackCleanupV1
+	plan           configpoc.RoutedBootMarkPlanV1
+	scope          networkexecutor.OwnedNamespaceIdentity
+	before, target routedmodel.Revision
+	forward, undo  routednft.Artifact
+	applied        bool
 }
 
 func equalAdmissionMarks(a, b routedmodel.AdmissionMarks) bool {
@@ -67,24 +64,23 @@ func (e *Engine) resolveMarkedRoutedTransition(ctx context.Context, transition c
 		!sameArtifact(prior.Policy.DHCPServer, next.Policy.DHCPServer) {
 		return nil, ErrState
 	}
-	assigned, closeForForward, err := routedmodel.ReserveAdmissionMarks(scope.BootID, marks.BaseIssued, marks.Prior, prior, next)
+	assigned, _, err := routedmodel.ReserveAdmissionMarks(scope.BootID, marks.BaseIssued, marks.Prior, prior, next)
 	if err != nil || !equalAdmissionMarks(assigned, marks.Applied) {
 		return nil, ErrState
 	}
-	restored, closeForUndo, err := routedmodel.ReserveAdmissionMarks(scope.BootID, assigned.Issued, &assigned, next, prior)
+	restored, _, err := routedmodel.ReserveAdmissionMarks(scope.BootID, assigned.Issued, &assigned, next, prior)
 	if err != nil || !equalAdmissionMarks(restored, marks.Restored) {
 		return nil, ErrState
 	}
-	forward, err := routednft.CompileMarkedPolicy(next, assigned)
+	forward, err := routednft.CompileHeldMarkedPolicy(next, assigned)
 	if err != nil {
 		return nil, ErrState
 	}
-	undo, err := routednft.CompileMarkedPolicy(prior, restored)
+	undo, err := routednft.CompileHeldMarkedPolicy(prior, restored)
 	if err != nil {
 		return nil, ErrState
 	}
-	return &markedRoutedTransition{plan: *marks, scope: scope, before: prior, target: next, forward: forward, undo: undo,
-		closeForForward: marks.Prior == nil || closeForForward, closeForUndo: closeForUndo}, nil
+	return &markedRoutedTransition{plan: *marks, scope: scope, before: prior, target: next, forward: forward, undo: undo}, nil
 }
 
 func (e *Engine) applyMarkedRoutedLocked(ctx context.Context, restore bool) error {
@@ -98,14 +94,10 @@ func (e *Engine) applyMarkedRoutedLocked(ctx context.Context, restore bool) erro
 	before, target := m.before, m.target
 	previous, assigned := m.plan.Prior, m.plan.Applied
 	batch, origin, destination := m.forward.Batch, e.prepared.Before, e.prepared.Target
-	watermark := m.plan.BaseIssued
-	needsClosure := m.closeForForward
 	if restore {
 		before, target = target, before
 		previous, assigned = &m.plan.Applied, m.plan.Restored
 		batch, origin, destination = m.undo.Batch, destination, origin
-		watermark = previous.Issued
-		needsClosure = m.closeForUndo
 	}
 	if !sameOptionalAdmissionMarks(e.admission, previous) ||
 		!e.matches(ctx, origin, e.prepared.Dependencies) {
@@ -114,51 +106,44 @@ func (e *Engine) applyMarkedRoutedLocked(ctx context.Context, restore bool) erro
 		}
 		return ErrState
 	}
-	var retirement *routedflow.Retirement
-	var err error
-	if previous != nil {
-		retirement, err = routedflow.NewRetirement(e.plan.Operation, m.scope.Namespace, m.scope.Host, before, target, *previous, assigned, watermark)
-	}
-	if err != nil || e.kernel.Check(ctx, batch) != nil || ctx.Err() != nil {
+	hold := routednft.ForwardHold(true)
+	if e.kernel.Check(ctx, hold) != nil || e.kernel.Check(ctx, batch) != nil || ctx.Err() != nil {
 		if restore {
 			return e.closeMarkedRoutedLocked(m)
 		}
 		return ErrState
 	}
-	if needsClosure && e.denyMarkedRoutedLocked(ctx, m) != nil {
+	if e.kernel.Apply(ctx, hold) != nil || !e.markedForwardHeld(ctx, before, previous) {
 		return e.closeMarkedRoutedLocked(m)
 	}
-	if e.kernel.Apply(ctx, batch) != nil {
+	if e.kernel.Apply(ctx, batch) != nil || !e.markedForwardHeld(ctx, target, &assigned) {
+		return e.closeMarkedRoutedLocked(m)
+	}
+	// Keep the independent DHCP gate intact. If its owner is renewing or
+	// expires during this transaction it continues to deny forwarding after
+	// the configuration barrier is removed.
+	if e.network.Verify(ctx) != nil {
+		return e.closeMarkedRoutedLocked(m)
+	}
+	release := routednft.ForwardHold(false)
+	if e.kernel.Check(ctx, release) != nil || e.kernel.Apply(ctx, release) != nil {
 		return e.closeMarkedRoutedLocked(m)
 	}
 	e.admission = &assigned
-	// Deletion assumes that the new policy already rejects the retired marks.
-	// Confirm that prerequisite before touching any tracked connection.
-	loaded, exists, err := e.kernel.Observe(ctx, RoutedTable)
-	if err != nil || !exists {
-		return e.closeMarkedRoutedLocked(m)
-	}
-	if _, err = routednft.VerifyRetainedWANObservation(loaded, target, assigned); err != nil {
-		return e.closeMarkedRoutedLocked(m)
-	}
-	summary := &configpoc.RoutedConntrackCleanupV1{Operation: e.plan.Operation, Partial: true}
-	if retirement != nil {
-		result, err := e.retireMarked(retirement, ctx)
-		if err != nil || result.Operation != e.plan.Operation || result.Retired < 0 || result.Retired > routedflow.MaxRetirements {
-			return e.closeMarkedRoutedLocked(m)
-		}
-		summary.Retired, summary.Partial = uint16(result.Retired), result.Limited
-	}
 	if !e.matches(ctx, destination, e.prepared.Dependencies) {
 		return e.closeMarkedRoutedLocked(m)
 	}
 	m.applied = !restore
-	if restore {
-		m.undoCleanup = summary
-	} else {
-		m.applyCleanup = summary
-	}
 	return nil
+}
+
+func (e *Engine) markedForwardHeld(ctx context.Context, revision routedmodel.Revision, marks *routedmodel.AdmissionMarks) bool {
+	raw, present, err := e.kernel.Observe(ctx, RoutedTable)
+	if err != nil || !present {
+		return false
+	}
+	_, err = routednft.VerifyHeldObservation(raw, revision, marks)
+	return err == nil && ctx.Err() == nil
 }
 
 // The closure is a separate safety effect for an uncertain kernel mutation.

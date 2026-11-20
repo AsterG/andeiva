@@ -131,7 +131,9 @@ func (m *v2ReserveManager) prepareAdmission(s *v2Store, st *v2State, op *v2Opera
 	if m == nil || m.validateProfiles() != nil || op == nil || op.Reserve != nil || len(st.ActiveReserves) >= 16 {
 		return errV2Unavailable
 	}
-	if err := s.reserveMaintenanceReadyV2(op.Request.Origin); err != nil {
+	allowDHCP := s.retainedDHCPMetadataAllowedV4(*op) &&
+		(s.state.RoutedDHCPConfiguration == nil || s.state.RoutedDHCPConfiguration.Transition == "")
+	if err := s.reserveMaintenanceWithDHCPV4(op.Request.Origin, allowDHCP); err != nil {
 		return err
 	}
 	if !reserveMetadataStateFitsV2(*st) {
@@ -218,7 +220,11 @@ func reserveAdmissionScopeV2(s *v2Store, st v2State, op v2Operation, owner strin
 }
 
 func (s *v2Store) reserveMaintenanceReadyV2(exceptOrigin string) error {
-	if s.state.RoutedDHCP != nil {
+	return s.reserveMaintenanceWithDHCPV4(exceptOrigin, false)
+}
+
+func (s *v2Store) reserveMaintenanceWithDHCPV4(exceptOrigin string, allowDHCP bool) error {
+	if s.state.RoutedDHCP != nil && !allowDHCP {
 		return ErrRecovery
 	}
 	if s.state.RoutedBootBoundary != nil {

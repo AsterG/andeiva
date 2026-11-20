@@ -23,7 +23,7 @@ type Observation struct {
 // VerifyObservation compares every object, expression and order against a trusted
 // complete revision. Only kernel handles, metadata and counter values may vary.
 func VerifyObservation(data []byte, expected Revision) (Observation, error) {
-	return verifyObservation(data, expected, nil)
+	return verifyObservation(data, expected, nil, false)
 }
 
 // VerifyRetainedWANObservation requires the exact retained-WAN compiler output.
@@ -33,10 +33,24 @@ func VerifyRetainedWANObservation(data []byte, expected Revision, assigned route
 	if err != nil {
 		return Observation{}, ErrObservation
 	}
-	return verifyObservation(data, expected, marks)
+	return verifyObservation(data, expected, marks, false)
 }
 
-func verifyObservation(data []byte, expected Revision, marks map[string]uint32) (Observation, error) {
+// VerifyHeldObservation checks both the policy and the forwarding barrier.
+// It accepts a nil assignment only for an authenticated legacy source.
+func VerifyHeldObservation(data []byte, expected Revision, assigned *routedmodel.AdmissionMarks) (Observation, error) {
+	var marks map[string]uint32
+	if assigned != nil {
+		var err error
+		marks, err = assigned.MarkIndex(expected)
+		if err != nil {
+			return Observation{}, ErrObservation
+		}
+	}
+	return verifyObservation(data, expected, marks, true)
+}
+
+func verifyObservation(data []byte, expected Revision, marks map[string]uint32, hold bool) (Observation, error) {
 	r, e := Canonical(expected.Policy)
 	if e != nil || r.Hash != expected.Hash || len(data) == 0 || len(data) > MaxObservation || !nftengine.UniqueJSONFields(data) {
 		return Observation{}, ErrObservation
@@ -51,11 +65,16 @@ func verifyObservation(data []byte, expected Revision, marks map[string]uint32) 
 		return Observation{}, ErrObservation
 	}
 	wanted := compiledObjects(r, marks)
-	if len(envelope.Objects) > len(wanted)+1 {
+	limit := len(wanted) + 1
+	if hold {
+		limit++
+	}
+	if len(envelope.Objects) > limit {
 		return Observation{}, ErrObservation
 	}
 	objects := []object{}
 	counters := []Counter{}
+	held := false
 	for i, entry := range envelope.Objects {
 		if len(entry) != 1 {
 			return Observation{}, ErrObservation
@@ -79,6 +98,13 @@ func verifyObservation(data []byte, expected Revision, marks map[string]uint32) 
 					return Observation{}, ErrObservation
 				}
 				delete(body, "handle")
+			}
+			if key == "chain" && body["name"] == ForwardHoldChain {
+				if !hold || held || !equal(body, forwardHoldChain()) {
+					return Observation{}, ErrObservation
+				}
+				held = true
+				continue
 			}
 			if key != "rule" {
 				continue
@@ -118,9 +144,11 @@ func verifyObservation(data []byte, expected Revision, marks map[string]uint32) 
 			}
 			counters = append(counters, count)
 		}
-		objects = append(objects, entry)
+		if body, ok := entry["chain"].(map[string]any); !ok || body["name"] != ForwardHoldChain {
+			objects = append(objects, entry)
+		}
 	}
-	if len(objects) != len(wanted) {
+	if held != hold || len(objects) != len(wanted) {
 		return Observation{}, ErrObservation
 	}
 	for i := range wanted {

@@ -112,6 +112,9 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 		s.blocked = true
 		return v2Operation{}, err
 	}
+	if err = s.finishRetainedDHCPConfigurationV4(&st, op); err != nil {
+		return v2Operation{}, err
+	}
 	if err = s.publish(st); err != nil {
 		return v2Operation{}, err
 	}

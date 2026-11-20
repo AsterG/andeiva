@@ -16,7 +16,6 @@ import (
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
 	"github.com/AsterG/andeiva/internal/nftguardian"
-	"github.com/AsterG/andeiva/internal/routedflow"
 	"github.com/AsterG/andeiva/internal/routedmodel"
 	"github.com/AsterG/andeiva/internal/routednft"
 )
@@ -106,7 +105,6 @@ type Engine struct {
 	legacyExhausted   bool
 	admission         *routedmodel.AdmissionMarks
 	marked            *markedRoutedTransition
-	retireMarked      func(*routedflow.Retirement, context.Context) (routedflow.RetirementResult, error)
 }
 
 var _ nftguardian.GroupEngine = (*Engine)(nil)
@@ -165,8 +163,7 @@ func New(kernel Kernel, network Network, listeners localengine.Listeners, option
 		return nil, ErrState
 	}
 	return &Engine{kernel: kernel, network: network, listeners: listeners, options: options,
-		initial:      [3]TableStateV1{legacy, {Presence: Absent}, local},
-		retireMarked: (*routedflow.Retirement).Retire}, nil
+		initial: [3]TableStateV1{legacy, {Presence: Absent}, local}}, nil
 }
 
 func tables(owned OwnedV1) [3]TableStateV1 {

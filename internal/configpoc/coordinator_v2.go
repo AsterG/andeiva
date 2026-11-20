@@ -75,6 +75,7 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.dhcpServerSupported = false
+	store.retainDHCPV4 = options.RetainDHCPV4
 	if support, ok := options.Routed.(RoutedDHCPServerSupportV1); ok {
 		store.dhcpServerSupported = support.SupportsDHCPServerV1()
 	}
@@ -426,8 +427,9 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	if op.State != "accepted" {
 		return result(op), nil
 	}
+	retainedMetadata := s.retainedDHCPMetadataAllowedV4(op) && s.retainedDHCPMetadataRetryV4(op)
 	if s.reserves != nil && op.ClosingCredit == "" {
-		if err = s.reserveMaintenanceReadyV2(""); err != nil {
+		if err = s.reserveMaintenanceWithDHCPV4("", retainedMetadata); err != nil {
 			return result(op), err
 		}
 	}
@@ -533,7 +535,11 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 		return result(op), err
 	}
 	defer closingRestore()
-	target, changed, err := c.targetLocked(op, state, now)
+	projectedAt := now
+	if retainedMetadata {
+		projectedAt = op.Accepted
+	}
+	target, changed, err := c.targetLocked(op, state, projectedAt)
 	if err != nil {
 		return result(op), err
 	}
@@ -555,6 +561,10 @@ func (c *v2Coordinator) executeLocalLocked(ctx context.Context, principal v2Trus
 	}
 	if err = c.absoluteGuardPreflightV2(op, state, target); err != nil {
 		return result(op), err
+	}
+	if retainedMetadata {
+		final, e := c.executeRetainedDHCPMetadataV4(op, state, target, changed, now)
+		return result(final), e
 	}
 	if err = c.persistRevisions(target); err != nil {
 		s.blocked = true
