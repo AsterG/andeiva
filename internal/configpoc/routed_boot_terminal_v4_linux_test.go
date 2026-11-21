@@ -5,6 +5,7 @@ package configpoc
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -373,4 +374,152 @@ func reopenRebootHookFixtureV4(t *testing.T, c *v2Coordinator, a *boundaryAuthor
 		_ = s.close()
 	})
 	return opened, err
+}
+
+// bootAgainFixtureV4 opens the selected store as one more complete kernel boot.
+// The proof names whichever scope the store currently selects as the old one.
+type bootAgainFixtureV4 struct {
+	f         bootTerminalFixtureV4
+	template  RoutedRebootScopeEvidenceV4
+	scopes    []*boundaryAuthorityFixtureV2
+	bootCount int
+}
+
+func (b *bootAgainFixtureV4) boot(t *testing.T, interruptAt string) (*v2Coordinator, *boundaryAuthorityFixtureV2, error) {
+	t.Helper()
+	c := b.f.c
+	c.close()
+	_ = c.store.close()
+	s, err := openSharedStoreV2(c.store.root, c.store.budget, *c.store.access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.store = s
+	b.bootCount++
+	next := freshBoundaryAuthorityV2(b.f.old)
+	next.identity.BootID = string(rune('2'+b.bootCount)) + "2345678-1234-1234-1234-123456789abc"
+	next.identity.RunID = strings.Repeat(string(rune('a'+b.bootCount)), 32)
+	next.identity.Namespace, next.identity.Host = b.f.old.identity.Namespace, b.f.old.identity.Host
+	// Root records every scope it created; the store selects one of them.
+	retired := b.f.old.identity
+	state := s.state
+	work := ""
+	if in := state.Configuration.Intent; in != nil && validHash(in.RoutedWork) {
+		work = in.RoutedWork
+	} else if state.RoutedActive != nil {
+		work = state.RoutedActive.Work
+	}
+	if p, e := loadRoutedWorkV2(work, state.Lineage, s.readObject); e == nil {
+		retired = p.Scope().Identity
+	}
+	if bd := state.RoutedBootBoundary; bd != nil && bd.CompletedBoot == "" && state.Configuration.Intent != nil {
+		if p, e := loadRoutedWorkV2(bd.OldWork, state.Lineage, s.readObject); e == nil {
+			retired = p.Scope().Identity
+		}
+	}
+	proof := &rebootScopeFixtureV4{proof: b.template}
+	proof.proof.Old, proof.proof.New = retired, next.identity
+	bootAttestedFixtureV4(proof)
+	opts := c.options
+	opts.FreshScope, opts.RebootScope, opts.Routed, opts.RoutedIdentity = nil, proof, next, next.identity
+	id := v2BootID(next.identity.BootID)
+	opts.BootID = &id
+	opts.Hook = nil
+	if interruptAt != "" {
+		opts.Hook = func(name string) error {
+			if name == interruptAt {
+				return ErrInterrupted
+			}
+			return nil
+		}
+	}
+	opened, err := openCoordinatorV2(context.Background(), s, c.firewall, c.local, opts)
+	if opened != nil {
+		c.firewall, c.local = opened.firewall, opened.local
+		t.Cleanup(opened.close)
+	}
+	t.Cleanup(func() { _ = s.close() })
+	b.scopes = append(b.scopes, next)
+	return opened, next, err
+}
+
+// A scope replacement whose Startup boot was verified is finished and repeated
+// from Startup on the next complete boot, keeping what was already archived.
+// One whose own boot was still selected stays closed.
+func TestRoutedBootTerminalV4RepeatsAnUnfinishedScopeReplacement(t *testing.T) {
+	points := []string{"after_boot_intent", "after_boot_readback", "before_boot_completion", "after_boot_completion", "before_boot_boundary_completion", "after_boot_boundary_completion"}
+	for _, kind := range []string{"pending confirm", "interrupted boot"} {
+		for _, point := range points {
+			t.Run(kind+"/"+point, func(t *testing.T) {
+				var f bootTerminalFixtureV4
+				if kind == "pending confirm" {
+					c, old, principal, cfg := boundaryCoordinatorFixtureV2(t)
+					reader := sharedBoundaryReaderV2(t, c, old)
+					if _, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpStage, Config: &cfg}); err != nil {
+						t.Fatal(err)
+					}
+					seconds := uint64(90)
+					origin, result, err := routedRequestV2(t, c, principal, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+					if err != nil {
+						t.Fatal(err)
+					}
+					f = bootTerminalFixtureV4{c: c, old: old, reader: reader, subject: principal.Subject, operation: origin.ID, startup: result.Current.Startup.Hash}
+				} else {
+					f = interruptedRoutedFixtureV4(t, "commit")
+				}
+				_, proof := rebootAuthorityFixtureV4(t, f.c, f.old)
+				again := &bootAgainFixtureV4{f: f, template: proof.proof}
+				if kind == "interrupted boot" {
+					// The first recovery boot is cut once its own intent is selected.
+					if _, _, err := again.boot(t, "after_boot_intent"); !errors.Is(err, ErrInterrupted) {
+						t.Fatal("first recovery boot was not interrupted", err)
+					}
+				}
+				// This boot registers the scope replacement and is cut at the step.
+				if _, _, err := again.boot(t, point); !errors.Is(err, ErrInterrupted) {
+					t.Fatal("scope replacement was not interrupted at the publication step: ", err)
+				}
+				before, err := f.c.store.readRecordV2("selected.json", 4096)
+				if err != nil {
+					t.Fatal(err)
+				}
+				opened, last, err := again.boot(t, "")
+				if strings.HasPrefix(point, "after_boot_intent") || point == "after_boot_readback" || point == "before_boot_completion" {
+					// The replacement boot itself was still selected. Its system
+					// reservation cannot be released before a later boot is verified,
+					// so this selection stays closed and nothing is published.
+					after, e := f.c.store.readRecordV2("selected.json", 4096)
+					if !errors.Is(err, ErrRecovery) || e != nil || string(before) != string(after) || last.applies != 0 || last.bootstraps != 0 || last.arms != 0 || last.recovers != 0 {
+						t.Fatal("selected replacement boot was not kept closed without effects: ", err, e)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal("unfinished scope replacement was not repeated on the next complete boot: ", err)
+				}
+				cfg := opened.store.state.Configuration
+				if cfg.Intent != nil || cfg.Pending != nil || cfg.RecoveryRequired || cfg.Running.Hash != f.startup || last.current != f.startup || last.recovers != 0 {
+					t.Fatal("repeated replacement did not select Startup in the new scope")
+				}
+				op, err := opened.store.lookupRetained(f.subject, f.operation)
+				if err != nil || op.State != "final" || op.Pinned {
+					t.Fatal("original transaction is not terminal after the repeated replacement", err)
+				}
+				superseded := 0
+				for hash := cfg.AuditTip; hash != ""; {
+					var audit v2CoordinatorAudit
+					if e := opened.store.readObject(hash, &audit); e != nil {
+						t.Fatal(e)
+					}
+					if audit.Result == "superseded_by_boot" && audit.OriginCommit == f.operation {
+						superseded++
+					}
+					hash = audit.Previous
+				}
+				if kind == "pending confirm" && superseded != 1 {
+					t.Fatal("pending Confirm was not archived exactly once", superseded)
+				}
+			})
+		}
+	}
 }

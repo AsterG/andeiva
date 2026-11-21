@@ -132,7 +132,7 @@ func (c *v2Coordinator) openRoutedBootBoundaryV2(ctx context.Context) (bool, err
 	}
 	if b := s.state.RoutedBootBoundary; b != nil {
 		if b.NewIdentity != identity {
-			return true, ErrRecovery
+			return c.finishRetiredRoutedBootBoundaryV4(ctx, *b)
 		}
 		if s.state.Configuration.Intent != nil {
 			return false, nil

@@ -130,3 +130,37 @@ func (c *v2Coordinator) archiveOperationByBootV4(in *v2CoordinatorIntent) error 
 	_, err = c.completeLocked(op, previous, generation, "failed_rolled_back", code, false, c.recoveryNow())
 	return err
 }
+
+// finishRetiredRoutedBootBoundaryV4 handles a scope replacement registered by
+// an earlier kernel boot. When that boot had already verified and selected
+// Startup, only the bookkeeping of the replacement is missing. It is completed
+// from the records that boot left, after the helper proves that its scope is
+// gone, and the ordinary Startup boot then runs for the new scope.
+//
+// A replacement whose own Startup boot was still selected is not repeated
+// here: its system reservation cannot be released before a later boot is
+// verified. That selection and every scope of the running boot stay rejected.
+func (c *v2Coordinator) finishRetiredRoutedBootBoundaryV4(ctx context.Context, b v2RoutedBootBoundary) (bool, error) {
+	s := c.store
+	cfg := s.state.Configuration
+	identity := c.options.RoutedIdentity
+	active := s.state.RoutedActive
+	if c.options.RebootScope == nil || s.reserves == nil || b.NewIdentity.BootID == identity.BootID || b.NewIdentity.RunID == identity.RunID ||
+		b.NewIdentity.UID != identity.UID || b.NewIdentity.GID != identity.GID || cfg.Intent != nil || cfg.Pending != nil || cfg.RecoveryRequired || active == nil {
+		return true, ErrRecovery
+	}
+	completed, err := loadRoutedWorkV2(active.Work, s.state.Lineage, s.readObject)
+	if err != nil || completed.Scope().Identity != b.NewIdentity {
+		return true, ErrRecovery
+	}
+	if _, err = c.proveRebootScopeV4(ctx, b.NewIdentity, active.Work); err != nil {
+		return true, err
+	}
+	if err = c.finishRoutedBootBoundaryV2(); err != nil {
+		return true, err
+	}
+	if err = s.reserves.maintain(s); err != nil {
+		return true, err
+	}
+	return false, nil
+}
