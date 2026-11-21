@@ -18,7 +18,7 @@ func coldDHCPScopeRetirementV3(v *selectedViewV2, a RoutedColdAnchorV1, anchored
 	}
 	x, validX := compareScopeV4(terminal.Retirement, terminal.RebootRetirement)
 	y, validY := compareScopeV4(p.work.FreshScope, p.work.RebootScope)
-	if !validX || !validY || y.work != anchored.RoutedActive.Work || x.old != y.old || x.next != y.next || x.receipt != y.receipt || x.metadata != y.metadata || x.drained != y.drained || x.before != y.before || x.dependencies != y.dependencies || x.reboot != y.reboot || x.observed > y.observed {
+	if !validX || !validY || y.work != anchored.RoutedActive.Work || x.old != y.old || x.next != y.next || x.receipt != y.receipt || x.metadata != y.metadata || x.drained != y.drained || x.before != y.before || x.dependencies != y.dependencies || x.reboot != y.reboot || x.attested != y.attested || x.observed > y.observed {
 		return false
 	}
 	var previous v2Configuration

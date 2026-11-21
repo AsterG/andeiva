@@ -91,7 +91,7 @@ func validRoutedDHCPShapeV3(st v2State) bool {
 	}
 	if d.Phase == "scope_retired" {
 		_, valid := compareScopeV4(d.Retirement, d.RebootRetirement)
-		if !valid || d.Retirement != nil && !hasFeatureV2(st, v3RoutedFreshScopeFeature) || d.RebootRetirement != nil && !hasFeatureV2(st, v4RoutedRebootScopeFeature) {
+		if !valid || d.Retirement != nil && !hasFeatureV2(st, v3RoutedFreshScopeFeature) || !rebootScopeDeclaredV4(st, d.RebootRetirement) {
 			return false
 		}
 	} else if d.Retirement != nil || d.RebootRetirement != nil {
@@ -147,7 +147,7 @@ func validateRoutedDHCPSelectedV3(st v2State, load func(string, any) error) erro
 		if load(st.RoutedDHCPLast, &last) != nil || validateRoutedDHCPTerminalV3(last, st.Lineage, load) != nil {
 			return ErrRecovery
 		}
-		if last.Phase == "scope_retired" && (last.Retirement != nil && !hasFeatureV2(st, v3RoutedFreshScopeFeature) || last.RebootRetirement != nil && !hasFeatureV2(st, v4RoutedRebootScopeFeature)) {
+		if last.Phase == "scope_retired" && (last.Retirement != nil && !hasFeatureV2(st, v3RoutedFreshScopeFeature) || !rebootScopeDeclaredV4(st, last.RebootRetirement)) {
 			return ErrRecovery
 		}
 	}

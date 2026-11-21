@@ -34,7 +34,7 @@ func validateRoutedDHCPArchiveV3(archive v2ReserveArchive, facts v2ReserveFinali
 	if load(facts.Origin.Object, &d) != nil || validateRoutedDHCPTerminalV3(d, state.Lineage, load) != nil || reserveWorkV2(d.Bundle) != facts.Origin.ID || d.Audit != archive.Audit || !archiveMatchesBundleV2(archive, d.Bundle, false) {
 		return ErrRecovery
 	}
-	if d.Phase == "scope_retired" && (d.Retirement != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) || d.RebootRetirement != nil && !hasFeatureV2(state, v4RoutedRebootScopeFeature)) {
+	if d.Phase == "scope_retired" && (d.Retirement != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) || !rebootScopeDeclaredV4(state, d.RebootRetirement)) {
 		return ErrRecovery
 	}
 	return nil

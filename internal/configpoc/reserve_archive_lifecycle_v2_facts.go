@@ -74,7 +74,7 @@ func validateArchiveFinalityWithWorkV2(archive v2ReserveArchive, state v2State, 
 			if plan.work.FreshScope != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
 				return ErrRecovery
 			}
-			if plan.work.RebootScope != nil && !hasFeatureV2(state, v4RoutedRebootScopeFeature) {
+			if !rebootScopeDeclaredV4(state, plan.work.RebootScope) {
 				return ErrRecovery
 			}
 		}

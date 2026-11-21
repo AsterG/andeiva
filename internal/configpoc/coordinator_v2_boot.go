@@ -50,7 +50,7 @@ func validFeaturesV2(state v2State) bool {
 	}
 	last := ""
 	for _, feature := range state.RequiredFeatures {
-		if (feature != routedBootMarkReservationFeatureV1 && feature != routedConntrackAuditFeatureV1 && feature != routedCompensationFeatureV1 && feature != v4RoutedDHCPConfigurationFeature && feature != v1RoutedDHCPServerFeature && feature != v4RoutedRebootScopeFeature && feature != v3RoutedFreshScopeFeature && feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
+		if (feature != routedBootMarkReservationFeatureV1 && feature != routedConntrackAuditFeatureV1 && feature != routedCompensationFeatureV1 && feature != v4RoutedDHCPConfigurationFeature && feature != v1RoutedDHCPServerFeature && feature != v4RoutedBootAttestationFeature && feature != v4RoutedRebootScopeFeature && feature != v3RoutedFreshScopeFeature && feature != v3RoutedDHCPFeature && feature != v2RoutedOfflineMigrationFeature && feature != v2ReserveCompensationFeature && feature != v2SharedReaderFeature && feature != v2BootFeature && feature != v2LocalFeature && feature != v2GuardDeadlineFeature && feature != v2RoutedFeature && feature != v2RoutedBootFeature && feature != v2RoutedNoNetworkFeature && feature != v2OwnedCandidateFeature && feature != v2RoutedBootBoundaryFeature && feature != v2RoutedOfflineSeedFeature) || feature <= last {
 			return false
 		}
 		last = feature
@@ -68,6 +68,9 @@ func validFeaturesV2(state v2State) bool {
 		return false
 	}
 	if (hasFeatureV2(state, v3RoutedFreshScopeFeature) || hasFeatureV2(state, v4RoutedRebootScopeFeature)) && (!hasFeatureV2(state, v2RoutedFeature) || !hasFeatureV2(state, v2SharedReaderFeature) || state.RecoveryReserveVersion != 1) {
+		return false
+	}
+	if hasFeatureV2(state, v4RoutedBootAttestationFeature) && !hasFeatureV2(state, v4RoutedRebootScopeFeature) {
 		return false
 	}
 	if hasFeatureV2(state, v2RoutedNoNetworkFeature) && !hasFeatureV2(state, v2RoutedBootFeature) {
@@ -261,7 +264,7 @@ func (c *v2Coordinator) bootStartupLocked(ctx context.Context, id v2BootID) erro
 	}
 	st := clone(s.state)
 	if c.bootRebootScope != nil {
-		addFeatureV2(&st, v4RoutedRebootScopeFeature)
+		addRebootScopeFeaturesV4(&st, c.bootRebootScope)
 	}
 	if c.bootFreshScope != nil {
 		addFeatureV2(&st, v3RoutedFreshScopeFeature)
