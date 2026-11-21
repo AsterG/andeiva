@@ -77,7 +77,10 @@ func coldCompletedRecoveryV1(v *selectedViewV2, a RoutedColdAnchorV1, before v2C
 		if !in.Recovery || in.Domain != "routed" || in.RoutedWork != a.reference.WorkHash || (in.Kind != "restart" && in.Kind != "timeout") {
 			return false
 		}
-		if v.store.readObject(in.Previous, &source) != nil {
+		// The anchor captured this exact object when the intent was selected.
+		if a.recoverySource != nil {
+			source = clone(*a.recoverySource)
+		} else if v.store.readObject(in.Previous, &source) != nil {
 			return false
 		}
 		sourceHash = in.Previous

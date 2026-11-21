@@ -415,6 +415,13 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 	if err = c.point("after_recovery_readback"); err != nil {
 		return err
 	}
+	return c.completeRecoveryLocked(intent, origin, target)
+}
+
+// completeRecoveryLocked publishes the exact revert projection. The caller has
+// either read back the restored target or proved that its scope is gone.
+func (c *v2Coordinator) completeRecoveryLocked(intent *v2CoordinatorIntent, origin v2Operation, target v2Configuration) error {
+	s := c.store
 	var record v2RecoveryRecord
 	if s.readObject(s.state.Configuration.LastRecovery, &record) != nil || record.ID != intent.Operation || record.Lease != intent.Lease || record.Origin != origin.ID {
 		return errV2Unavailable

@@ -1,0 +1,132 @@
+package configpoc
+
+import "context"
+
+// archiveInterruptedRoutedV4 gives an unfinished routed transaction its
+// terminal record when the scope that owned it belongs to another kernel boot.
+//
+// Nothing of that scope can be restored or read back: the helper instead proves
+// that the scope is gone and that the new scope is closed and empty. The
+// transaction then receives the same terminal projection an ordinary recovery
+// publishes, without any engine effect, deadline, permit, mark or lease from
+// the previous boot. It becomes final exactly once and holds no reservation
+// afterwards. The caller continues with the ordinary Startup boot, which proves
+// the scope again and is repeatable from every publication.
+//
+// A scope of the running boot, a missing proof and every state this function
+// does not recognize return nil without publishing: the existing rejection of
+// those selections is unchanged.
+func (c *v2Coordinator) archiveInterruptedRoutedV4(ctx context.Context) error {
+	s := c.store
+	cfg := s.state.Configuration
+	if cfg == nil || !hasFeatureV2(s.state, v2RoutedFeature) || c.options.Routed == nil || c.options.BootID == nil || c.options.RebootScope == nil || s.reserves == nil ||
+		s.state.RoutedDHCP != nil || s.state.RoutedBootBoundary != nil || cfg.RecoveryRequired {
+		return nil
+	}
+	in := cfg.Intent
+	if in == nil || in.Kind == v2BootKind || in.Domain != "routed" || !validHash(in.RoutedWork) {
+		return nil
+	}
+	identity := c.options.RoutedIdentity
+	if !validRoutedIdentityV1(identity) || identity != c.options.Routed.Identity() || identity.BootID != string(*c.options.BootID) {
+		return nil
+	}
+	old, err := loadRoutedWorkV2(in.RoutedWork, s.state.Lineage, s.readObject)
+	if err != nil || old.work.Boundary != nil || validateRoutedWorkIntentV2(in, old, s.readObject) != nil {
+		return nil
+	}
+	scope := old.Scope().Identity
+	if scope.BootID == identity.BootID || scope.RunID == identity.RunID || scope.UID != identity.UID || scope.GID != identity.GID {
+		return nil
+	}
+	if in.Recovery {
+		if in.Kind != "timeout" && in.Kind != "restart" || cfg.Pending == nil || cfg.Pending.Domain != "routed" {
+			return nil
+		}
+	} else if in.Kind != OpCommit && in.Kind != OpRollback && in.Kind != OpConfirm {
+		return nil
+	}
+	if _, err = c.proveRebootScopeV4(ctx, scope, in.RoutedWork); err != nil {
+		return err
+	}
+	previousAllowance := s.allowance
+	s.allowance = v2Budget{Bytes: v2OperationReserveBytes, Inodes: v2OperationReserveInodes}
+	defer func() { s.allowance = previousAllowance }()
+	if err = c.point("before_boot_terminal_archive"); err != nil {
+		return err
+	}
+	if in.Recovery {
+		err = c.archiveRollbackByBootV4(in)
+	} else {
+		err = c.archiveOperationByBootV4(in)
+	}
+	if err != nil {
+		return err
+	}
+	return c.point("after_boot_terminal_archive")
+}
+
+// The pending Confirm window ends with the revert projection of its original
+// rollback record. Its deadline is not consulted: it belongs to another boot.
+func (c *v2Coordinator) archiveRollbackByBootV4(in *v2CoordinatorIntent) error {
+	s := c.store
+	origin, err := s.lookupRetained(in.Subject, in.OriginCommit)
+	if err != nil || origin.Domain != in.Domain || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.ConfirmationLease != in.Lease {
+		return ErrRecovery
+	}
+	restore, err := s.reserves.recoveryAllowance(s, origin)
+	if err != nil {
+		return err
+	}
+	defer restore()
+	var previous, target v2Configuration
+	if s.readObject(in.Previous, &previous) != nil || s.readObject(in.Target, &target) != nil || !validV2Configuration(&previous) || !validV2Configuration(&target) || target.Intent != nil {
+		return ErrRecovery
+	}
+	return c.completeRecoveryLocked(in, origin, target)
+}
+
+// An operation interrupted before its result was published ends as a failed
+// operation with the configuration it started from. A Confirm additionally
+// reverts the pending change it could not finish confirming.
+func (c *v2Coordinator) archiveOperationByBootV4(in *v2CoordinatorIntent) error {
+	s := c.store
+	op, err := s.lookupRetained(in.Subject, in.Operation)
+	if err != nil || op.State != "pending" && op.State != "uncertain" || op.Domain != "routed" || op.Request.Kind != in.Kind {
+		return ErrRecovery
+	}
+	restore, err := s.closingOperationAllowanceLocked(op)
+	if err != nil {
+		return err
+	}
+	defer restore()
+	if s.reserves.verifyBundle(s, op.Reserve) != nil {
+		return ErrRecovery
+	}
+	var previous v2Configuration
+	if s.readObject(in.Previous, &previous) != nil || !validV2Configuration(&previous) || previous.Intent != nil {
+		return ErrRecovery
+	}
+	generation, code := s.state.Generation, ErrInterrupted.Error()
+	if in.Kind == OpConfirm {
+		pending := previous.Pending
+		var original v2Configuration
+		if pending == nil || pending.Domain != "routed" || pending.Owner != op.Subject || pending.OriginCommit != op.Request.Origin || pending.Target != op.Request.Target ||
+			s.state.Generation == ^uint64(0) || s.readObject(pending.Previous, &original) != nil {
+			return ErrRecovery
+		}
+		origin, e := s.lookupRetained(pending.Owner, pending.OriginCommit)
+		if e != nil || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.ConfirmationLease != pending.Lease || origin.Outcome.RunningRevision != pending.Target {
+			return ErrRecovery
+		}
+		reverted, ok := coldRevertedConfigurationV1(previous, original)
+		if !ok {
+			return ErrRecovery
+		}
+		previous, generation, code = reverted, generation+1, ErrRecovery.Error()
+	}
+	previous.RecoveryRequired = false
+	previous.Intent = nil
+	_, err = c.completeLocked(op, previous, generation, "failed_rolled_back", code, false, c.recoveryNow())
+	return err
+}

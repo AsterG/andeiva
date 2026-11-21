@@ -10,6 +10,10 @@ type RoutedColdAnchorV1 struct {
 	reference         SelectionReferenceV2
 	configuration     v2Configuration
 	configurationHash string
+	// The configuration a selected rollback intent started from. It is immutable
+	// and content addressed; the bounded action closure does not retain it once
+	// the rollback is final.
+	recoverySource *v2Configuration
 }
 
 func (a RoutedColdAnchorV1) Reference() SelectionReferenceV2 { return a.reference }
@@ -33,13 +37,21 @@ func (r *RoutedSelectionReaderV2) CaptureColdAnchorV1(ctx context.Context) (Rout
 		if e != nil || len(data) > reserveMetadataObjectLimitV2 {
 			return ErrRecovery
 		}
+		var recoverySource *v2Configuration
+		if in := v.store.state.Configuration.Intent; in != nil && in.Recovery && validHash(in.Previous) {
+			var source v2Configuration
+			if e = v.store.readObject(in.Previous, &source); e != nil {
+				return ErrRecovery
+			}
+			recoverySource = &source
+		}
 		if e = r.revalidate(ctx, v); e != nil {
 			return e
 		}
 		if e = v.graph.closeSelectedV2(); e != nil {
 			return e
 		}
-		anchor = RoutedColdAnchorV1{reader: r, reference: ref, configuration: clone(*v.store.state.Configuration), configurationHash: hash}
+		anchor = RoutedColdAnchorV1{reader: r, reference: ref, configuration: clone(*v.store.state.Configuration), configurationHash: hash, recoverySource: recoverySource}
 		return errInspectionHeaderV1
 	})
 	if ctx.Err() != nil {
