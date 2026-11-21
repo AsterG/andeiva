@@ -11,6 +11,12 @@ func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, ori
 	if current == nil {
 		current = &v2Configuration{}
 	}
+	return c.appendAuditAfterLocked(current, state, operation, origin, lease, subject, kind, result, generation, at, cleanup...)
+}
+
+// Earlier audit objects in the same publication are still reachable through
+// the proposed state's tip even though the selected configuration is unchanged.
+func (c *v2Coordinator) appendAuditAfterLocked(current, state *v2Configuration, operation, origin, lease, subject, kind, result string, generation uint64, at time.Time, cleanup ...RoutedConntrackCleanupV1) (string, error) {
 	if current.AuditSequence == ^uint64(0) {
 		return "", errV2Limited
 	}

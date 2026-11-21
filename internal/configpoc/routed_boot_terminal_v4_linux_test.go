@@ -274,7 +274,7 @@ func TestRoutedBootTerminalV4KeepsRejectingTheSameBootAndMissingProof(t *testing
 // Power may be lost again at every publication of the recovery. Each further
 // complete boot repeats it, and the original transaction stays archived once.
 func TestRoutedBootTerminalV4RepeatsAfterInterruptionAtEveryPublication(t *testing.T) {
-	points := []string{"before_boot_terminal_archive", "after_boot_terminal_archive", "before_boot_intent", "after_boot_intent", "after_boot_readback", "before_boot_completion"}
+	points := []string{"before_boot_terminal_archive", "after_boot_terminal_archive", "before_boot_intent", "after_boot_intent", "after_boot_readback", "before_boot_completion", "after_boot_completion"}
 	for _, state := range []string{"commit", "rollback"} {
 		for _, point := range points {
 			t.Run(state+"/"+point, func(t *testing.T) {
@@ -322,7 +322,7 @@ func TestRoutedBootTerminalV4RepeatsAfterInterruptionAtEveryPublication(t *testi
 				}
 				t.Cleanup(func() { _ = final.close() })
 				retired := f.old.identity
-				if in := final.state.Configuration.Intent; in != nil && in.Kind == v2BootKind {
+				if in := final.state.Configuration.Intent; point == "after_boot_completion" || in != nil && in.Kind == v2BootKind {
 					retired = second.identity
 				}
 				again := &rebootScopeFixtureV4{proof: proof.proof}
@@ -339,6 +339,13 @@ func TestRoutedBootTerminalV4RepeatsAfterInterruptionAtEveryPublication(t *testi
 				cfg := opened.store.state.Configuration
 				if cfg.Intent != nil || cfg.Pending != nil || cfg.Running.Hash != f.startup || third.current != f.startup || third.recovers != 0 || second.recovers != 0 {
 					t.Fatal("repeated recovery did not select Startup without replaying effects")
+				}
+				wantAttestations := 1
+				if point == "after_boot_completion" {
+					wantAttestations++
+				}
+				if got := attestationAuditCountV4(t, opened); got != wantAttestations {
+					t.Fatal("attestation was lost or duplicated across the next boot", got, wantAttestations)
 				}
 				subject, want := f.operation, "failed_rolled_back"
 				if f.recovery != "" {
@@ -543,6 +550,11 @@ func attestationAuditCountV4(t *testing.T, c *v2Coordinator) int {
 		if audit.Kind == bootAttestationAuditKindV4 {
 			if audit.Result != bootAttestationAuditResultV4 || audit.Subject != "system" || audit.Operation == "" {
 				t.Fatal("unexpected attestation audit entry")
+			}
+			var verified v2CoordinatorAudit
+			if err := c.store.readObject(audit.Previous, &verified); err != nil || verified.Kind != v2BootKind ||
+				verified.Result != "verified" || verified.Operation != audit.Operation || verified.Sequence+1 != audit.Sequence {
+				t.Fatal("attestation did not follow its verified boot in the audit chain", err)
 			}
 			count++
 		}

@@ -59,7 +59,8 @@ marcas del arranque anterior. Una sustitución de ámbito cuyo arranque de Start
 ya había verificado un arranque anterior se termina con los registros que ese
 arranque dejó. Un arranque completado y aceptado por acreditación añade una
 entrada de auditoría protegida, `boot_attestation` con resultado
-`accepted_without_receipt`.
+`accepted_without_receipt`. Startup y esta entrada se seleccionan juntos para
+conservar la auditoría si hay otro corte después de completar Startup.
 
 Cada paso puede interrumpirse y repetirse en el siguiente arranque completo, con
 una excepción: una sustitución de ámbito cuyo propio arranque de Startup seguía

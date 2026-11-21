@@ -467,6 +467,19 @@ func (c *v2Coordinator) finishBootLocked(ctx context.Context) (result error) {
 	if err != nil {
 		return err
 	}
+	if intent.Domain == "routed" {
+		plan, err := loadRoutedWorkV2(intent.RoutedWork, s.state.Lineage, s.readObject)
+		if err != nil {
+			return err
+		}
+		if proof := plan.RebootScopeEvidenceV4(); proof != nil && proof.BootAttested {
+			// Keep the verified boot audit adjacent to its predecessor, then
+			// select both events together with the completed Startup state.
+			if _, err = c.appendAuditAfterLocked(&target, &target, record.ID, "", "", "system", bootAttestationAuditKindV4, bootAttestationAuditResultV4, intent.TargetGeneration, completed); err != nil {
+				return err
+			}
+		}
+	}
 	target.VerifiedIndex, err = c.verifiedInsert(target.VerifiedIndex, 0, v2VerifiedEntry{Revision: target.Running.Hash, Audit: audit, Operation: record.ID})
 	if err != nil {
 		return err

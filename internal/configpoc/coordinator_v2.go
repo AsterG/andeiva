@@ -141,9 +141,6 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 		return c, fmt.Errorf("boot terminal archive: %w", err)
 	}
 	if handled, err := c.openRoutedBootBoundaryV2(ctx); handled {
-		if err == nil {
-			err = c.auditBootAttestationV4()
-		}
 		return c, err
 	}
 	if store.state.Configuration.Intent != nil {
@@ -169,9 +166,6 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	if options.BootID != nil {
 		if err := c.bootStartupLocked(ctx, *options.BootID); err != nil {
 			return c, fmt.Errorf("startup reconciliation: %w", err)
-		}
-		if err := c.auditBootAttestationV4(); err != nil {
-			return c, fmt.Errorf("boot attestation audit: %w", err)
 		}
 	}
 	if err := c.resumeRoutedLockedV2(ctx); err != nil {

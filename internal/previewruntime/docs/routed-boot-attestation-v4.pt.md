@@ -59,7 +59,8 @@ não são consultados. Uma substituição de escopo cujo arranque de Startup já
 tinha sido verificado por um arranque anterior é concluída com os registros que
 esse arranque deixou. Um arranque concluído e aceito por atestação acrescenta
 uma entrada de auditoria protegida, `boot_attestation` com resultado
-`accepted_without_receipt`.
+`accepted_without_receipt`. O Startup e este evento são selecionados juntos
+para preservar a auditoria se houver outra queda após concluir o Startup.
 
 Cada passo pode ser interrompido e repetido no arranque completo seguinte, com
 uma exceção: uma substituição de escopo cujo próprio arranque de Startup ainda

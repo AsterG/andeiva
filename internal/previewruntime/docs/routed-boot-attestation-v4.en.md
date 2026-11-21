@@ -56,7 +56,8 @@ new scope. The deadline, lease and marks of the previous boot are not consulted.
 A scope replacement whose Startup boot an earlier boot had already verified is
 finished from the records that boot left. A completed boot accepted from an
 attestation adds one protected audit entry, `boot_attestation` with result
-`accepted_without_receipt`.
+`accepted_without_receipt`. Startup and this event are selected together so the
+event survives a further power cut after Startup completes.
 
 Each step can be interrupted and repeated on the next complete boot, with one
 exception: a scope replacement whose own Startup boot was still selected when
