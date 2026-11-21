@@ -49,12 +49,26 @@ que o lançador nunca registrou e um histórico selecionado corrompido mantêm o
 serviço fechado e exigem manutenção offline autorizada. Web, CLI e API não
 participam desta prova.
 
+## O que o coordenador faz com a prova
+
+Com uma prova válida para um escopo de outro arranque do kernel, um Commit ou
+Confirm interrompido e um rollback que nunca terminou recebem o seu registro
+terminal comum sem nenhum efeito de motor, e em seguida o Startup salvo é
+iniciado no novo escopo. O prazo, a concessão e as marcas do arranque anterior
+não são consultados. Uma substituição de escopo cujo arranque de Startup já
+tinha sido verificado por um arranque anterior é concluída com os registros que
+esse arranque deixou. Um arranque concluído e aceito por atestação acrescenta
+uma entrada de auditoria protegida, `boot_attestation` com resultado
+`accepted_without_receipt`.
+
+Cada passo pode ser interrompido e repetido no arranque completo seguinte, com
+uma exceção: uma substituição de escopo cujo próprio arranque de Startup ainda
+estava selecionado quando a energia caiu de novo permanece fechada.
+
 ## Limites
 
-Este documento cobre apenas a prova. Arquivar um Commit interrompido, um
-rollback falhado ou uma substituição de escopo inacabada e selecionar Startup
-para eles ainda não está implementado; esses estados continuam a parar o
-arranque. O slot é escrito no lugar: uma escrita truncada por uma queda de
+O aviso ao administrador na interface web não está implementado; a entrada de
+auditoria é o único registro visível. O slot é escrito no lugar: uma escrita truncada por uma queda de
 energia deixa-o ilegível e o serviço fechado. Se um escopo iniciado após uma
 queda parar de forma ordenada antes de o armazenamento concluir a recuperação,
 o recibo de drenagem substitui a atestação e o início seguinte é recusado. As

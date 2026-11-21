@@ -47,11 +47,25 @@ launcher never recorded and a corrupt selected history keep the service closed
 and require authorized offline maintenance. Web, CLI and API have no part in
 this proof.
 
+## What the coordinator does with the proof
+
+With a valid proof for a scope of another kernel boot, an interrupted Commit or
+Confirm and a rollback that never completed receive their ordinary terminal
+record without any engine effect, and the saved Startup is then booted in the
+new scope. The deadline, lease and marks of the previous boot are not consulted.
+A scope replacement whose Startup boot an earlier boot had already verified is
+finished from the records that boot left. A completed boot accepted from an
+attestation adds one protected audit entry, `boot_attestation` with result
+`accepted_without_receipt`.
+
+Each step can be interrupted and repeated on the next complete boot, with one
+exception: a scope replacement whose own Startup boot was still selected when
+power was lost again stays closed.
+
 ## Limits
 
-This document covers the proof only. Archiving an interrupted Commit, a failed
-rollback or an unfinished scope replacement and selecting Startup for them is
-not implemented yet; those states still stop at start. The slot is written in
+The administrator notice in the web interface is not implemented; the audit
+entry is the only record shown. The slot is written in
 place: a write torn by a power loss leaves it unreadable and the service
 closed. If a scope started after a power loss stops in an orderly way before
 the store completed its recovery, the drain receipt replaces the attestation

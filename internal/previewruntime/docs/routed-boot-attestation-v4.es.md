@@ -49,12 +49,26 @@ que el lanzador nunca registró y un historial seleccionado corrupto mantienen
 el servicio cerrado y requieren mantenimiento offline autorizado. Web, CLI y
 API no intervienen en esta prueba.
 
+## Qué hace el coordinador con la prueba
+
+Con una prueba válida para un ámbito de otro arranque del kernel, un Commit o
+Confirm interrumpido y un rollback que nunca terminó reciben su registro
+terminal ordinario sin ningún efecto de motor, y después se arranca el Startup
+guardado en el ámbito nuevo. No se consultan el plazo, la concesión ni las
+marcas del arranque anterior. Una sustitución de ámbito cuyo arranque de Startup
+ya había verificado un arranque anterior se termina con los registros que ese
+arranque dejó. Un arranque completado y aceptado por acreditación añade una
+entrada de auditoría protegida, `boot_attestation` con resultado
+`accepted_without_receipt`.
+
+Cada paso puede interrumpirse y repetirse en el siguiente arranque completo, con
+una excepción: una sustitución de ámbito cuyo propio arranque de Startup seguía
+seleccionado cuando la energía se cortó de nuevo permanece cerrada.
+
 ## Límites
 
-Este documento cubre sólo la prueba. Archivar un Commit interrumpido, un
-rollback fallido o una sustitución de ámbito inconclusa y seleccionar Startup
-para ellos todavía no está implementado; esos estados siguen deteniendo el
-arranque. El slot se escribe en su sitio: una escritura truncada por un corte
+El aviso al administrador en la interfaz web no está implementado; la entrada
+de auditoría es el único registro visible. El slot se escribe en su sitio: una escritura truncada por un corte
 de energía lo deja ilegible y el servicio cerrado. Si un ámbito iniciado tras
 un corte se detiene de forma ordenada antes de que el almacén complete su
 recuperación, el recibo de drenaje sustituye la acreditación y el siguiente
