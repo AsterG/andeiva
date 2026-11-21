@@ -238,7 +238,7 @@ func (p *routedFreshScopeV3) prepareSelected(ctx context.Context, target configp
 	}
 	_, err = p.observeScope(ctx, p.work, func(source configpoc.RoutedFreshScopeSourceV3, _ configpoc.RoutedPrepareViewV2) error {
 		selected, baseline := source.PreparationBundles()
-		if source.Identity() != r.Old || selected.Composite.Hash != target.Composite.Hash || baseline.Composite.Hash != saved {
+		if _, ok := r.retired(source.Identity()); !ok || selected.Composite.Hash != target.Composite.Hash || baseline.Composite.Hash != saved {
 			return configpoc.ErrConflict
 		}
 		var e error

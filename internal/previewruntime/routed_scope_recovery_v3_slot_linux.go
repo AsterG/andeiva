@@ -173,7 +173,14 @@ func (s *routedScopeRecordSlotV3) clearCompleted(ctx context.Context, receipt *r
 	}
 	old, err := DecodeRootRetirementReceiptV3(proof)
 	identity := networkexecutor.OwnedNamespaceIdentity{UID: r.Identities.HelperUID, GID: r.Identities.IPCGID, Namespace: r.Metadata.GatewayNamespace, Host: r.Metadata.HostNamespace, BootID: r.Metadata.BootID, RunID: r.Metadata.RunID}
-	if err != nil || old.Old != identity || old.MetadataSHA256 != r.MetadataSHA256 {
+	if err != nil {
+		// Without a drain receipt the record is released only when the slot
+		// attests this exact record for a kernel boot other than its own.
+		kernel, e := readRoutedKernelBootID()
+		if e != nil || !routedBootAttestationReleasesV4(kernel, raw, proof) {
+			return ErrIdentity
+		}
+	} else if old.Old != identity || old.MetadataSHA256 != r.MetadataSHA256 {
 		return ErrIdentity
 	}
 	stored, err := readScopeRecoveryStoreV3(ctx)

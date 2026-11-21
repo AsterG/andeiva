@@ -277,6 +277,11 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 			return err
 		}
 	}
+	// A record left by another kernel boot has no drain receipt to wait for.
+	// Root attests it durably first, so a later interruption can repeat this.
+	if err = attestRoutedBootV4(slot, record, ids); err != nil {
+		return err
+	}
 	if err = record.clearCompleted(ctx, slot); err != nil {
 		return err
 	}

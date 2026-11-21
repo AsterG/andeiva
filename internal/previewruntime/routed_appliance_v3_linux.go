@@ -199,7 +199,7 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 		if e != nil {
 			return out, e
 		}
-		reboot, e := reader.PrepareRebootScopeViewV4(ctx, receipt.Old)
+		reboot, e := reader.PrepareRetiredScopeViewV4(ctx, receipt.identities())
 		if e != nil {
 			return out, e
 		}

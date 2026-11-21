@@ -101,11 +101,72 @@ func openRoutedRetirementSlotV3(area *os.Root) (*routedRetirementSlot, error) {
 	}
 	if !bytes.Equal(raw, make([]byte, len(raw))) {
 		if _, err = DecodeRootRetirementReceiptV3(raw); err != nil {
-			return nil, err
+			if _, err = DecodeRootBootAttestationV4(raw); err != nil {
+				return nil, err
+			}
 		}
 	}
 	accepted = true
 	return slot, nil
+}
+
+func (s *routedRetirementSlot) read() ([]byte, error) {
+	if s == nil || s.sameFile() != nil {
+		return nil, ErrIdentity
+	}
+	raw := make([]byte, RootRetirementReceiptSizeV3)
+	if n, err := s.file.ReadAt(raw, 0); err != nil || n != len(raw) || s.sameFile() != nil {
+		return nil, ErrIdentity
+	}
+	return raw, nil
+}
+
+// recordBootAttested replaces the slot only with a complete attestation built
+// from root records. It never claims that a scope was drained.
+func (s *routedRetirementSlot) recordBootAttested(raw []byte) error {
+	if s == nil || os.Getuid() != 0 || os.Geteuid() != 0 || s.sameFile() != nil {
+		return ErrIdentity
+	}
+	if _, err := DecodeRootBootAttestationV4(raw); err != nil {
+		return err
+	}
+	n, err := s.file.WriteAt(raw, 0)
+	if err != nil || n != len(raw) {
+		return errors.Join(err, io.ErrShortWrite)
+	}
+	if err = s.file.Sync(); err != nil {
+		return err
+	}
+	readback, err := s.read()
+	if err != nil || !bytes.Equal(raw, readback) {
+		return errors.Join(err, ErrStorage)
+	}
+	return nil
+}
+
+// attestRoutedBootV4 runs before the previous scope record may be released.
+// Root reads the kernel identity itself; no caller supplies it.
+func attestRoutedBootV4(slot *routedRetirementSlot, record *routedScopeRecordSlotV3, ids Identities) error {
+	if slot == nil || record == nil || os.Getuid() != 0 || os.Geteuid() != 0 {
+		return ErrIdentity
+	}
+	kernel, err := readRoutedKernelBootID()
+	if err != nil {
+		return err
+	}
+	previous, err := record.read()
+	if err != nil {
+		return err
+	}
+	current, err := slot.read()
+	if err != nil {
+		return err
+	}
+	next, issue, err := routedBootAttestationNextV4(kernel, ids, previous, current)
+	if err != nil || !issue {
+		return err
+	}
+	return slot.recordBootAttested(next)
 }
 
 func validateRoutedRetirementFileV3(file *os.File) error {
@@ -231,12 +292,24 @@ func openRoutedRetirementResourceV3(metadata Metadata, ids Identities) (*routedR
 	if err != nil || actualBoot != identity.BootID {
 		return nil, ErrIdentity
 	}
-	receipt, err := DecodeRootRetirementReceiptV3(raw)
-	if err != nil {
-		return nil, err
-	}
 	binding := RoutedFreshScopeBindingV3{ReceiptSHA256: retirementDigestV3(raw), NewIdentity: identity}
 	resource := &routedRetirementResourceV4{}
+	receipt, err := DecodeRootRetirementReceiptV3(raw)
+	if err != nil {
+		// A boot attestation is valid only for the kernel boot that issued it and
+		// for the accounts of this installation. It selects the reboot profile.
+		attestation, e := DecodeRootBootAttestationV4(raw)
+		if e != nil || attestation.BootID != actualBoot || attestation.Identities != ids {
+			return nil, ErrIdentity
+		}
+		reboot := RoutedRebootScopeBindingV4(binding)
+		if _, err = readRebootRetirementFileV4(file, reboot); err != nil {
+			return nil, err
+		}
+		resource.RebootScope = &RoutedRebootScopeOptionsV4{Receipt: file, Binding: reboot}
+		accepted = true
+		return resource, nil
+	}
 	if receipt.Old.BootID == actualBoot {
 		if _, err = readRetirementFileV3(file, binding); err != nil {
 			return nil, err
