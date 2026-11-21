@@ -147,6 +147,9 @@ func (f bootTerminalFixtureV4) assertArchivedAndStartup(t *testing.T, opened *v2
 	if len(st.ActiveReserves) != 0 {
 		t.Fatal("archived transaction still holds a reservation")
 	}
+	if n := attestationAuditCountV4(t, opened); n != 1 {
+		t.Fatal("boot accepted without a drain receipt was not audited exactly once", n)
+	}
 	active, err := loadRoutedWorkV2(st.RoutedActive.Work, st.Lineage, opened.store.readObject)
 	if err != nil || active.Scope().Identity != fresh.identity || active.RebootScopeEvidenceV4() == nil || !active.RebootScopeEvidenceV4().BootAttested || active.target.Composite.Hash != f.startup {
 		t.Fatal("selected plan is not the attested Startup boot of the new scope", err)
@@ -192,6 +195,11 @@ func TestRoutedBootTerminalV4ArchivesInterruptedTransactionAndSelectsStartup(t *
 				t.Fatal("helper could not authorize the Startup bootstrap after the archive: ", resolved, during)
 			}
 			f.assertArchivedAndStartup(t, opened, fresh)
+			// The complete selected history, including the attestation audit entry,
+			// passes the independent full inspection of the helper reader.
+			if _, err = r.PrepareCurrentView(ctx); err != nil {
+				t.Fatal("full inspection refused the recovered store: ", err)
+			}
 			if proof.calls < 2 {
 				t.Fatal("scope was not proved before the archive and again for Startup")
 			}
@@ -521,5 +529,69 @@ func TestRoutedBootTerminalV4RepeatsAnUnfinishedScopeReplacement(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func attestationAuditCountV4(t *testing.T, c *v2Coordinator) int {
+	t.Helper()
+	count := 0
+	for hash := c.store.state.Configuration.AuditTip; hash != ""; {
+		var audit v2CoordinatorAudit
+		if err := c.store.readObject(hash, &audit); err != nil {
+			t.Fatal(err)
+		}
+		if audit.Kind == bootAttestationAuditKindV4 {
+			if audit.Result != bootAttestationAuditResultV4 || audit.Subject != "system" || audit.Operation == "" {
+				t.Fatal("unexpected attestation audit entry")
+			}
+			count++
+		}
+		hash = audit.Previous
+	}
+	return count
+}
+
+func TestRoutedBootTerminalV4AuditsAttestationOncePerBoot(t *testing.T) {
+	for _, attested := range []bool{true, false} {
+		name := "drain receipt"
+		if attested {
+			name = "boot attestation"
+		}
+		t.Run(name, func(t *testing.T) {
+			c, old, principal, cfg := boundaryCoordinatorFixtureV2(t)
+			m := c.store.reserves
+			c.store = sharedTestStoreV2(t, c.store)
+			c.store.reserves = m
+			c.options.SharedReader = c.store.access
+			if _, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpStage, Config: &cfg}); err != nil {
+				t.Fatal(err)
+			}
+			seconds := uint64(90)
+			if _, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds}); err != nil {
+				t.Fatal(err)
+			}
+			fresh, proof := rebootAuthorityFixtureV4(t, c, old)
+			want := 0
+			if attested {
+				bootAttestedFixtureV4(proof)
+				want = 1
+			}
+			opened, err := reopenRebootFixtureV4(t, c, fresh, proof)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := attestationAuditCountV4(t, opened); n != want {
+				t.Fatal("unexpected number of attestation audit entries after the boot", n)
+			}
+			tip := opened.store.state.Configuration.AuditTip
+			// A service restart during the same boot finds the entry and adds none.
+			again, err := reopenRebootFixtureV4(t, opened, fresh, proof)
+			if err != nil {
+				t.Fatal("same-boot reopen after the audit entry failed: ", err)
+			}
+			if n := attestationAuditCountV4(t, again); n != want || again.store.state.Configuration.AuditTip != tip {
+				t.Fatal("attestation audit entry was repeated for the same boot", n)
+			}
+		})
 	}
 }
