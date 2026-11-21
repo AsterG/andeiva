@@ -3,8 +3,11 @@
 package previewruntime
 
 import (
+	"bufio"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -63,11 +66,58 @@ func openRoutedProcIdentity(name string) (string, error) {
 	}
 	file := os.NewFile(uintptr(fd), name)
 	defer file.Close()
+	leafMount, _, ok := routedProcMountID(fd)
+	if !ok {
+		return "", ErrIdentity
+	}
+	if leafMount != mount {
+		if name != routedKernelBootIDName || !routedProtectedKernelMount(root, mount, leafMount) {
+			return "", ErrIdentity
+		}
+		mount = leafMount
+	}
 	return readRoutedProcBootID(file, mount)
 }
 
-// The file must belong to the procfs mount whose root was opened. A file or
-// directory mounted over the fixed name carries another mount identity.
+// The grouped unit mounts the genuine /sys/kernel subtree of procfs read-only.
+// Match that exact mount in the caller's kernel mount table. A separate mount
+// at the leaf or any other subtree must never supply the boot identity.
+func routedProtectedKernelMount(root int, rootMount, leafMount uint64) bool {
+	var proc unix.Stat_t
+	if unix.Fstat(root, &proc) != nil {
+		return false
+	}
+	fd, err := unix.Openat(root, "thread-self/mountinfo", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return false
+	}
+	file := os.NewFile(uintptr(fd), "proc mountinfo")
+	defer file.Close()
+	if mount, _, ok := routedProcMountID(fd); !ok || mount != rootMount {
+		return false
+	}
+	device := strconv.FormatUint(uint64(unix.Major(uint64(proc.Dev))), 10) + ":" + strconv.FormatUint(uint64(unix.Minor(uint64(proc.Dev))), 10)
+	return routedProtectedKernelMountInfo(file, rootMount, leafMount, device)
+}
+
+func routedProtectedKernelMountInfo(src io.Reader, root, leaf uint64, device string) bool {
+	rootID, leafID := strconv.FormatUint(root, 10), strconv.FormatUint(leaf, 10)
+	scan := bufio.NewScanner(io.LimitReader(src, 1<<20))
+	for scan.Scan() {
+		line, fs, found := strings.Cut(scan.Text(), " - ")
+		fields := strings.Fields(line)
+		if len(fields) < 6 || fields[0] != leafID {
+			continue
+		}
+		mode, _, _ := strings.Cut(fields[5], ",")
+		kind, _, _ := strings.Cut(fs, " ")
+		return found && kind == "proc" && fields[1] == rootID && fields[2] == device &&
+			fields[3] == "/sys/kernel" && fields[4] == "/proc/sys/kernel" && mode == "ro"
+	}
+	return false
+}
+
+// The file must belong to the already validated procfs mount.
 func readRoutedProcBootID(file *os.File, procMount uint64) (string, error) {
 	fd := int(file.Fd())
 	var st unix.Stat_t

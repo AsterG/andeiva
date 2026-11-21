@@ -7,10 +7,30 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
 )
+
+func TestRoutedKernelBootIDAcceptsOnlyExactReadOnlyKernelMount(t *testing.T) {
+	const mount = "64 19 0:23 /sys/kernel /proc/sys/kernel ro,nosuid,nodev,noexec,relatime - proc proc rw\n"
+	if !routedProtectedKernelMountInfo(strings.NewReader(mount), 19, 64, "0:23") {
+		t.Fatal("genuine read-only kernel mount rejected")
+	}
+	for _, fake := range []string{
+		strings.Replace(mount, "64 19", "64 42", 1),
+		strings.Replace(mount, "0:23", "0:42", 1),
+		strings.Replace(mount, " /sys/kernel ", " /sys/kernel/random ", 1),
+		strings.Replace(mount, " /proc/sys/kernel ", " /proc/sys/kernel/random/boot_id ", 1),
+		strings.Replace(mount, " ro,", " rw,", 1),
+		strings.Replace(mount, " - proc ", " - ext4 ", 1),
+	} {
+		if routedProtectedKernelMountInfo(strings.NewReader(fake), 19, 64, "0:23") {
+			t.Fatal("accepted a different kernel mount", fake)
+		}
+	}
+}
 
 func TestRoutedKernelBootIDReadsProcfs(t *testing.T) {
 	id, err := readRoutedKernelBootID()
