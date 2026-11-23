@@ -21,6 +21,17 @@ for unit in andeiva-preview-helper.service andeiva-preview-namespaces.service; d
 done
 printf 'PASS: administration stop/failure does not propagate to helper or namespaces; explicit target shutdown remains intact\n'
 
+# Publication is necessary even to bind the grouped management socket. The
+# classic target and its individual units must stay inhibited afterward.
+marker=/var/lib/andeiva-preview/grouped-cutover.json
+for unit in andeiva-preview-grouped.socket andeiva-preview-grouped.service; do
+  value "$unit" ConditionPathExists | grep -Fx "$marker" >/dev/null
+done
+for unit in andeiva-preview.target andeiva-preview-api.socket andeiva-preview-api.service \
+            andeiva-preview-helper.service andeiva-preview-namespaces.service; do
+  value "$unit" ConditionPathExists | grep -Fx "!$marker" >/dev/null
+done
+
 # Root alone publishes bounded recovery anchors; retention survives a failed
 # service, but acceptance and removal still require actual manager readback.
 [[ $(value andeiva-preview-grouped.service NotifyAccess) = main ]]

@@ -1,6 +1,7 @@
 [Unit]
 Description=ANDEIVA Firewall Alpha Preview
 ConditionPathExists=/var/lib/andeiva-preview/identities.json
+ConditionPathExists=!/var/lib/andeiva-preview/grouped-cutover.json
 Requires=andeiva-preview-namespaces.service andeiva-preview-helper.service
 # Administration failure must not tear down the independent data plane.
 Wants=andeiva-preview-api.socket andeiva-preview-api.service
