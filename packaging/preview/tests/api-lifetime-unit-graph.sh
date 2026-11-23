@@ -45,6 +45,8 @@ printf 'PASS: grouped Root FD store is bounded and main-only; writes use exact p
 [[ $(value andeiva-preview-grouped.service PrivateMounts) = yes ]]
 
 # Root alone may enter/restore an authenticated retained mount namespace.
+! grep -Eq '^User=' "$units/andeiva-preview-grouped.service"
+[[ $(value andeiva-preview-grouped.service Group) = root ]]
 [[ $(value andeiva-preview-grouped.service NoNewPrivileges) = yes ]]
 [[ $(value andeiva-preview-grouped.service CapabilityBoundingSet) = 'CAP_SYS_ADMIN CAP_SYS_CHROOT CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_READ_SEARCH CAP_KILL CAP_CHOWN' ]]
 [[ $(value andeiva-preview-api.service CapabilityBoundingSet) = '' ]]

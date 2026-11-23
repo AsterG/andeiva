@@ -16,7 +16,9 @@ Type=simple
 NotifyAccess=main
 FileDescriptorStoreMax=7
 FileDescriptorStorePreserve=yes
-User=root
+# The system manager already runs this supervisor as UID 0. On Debian 13,
+# an explicit User=root with the seccomp profile drops CAP_SETUID from the
+# effective set before the supervisor can assign the fixed child identities.
 Group=root
 ExecStart=/usr/lib/andeiva-preview/andeiva-preview grouped-managed-supervisor
 Restart=no

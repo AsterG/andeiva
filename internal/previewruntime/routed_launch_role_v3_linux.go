@@ -246,7 +246,7 @@ func receiveRoutedLaunchV3(role string) (*routedLaunchFilesV3, routedLaunchBoots
 			return fail()
 		}
 	}
-	resources := RoutedLaunchResourcesV3{Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Directory: f.roots[0], IntegrityRoot: f.integrityRoot, Store: RoutedReaderRootV3{Root: f.roots[1], Access: b.Access[0]}, Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget}
+	resources := RoutedLaunchResourcesV3{LocalOrigin: b.LocalOrigin, Metadata: b.Metadata, Identities: b.Identities, Gateway: f.files[0], Host: f.files[9], Directory: f.roots[0], IntegrityRoot: f.integrityRoot, Store: RoutedReaderRootV3{Root: f.roots[1], Access: b.Access[0]}, Admission: RoutedReaderRootV3{Root: f.roots[2], Access: b.Access[1], Profile: b.Profiles[0]}, Plan: RoutedReaderRootV3{Root: f.roots[3], Access: b.Access[2], Profile: b.Profiles[1]}, Emergency: RoutedReaderRootV3{Root: f.roots[4], Access: b.Access[3], Profile: b.Profiles[2]}, Budget: b.Budget}
 	if f.retirementFile != nil && b.RebootScopeBinding != nil {
 		resources.RebootScope = &RoutedRebootScopeOptionsV4{Receipt: f.retirementFile, Binding: *b.RebootScopeBinding}
 	}
