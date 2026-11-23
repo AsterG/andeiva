@@ -70,6 +70,10 @@ func (a *actionReadDependenciesV2) keep(r *v2ReachabilityReader, name string, in
 	return nil
 }
 func (r *v2ReachabilityReader) closeSelectedV2() error {
+	if r.history != nil {
+		r.active -= r.history.bytes
+		r.history = nil
+	}
 	if r.action != nil {
 		r.active -= r.action.unpinnedBytes + r.action.metadataBytes
 		r.action.metadataBytes = 0
@@ -82,6 +86,9 @@ func (r *v2ReachabilityReader) revalidateSelectedV2() error {
 	if err := r.cache.revalidate(r); err != nil {
 		return err
 	}
+	if r.history != nil {
+		return r.history.revalidate(r)
+	}
 	if r.action == nil {
 		return nil
 	}
@@ -93,35 +100,45 @@ func (r *v2ReachabilityReader) revalidateSelectedV2() error {
 			}
 			continue
 		}
-		if r.ctx.Err() != nil {
-			return errV2Unavailable
+		if err := r.revalidateUnpinnedV2(name, e.info, len(e.data), func(data []byte) bool {
+			return bytes.Equal(data, e.data)
+		}); err != nil {
+			return err
 		}
-		if r.report.IOCalls > r.budget.IOCalls || r.budget.IOCalls-r.report.IOCalls < 128 {
-			return errV2InspectionBudget
-		}
-		r.report.IOCalls += 128
-		info, err := r.shared.CheckFile(r.area, name, max(int64(len(e.data)), 1))
-		if err != nil || !selectedCacheSameV2(e.info, info) {
-			return errV2Unavailable
-		}
-		n := uint64(len(e.data))
-		if r.report.BytesRead > r.budget.Bytes || n > r.budget.Bytes-r.report.BytesRead || r.active > r.budget.ActiveBytes || n > r.budget.ActiveBytes-r.active {
-			return errV2InspectionBudget
-		}
-		r.report.BytesRead += n
-		r.active += n
-		if r.active > r.report.PeakActiveBytes {
-			r.report.PeakActiveBytes = r.active
-		}
-		data, readErr := r.shared.ReadFile(r.ctx, r.area, name, max(len(e.data), 1))
-		r.active -= n
-		if readErr != nil || !bytes.Equal(data, e.data) {
-			return errV2Unavailable
-		}
-		after, err := r.shared.CheckFile(r.area, name, max(int64(len(e.data)), 1))
-		if err != nil || !selectedCacheSameV2(e.info, after) {
-			return errV2Unavailable
-		}
+	}
+	return nil
+}
+
+func (r *v2ReachabilityReader) revalidateUnpinnedV2(name string, expected os.FileInfo, size int, sameContent func([]byte) bool) error {
+	if r.ctx.Err() != nil || size < 0 || size > v2ObjectLimit {
+		return errV2Unavailable
+	}
+	if r.report.IOCalls > r.budget.IOCalls || r.budget.IOCalls-r.report.IOCalls < 128 {
+		return errV2InspectionBudget
+	}
+	r.report.IOCalls += 128
+	limit := max(size, 1)
+	info, err := r.shared.CheckFile(r.area, name, int64(limit))
+	if err != nil || !selectedCacheSameV2(expected, info) {
+		return errV2Unavailable
+	}
+	n := uint64(size)
+	if r.report.BytesRead > r.budget.Bytes || n > r.budget.Bytes-r.report.BytesRead || !r.selectedActiveFitsV2(n) {
+		return errV2InspectionBudget
+	}
+	r.report.BytesRead += n
+	r.active += n
+	if r.active > r.report.PeakActiveBytes {
+		r.report.PeakActiveBytes = r.active
+	}
+	data, readErr := r.shared.ReadFile(r.ctx, r.area, name, limit)
+	r.active -= n
+	if readErr != nil || !sameContent(data) {
+		return errV2Unavailable
+	}
+	after, err := r.shared.CheckFile(r.area, name, int64(limit))
+	if err != nil || !selectedCacheSameV2(expected, after) {
+		return errV2Unavailable
 	}
 	return nil
 }
