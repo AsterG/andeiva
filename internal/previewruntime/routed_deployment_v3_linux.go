@@ -117,6 +117,56 @@ type routedDeploymentResourcesV3 struct {
 	listener net.Listener
 }
 
+func (r *routedDeploymentResourcesV3) openPinnedRoot(path string) (*os.Root, error) {
+	if safeParents(path) != nil {
+		return nil, ErrStorage
+	}
+	before, err := os.Lstat(path)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrStorage
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, ErrStorage
+	}
+	r.roots = append(r.roots, root)
+	after, err := root.Stat(".")
+	if err != nil || !os.SameFile(before, after) {
+		return nil, ErrIdentity
+	}
+	return root, nil
+}
+
+// Prepared storage is independent of a running namespace. Both activation and
+// startup need these same pinned roots, with the classic writer kept separate.
+func (r *routedDeploymentResourcesV3) openPreparedStore(record routedDeploymentRecordV3) error {
+	resources := [4]*RoutedReaderRootV3{&r.launch.Store, &r.launch.Admission, &r.launch.Plan, &r.launch.Emergency}
+	for i, name := range []string{"state", "admission", "plan", "emergency"} {
+		root, err := r.openPinnedRoot(filepath.Join(routedDeploymentDataV3, name))
+		if err != nil {
+			return err
+		}
+		resource := resources[i]
+		resource.Root, resource.Access = root, record.Access[i].access()
+		if resource.Access.CheckDirectory(root) != nil {
+			return ErrIdentity
+		}
+		if i > 0 {
+			resource.Profile = record.Profiles[i-1].profile()
+			continue
+		}
+		if old, err := os.Stat(DataDir + "/state"); err == nil {
+			current, err := root.Stat(".")
+			if err != nil || os.SameFile(old, current) {
+				return ErrIdentity
+			}
+		} else if !os.IsNotExist(err) {
+			return ErrStorage
+		}
+	}
+	return nil
+}
+
 func (r *routedDeploymentResourcesV3) Close() error {
 	if r == nil {
 		return nil
@@ -269,64 +319,20 @@ func openRoutedDeploymentModeV3(ctx context.Context, c Config, management *os.Fi
 		r.files = append(r.files, host)
 		r.launch.Host = host
 	}
-	openRoot := func(path string) (*os.Root, error) {
-		if safeParents(path) != nil {
-			return nil, ErrStorage
-		}
-		before, e := os.Lstat(path)
-		if e != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
-			return nil, ErrStorage
-		}
-		root, e := os.OpenRoot(path)
-		if e != nil {
-			return nil, ErrStorage
-		}
-		r.roots = append(r.roots, root)
-		after, e := root.Stat(".")
-		if e != nil || !os.SameFile(before, after) {
-			return nil, ErrIdentity
-		}
-		return root, nil
+	if err = r.openPreparedStore(record); err != nil {
+		return nil, err
 	}
-	roots := [4]*os.Root{}
-	for i, name := range []string{"state", "admission", "plan", "emergency"} {
-		roots[i], err = openRoot(filepath.Join(routedDeploymentDataV3, name))
-		if err != nil {
-			return nil, err
-		}
-		if err = record.Access[i].access().CheckDirectory(roots[i]); err != nil {
-			return nil, ErrIdentity
-		}
-		if i == 0 {
-			if old, e := os.Stat(DataDir + "/state"); e == nil {
-				current, e := roots[i].Stat(".")
-				if e != nil || os.SameFile(old, current) {
-					return nil, ErrIdentity
-				}
-			} else if !os.IsNotExist(e) {
-				return nil, ErrStorage
-			}
-		}
-	}
-	resource := func(i int) RoutedReaderRootV3 {
-		value := RoutedReaderRootV3{Root: roots[i], Access: record.Access[i].access()}
-		if i > 0 {
-			value.Profile = record.Profiles[i-1].profile()
-		}
-		return value
-	}
-	r.launch.Store, r.launch.Admission, r.launch.Plan, r.launch.Emergency = resource(0), resource(1), resource(2), resource(3)
 	if recovery != nil {
 		if ctx.Err() != nil {
 			return nil, ErrUnavailable
 		}
 		return r, nil
 	}
-	r.launch.Directory, err = openRoot(filepath.Join(routedDeploymentRunV3, "ipc"))
+	r.launch.Directory, err = r.openPinnedRoot(filepath.Join(routedDeploymentRunV3, "ipc"))
 	if err != nil {
 		return nil, err
 	}
-	r.launch.IntegrityRoot, err = openRoot(filepath.Join(routedDeploymentDataV3, "integrity"))
+	r.launch.IntegrityRoot, err = r.openPinnedRoot(filepath.Join(routedDeploymentDataV3, "integrity"))
 	if err != nil {
 		return nil, err
 	}
