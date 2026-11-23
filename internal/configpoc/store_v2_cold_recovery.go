@@ -13,6 +13,10 @@ func coldCompletedPredecessorV1(v *selectedViewV2, a RoutedColdAnchorV1, p Route
 	if v.store.readObject(p.work.Transition.Previous, &before) != nil || !validV2Configuration(&before) || before.Intent != nil || before.Pending != nil || before.RecoveryRequired {
 		return false
 	}
+	return coldCompletedConfigurationV1(v, a, before)
+}
+
+func coldCompletedConfigurationV1(v *selectedViewV2, a RoutedColdAnchorV1, before v2Configuration) bool {
 	if in := a.configuration.Intent; in != nil && !in.Recovery && (in.Kind == OpCommit || in.Kind == OpRollback || in.Kind == OpConfirm) {
 		return coldCompletedOperationV1(v, a, before)
 	}

@@ -471,6 +471,7 @@ func (s *v2Store) readSelection() error {
 		if err = s.readObject(prior.State, &state); err != nil || !v2ValidState(state) || state.Lineage != prior.Lineage ||
 			!validRoutedCompensationSequenceV1(state, prior.Sequence) || !validRoutedCompensationPublicationV1(state, currentState, current.Sequence) ||
 			!validRoutedBootMarkSourceV1(state, currentState, current.Previous) ||
+			retainedDHCPColdAuditFollowsV1(state.RoutedDHCP, currentState.RoutedDHCP) && !validatesRetainedDHCPColdAuditEdgeV1(state, currentState, current.Previous, s.readObject) ||
 			!preservesSelectedDHCPConfigurationReadV4(state, currentState, current.Previous, prior, s.readObject, routedDHCPConfigurationHeaderV4) || !preservesReclamationV2(state, currentState) || !preservesRecoveryReserveV2(state, currentState) {
 			return errV2Unavailable
 		}

@@ -20,7 +20,13 @@ func validateRoutedDHCPTerminalV3(d v3RoutedDHCPState, lineage string, load func
 		return ErrRecovery
 	}
 	var audit v2CoordinatorAudit
-	if load(d.Audit, &audit) != nil || audit.Format != v2Format || audit.Operation != in.Operation || audit.Kind != v3RoutedDHCPKind || audit.Result != d.Phase || audit.Generation != w.Generation || audit.Running != w.Running || audit.Sequence == 0 {
+	if load(d.Audit, &audit) != nil || audit.Format != v2Format || audit.Operation != in.Operation || audit.Kind != v3RoutedDHCPKind || audit.Result != d.Phase || audit.Sequence == 0 {
+		return ErrRecovery
+	}
+	if d.ColdSource != "" {
+		return validateRetainedDHCPColdAuditV1(d, lineage, audit, load)
+	}
+	if audit.Generation != w.Generation || audit.Running != w.Running {
 		return ErrRecovery
 	}
 	return nil
@@ -32,6 +38,9 @@ func validateRoutedDHCPArchiveV3(archive v2ReserveArchive, facts v2ReserveFinali
 	}
 	var d v3RoutedDHCPState
 	if load(facts.Origin.Object, &d) != nil || validateRoutedDHCPTerminalV3(d, state.Lineage, load) != nil || reserveWorkV2(d.Bundle) != facts.Origin.ID || d.Audit != archive.Audit || !archiveMatchesBundleV2(archive, d.Bundle, false) {
+		return ErrRecovery
+	}
+	if d.ColdSource != "" && !hasFeatureV2(state, retainedDHCPColdRetirementFeatureV1) {
 		return ErrRecovery
 	}
 	if d.Phase == "scope_retired" && (d.Retirement != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) || !rebootScopeDeclaredV4(state, d.RebootRetirement)) {

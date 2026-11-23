@@ -26,6 +26,8 @@ type v3RoutedDHCPWork struct {
 }
 
 type v3RoutedDHCPState struct {
+	ColdAuditSource  string                       `json:"cold_audit_source,omitempty"`
+	ColdSource       string                       `json:"cold_source,omitempty"`
 	RebootRetirement *RoutedRebootScopeEvidenceV4 `json:"reboot_retirement,omitempty"`
 	Work             string                       `json:"work"`
 	Phase            string                       `json:"phase"`
@@ -35,7 +37,7 @@ type v3RoutedDHCPState struct {
 }
 
 func routedDHCPTerminalV3(d *v3RoutedDHCPState) bool {
-	return d != nil && (d.Phase == "withdrawn" || d.Phase == "scope_retired")
+	return d != nil && (d.Phase == "withdrawn" || d.Phase == "scope_retired" && (d.ColdSource == "" || d.ColdAuditSource != ""))
 }
 
 // RoutedDHCPSelectedV3 has no exported authority fields. Only the selected
@@ -86,7 +88,13 @@ func validRoutedDHCPShapeV3(st v2State) bool {
 	if !hasFeatureV2(st, v3RoutedDHCPFeature) || st.RecoveryReserveVersion != 1 || st.Configuration == nil || !validHash(d.Work) || !validReserveBundleV2(d.Bundle) || d.Bundle.Scope.Kind != "recovery" || d.Bundle.Scope.Domain != "routed" || d.Bundle.Scope.Fingerprint != d.Work || d.Bundle.Scope.Lineage != st.Lineage || d.Bundle.PlanIntent == nil || d.Bundle.PlanIntent.DHCPWork != d.Work || d.Bundle.PlanIntent.RoutedWork != "" || d.Bundle.PlanIntent.Kind != v3RoutedDHCPKind || !d.Bundle.PlanIntent.Recovery || d.Bundle.PlanIntent.BootID != nil || d.Bundle.PlanIntent.GuardDeadline != nil || d.Bundle.ClosingEscrow != nil {
 		return false
 	}
-	if d.Phase != "prepared" && d.Phase != "applied" && !routedDHCPTerminalV3(d) {
+	if d.Phase != "prepared" && d.Phase != "applied" && d.Phase != "scope_retired" && d.Phase != "withdrawn" {
+		return false
+	}
+	if d.ColdSource != "" && (!validHash(d.ColdSource) || d.Phase != "scope_retired" || d.RebootRetirement == nil || !hasFeatureV2(st, retainedDHCPColdRetirementFeatureV1)) {
+		return false
+	}
+	if d.ColdAuditSource != "" && (d.ColdSource == "" || !validHash(d.ColdAuditSource)) {
 		return false
 	}
 	if d.Phase == "scope_retired" {
@@ -109,7 +117,13 @@ func preservesRoutedDHCPV3(before, next v2State) bool {
 		_, hash, err := v2Canonical(a)
 		return routedDHCPTerminalV3(a) && err == nil && next.RoutedDHCPLast == hash
 	}
-	if before.RoutedDHCPLast != next.RoutedDHCPLast || a.Work != b.Work || !reserveJSONEqualV2(a.Bundle, b.Bundle) || before.Generation != next.Generation {
+	if before.RoutedDHCPLast != next.RoutedDHCPLast || a.Work != b.Work || !reserveJSONEqualV2(a.Bundle, b.Bundle) {
+		return false
+	}
+	if a.ColdSource != "" || b.ColdSource != "" {
+		return a.ColdSource != "" && hasFeatureV2(next, retainedDHCPColdRetirementFeatureV1) && next.Generation >= before.Generation && (reflect.DeepEqual(a, b) || retainedDHCPColdAuditFollowsV1(a, b))
+	}
+	if before.Generation != next.Generation {
 		return false
 	}
 	if a.Phase == b.Phase {
@@ -147,6 +161,9 @@ func validateRoutedDHCPSelectedV3(st v2State, load func(string, any) error) erro
 		if load(st.RoutedDHCPLast, &last) != nil || validateRoutedDHCPTerminalV3(last, st.Lineage, load) != nil {
 			return ErrRecovery
 		}
+		if last.ColdSource != "" && !hasFeatureV2(st, retainedDHCPColdRetirementFeatureV1) {
+			return ErrRecovery
+		}
 		if last.Phase == "scope_retired" && (last.Retirement != nil && !hasFeatureV2(st, v3RoutedFreshScopeFeature) || !rebootScopeDeclaredV4(st, last.RebootRetirement)) {
 			return ErrRecovery
 		}
@@ -154,6 +171,13 @@ func validateRoutedDHCPSelectedV3(st v2State, load func(string, any) error) erro
 	d := st.RoutedDHCP
 	if d == nil {
 		return nil
+	}
+	if d.ColdSource != "" {
+		if d.ColdAuditSource == "" {
+			_, err := retainedDHCPColdSourceV1(*d, st.Lineage, load)
+			return err
+		}
+		return validateRoutedDHCPTerminalV3(*d, st.Lineage, load)
 	}
 	w, err := loadRoutedDHCPWorkV3(d.Work, st.Lineage, load)
 	if err != nil || w.Generation != st.Generation || w.Running != st.Configuration.Running.Hash || st.Configuration.Intent != nil || st.Configuration.Pending != nil || d.Bundle.Scope.Global != w.Generation || d.Bundle.Scope.Generation != w.Generation {
@@ -214,7 +238,7 @@ func (r *RoutedSelectionReaderV2) resolveDHCPLeaseAuthority(ctx context.Context,
 	}()
 	st := v.store.state
 	d := st.RoutedDHCP
-	if d == nil || d.Work != expected || !validRoutedDHCPShapeV3(st) {
+	if d == nil || d.Work != expected || d.ColdSource != "" || !validRoutedDHCPShapeV3(st) {
 		if err = r.revalidate(ctx, v); err != nil {
 			return RoutedDHCPSelectedV3{}, err
 		}

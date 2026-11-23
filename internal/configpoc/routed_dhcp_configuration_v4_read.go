@@ -3,6 +3,9 @@ package configpoc
 import "reflect"
 
 func (s *v2Store) preservesPublishedFeaturesV2(next v2State) bool {
+	if retainedDHCPColdAuditFollowsV1(s.state.RoutedDHCP, next.RoutedDHCP) && !validatesRetainedDHCPColdAuditEdgeV1(s.state, next, s.selector.Current, s.readObject) {
+		return false
+	}
 	if reflect.DeepEqual(s.state.RoutedDHCPConfiguration, next.RoutedDHCPConfiguration) {
 		return preservesFeaturesV2(s.state, next)
 	}
@@ -32,7 +35,8 @@ func validateRoutedDHCPConfigurationSelectionV4(h *v4RoutedDHCPConfigurationStat
 // summary retains two hashes, not all prior state/configuration objects.
 func (r *v2ReachabilityReader) preservesFeaturesConfigurationReadV4(previous, nextSummary v2State, sourceSelection v2Selection, sourceHash string, nextSelection v2Selection, headerOf routedDHCPConfigurationHeaderOfV4) (bool, error) {
 	p, n := headerOf(previous), headerOf(nextSummary)
-	if reflect.DeepEqual(p, n) {
+	coldAudit := retainedDHCPColdAuditFollowsV1(previous.RoutedDHCP, nextSummary.RoutedDHCP)
+	if reflect.DeepEqual(p, n) && !coldAudit {
 		return preservesFeaturesV2(previous, nextSummary), nil
 	}
 	var next v2State
@@ -43,6 +47,9 @@ func (r *v2ReachabilityReader) preservesFeaturesConfigurationReadV4(previous, ne
 	defer release()
 	if next.Lineage != previous.Lineage || next.Generation != nextSummary.Generation || !reflect.DeepEqual(headerOf(next), n) {
 		return false, ErrRecovery
+	}
+	if coldAudit {
+		return preservesFeaturesV2(previous, next) && validatesRetainedDHCPColdAuditEdgeV1(previous, next, sourceHash, r.object), nil
 	}
 	ok := preservesRoutedDHCPConfigurationReadV4(previous, p, next, n, actualDHCPConfigurationSourceV4(sourceHash, sourceSelection, previous), r.object, func(subject, id string) (v2Operation, error) { return r.lookup(next, subject, id) }, headerOf)
 	return ok, nil

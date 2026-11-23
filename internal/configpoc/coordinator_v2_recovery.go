@@ -265,6 +265,16 @@ func (c *v2Coordinator) recoveryStatus() (v2RecoveryRecord, error) {
 }
 
 func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
+	if c.store.state.Configuration.Pending == nil {
+		return nil
+	}
+	if err := c.startRecoveryLocked(kind); err != nil {
+		return err
+	}
+	return c.finishRecoveryLocked(ctx)
+}
+
+func (c *v2Coordinator) startRecoveryLocked(kind string) error {
 	s := c.store
 	current := clone(*s.state.Configuration)
 	pending := current.Pending
@@ -332,10 +342,7 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 		return err
 	}
 	c.invalidateLocalLocked()
-	if err = c.point("after_recovery_intent"); err != nil {
-		return err
-	}
-	return c.finishRecoveryLocked(ctx)
+	return c.point("after_recovery_intent")
 }
 
 // Both the writer and independent continuation reader need the same rollback

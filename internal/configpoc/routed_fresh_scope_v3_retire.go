@@ -5,6 +5,9 @@ import "context"
 func (c *v2Coordinator) retireDHCPScopeV3(ctx context.Context, work v3RoutedDHCPWork) error {
 	s := c.store
 	d := s.state.RoutedDHCP
+	if s.state.RoutedDHCPConfiguration != nil {
+		return c.retireRetainedDHCPOnColdBootV1(ctx, work)
+	}
 	if d == nil || routedDHCPTerminalV3(d) || validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil || s.reserves == nil || s.reserves.verifySelected(s) != nil {
 		return ErrRecovery
 	}

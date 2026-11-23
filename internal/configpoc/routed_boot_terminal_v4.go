@@ -1,6 +1,9 @@
 package configpoc
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // archiveInterruptedRoutedV4 gives an unfinished routed transaction its
 // terminal record when the scope that owned it belongs to another kernel boot.
@@ -20,7 +23,7 @@ func (c *v2Coordinator) archiveInterruptedRoutedV4(ctx context.Context) error {
 	s := c.store
 	cfg := s.state.Configuration
 	if cfg == nil || !hasFeatureV2(s.state, v2RoutedFeature) || c.options.Routed == nil || c.options.BootID == nil || c.options.RebootScope == nil || s.reserves == nil ||
-		s.state.RoutedDHCP != nil || s.state.RoutedBootBoundary != nil || cfg.RecoveryRequired {
+		s.state.RoutedDHCP != nil && s.state.RoutedDHCP.ColdSource == "" || s.state.RoutedBootBoundary != nil || cfg.RecoveryRequired {
 		return nil
 	}
 	in := cfg.Intent
@@ -100,8 +103,8 @@ func (c *v2Coordinator) archiveOperationByBootV4(in *v2CoordinatorIntent) error 
 		return err
 	}
 	defer restore()
-	if s.reserves.verifyBundle(s, op.Reserve) != nil {
-		return ErrRecovery
+	if err := s.reserves.verifyBundle(s, op.Reserve); err != nil {
+		return fmt.Errorf("verify terminal operation reserve: %w", err)
 	}
 	var previous v2Configuration
 	if s.readObject(in.Previous, &previous) != nil || !validV2Configuration(&previous) || previous.Intent != nil {
@@ -128,7 +131,10 @@ func (c *v2Coordinator) archiveOperationByBootV4(in *v2CoordinatorIntent) error 
 	previous.RecoveryRequired = false
 	previous.Intent = nil
 	_, err = c.completeLocked(op, previous, generation, "failed_rolled_back", code, false, c.recoveryNow())
-	return err
+	if err != nil {
+		return fmt.Errorf("complete terminal operation: %w", err)
+	}
+	return nil
 }
 
 // finishRetiredRoutedBootBoundaryV4 handles a scope replacement registered by

@@ -440,6 +440,15 @@ func (b *bootAgainFixtureV4) boot(t *testing.T, interruptAt string) (*v2Coordina
 	id := v2BootID(next.identity.BootID)
 	opts.BootID = &id
 	opts.Hook = nil
+	if interruptAt == "reserve_archive_selected" || interruptAt == "reserve_archive_anchored" {
+		s.hook = func(name string) error {
+			d := s.state.RoutedDHCP
+			if name == interruptAt && routedDHCPTerminalV3(d) && d.ColdSource != "" {
+				return ErrInterrupted
+			}
+			return nil
+		}
+	}
 	if interruptAt != "" {
 		opts.Hook = func(name string) error {
 			if name == interruptAt {

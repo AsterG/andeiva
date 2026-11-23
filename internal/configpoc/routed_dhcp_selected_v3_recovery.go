@@ -41,6 +41,17 @@ func (c *v2Coordinator) recoverRoutedDHCPAtOpenV3(ctx context.Context) error {
 	if d == nil {
 		return nil
 	}
+	if d.ColdSource != "" {
+		old := d.RebootRetirement.Old
+		if c.options.BootID == nil || string(*c.options.BootID) != c.options.RoutedIdentity.BootID ||
+			d.RebootRetirement.New.BootID == c.options.RoutedIdentity.BootID {
+			return ErrRecovery
+		}
+		if _, err := c.proveRebootScopeV4(ctx, old, d.Work); err != nil {
+			return err
+		}
+		return nil
+	}
 	if routedDHCPTerminalV3(d) {
 		if s.reserves == nil || s.reserves.verifySelected(s) != nil {
 			return ErrRecovery
