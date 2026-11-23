@@ -224,6 +224,11 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 	if err != nil {
 		return out, err
 	}
+	if c.RebootScope != nil && c.RebootScope.Binding.Lineage != nil {
+		if c.LocalOrigin == nil || validateRoutedBootLineageLinksV5(*c.RebootScope.Binding.Lineage, bindings) != nil {
+			return out, ErrIdentity
+		}
+	}
 	var network routedNetworkDriverV4
 	var selector *routedNetworkSelectorV4
 	if c.DHCPJobsEnabled {
@@ -262,6 +267,18 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 		return out, err
 	}
 	return out, nil
+}
+
+func validateRoutedBootLineageLinksV5(lineage routedBootLineageV5, bindings []networkplan.Binding) error {
+	if lineage.digest() == "" || len(bindings) != 2 {
+		return ErrIdentity
+	}
+	for i, binding := range bindings {
+		if binding.Name != routedLinkNameV3(i) || binding.HardwareAddress != routedLinkMACV3(lineage.Node, i) {
+			return ErrIdentity
+		}
+	}
+	return nil
 }
 
 func routedApplianceBindingsV3() ([]networkplan.Binding, error) {

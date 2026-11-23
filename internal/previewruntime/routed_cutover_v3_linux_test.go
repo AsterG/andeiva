@@ -17,7 +17,7 @@ func TestRoutedCutoverV3PinsOperationalManifests(t *testing.T) {
 	deployment, links := []byte("deployment\n"), []byte("node-links\n")
 	digest, linkDigest := sha256.Sum256(deployment), sha256.Sum256(links)
 	marker, _ := json.Marshal(routedCutoverRecordV3{1, hex.EncodeToString(digest[:]), hex.EncodeToString(linkDigest[:])})
-	if err := verifyRoutedCutoverV3(marker, deployment, links); err != nil {
+	if _, err := verifiedRoutedCutoverV3(marker, deployment, links); err != nil {
 		t.Fatal(err)
 	}
 	for _, input := range []struct{ marker, deployment, links []byte }{
@@ -26,7 +26,7 @@ func TestRoutedCutoverV3PinsOperationalManifests(t *testing.T) {
 		{append(marker, []byte(" {}")...), deployment, links},
 		{[]byte(strings.Replace(string(marker), `"version":1`, `"version":1,"version":1`, 1)), deployment, links},
 	} {
-		if verifyRoutedCutoverV3(input.marker, input.deployment, input.links) == nil {
+		if _, err := verifiedRoutedCutoverV3(input.marker, input.deployment, input.links); err == nil {
 			t.Fatal("unbound cutover accepted")
 		}
 	}

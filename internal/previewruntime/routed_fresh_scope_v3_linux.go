@@ -23,14 +23,15 @@ type RoutedFreshScopeOptionsV3 struct {
 }
 
 type routedFreshScopeV3 struct {
-	mu        sync.Mutex
-	file      *os.File
-	binding   RoutedFreshScopeBindingV3
-	reader    *configpoc.RoutedSelectionReaderV2
-	authority configpoc.RoutedAuthorityV1
-	kernel    *routedKernelV3
-	work      string // Correlation only; every preparation independently rereads selected work.
-	reboot    bool   // Set only by the separate kernel-bound v4 constructor.
+	rebootBinding RoutedRebootScopeBindingV4
+	mu            sync.Mutex
+	file          *os.File
+	binding       RoutedFreshScopeBindingV3
+	reader        *configpoc.RoutedSelectionReaderV2
+	authority     configpoc.RoutedAuthorityV1
+	kernel        *routedKernelV3
+	work          string // Correlation only; every preparation independently rereads selected work.
+	reboot        bool   // Set only by the separate kernel-bound v4 constructor.
 }
 
 func validateRetirementFileV3(file *os.File) error {

@@ -11,7 +11,7 @@ const (
 	routedBootAttestationLimitV4   = 8
 	routedBootAttestedRecordV4     = "scope_record"
 	routedBootAttestedReceiptV4    = "drain_receipt"
-	routedBootAttestationVersionV4 = 4
+	routedBootAttestationVersionV4 = 5
 )
 
 // RootBootAttestedScopeV4 names one scope that root itself recorded during an
@@ -21,6 +21,7 @@ type RootBootAttestedScopeV4 struct {
 	Old            networkexecutor.OwnedNamespaceIdentity `json:"old"`
 	MetadataSHA256 string                                 `json:"metadata_sha256"`
 	Source         string                                 `json:"source"`
+	LineageSHA256  string                                 `json:"lineage_sha256"`
 	SourceSHA256   string                                 `json:"source_sha256"`
 }
 
@@ -45,10 +46,22 @@ func (a RootBootAttestationV4) valid() bool {
 	seen := map[networkexecutor.OwnedNamespaceIdentity]bool{}
 	for _, entry := range a.Retired {
 		if !retirementIdentityV3(entry.Old) || entry.Old.BootID == a.BootID || entry.Old.UID != a.Identities.HelperUID || entry.Old.GID != a.Identities.IPCGID || seen[entry.Old] ||
-			!retirementHashV3(entry.MetadataSHA256) || !retirementHashV3(entry.SourceSHA256) || entry.Source != routedBootAttestedRecordV4 && entry.Source != routedBootAttestedReceiptV4 {
+			!retirementHashV3(entry.LineageSHA256) || !retirementHashV3(entry.MetadataSHA256) || !retirementHashV3(entry.SourceSHA256) || entry.Source != routedBootAttestedRecordV4 && entry.Source != routedBootAttestedReceiptV4 {
 			return false
 		}
 		seen[entry.Old] = true
+	}
+	return true
+}
+
+func (a RootBootAttestationV4) matchesLineage(digest string) bool {
+	if !retirementHashV3(digest) {
+		return false
+	}
+	for _, entry := range a.Retired {
+		if entry.LineageSHA256 != digest {
+			return false
+		}
 	}
 	return true
 }
@@ -113,9 +126,9 @@ func routedScopeRecordIdentityV4(r RoutedScopeRecoveryRecordV3) networkexecutor.
 // root just read from procfs. A record of the running boot is a service
 // restart: nothing is issued and the orderly drain receipt stays mandatory.
 // Damaged, foreign or contradictory records keep the launch closed.
-func routedBootAttestationNextV4(kernel string, ids Identities, record, slot []byte) ([]byte, bool, error) {
+func routedBootAttestationNextV4(kernel string, ids Identities, record, slot []byte, lineage string) ([]byte, bool, error) {
 	boot, err := canonicalBoot([]byte(kernel))
-	if err != nil || boot != kernel || ids.Validate() != nil || len(record) != RoutedScopeRecoveryRecordSizeV3 || len(slot) != RootRetirementReceiptSizeV3 {
+	if err != nil || boot != kernel || ids.Validate() != nil || !retirementHashV3(lineage) || len(record) != RoutedScopeRecoveryRecordSizeV3 || len(slot) != RootRetirementReceiptSizeV3 {
 		return nil, false, ErrIdentity
 	}
 	pinned := !bytes.Equal(record, make([]byte, len(record)))
@@ -124,10 +137,7 @@ func routedBootAttestationNextV4(kernel string, ids Identities, record, slot []b
 		if previous, err = DecodeRoutedScopeRecoveryV3(record); err != nil {
 			return nil, false, ErrIdentity
 		}
-		if previous.Metadata.BootID == kernel {
-			return nil, false, nil
-		}
-		if previous.Identities != ids {
+		if previous.Identities != ids || previous.Version == 4 && previous.LineageSHA256 != lineage {
 			return nil, false, ErrIdentity
 		}
 	}
@@ -140,12 +150,12 @@ func routedBootAttestationNextV4(kernel string, ids Identities, record, slot []b
 		if !pinned || receipt.Old == routedScopeRecordIdentityV4(previous) && receipt.MetadataSHA256 == previous.MetadataSHA256 {
 			return nil, false, nil
 		}
-		if receipt.Old.BootID == kernel || receipt.Old.UID != ids.HelperUID || receipt.Old.GID != ids.IPCGID {
+		if previous.PriorSlotSHA256 != retirementDigestV3(slot) || receipt.Old.BootID == kernel || receipt.Old.UID != ids.HelperUID || receipt.Old.GID != ids.IPCGID {
 			return nil, false, ErrIdentity
 		}
-		retired = []RootBootAttestedScopeV4{{Old: receipt.Old, MetadataSHA256: receipt.MetadataSHA256, Source: routedBootAttestedReceiptV4, SourceSHA256: retirementDigestV3(slot)}}
+		retired = []RootBootAttestedScopeV4{{Old: receipt.Old, MetadataSHA256: receipt.MetadataSHA256, Source: routedBootAttestedReceiptV4, LineageSHA256: lineage, SourceSHA256: retirementDigestV3(slot)}}
 	} else if earlier, e := DecodeRootBootAttestationV4(slot); e == nil {
-		if earlier.Identities != ids {
+		if earlier.Identities != ids || !earlier.matchesLineage(lineage) {
 			return nil, false, ErrIdentity
 		}
 		for _, entry := range earlier.Retired {
@@ -161,8 +171,14 @@ func routedBootAttestationNextV4(kernel string, ids Identities, record, slot []b
 		return nil, false, ErrIdentity
 	}
 	if pinned {
+		if previous.Version != 4 {
+			return nil, false, ErrIdentity
+		}
+		if previous.Metadata.BootID == kernel {
+			return nil, false, nil // The exact orderly receipt remains mandatory to release this record.
+		}
 		old := routedScopeRecordIdentityV4(previous)
-		next := []RootBootAttestedScopeV4{{Old: old, MetadataSHA256: previous.MetadataSHA256, Source: routedBootAttestedRecordV4, SourceSHA256: retirementDigestV3(record)}}
+		next := []RootBootAttestedScopeV4{{Old: old, MetadataSHA256: previous.MetadataSHA256, Source: routedBootAttestedRecordV4, LineageSHA256: lineage, SourceSHA256: retirementDigestV3(record)}}
 		for _, entry := range retired {
 			if entry.Old != old && len(next) < routedBootAttestationLimitV4 {
 				next = append(next, entry)
@@ -185,7 +201,7 @@ func routedBootAttestationReleasesV4(kernel string, record, slot []byte) bool {
 		return false
 	}
 	a, err := DecodeRootBootAttestationV4(slot)
-	if err != nil || a.BootID != kernel || previous.Metadata.BootID == kernel || a.Identities != previous.Identities {
+	if err != nil || a.BootID != kernel || previous.Metadata.BootID == kernel || a.Identities != previous.Identities || previous.Version != 4 || !a.matchesLineage(previous.LineageSHA256) {
 		return false
 	}
 	entry, ok := a.retired(routedScopeRecordIdentityV4(previous))
@@ -232,7 +248,7 @@ func (p routedRebootProofV4) identities() []networkexecutor.OwnedNamespaceIdenti
 
 // decodeRoutedRebootProofV4 binds either slot content to the new scope. Every
 // retired scope must belong to another boot, another run and the same accounts.
-func decodeRoutedRebootProofV4(raw []byte, next networkexecutor.OwnedNamespaceIdentity) (routedRebootProofV4, error) {
+func decodeRoutedRebootProofV4(raw []byte, next networkexecutor.OwnedNamespaceIdentity, lineage string) (routedRebootProofV4, error) {
 	if !retirementIdentityV3(next) {
 		return routedRebootProofV4{}, ErrIdentity
 	}
@@ -243,7 +259,7 @@ func decodeRoutedRebootProofV4(raw []byte, next networkexecutor.OwnedNamespaceId
 		return routedRebootProofV4{receipt: &r}, nil
 	}
 	a, err := DecodeRootBootAttestationV4(raw)
-	if err != nil || a.BootID != next.BootID || a.Identities.HelperUID != next.UID || a.Identities.IPCGID != next.GID {
+	if err != nil || a.BootID != next.BootID || a.Identities.HelperUID != next.UID || a.Identities.IPCGID != next.GID || !a.matchesLineage(lineage) {
 		return routedRebootProofV4{}, ErrIdentity
 	}
 	for _, entry := range a.Retired {

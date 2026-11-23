@@ -146,7 +146,7 @@ func (s *routedRetirementSlot) recordBootAttested(raw []byte) error {
 
 // attestRoutedBootV4 runs before the previous scope record may be released.
 // Root reads the kernel identity itself; no caller supplies it.
-func attestRoutedBootV4(slot *routedRetirementSlot, record *routedScopeRecordSlotV3, ids Identities) error {
+func attestRoutedBootV4(slot *routedRetirementSlot, record *routedScopeRecordSlotV3, ids Identities, lineage string) error {
 	if slot == nil || record == nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return ErrIdentity
 	}
@@ -162,7 +162,7 @@ func attestRoutedBootV4(slot *routedRetirementSlot, record *routedScopeRecordSlo
 	if err != nil {
 		return err
 	}
-	next, issue, err := routedBootAttestationNextV4(kernel, ids, previous, current)
+	next, issue, err := routedBootAttestationNextV4(kernel, ids, previous, current, lineage)
 	if err != nil || !issue {
 		return err
 	}
@@ -237,7 +237,7 @@ type routedRetirementResourceV4 struct {
 	RebootScope *RoutedRebootScopeOptionsV4
 }
 
-func openRoutedRetirementResourceV3(metadata Metadata, ids Identities) (*routedRetirementResourceV4, error) {
+func openRoutedRetirementResourceV3(metadata Metadata, ids Identities, lineage *routedBootLineageV5) (*routedRetirementResourceV4, error) {
 	if os.Getuid() != 0 || os.Geteuid() != 0 || ids.Validate() != nil || metadata.ValidateRouted() != nil || safeParents(routedRetirementDirectoryV3+"/"+routedRetirementSlotV3) != nil {
 		return nil, ErrIdentity
 	}
@@ -299,10 +299,10 @@ func openRoutedRetirementResourceV3(metadata Metadata, ids Identities) (*routedR
 		// A boot attestation is valid only for the kernel boot that issued it and
 		// for the accounts of this installation. It selects the reboot profile.
 		attestation, e := DecodeRootBootAttestationV4(raw)
-		if e != nil || attestation.BootID != actualBoot || attestation.Identities != ids {
+		if e != nil || attestation.BootID != actualBoot || attestation.Identities != ids || lineage == nil || !attestation.matchesLineage(lineage.digest()) {
 			return nil, ErrIdentity
 		}
-		reboot := RoutedRebootScopeBindingV4(binding)
+		reboot := RoutedRebootScopeBindingV4{ReceiptSHA256: binding.ReceiptSHA256, NewIdentity: identity, Lineage: lineage}
 		if _, err = readRebootRetirementFileV4(file, reboot); err != nil {
 			return nil, err
 		}
@@ -316,7 +316,7 @@ func openRoutedRetirementResourceV3(metadata Metadata, ids Identities) (*routedR
 		}
 		resource.FreshScope = &RoutedFreshScopeOptionsV3{Receipt: file, Binding: binding}
 	} else {
-		reboot := RoutedRebootScopeBindingV4(binding)
+		reboot := RoutedRebootScopeBindingV4{ReceiptSHA256: binding.ReceiptSHA256, NewIdentity: identity}
 		if _, err = readRebootRetirementFileV4(file, reboot); err != nil {
 			return nil, err
 		}

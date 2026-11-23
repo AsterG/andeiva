@@ -25,7 +25,7 @@ func readRebootRetirementFileV4(file *os.File, binding RoutedRebootScopeBindingV
 	if n, err := file.ReadAt(raw, 0); err != nil || n != len(raw) || validateRetirementFileV3(file) != nil || retirementDigestV3(raw) != binding.ReceiptSHA256 {
 		return routedRebootProofV4{}, ErrIdentity
 	}
-	return decodeRoutedRebootProofV4(raw, binding.NewIdentity)
+	return decodeRoutedRebootProofV4(raw, binding.NewIdentity, binding.lineageDigest())
 }
 
 func newRoutedRebootScopeV4(m Metadata, o RoutedRebootScopeOptionsV4, reader *configpoc.RoutedSelectionReaderV2, authority configpoc.RoutedAuthorityV1) (*routedFreshScopeV3, error) {
@@ -50,14 +50,14 @@ func newRoutedRebootScopeV4(m Metadata, o RoutedRebootScopeOptionsV4, reader *co
 		_ = f.Close()
 		return nil, err
 	}
-	return &routedFreshScopeV3{file: f, binding: RoutedFreshScopeBindingV3(o.Binding), reader: reader, authority: authority, kernel: k, reboot: true}, nil
+	return &routedFreshScopeV3{file: f, binding: RoutedFreshScopeBindingV3{ReceiptSHA256: o.Binding.ReceiptSHA256, NewIdentity: o.Binding.NewIdentity}, rebootBinding: o.Binding.detached(), reader: reader, authority: authority, kernel: k, reboot: true}, nil
 }
 
 // The helper reads the kernel identity itself on every proof. An attestation is
 // usable only while that identity is the one root bound to the new scope.
 func (p *routedFreshScopeV3) readReceipt() (routedRebootProofV4, error) {
 	if p.reboot {
-		proof, err := readRebootRetirementFileV4(p.file, RoutedRebootScopeBindingV4(p.binding))
+		proof, err := readRebootRetirementFileV4(p.file, p.rebootBinding)
 		if err != nil {
 			return routedRebootProofV4{}, err
 		}

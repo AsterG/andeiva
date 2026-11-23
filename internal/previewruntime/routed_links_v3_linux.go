@@ -83,14 +83,18 @@ func validRoutedParentV3(p RoutedParentLinkV3) bool {
 	return err == nil && len(mac) == 6 && mac.String() == p.MAC && mac[0]&1 == 0 && p.MAC != "00:00:00:00:00:00"
 }
 
+func routedLinkMACV3(node string, slot int) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("andeiva-private-link-v1:%s:%d", node, slot)))
+	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
+}
+
 func newRoutedGatewayLinksV3(ctx context.Context, runID string, parents [2]RoutedParentLinkV3, run func(context.Context, routedLinkOperationV3) ([]byte, error)) (*RoutedGatewayLinksV3, error) {
 	if ctx == nil || ctx.Err() != nil || !validHex(runID, 16) || run == nil || !validRoutedParentV3(parents[0]) || !validRoutedParentV3(parents[1]) || parents[0].Index == parents[1].Index || parents[0].Name == parents[1].Name || parents[0].MAC == parents[1].MAC {
 		return nil, ErrIdentity
 	}
 	l := &RoutedGatewayLinksV3{ctx: ctx, parents: parents, run: run}
 	for i := range l.macs {
-		sum := sha256.Sum256([]byte(fmt.Sprintf("andeiva-private-link-v1:%s:%d", runID, i)))
-		l.macs[i] = fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
+		l.macs[i] = routedLinkMACV3(runID, i)
 	}
 	if l.macs[0] == l.macs[1] || l.macs[0] == parents[0].MAC || l.macs[0] == parents[1].MAC || l.macs[1] == parents[0].MAC || l.macs[1] == parents[1].MAC {
 		return nil, ErrIdentity

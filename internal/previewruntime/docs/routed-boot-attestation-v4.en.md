@@ -75,3 +75,23 @@ closed. If a scope started after a power loss stops in an orderly way before
 the store completed its recovery, the drain receipt replaces the attestation
 and the next start is refused. Abrupt power cuts on real hardware have not been
 qualified.
+
+## Upgrade and rollback
+
+Before installing the update, stop the grouped service and verify its orderly
+drain. Keep a verified backup of the previous package, selected store and
+operational records from that same stopped installation. A legacy scope record
+can be cleared only with its exact orderly receipt. A legacy boot attestation
+and unknown record formats keep recovery closed.
+
+The new scope record binds the node and verified cutover to the previous slot's
+digest. Each retained entry in a new boot attestation carries the installation
+digest. The helper receives the expected values through its authenticated
+bootstrap. It checks the installed origin against the selected store, matches
+the gateway MACs and compares every entry with the expected digest.
+
+Earlier binaries reject the new root record formats. To roll back, have an
+authorized operator stop and drain the grouped service. Restore the earlier
+package and its matching, verified stopped backup using the offline recovery
+procedure. Keep forwarding closed until the restored Startup and kernel state
+have been verified. Restoring the backup discards changes made afterward.

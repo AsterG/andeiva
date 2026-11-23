@@ -4,31 +4,34 @@ package previewruntime
 
 import (
 	"encoding/json"
-	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"strings"
 	"testing"
+
+	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/networkplan"
 )
 
 func TestRoutedRetirementBootstrapV4KeepsAuthorityHelperOnly(t *testing.T) {
-	binding := RoutedRebootScopeBindingV4{ReceiptSHA256: strings.Repeat("b", 64), NewIdentity: networkexecutor.OwnedNamespaceIdentity{UID: 62002, GID: 62003, Namespace: 42, Host: 40, BootID: "22345678-1234-1234-1234-123456789abc", RunID: strings.Repeat("a", 32)}}
+	binding := RoutedRebootScopeBindingV4{ReceiptSHA256: strings.Repeat("b", 64), NewIdentity: networkexecutor.OwnedNamespaceIdentity{UID: 62002, GID: 62003, Namespace: 42, Host: 40, BootID: "22345678-1234-1234-1234-123456789abc", RunID: strings.Repeat("a", 32)}, Lineage: new(bootLineageFixtureV5())}
 	supervisor := &RoutedLaunchSupervisorV3{resources: RoutedLaunchResourcesV3{RebootScope: &RoutedRebootScopeOptionsV4{Binding: binding}}}
 	helper, api := supervisor.bootstrap(0, 0), supervisor.bootstrap(123, 1)
 	helper.Integrity, api.Integrity = true, true // Directory inheritance is qualified separately.
 	if !validRoutedScopeBootstrapV4(helper, RoutedHelperRoleV3) || !validRoutedScopeBootstrapV4(api, RoutedAPIRoleV3) {
 		t.Fatal("valid reboot profile refused")
 	}
-	if helper.FreshScope || api.FreshScope || !helper.RebootScope || !api.RebootScope || helper.RebootScopeBinding == nil || *helper.RebootScopeBinding != binding || api.RebootScopeBinding != nil {
+	if helper.FreshScope || api.FreshScope || !helper.RebootScope || !api.RebootScope || helper.RebootScopeBinding == nil || helper.RebootScopeBinding.NewIdentity != binding.NewIdentity || helper.RebootScopeBinding.ReceiptSHA256 != binding.ReceiptSHA256 || helper.RebootScopeBinding.Lineage == nil || *helper.RebootScopeBinding.Lineage != *binding.Lineage || api.RebootScopeBinding != nil {
 		t.Fatal("reboot authority leaked or profiles mixed")
 	}
 	raw, err := json.Marshal(api)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), binding.ReceiptSHA256) || strings.Contains(string(raw), "scope_binding") {
+	if strings.Contains(string(raw), binding.ReceiptSHA256) || strings.Contains(string(raw), "scope_binding") || strings.Contains(string(raw), binding.Lineage.Node) || strings.Contains(string(raw), binding.Lineage.DeploymentSHA256) || strings.Contains(string(raw), binding.Lineage.LinksSHA256) {
 		t.Fatal("API wire contains root binding")
 	}
 	helper.RebootScopeBinding.ReceiptSHA256 = strings.Repeat("c", 64)
-	if supervisor.resources.RebootScope.Binding != binding {
+	helper.RebootScopeBinding.Lineage.Node = strings.Repeat("4", 32)
+	if supervisor.resources.RebootScope.Binding != binding || binding.Lineage.Node != bootLineageFixtureV5().Node {
 		t.Fatal("bootstrap aliases root binding")
 	}
 	c := (&routedLaunchFilesV3{}).context(api)
@@ -65,5 +68,20 @@ func TestRoutedRetirementBootstrapV4RejectsAmbiguousAuthority(t *testing.T) {
 		if validRoutedScopeBootstrapV4(b, RoutedAPIRoleV3) || validateRoutedScopeReceiptV4(nil, b) == nil {
 			t.Fatal("API binding or missing receipt accepted")
 		}
+	}
+}
+
+func TestRoutedBootLineageV5MatchesObservedGateway(t *testing.T) {
+	lineage := bootLineageFixtureV5()
+	links := []networkplan.Binding{
+		{Name: "lan0", HardwareAddress: routedLinkMACV3(lineage.Node, 0)},
+		{Name: "wan0", HardwareAddress: routedLinkMACV3(lineage.Node, 1)},
+	}
+	if err := validateRoutedBootLineageLinksV5(lineage, links); err != nil {
+		t.Fatal(err)
+	}
+	links[0].HardwareAddress = routedLinkMACV3(strings.Repeat("2", 32), 0)
+	if err := validateRoutedBootLineageLinksV5(lineage, links); err == nil {
+		t.Fatal("helper accepted a different observed MAC")
 	}
 }

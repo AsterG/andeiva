@@ -78,3 +78,25 @@ de energía lo deja ilegible y el servicio cerrado. Si un ámbito iniciado tras
 un corte se detiene de forma ordenada antes de que el almacén complete su
 recuperación, el recibo de drenaje sustituye la acreditación y el siguiente
 inicio se rechaza. Los cortes abruptos en equipo real no están calificados.
+
+## Actualización y reversión
+
+Antes de instalar la actualización, detén el servicio agrupado y comprueba su
+drenaje ordenado. Conserva una copia verificada del paquete anterior, el almacén
+seleccionado y los registros operativos de esa misma instalación detenida. Un
+registro de ámbito antiguo solo puede liberarse con su recibo ordenado exacto.
+Las acreditaciones antiguas y los formatos desconocidos mantienen la
+recuperación cerrada.
+
+El nuevo registro de ámbito vincula el nodo y el cutover verificado con el
+resumen del slot anterior. Cada entrada retenida de una nueva acreditación
+incluye el resumen de la instalación. El helper recibe los valores esperados
+en su bootstrap autenticado. Comprueba el origen contra el almacén, verifica
+las MAC del gateway y coteja cada entrada con el resumen esperado.
+
+Los binarios anteriores rechazan los nuevos formatos de root. Para revertir,
+un operador autorizado detiene y drena el servicio agrupado. Restaura el
+paquete anterior y su copia verificada del estado detenido mediante el
+procedimiento de recuperación offline. Mantén cerrado el reenvío hasta
+verificar el Startup restaurado y el estado del kernel. Restaurar la copia
+descarta los cambios posteriores.

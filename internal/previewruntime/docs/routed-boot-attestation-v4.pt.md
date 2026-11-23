@@ -78,3 +78,25 @@ energia deixa-o ilegível e o serviço fechado. Se um escopo iniciado após uma
 queda parar de forma ordenada antes de o armazenamento concluir a recuperação,
 o recibo de drenagem substitui a atestação e o início seguinte é recusado. As
 quedas abruptas em equipamento real não foram qualificadas.
+
+## Atualização e reversão
+
+Antes de instalar a atualização, pare o serviço agrupado e verifique a sua
+drenagem ordenada. Guarde uma cópia verificada do pacote anterior, do
+armazenamento selecionado e dos registros operacionais da mesma instalação
+parada. Um registro de escopo antigo só pode ser liberado com seu recibo
+ordenado exato. Atestações antigas e formatos desconhecidos mantêm a
+recuperação fechada.
+
+O novo registro de escopo vincula o nó e o cutover verificado ao resumo do
+slot anterior. Cada entrada retida de uma nova atestação inclui o resumo da
+instalação. O helper recebe os valores esperados no seu bootstrap autenticado.
+Ele verifica a origem no armazenamento, confere os MACs do gateway e compara
+cada entrada com o resumo esperado.
+
+Binários anteriores rejeitam os novos formatos de root. Para reverter, um
+operador autorizado para e drena o serviço agrupado. Restaure o pacote
+anterior e sua cópia verificada do estado parado pelo procedimento de
+recuperação offline. Mantenha o encaminhamento fechado até verificar o Startup
+restaurado e o estado do kernel. A restauração descarta as alterações
+posteriores.

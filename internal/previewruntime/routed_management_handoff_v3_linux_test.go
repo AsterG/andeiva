@@ -19,10 +19,10 @@ func TestRoutedManagementHandoffV3RequiresExplicitSocket(t *testing.T) {
 	t.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()))
 	t.Setenv("LISTEN_FDS", "1")
 	t.Setenv("LISTEN_FDNAMES", "andeiva-management-v3")
-	if resources, err := openRoutedDeploymentWithManagementV3(context.Background(), applianceConfigFixtureV3(), nil); err == nil || resources != nil {
+	if resources, err := openRoutedDeploymentWithManagementV3(context.Background(), applianceConfigFixtureV3(), nil, nil); err == nil || resources != nil {
 		t.Fatal("missing named management descriptor fell back to activation environment")
 	}
-	if err := runRoutedSupervisorWithManagementV3(context.Background(), applianceConfigFixtureV3(), nil); err == nil {
+	if err := runRoutedSupervisorWithManagementV3(context.Background(), applianceConfigFixtureV3(), nil, nil); err == nil {
 		t.Fatal("supervisor accepted missing named descriptor")
 	}
 	if os.Getenv("LISTEN_FDS") != "1" {
