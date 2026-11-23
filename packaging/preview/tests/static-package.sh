@@ -5,6 +5,8 @@ package=$(realpath -- "$1")
 source_root=$(realpath -e -- "$(dirname -- "${BASH_SOURCE[0]}")/../../..")
 [[ $(dpkg-deb -f "$package" Package) = andeiva-firewall-preview ]]
 [[ $(dpkg-deb -f "$package" Architecture) = amd64 ]]
+# The grouped runtime and offline installer both use Debian's fixed sysctl.
+dpkg-deb -f "$package" Depends | grep -Eq '(^|, )procps(,|$)'
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
 dpkg-deb -x "$package" "$stage/root"

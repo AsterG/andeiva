@@ -4,7 +4,7 @@ Section: net
 Priority: optional
 Architecture: amd64
 Maintainer: ASTERG
-Depends: libc6, systemd (>= 257), adduser, iproute2, nftables, util-linux
+Depends: libc6, systemd (>= 257), adduser, iproute2, nftables, util-linux, procps
 Conflicts: andeiva-experimental
 Description: ANDEIVA experimental firewall administration preview
  Persistent Web, CLI and API administration for isolated Debian laboratory
