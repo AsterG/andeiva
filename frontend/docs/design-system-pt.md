@@ -105,7 +105,7 @@ docker build -f frontend/Dockerfile.visual -t andeiva-design-check .
 docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --shm-size=512m andeiva-design-check
 ```
 
-`frontend/Dockerfile.visual` fixa por digest o Playwright 1.65.0 sobre Linux Noble
+`frontend/Dockerfile.visual` fixa por digest o Playwright 1.65.1 sobre Linux Noble
 e o Node 24.20.0. Node e seus npm/npx 11.19.0 compartilham um diretório isolado;
 o build verifica os destinos dos executáveis e imprime as três versões. A busca
 normaliza maiúsculas sem depender do locale do navegador, com testes em navegador
