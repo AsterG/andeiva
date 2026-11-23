@@ -16,6 +16,16 @@ import (
 
 const routedAccountsPathV3 = routedDeploymentDataV3 + "/accounts.json"
 
+type routedAccountPreparationV3 struct {
+	Version        int       `json:"version"`
+	Actor          string    `json:"actor"`
+	CreatedAt      time.Time `json:"created_at"`
+	PlanSHA256     string    `json:"plan_sha256"`
+	ProfileSHA256  string    `json:"profile_sha256"`
+	SourceSHA256   string    `json:"source_sha256"`
+	AccountsSHA256 string    `json:"accounts_sha256"`
+}
+
 // Account authority remains separate from configuration-reader permissions.
 // The old credential file is retained but never used as a grouped fallback.
 func routedAccountImageV3(source, draft []byte) ([]byte, error) {
@@ -139,15 +149,11 @@ func PrepareRoutedAccountsV3(ctx context.Context, c Config) (string, error) {
 	}
 	digest := sha256.Sum256(image)
 	profileDigest, sourceDigest := sha256.Sum256(profile), sha256.Sum256(source)
-	receipt := struct {
-		Version        int       `json:"version"`
-		Actor          string    `json:"actor"`
-		CreatedAt      time.Time `json:"created_at"`
-		PlanSHA256     string    `json:"plan_sha256"`
-		ProfileSHA256  string    `json:"profile_sha256"`
-		SourceSHA256   string    `json:"source_sha256"`
-		AccountsSHA256 string    `json:"accounts_sha256"`
-	}{1, "local-root", time.Now().UTC(), inspected.PlanSHA256, hex.EncodeToString(profileDigest[:]), hex.EncodeToString(sourceDigest[:]), hex.EncodeToString(digest[:])}
+	receipt := routedAccountPreparationV3{
+		Version: 1, Actor: "local-root", CreatedAt: time.Now().UTC(), PlanSHA256: inspected.PlanSHA256,
+		ProfileSHA256: hex.EncodeToString(profileDigest[:]), SourceSHA256: hex.EncodeToString(sourceDigest[:]),
+		AccountsSHA256: hex.EncodeToString(digest[:]),
+	}
 	operational, err := os.OpenRoot("/etc/andeiva-preview")
 	if err != nil {
 		return "", err

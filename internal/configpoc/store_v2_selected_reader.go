@@ -70,10 +70,18 @@ type selectedViewV2 struct {
 }
 
 func NewRoutedSelectionReaderV2(area *os.Root, options SelectionReaderOptionsV2) (*RoutedSelectionReaderV2, error) {
-	if (options.Policy != SelectionFullHistoryV2 && options.Policy != SelectionActionAuthorityV2) || area == nil || !validRoutedIdentityV1(options.Identity) || options.Identity.UID == options.Access.OwnerUID || options.Admission == nil || options.Plan == nil || options.Emergency == nil || options.Admission == options.Plan || options.Plan == options.Emergency || options.Admission == options.Emergency || !validReachabilityBudgetV2(options.Budget) || options.Access.CheckDirectory(area) != nil {
+	if (options.Policy != SelectionFullHistoryV2 && options.Policy != SelectionActionAuthorityV2) ||
+		!validRoutedIdentityV1(options.Identity) || options.Identity.UID == options.Access.OwnerUID ||
+		!validSelectionReaderResourcesV2(area, options) {
 		return nil, ErrInvalid
 	}
 	return &RoutedSelectionReaderV2{area: area, options: options}, nil
+}
+
+func validSelectionReaderResourcesV2(area *os.Root, options SelectionReaderOptionsV2) bool {
+	return area != nil && options.Admission != nil && options.Plan != nil && options.Emergency != nil &&
+		options.Admission != options.Plan && options.Admission != options.Emergency && options.Plan != options.Emergency &&
+		validReachabilityBudgetV2(options.Budget) && options.Access.CheckDirectory(area) == nil
 }
 
 func (r *RoutedSelectionReaderV2) pools() [3]*recoveryreserve.ReadOnlyPoolV2 {
