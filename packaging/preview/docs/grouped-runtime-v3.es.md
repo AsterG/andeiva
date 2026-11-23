@@ -48,3 +48,27 @@ La activación conserva el almacén clásico y sus respaldos. Después de
 publicar el marcador, volver al clásico requiere recuperación offline
 autorizada desde una copia coherente anterior a la transición. Todavía
 no existe un comando de retorno al clásico.
+
+La activación offline usa un hijo privado con la identidad de la API y sin
+capacidades. Autentica al padre root por las tuberías heredadas, lee el
+almacén clásico bajo su bloqueo de escritura y confirma otra vez la huella
+antes de publicar. El hijo usa sólo el almacén clásico y su bloqueo.
+El instalador verifica el ámbito y el arranque, el drenaje de servicios y
+el cierre del reenvío. Si se interrumpe el hijo, el arranque clásico sigue
+inhibido y la activación debe revalidar toda la preparación antes de seguir.
+
+En una instalación Debian Preview autorizada, ejecuta como root
+`/usr/lib/andeiva-preview/andeiva-preview grouped-activate` desde la ventana
+fría aprobada. Detén primero la API y el socket clásicos. Se requieren los
+registros preparados, las reservas de recuperación y el ajuste del socket
+agrupado que coincide con la configuración de gestión. El comando verifica
+el ámbito clásico y el reenvío del host, enmascara ambos grupos de unidades
+de forma persistente y valida Startup con el lector de solo lectura antes de
+publicar el marcador. Comprueba que el trabajador libere el bloqueo antes de
+arrancar el servicio. Después verifica la salud agrupada y el certificado TLS.
+
+Una huella rechazada o un fallo del trabajador mantiene las unidades
+enmascaradas. Repite un intento interrumpido antes de la publicación con la
+misma preparación. El instalador comprueba cualquier marcador pendiente
+contra los bytes esperados. Con un marcador publicado rechaza otra activación
+inicial. Conserva el marcador para recuperación offline autorizada.

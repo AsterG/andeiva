@@ -83,7 +83,19 @@ func migrationProvenanceFromStateV3(state v2State, read func(string, any) error)
 // WithLegacyFingerprintV3 is an installer-only read scope. The visitor must
 // honor ctx and must not reopen this source. The original legacy lock and
 // validators remain authoritative throughout the callback and final recheck.
-func WithLegacyFingerprintV3(ctx context.Context, area *os.Root, domain string, visit func(context.Context, LegacyFingerprintV2) error) (result error) {
+func WithLegacyFingerprintV3(ctx context.Context, area *os.Root, domain string, visit func(context.Context, LegacyFingerprintV2) error) error {
+	if visit == nil {
+		return ErrInvalid
+	}
+	return WithLegacyFingerprintRecheckV3(ctx, area, domain, func(ctx context.Context, fingerprint LegacyFingerprintV2, _ func() error) error {
+		return visit(ctx, fingerprint)
+	})
+}
+
+// WithLegacyFingerprintRecheckV3 lets the installer verify the same source
+// immediately before publication without releasing the classic writer lock.
+// Recheck is synchronous and may only be used inside visit.
+func WithLegacyFingerprintRecheckV3(ctx context.Context, area *os.Root, domain string, visit func(context.Context, LegacyFingerprintV2, func() error) error) (result error) {
 	if ctx == nil || area == nil || visit == nil || (domain != "firewall" && domain != "local_services") {
 		return ErrInvalid
 	}
@@ -95,6 +107,10 @@ func WithLegacyFingerprintV3(ctx context.Context, area *os.Root, domain string, 
 		return err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
+	opened, err := lock.Stat()
+	if err != nil {
+		return err
+	}
 	image, err := inspectLegacyV2(area, domain, nil)
 	if err != nil {
 		return err
@@ -103,13 +119,20 @@ func WithLegacyFingerprintV3(ctx context.Context, area *os.Root, domain string, 
 		return ctx.Err()
 	}
 	expected := fingerprintLegacyV2(image)
-	visited := visit(ctx, expected)
-	current, readErr := inspectLegacyV2(area, domain, nil)
-	if readErr != nil {
-		return errors.Join(visited, readErr)
+	recheck := func() error {
+		named, err := area.Lstat("state.lock")
+		if err != nil || !sameRecordFile(opened, named) {
+			return ErrConflict
+		}
+		current, err := inspectLegacyV2(area, domain, nil)
+		if err != nil {
+			return err
+		}
+		if fingerprintLegacyV2(current) != expected {
+			return ErrConflict
+		}
+		return ctx.Err()
 	}
-	if fingerprintLegacyV2(current) != expected {
-		return errors.Join(visited, ErrConflict)
-	}
-	return errors.Join(visited, ctx.Err())
+	visited := visit(ctx, expected, recheck)
+	return errors.Join(visited, recheck())
 }

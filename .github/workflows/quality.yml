@@ -82,7 +82,7 @@ jobs:
         run: |
           go test -c -o "${RUNNER_TEMP}/activation-publisher.test" ./internal/previewruntime
           sudo -- "${RUNNER_TEMP}/activation-publisher.test" \
-            -test.run '^TestPublishActivationRecordNeverReplaces$' -test.v -test.timeout=30s
+            -test.run '^TestPublishActivationRecord(NeverReplaces|ChecksSourceBeforeRename)$' -test.v -test.timeout=30s
       - run: bash scripts/check.sh
       - name: Offline DHCP installer boundaries without privileged effects
         run: |

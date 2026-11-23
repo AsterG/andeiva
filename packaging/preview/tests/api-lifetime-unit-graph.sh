@@ -21,6 +21,17 @@ for unit in andeiva-preview-helper.service andeiva-preview-namespaces.service; d
 done
 printf 'PASS: administration stop/failure does not propagate to helper or namespaces; explicit target shutdown remains intact\n'
 
+# Publication is necessary even to bind the grouped management socket. The
+# classic target and its individual units must stay inhibited afterward.
+marker=/var/lib/andeiva-preview/grouped-cutover.json
+for unit in andeiva-preview-grouped.socket andeiva-preview-grouped.service; do
+  value "$unit" ConditionPathExists | grep -Fx "$marker" >/dev/null
+done
+for unit in andeiva-preview.target andeiva-preview-api.socket andeiva-preview-api.service \
+            andeiva-preview-helper.service andeiva-preview-namespaces.service; do
+  value "$unit" ConditionPathExists | grep -Fx "!$marker" >/dev/null
+done
+
 # Root alone publishes bounded recovery anchors; retention survives a failed
 # service, but acceptance and removal still require actual manager readback.
 [[ $(value andeiva-preview-grouped.service NotifyAccess) = main ]]
@@ -34,6 +45,8 @@ printf 'PASS: grouped Root FD store is bounded and main-only; writes use exact p
 [[ $(value andeiva-preview-grouped.service PrivateMounts) = yes ]]
 
 # Root alone may enter/restore an authenticated retained mount namespace.
+! grep -Eq '^User=' "$units/andeiva-preview-grouped.service"
+[[ $(value andeiva-preview-grouped.service Group) = root ]]
 [[ $(value andeiva-preview-grouped.service NoNewPrivileges) = yes ]]
 [[ $(value andeiva-preview-grouped.service CapabilityBoundingSet) = 'CAP_SYS_ADMIN CAP_SYS_CHROOT CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_READ_SEARCH CAP_KILL CAP_CHOWN' ]]
 [[ $(value andeiva-preview-api.service CapabilityBoundingSet) = '' ]]

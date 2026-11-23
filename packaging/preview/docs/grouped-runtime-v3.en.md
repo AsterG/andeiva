@@ -56,3 +56,27 @@ The activation procedure preserves the classic store and its backups. After
 the cutover marker is published, returning to classic requires authorized
 offline recovery from a coherent pre-cutover backup. There is currently
 no command for returning to classic.
+
+Offline activation uses a private child with the API identity and no
+capabilities. It authenticates its root parent over inherited pipes, reads the
+classic store under its existing writer lock and confirms the same fingerprint
+again before publication. The child consumes only the classic store and lock.
+The installer owns scope and boot verification, service drain and forwarding
+closure. If the child is interrupted, classic startup remains inhibited and
+activation must revalidate the preparation in full before continuing.
+
+On an authorized Debian Preview installation, run
+`/usr/lib/andeiva-preview/andeiva-preview grouped-activate` as root from the
+approved cold window. Stop the classic API and socket first. The prepared
+records and recovery slots must exist, and the grouped socket drop-in must
+match the management configuration. The command checks the classic scope and
+host forwarding, persistently masks both sets of units, then checks Startup
+with the read-only helper before publishing the cutover marker. Before enabling
+the grouped units, it also verifies successful release of the classic lock.
+After startup it verifies grouped health and a certificate-checked TLS handshake.
+
+A rejected fingerprint or failed worker keeps the units masked. Retry an
+interrupted prepublication attempt with the same preparation. The installer
+checks any staged marker against the exact expected bytes. With a published
+marker the installer refuses another initial activation. Preserve the marker
+for authorized offline recovery.

@@ -43,6 +43,22 @@ func run(args []string) error {
 		defer cancel()
 		return previewruntime.RunRoutedApplianceRoleV3(ctx, args[0])
 	}
+	if len(args) > 0 && args[0] == previewruntime.RoutedActivationSourceRoleV1 {
+		if len(args) != 1 {
+			return previewruntime.ErrConfiguration
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer cancel()
+		return previewruntime.RunRoutedActivationSourceRoleV1(ctx)
+	}
+	if len(args) > 0 && args[0] == previewruntime.RoutedActivationPreparedRoleV1 {
+		if len(args) != 1 {
+			return previewruntime.ErrConfiguration
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer cancel()
+		return previewruntime.RunRoutedActivationPreparedRoleV1(ctx)
+	}
 	if len(args) > 0 && (args[0] == previewruntime.RoutedMigrationPrepareRoleV3 || args[0] == previewruntime.RoutedMigrationInspectRoleV3 || args[0] == previewruntime.RoutedMigrationStateRoleV3 || args[0] == previewruntime.RoutedMigrationSourceRoleV3) {
 		if len(args) != 1 {
 			return previewruntime.ErrConfiguration
@@ -98,6 +114,12 @@ func run(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(map[string]bool{"provisioned": true})
 	case "grouped-profile":
 		result, err := previewruntime.ConvertRoutedMigrationProfileV3(ctx, c)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	case "grouped-activate":
+		result, err := previewruntime.ActivateRoutedMigrationV1(ctx, c)
 		if err != nil {
 			return err
 		}

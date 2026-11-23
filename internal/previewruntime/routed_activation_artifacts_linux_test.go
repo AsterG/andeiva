@@ -146,3 +146,36 @@ func TestPublishActivationRecordNeverReplaces(t *testing.T) {
 		t.Fatal("published data has incorrect permissions", err)
 	}
 }
+
+func TestPublishActivationRecordChecksSourceBeforeRename(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("test uses a root-owned installation directory")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	area, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer area.Close()
+	const marker = "grouped-cutover.json"
+	cutover := []byte(`{"fixture":true}`)
+	if err = publishActivationRecordCheckedV1(area, marker, cutover, func() error { return ErrUnavailable }); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("source loss was not propagated", err)
+	}
+	if _, err = area.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("source loss made the marker visible", err)
+	}
+	staged, err := area.ReadFile("." + marker + ".pending")
+	if err != nil || !bytes.Equal(staged, cutover) {
+		t.Fatal("staging evidence lost", err)
+	}
+	if err = publishActivationRecordCheckedV1(area, marker, []byte(`{}`), func() error { return nil }); !errors.Is(err, ErrStorage) {
+		t.Fatal("different staging evidence accepted", err)
+	}
+	if err = publishActivationRecordCheckedV1(area, marker, cutover, func() error { return nil }); err != nil {
+		t.Fatal("exact staging evidence could not be resumed", err)
+	}
+}

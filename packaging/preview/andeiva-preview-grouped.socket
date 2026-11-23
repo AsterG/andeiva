@@ -3,6 +3,7 @@ PartOf=andeiva-preview-grouped.service
 Description=ANDEIVA explicitly prepared grouped administration listener
 ConditionPathExists=/etc/andeiva-preview/grouped.json
 ConditionPathExists=/etc/systemd/system/andeiva-preview-grouped.socket.d/listen.conf
+ConditionPathExists=/var/lib/andeiva-preview/grouped-cutover.json
 After=network-online.target
 Wants=network-online.target
 

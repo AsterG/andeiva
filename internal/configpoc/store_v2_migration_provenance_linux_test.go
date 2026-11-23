@@ -210,6 +210,31 @@ func TestWithLegacyFingerprintV3RetainsAndRechecksOriginalLock(t *testing.T) {
 	if _, err = InspectLegacyV2(area, "firewall"); err != nil {
 		t.Fatal("lock not closed", err)
 	}
+	occupied, err := lockLegacyV2(area)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = WithLegacyFingerprintRecheckV3(context.Background(), area, "firewall", func(context.Context, LegacyFingerprintV2, func() error) error {
+		t.Error("occupied store reached the activation visitor")
+		return nil
+	})
+	if closeErr := occupied.Close(); closeErr != nil || !errors.Is(err, ErrLocked) {
+		t.Fatal("occupied store outcome", err, closeErr)
+	}
+	if err = WithLegacyFingerprintRecheckV3(context.Background(), area, "firewall", func(_ context.Context, fingerprint LegacyFingerprintV2, recheck func() error) error {
+		if fingerprint != expected || recheck() != nil {
+			t.Error("the active proof does not match the original fingerprint")
+		}
+		if nested, e := lockLegacyV2(area); e == nil {
+			_ = nested.Close()
+			t.Error("the lock was released before publication")
+		} else if !errors.Is(e, ErrLocked) {
+			t.Error("unexpected second writer outcome", e)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	sentinel := errors.New("visitor refused")
 	if err = WithLegacyFingerprintV3(context.Background(), area, "firewall", func(context.Context, LegacyFingerprintV2) error { return sentinel }); !errors.Is(err, sentinel) {
 		t.Fatal("visitor error lost", err)
@@ -221,7 +246,15 @@ func TestWithLegacyFingerprintV3RetainsAndRechecksOriginalLock(t *testing.T) {
 	// A noncooperating writer can ignore flock. Reinspection must detect its
 	// corruption and preserve it, rather than repairing evidence silently.
 	record := filepath.Join(path, "00000001.json")
-	if err = WithLegacyFingerprintV3(context.Background(), area, "firewall", func(context.Context, LegacyFingerprintV2) error { return os.WriteFile(record, []byte("{}"), 0600) }); err == nil {
+	if err = WithLegacyFingerprintRecheckV3(context.Background(), area, "firewall", func(_ context.Context, _ LegacyFingerprintV2, recheck func() error) error {
+		if err := os.WriteFile(record, []byte("{}"), 0600); err != nil {
+			return err
+		}
+		if err := recheck(); err == nil {
+			t.Error("changed source received pre-publication proof")
+		}
+		return nil
+	}); err == nil {
 		t.Fatal("source mutation during visitor accepted")
 	}
 	if data, e := os.ReadFile(record); e != nil || string(data) != "{}" {

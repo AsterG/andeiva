@@ -39,7 +39,7 @@ func TestMigrationWorkerExecutableDescriptors(t *testing.T) {
 		t.Fatalf("CPU quota file must exist for the regression to be meaningful: %v", err)
 	}
 
-	for _, role := range []string{previewruntime.RoutedMigrationInspectRoleV3, previewruntime.RoutedMigrationPrepareRoleV3} {
+	for _, role := range []string{previewruntime.RoutedMigrationInspectRoleV3, previewruntime.RoutedMigrationPrepareRoleV3, previewruntime.RoutedActivationSourceRoleV1, previewruntime.RoutedActivationPreparedRoleV1} {
 		t.Run(role, func(t *testing.T) {
 			t.Run("protocol-descriptors", func(t *testing.T) { checkMigrationWorkerExecutable(t, role, false) })
 			t.Run("unexpected-descriptor", func(t *testing.T) { checkMigrationWorkerExecutable(t, role, true) })
@@ -60,7 +60,11 @@ func checkMigrationWorkerExecutable(t *testing.T, role string, unexpected bool) 
 	cmd := exec.CommandContext(ctx, *migrationWorkerExecutable, role)
 	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
 	cmd.Stdin, cmd.Stdout = input, output
-	cmd.ExtraFiles = []*os.File{gateway}
+	if role == previewruntime.RoutedActivationSourceRoleV1 || role == previewruntime.RoutedActivationPreparedRoleV1 {
+		gateway = nil
+	} else {
+		cmd.ExtraFiles = []*os.File{gateway}
+	}
 	if unexpected {
 		extra, err := os.Open(os.DevNull)
 		if err != nil {
@@ -145,9 +149,12 @@ func assertMigrationWorkerDescriptors(t *testing.T, pid int, gateway *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	namespace, err := os.Readlink(filepath.Join("/proc/self/fd", strconv.FormatUint(uint64(gateway.Fd()), 10)))
-	if err != nil {
-		t.Fatal(err)
+	var namespace string
+	if gateway != nil {
+		namespace, err = os.Readlink(filepath.Join("/proc/self/fd", strconv.FormatUint(uint64(gateway.Fd()), 10)))
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, fd := range fds {
 		target, err := os.Readlink(filepath.Join(path, fd.Name()))
@@ -157,9 +164,13 @@ func assertMigrationWorkerDescriptors(t *testing.T, pid int, gateway *os.File) {
 		switch fd.Name() {
 		case "0", "1", "2":
 		case "3":
-			if target != namespace {
-				t.Fatalf("unexpected namespace descriptor: %s", target)
+			if gateway != nil {
+				if target != namespace {
+					t.Fatalf("unexpected namespace descriptor: %s", target)
+				}
+				continue
 			}
+			fallthrough
 		default:
 			if target != "anon_inode:[eventpoll]" && target != "anon_inode:[eventfd]" {
 				t.Fatalf("unexpected worker descriptor %s: %s", fd.Name(), target)

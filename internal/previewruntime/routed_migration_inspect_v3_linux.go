@@ -97,33 +97,18 @@ func RunRoutedMigrationInspectRoleV3(ctx context.Context) error {
 	if checkMigrationInspectFDsV3() != nil {
 		return ErrIdentity
 	}
-	var in, out unix.Stat_t
-	inputFlags, e := unix.FcntlInt(0, unix.F_GETFL, 0)
-	outputFlags, oe := unix.FcntlInt(1, unix.F_GETFL, 0)
-	if e != nil || oe != nil || inputFlags&unix.O_ACCMODE != unix.O_RDONLY || outputFlags&unix.O_ACCMODE != unix.O_WRONLY || unix.Fstat(0, &in) != nil || unix.Fstat(1, &out) != nil || in.Mode&unix.S_IFMT != unix.S_IFIFO || out.Mode&unix.S_IFMT != unix.S_IFIFO || in.Uid != 0 || out.Uid != 0 || (in.Dev == out.Dev && in.Ino == out.Ino) || unix.SetNonblock(0, true) != nil {
-		return ErrIdentity
-	}
-	input := os.NewFile(0, "migration-inspect-control")
-	if input == nil {
-		return ErrIdentity
+	input, e := migrationFingerprintControlV3(45 * time.Second)
+	if e != nil {
+		return e
 	}
 	defer input.Close()
-	if input.SetReadDeadline(time.Now().Add(45*time.Second)) != nil {
-		return ErrUnavailable
-	}
 	reader := bufio.NewReaderSize(input, 16384)
 	data, e := reader.ReadSlice('\n')
 	var request routedMigrationInspectRequestV3
-	if e != nil || !jsoncheck.UniqueControlFields(data) || firewallipc.Decode(data, &request) != nil || request.Version != 1 || request.ParentPID <= 1 || request.ParentPID != os.Getppid() || request.Identities.Validate() != nil || checkPrivileges(request.Identities, false) != nil {
+	if e != nil || !jsoncheck.UniqueControlFields(data) || firewallipc.Decode(data, &request) != nil || request.Version != 1 {
 		return ErrIdentity
 	}
-	parent, e := os.Open("/proc/" + strconv.Itoa(request.ParentPID) + "/status")
-	if e != nil {
-		return ErrIdentity
-	}
-	status, re := io.ReadAll(io.LimitReader(parent, 65537))
-	ce := parent.Close()
-	if re != nil || ce != nil || !rootRoutedParentStatusV3(status, request.ParentPID) || armMigrationParentDeathV3(request.ParentPID) != nil {
+	if authenticateMigrationFingerprintParentV3(request.ParentPID, request.Identities) != nil {
 		return ErrIdentity
 	}
 	gateway := os.NewFile(3, "migration-inspect-source-namespace")
@@ -153,37 +138,37 @@ func RunRoutedMigrationInspectRoleV3(ctx context.Context) error {
 	})
 }
 
-// InspectRoutedMigrationV3 writes only an O_EXCL operational draft. It does not
-// update accounts, invent historical ownership, prepare a store or activate it.
-func InspectRoutedMigrationV3(ctx context.Context, c Config) (out MigrationInspectResultV3, result error) {
-	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || c.Validate() != nil {
-		return out, ErrIdentity
+// The callback runs while the existing API-identity worker holds the classic
+// writer lock. Success also requires the worker's final source recheck.
+func withRoutedMigrationFingerprintV3(ctx context.Context, c Config, visit func(context.Context, Identities, configpoc.LegacyFingerprintV2) error) (result error) {
+	if ctx == nil || ctx.Err() != nil || visit == nil || os.Getuid() != 0 || os.Geteuid() != 0 || c.Validate() != nil {
+		return ErrIdentity
 	}
 	ids, e := LoadIdentities(c)
 	if e != nil {
-		return out, e
+		return e
 	}
 	metadata, e := ReadMetadata()
 	if e != nil {
-		return out, e
+		return e
 	}
 	gateway, e := os.OpenFile(RuntimeDir+"/netns/gateway", os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if e != nil {
-		return out, e
+		return e
 	}
 	defer gateway.Close()
 	if verifyRoutedMigrationScopeV3(gateway, metadata, false) != nil {
-		return out, ErrIdentity
+		return ErrIdentity
 	}
 	self, e := os.Executable()
 	if e != nil || trustedRoutedExecutableV3(self) != nil || trustedRoutedExecutableV3("/usr/bin/setpriv") != nil {
-		return out, ErrIdentity
+		return ErrIdentity
 	}
 	call, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 	read, write, e := os.Pipe()
 	if e != nil {
-		return out, e
+		return e
 	}
 	defer read.Close()
 	defer write.Close()
@@ -199,13 +184,13 @@ func InspectRoutedMigrationV3(ctx context.Context, c Config) (out MigrationInspe
 	command.Stderr = &diagnostic
 	stdout, e := command.StdoutPipe()
 	if e != nil {
-		return out, e
+		return e
 	}
 	defer stdout.Close()
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if e = command.Start(); e != nil {
-		return out, e
+		return e
 	}
 	waited := false
 	defer func() {
@@ -215,73 +200,89 @@ func InspectRoutedMigrationV3(ctx context.Context, c Config) (out MigrationInspe
 		}
 	}()
 	if e = read.Close(); e != nil {
-		return out, e
+		return e
 	}
 	request := routedMigrationInspectRequestV3{Version: 1, ParentPID: os.Getpid(), Metadata: metadata, Identities: ids}
 	data, e := json.Marshal(request)
 	if e != nil {
-		return out, e
+		return e
 	}
 	data = append(data, '\n')
 	if _, e = write.Write(data); e != nil {
-		return out, e
+		return e
 	}
 	line, e := bufio.NewReaderSize(stdout, 4096).ReadSlice('\n')
 	var reply routedMigrationInspectReplyV3
 	digest := sha256.Sum256(data)
 	if e != nil || firewallipc.Decode(line, &reply) != nil || reply.Version != 1 || reply.Request != hex.EncodeToString(digest[:]) || reply.Fingerprint.Domain != "firewall" || reply.Fingerprint.Source == "" {
-		return out, ErrUnavailable
+		return ErrUnavailable
 	}
-	raw, e := readOwned(DataDir+"/accounts.json", 0, ids.APIGID, 0440, 16384)
-	if e != nil {
-		return out, e
-	}
-	var accounts []adminauth.Account
-	if !jsoncheck.UniqueControlFields(raw) || firewallipc.Decode(raw, &accounts) != nil {
-		return out, ErrConfiguration
-	}
-	accountHash := sha256.Sum256(raw)
-	plan, e := inspectMigrationPlanV3(accounts, hex.EncodeToString(accountHash[:]), reply.Fingerprint)
-	if e != nil {
-		return out, e
-	}
-	// Existing drafts are retained. Reinspection does not rotate assigned IDs or
-	// silently replace an operator's authorization context.
-	if old, readErr := readOwned(routedMigrationPlanPathV3, 0, 0, 0600, 65536); readErr == nil {
-		var existing routedMigrationPlanV3
-		if !jsoncheck.UniqueControlFields(old) || firewallipc.Decode(old, &existing) != nil || validateMigrationPlanV3(existing, accounts, plan.AccountsSHA256, plan.Firewall) != nil {
-			return out, ErrConfiguration
-		}
-		plan = existing
-	} else {
-		if _, statErr := os.Lstat(routedMigrationPlanPathV3); !os.IsNotExist(statErr) {
-			return out, ErrStorage
-		}
-		root, openErr := os.OpenRoot("/etc/andeiva-preview")
-		if openErr != nil {
-			return out, openErr
-		}
-		createErr := publishMigrationInspectDraftV3(root, plan, 0, 0)
-		closeErr := root.Close()
-		if createErr != nil || closeErr != nil {
-			return out, ErrStorage
-		}
-	}
-	// Revalidate the account source while the worker still holds the FW lock.
-	actual, e := readOwned(DataDir+"/accounts.json", 0, ids.APIGID, 0440, 16384)
-	if e != nil || !bytes.Equal(raw, actual) {
-		return out, ErrConfiguration
+	if err := visit(call, ids, reply.Fingerprint); err != nil {
+		return err
 	}
 	if _, e = io.WriteString(write, "release\n"); e != nil {
-		return out, e
+		return e
 	}
 	if e = write.Close(); e != nil {
-		return out, e
+		return e
 	}
 	e = command.Wait()
 	waited = true
 	if e != nil || call.Err() != nil {
-		return out, ErrUnavailable
+		return ErrUnavailable
+	}
+	return nil
+}
+
+// InspectRoutedMigrationV3 writes only an O_EXCL operational draft. It does not
+// update accounts, invent historical ownership, prepare a store or activate it.
+func InspectRoutedMigrationV3(ctx context.Context, c Config) (out MigrationInspectResultV3, result error) {
+	var plan routedMigrationPlanV3
+	var accounts []adminauth.Account
+	result = withRoutedMigrationFingerprintV3(ctx, c, func(_ context.Context, ids Identities, fingerprint configpoc.LegacyFingerprintV2) error {
+		raw, e := readOwned(DataDir+"/accounts.json", 0, ids.APIGID, 0440, 16384)
+		if e != nil {
+			return e
+		}
+		if !jsoncheck.UniqueControlFields(raw) || firewallipc.Decode(raw, &accounts) != nil {
+			return ErrConfiguration
+		}
+		accountHash := sha256.Sum256(raw)
+		plan, e = inspectMigrationPlanV3(accounts, hex.EncodeToString(accountHash[:]), fingerprint)
+		if e != nil {
+			return e
+		}
+		// Existing drafts are retained. Reinspection does not rotate assigned IDs or
+		// silently replace an operator's authorization context.
+		if old, readErr := readOwned(routedMigrationPlanPathV3, 0, 0, 0600, 65536); readErr == nil {
+			var existing routedMigrationPlanV3
+			if !jsoncheck.UniqueControlFields(old) || firewallipc.Decode(old, &existing) != nil || validateMigrationPlanV3(existing, accounts, plan.AccountsSHA256, plan.Firewall) != nil {
+				return ErrConfiguration
+			}
+			plan = existing
+		} else {
+			if _, statErr := os.Lstat(routedMigrationPlanPathV3); !os.IsNotExist(statErr) {
+				return ErrStorage
+			}
+			root, openErr := os.OpenRoot("/etc/andeiva-preview")
+			if openErr != nil {
+				return openErr
+			}
+			createErr := publishMigrationInspectDraftV3(root, plan, 0, 0)
+			closeErr := root.Close()
+			if createErr != nil || closeErr != nil {
+				return ErrStorage
+			}
+		}
+		// Revalidate the account source while the worker still holds the FW lock.
+		actual, e := readOwned(DataDir+"/accounts.json", 0, ids.APIGID, 0440, 16384)
+		if e != nil || !bytes.Equal(raw, actual) {
+			return ErrConfiguration
+		}
+		return nil
+	})
+	if result != nil {
+		return out, result
 	}
 	saved, e := readOwned(routedMigrationPlanPathV3, 0, 0, 0600, 65536)
 	var final routedMigrationPlanV3
@@ -330,6 +331,42 @@ func validateMigrationPlanV3(plan routedMigrationPlanV3, accounts []adminauth.Ac
 }
 
 func checkMigrationInspectFDsV3() error {
+	return checkMigrationWorkerFDsV3(3)
+}
+
+func migrationFingerprintControlV3(timeout time.Duration) (*os.File, error) {
+	var in, out unix.Stat_t
+	input, ie := unix.FcntlInt(0, unix.F_GETFL, 0)
+	output, oe := unix.FcntlInt(1, unix.F_GETFL, 0)
+	if ie != nil || oe != nil || input&unix.O_ACCMODE != unix.O_RDONLY || output&unix.O_ACCMODE != unix.O_WRONLY ||
+		unix.Fstat(0, &in) != nil || unix.Fstat(1, &out) != nil || in.Mode&unix.S_IFMT != unix.S_IFIFO ||
+		out.Mode&unix.S_IFMT != unix.S_IFIFO || in.Uid != 0 || out.Uid != 0 ||
+		in.Dev == out.Dev && in.Ino == out.Ino || unix.SetNonblock(0, true) != nil {
+		return nil, ErrIdentity
+	}
+	file := os.NewFile(0, "migration-fingerprint-control")
+	if file == nil {
+		return nil, ErrIdentity
+	}
+	if file.SetReadDeadline(time.Now().Add(timeout)) != nil {
+		_ = file.Close()
+		return nil, ErrUnavailable
+	}
+	return file, nil
+}
+
+func authenticateMigrationFingerprintParentV3(pid int, ids Identities) error {
+	if pid <= 1 || os.Getppid() != pid || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
+		return ErrIdentity
+	}
+	status, err := routedDHCPOwnerReadV3("/proc/"+strconv.Itoa(pid)+"/status", 65536)
+	if err != nil || !rootRoutedParentStatusV3(status, pid) {
+		return ErrIdentity
+	}
+	return armMigrationParentDeathV3(pid)
+}
+
+func checkMigrationWorkerFDsV3(lastProtocolFD int) error {
 	// This is process-local hardening of the dedicated child, never a host limit.
 	var limit unix.Rlimit
 	if unix.Getrlimit(unix.RLIMIT_NOFILE, &limit) != nil || limit.Max < 256 || unix.Setrlimit(unix.RLIMIT_NOFILE, &unix.Rlimit{Cur: 256, Max: 256}) != nil {
@@ -355,7 +392,7 @@ func checkMigrationInspectFDsV3() error {
 			_ = dir.Close()
 			return ErrIdentity
 		}
-		if fd <= 3 || fd == own {
+		if fd <= lastProtocolFD || fd == own {
 			continue
 		}
 		target, e := os.Readlink("/proc/self/fd/" + entry.Name())
