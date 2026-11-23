@@ -121,7 +121,7 @@ docker build -f frontend/Dockerfile.visual -t andeiva-design-check .
 docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --shm-size=512m andeiva-design-check
 ```
 
-The Dockerfile pins Playwright 1.65.0 on Linux Noble and Node 24.20.0 by image
+The Dockerfile pins Playwright 1.65.1 on Linux Noble and Node 24.20.0 by image
 digest. Node and its bundled npm/npx 11.19.0 share an isolated toolchain directory;
 the build checks executable destinations and prints all three versions. Search
 uses locale-independent casing, tested with a Turkish browser locale and EN/ES/PT

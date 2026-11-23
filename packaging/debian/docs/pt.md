@@ -343,3 +343,9 @@ bash packaging/debian/tests/vm-lifecycle.sh cleanup-reboot \
 A verificação exige um boot ID realmente diferente e arquivos próprios inalterados;
 a limpeza remove o pacote de teste. Mantenha resultados privados e preserve falhas.
 Se uma verificação rejeitar propriedade ou estado, revise sem contorná-la.
+# Verificação dos manifestos de dependências
+
+A verificação estática compara `go.mod` e `go.sum` empacotados byte a byte com
+o checkout revisado, além de verificar arquivo, checksums, licenças e inventário
+de módulos. Executar a partir da mesma revisão de fonte; o verificador não
+duplica as versões de patches das dependências.

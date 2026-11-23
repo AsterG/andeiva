@@ -1,5 +1,9 @@
 //go:build linux
 
+// Migration workers enumerate their descriptors at startup. Keep Go from
+// retaining an internal cgroup CPU quota descriptor in those workers.
+//go:debug containermaxprocs=0
+
 package main
 
 import (

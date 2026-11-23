@@ -13,6 +13,11 @@ Los comandos describen el contrato del paquete. Una ejecución satisfactoria en 
 laboratorio debe registrarse contra la compilación exacta; esta guía no afirma que
 esas pruebas hayan pasado.
 
+La verificación estática compara `go.mod` y `go.sum` empaquetados byte a byte con
+el checkout revisado, además de comprobar archivo, checksums, licencias e
+inventario de módulos. Ejecutarla desde esa misma revisión de fuente; el
+verificador no duplica las versiones de parches de dependencias.
+
 ## Requisitos y roles
 
 Compile con un usuario ordinario en una estación Linux confiable que ya disponga

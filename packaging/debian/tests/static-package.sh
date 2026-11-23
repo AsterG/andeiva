@@ -18,7 +18,7 @@ case "$evidence/" in "$source_root/"*) printf 'Evidence must be outside the sour
 mkdir -m 700 -- "$evidence"
 
 # Python is a host/CI test prerequisite only; the package and VM lifecycle do not need it.
-python3 - "$package" "$evidence" <<'PY'
+python3 - "$package" "$evidence" "$source_root" <<'PY'
 import configparser
 import hashlib
 import json
@@ -29,7 +29,7 @@ import subprocess
 import sys
 import tarfile
 
-package, evidence = map(pathlib.Path, sys.argv[1:])
+package, evidence, source_root = map(pathlib.Path, sys.argv[1:])
 assert package.stat().st_size <= 100 * 1024 * 1024, 'Unexpected package size'
 package_hash = hashlib.sha256(package.read_bytes()).hexdigest()
 fields = {}
@@ -123,8 +123,10 @@ modules = [json.loads(line) for line in payload['data', dependency_root + 'go-in
 assert modules and all(set(module) == {'path', 'version', 'main'} for module in modules)
 assert sum(module['main'] is True for module in modules) == 1
 assert {'golang.org/x/crypto', 'golang.org/x/sys'}.issubset({module['path'] for module in modules})
-assert b'golang.org/x/crypto v0.58.0 h1:' in payload['data', dependency_root + 'go.sum']
-assert b'golang.org/x/sys v0.49.0 h1:' in payload['data', dependency_root + 'go.sum']
+# Dependency versions follow the reviewed source, rather than duplicating pins
+# here and rejecting every legitimate module patch. Check the complete manifests.
+for name in ('go.mod', 'go.sum'):
+    assert payload['data', dependency_root + name] == (source_root / name).read_bytes(), f'Packaged dependency manifest differs from source: {name}'
 for name in ('usr/bin/andeiva', 'usr/lib/andeiva/andeiva-api'):
     binary = payload['data', name]
     assert binary[:4] == b'\x7fELF' and binary[4:6] == b'\x02\x01', f'Not ELF64 little endian: {name}'
