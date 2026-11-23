@@ -72,6 +72,12 @@ jobs:
         working-directory: frontend
       - name: Verify inherited-descriptor fixture before the full suite
         run: go test ./internal/previewruntime -count=1 -run '^TestRoutedMigrationInspectV3ExtraDescriptors$'
+      - name: Check real migration workers in a CPU cgroup
+        run: |
+          go build -trimpath -o "${RUNNER_TEMP}/andeiva-preview" ./cmd/andeiva-preview
+          go test -c -o "${RUNNER_TEMP}/andeiva-preview.test" ./cmd/andeiva-preview
+          sudo -- "${RUNNER_TEMP}/andeiva-preview.test" -test.run '^TestMigrationWorkerExecutableDescriptors$' \
+            -test.v -test.timeout=30s -andeiva-preview-executable="${RUNNER_TEMP}/andeiva-preview"
       - run: bash scripts/check.sh
       - name: Offline DHCP installer boundaries without privileged effects
         run: |
