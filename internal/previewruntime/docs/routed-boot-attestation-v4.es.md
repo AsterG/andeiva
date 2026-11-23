@@ -12,6 +12,10 @@ Antes de liberar el registro del ámbito anterior, el lanzador del sistema lee
 la identidad de arranque del kernel directamente de procfs y la compara con el
 registro.
 
+La unidad empaquetada admite el montaje de solo lectura de `/proc/sys/kernel`.
+El lanzador rechaza un montaje independiente de solo lectura de todo
+`/proc/sys`.
+
 - Misma identidad de arranque: no escribe nada. Es un reinicio del servicio y
   el recibo de drenaje ordenado sigue siendo obligatorio.
 - Identidad de arranque distinta: el lanzador escribe una acreditación de

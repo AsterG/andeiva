@@ -11,6 +11,9 @@ second proof for that case only.
 Before releasing the previous scope record, the system launcher reads the
 kernel boot identity directly from procfs and compares it with the record.
 
+The packaged unit may mount exactly `/proc/sys/kernel` read-only. The launcher
+rejects a separate read-only mount of the entire `/proc/sys` tree.
+
 - Same boot identity: nothing is written. This is a service restart and the
   orderly drain receipt remains mandatory.
 - Different boot identity: the launcher writes a boot attestation into the

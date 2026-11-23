@@ -12,6 +12,10 @@ Antes de liberar o registro do escopo anterior, o lançador do sistema lê a
 identidade de arranque do kernel diretamente do procfs e compara-a com o
 registro.
 
+A unidade empacotada aceita a montagem somente leitura de `/proc/sys/kernel`.
+O lançador rejeita uma montagem separada somente leitura de toda a árvore
+`/proc/sys`.
+
 - Mesma identidade de arranque: nada é escrito. É um reinício do serviço e o
   recibo de drenagem ordenada continua obrigatório.
 - Identidade de arranque diferente: o lançador escreve uma atestação de
