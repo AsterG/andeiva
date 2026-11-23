@@ -100,7 +100,7 @@ func (r *v2ReachabilityReader) revalidateSelectedV2() error {
 			}
 			continue
 		}
-		if err := r.revalidateUnpinnedV2(name, e.info, uint64(len(e.data)), func(data []byte) bool {
+		if err := r.revalidateUnpinnedV2(name, e.info, len(e.data), func(data []byte) bool {
 			return bytes.Equal(data, e.data)
 		}); err != nil {
 			return err
@@ -109,19 +109,20 @@ func (r *v2ReachabilityReader) revalidateSelectedV2() error {
 	return nil
 }
 
-func (r *v2ReachabilityReader) revalidateUnpinnedV2(name string, expected os.FileInfo, n uint64, sameContent func([]byte) bool) error {
-	if r.ctx.Err() != nil {
+func (r *v2ReachabilityReader) revalidateUnpinnedV2(name string, expected os.FileInfo, size int, sameContent func([]byte) bool) error {
+	if r.ctx.Err() != nil || size < 0 || size > v2ObjectLimit {
 		return errV2Unavailable
 	}
 	if r.report.IOCalls > r.budget.IOCalls || r.budget.IOCalls-r.report.IOCalls < 128 {
 		return errV2InspectionBudget
 	}
 	r.report.IOCalls += 128
-	limit := max(int64(n), 1)
-	info, err := r.shared.CheckFile(r.area, name, limit)
+	limit := max(size, 1)
+	info, err := r.shared.CheckFile(r.area, name, int64(limit))
 	if err != nil || !selectedCacheSameV2(expected, info) {
 		return errV2Unavailable
 	}
+	n := uint64(size)
 	if r.report.BytesRead > r.budget.Bytes || n > r.budget.Bytes-r.report.BytesRead || !r.selectedActiveFitsV2(n) {
 		return errV2InspectionBudget
 	}
@@ -130,12 +131,12 @@ func (r *v2ReachabilityReader) revalidateUnpinnedV2(name string, expected os.Fil
 	if r.active > r.report.PeakActiveBytes {
 		r.report.PeakActiveBytes = r.active
 	}
-	data, readErr := r.shared.ReadFile(r.ctx, r.area, name, int(limit))
+	data, readErr := r.shared.ReadFile(r.ctx, r.area, name, limit)
 	r.active -= n
 	if readErr != nil || !sameContent(data) {
 		return errV2Unavailable
 	}
-	after, err := r.shared.CheckFile(r.area, name, limit)
+	after, err := r.shared.CheckFile(r.area, name, int64(limit))
 	if err != nil || !selectedCacheSameV2(expected, after) {
 		return errV2Unavailable
 	}

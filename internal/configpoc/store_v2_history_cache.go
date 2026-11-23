@@ -9,6 +9,7 @@ import (
 type historyReadEntryV2 struct {
 	info   os.FileInfo
 	data   []byte
+	size   int
 	digest [sha256.Size]byte
 }
 
@@ -29,7 +30,7 @@ func (c *historyReadCacheV2) keep(r *v2ReachabilityReader, name string, info os.
 	if used > r.budget.ActiveBytes/2 || uint64(len(data)) > r.budget.ActiveBytes/2-used {
 		return false
 	}
-	c.entries[name] = historyReadEntryV2{info: info, data: data, digest: sha256.Sum256(data)}
+	c.entries[name] = historyReadEntryV2{info: info, data: data, size: len(data), digest: sha256.Sum256(data)}
 	c.bytes += uint64(len(data))
 	return true
 }
@@ -55,7 +56,7 @@ func (c *historyReadCacheV2) releasePayloads(r *v2ReachabilityReader) {
 
 func (c *historyReadCacheV2) revalidate(r *v2ReachabilityReader) error {
 	for name, entry := range c.entries {
-		if err := r.revalidateUnpinnedV2(name, entry.info, uint64(entry.info.Size()), func(data []byte) bool {
+		if err := r.revalidateUnpinnedV2(name, entry.info, entry.size, func(data []byte) bool {
 			// The readback may have released optional payloads to make room.
 			if previous := c.entries[name].data; previous != nil {
 				return bytes.Equal(previous, data)
