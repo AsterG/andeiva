@@ -103,6 +103,8 @@ func (r *RoutedSelectionReaderV2) readWithGateV2(ctx context.Context, beforeGrap
 	graph.cache = newSelectedReadCacheV2()
 	if r.options.Policy == SelectionActionAuthorityV2 {
 		graph.action = &actionReadDependenciesV2{entries: map[string]actionReadDependencyV2{}}
+	} else {
+		graph.history = &historyReadCacheV2{entries: map[string]historyReadEntryV2{}}
 	}
 	defer func() {
 		if result == nil {

@@ -47,6 +47,22 @@ func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]b
 			return data, noop, err
 		}
 	}
+	if r.history != nil {
+		e := r.history.entries[name]
+		// Routed Work can reserve pinned descriptors after ordinary traversal
+		// has filled its half of the cache. Byte reuse must not prevent that
+		// promotion or disable the existing validated-plan cache.
+		promote := r.cache.workRead && r.cache.canKeep(r, name, uint64(len(e.data)))
+		if e.data != nil && !promote {
+			if err := r.step(); err != nil {
+				return nil, noop, err
+			}
+			if int64(len(e.data)) > limit {
+				return nil, noop, errV2Unavailable
+			}
+			return e.data, noop, nil
+		}
+	}
 	if r.report.IOCalls > r.budget.IOCalls || r.budget.IOCalls-r.report.IOCalls < 64 {
 		return nil, noop, errV2InspectionBudget
 	}
@@ -60,7 +76,7 @@ func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]b
 		return nil, noop, errV2Unavailable
 	}
 	n := uint64(size)
-	if r.report.BytesRead > r.budget.Bytes || n > r.budget.Bytes-r.report.BytesRead || r.active > r.budget.ActiveBytes || n > r.budget.ActiveBytes-r.active {
+	if r.report.BytesRead > r.budget.Bytes || n > r.budget.Bytes-r.report.BytesRead || !r.selectedActiveFitsV2(n) {
 		return nil, noop, errV2InspectionBudget
 	}
 	r.report.BytesRead += n
@@ -88,6 +104,11 @@ func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]b
 			return nil, noop, err
 		}
 		if kept {
+			if r.history != nil {
+				if err := r.history.promote(r, name, r.cache.entries[name]); err != nil {
+					return nil, noop, err
+				}
+			}
 			if r.action != nil {
 				if err := r.action.keep(r, name, info, data, true); err != nil {
 					return nil, noop, err
@@ -101,6 +122,9 @@ func (r *v2ReachabilityReader) readSharedRecordV2(name string, limit int64) ([]b
 			r.active -= n
 			return nil, noop, err
 		}
+		return data, noop, nil
+	}
+	if r.history != nil && r.history.keep(r, name, info, data) {
 		return data, noop, nil
 	}
 	released := false

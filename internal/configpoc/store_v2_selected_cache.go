@@ -43,9 +43,17 @@ func (c *selectedReadCacheV2) get(r *v2ReachabilityReader, name string, limit in
 	c.hits++
 	return e.data, true, nil
 }
+func (c *selectedReadCacheV2) canKeep(r *v2ReachabilityReader, name string, size uint64) bool {
+	return len(name) == 76 && name[:7] == "object-" && name[71:] == ".json" && validHash(name[7:71]) &&
+		len(c.entries) < c.files && (c.workRead || len(c.entries) < c.files/2) && size <= r.budget.ActiveBytes/2-c.bytes
+}
+
 func (c *selectedReadCacheV2) keep(r *v2ReachabilityReader, name string, info os.FileInfo, data []byte) (bool, error) {
-	if len(name) != 76 || name[:7] != "object-" || name[71:] != ".json" || !validHash(name[7:71]) || len(c.entries) >= c.files || (!c.workRead && len(c.entries) >= c.files/2) || uint64(len(data)) > r.budget.ActiveBytes/2-c.bytes {
+	if !c.canKeep(r, name, uint64(len(data))) {
 		return false, nil
+	}
+	if r.history != nil && r.history.bytes > r.budget.ActiveBytes/2-c.bytes-uint64(len(data)) {
+		r.history.releasePayloads(r)
 	}
 	if err := r.step(); err != nil {
 		return false, err
@@ -83,7 +91,7 @@ func (c *selectedReadCacheV2) revalidate(r *v2ReachabilityReader) error {
 			return errV2Unavailable
 		}
 		n := uint64(len(e.data))
-		if r.report.BytesRead > r.budget.Bytes || n > r.budget.Bytes-r.report.BytesRead || r.active > r.budget.ActiveBytes || n > r.budget.ActiveBytes-r.active {
+		if r.report.BytesRead > r.budget.Bytes || n > r.budget.Bytes-r.report.BytesRead || !r.selectedActiveFitsV2(n) {
 			return errV2InspectionBudget
 		}
 		if err := r.step(); err != nil {
