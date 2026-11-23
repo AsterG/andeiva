@@ -48,3 +48,12 @@ A ativação preserva o armazenamento clássico e seus backups. Após a
 publicação do marcador, voltar ao modo clássico exige recuperação offline
 autorizada de um backup consistente anterior à transição. Ainda não há
 comando para retornar ao modo clássico.
+
+A ativação offline usa um processo filho privado com a identidade da API e
+sem capacidades. Ele autentica o pai root pelos pipes herdados, lê o
+armazenamento clássico sob o bloqueio de escrita existente e confirma
+novamente a impressão digital antes da publicação. O filho usa apenas o
+armazenamento clássico e seu bloqueio. O instalador verifica o escopo e a
+inicialização, a drenagem dos serviços e o fechamento do encaminhamento.
+Se o filho for interrompido, a inicialização clássica continua inibida e a
+ativação precisa revalidar toda a preparação antes de prosseguir.

@@ -97,33 +97,18 @@ func RunRoutedMigrationInspectRoleV3(ctx context.Context) error {
 	if checkMigrationInspectFDsV3() != nil {
 		return ErrIdentity
 	}
-	var in, out unix.Stat_t
-	inputFlags, e := unix.FcntlInt(0, unix.F_GETFL, 0)
-	outputFlags, oe := unix.FcntlInt(1, unix.F_GETFL, 0)
-	if e != nil || oe != nil || inputFlags&unix.O_ACCMODE != unix.O_RDONLY || outputFlags&unix.O_ACCMODE != unix.O_WRONLY || unix.Fstat(0, &in) != nil || unix.Fstat(1, &out) != nil || in.Mode&unix.S_IFMT != unix.S_IFIFO || out.Mode&unix.S_IFMT != unix.S_IFIFO || in.Uid != 0 || out.Uid != 0 || (in.Dev == out.Dev && in.Ino == out.Ino) || unix.SetNonblock(0, true) != nil {
-		return ErrIdentity
-	}
-	input := os.NewFile(0, "migration-inspect-control")
-	if input == nil {
-		return ErrIdentity
+	input, e := migrationFingerprintControlV3(45 * time.Second)
+	if e != nil {
+		return e
 	}
 	defer input.Close()
-	if input.SetReadDeadline(time.Now().Add(45*time.Second)) != nil {
-		return ErrUnavailable
-	}
 	reader := bufio.NewReaderSize(input, 16384)
 	data, e := reader.ReadSlice('\n')
 	var request routedMigrationInspectRequestV3
-	if e != nil || !jsoncheck.UniqueControlFields(data) || firewallipc.Decode(data, &request) != nil || request.Version != 1 || request.ParentPID <= 1 || request.ParentPID != os.Getppid() || request.Identities.Validate() != nil || checkPrivileges(request.Identities, false) != nil {
+	if e != nil || !jsoncheck.UniqueControlFields(data) || firewallipc.Decode(data, &request) != nil || request.Version != 1 {
 		return ErrIdentity
 	}
-	parent, e := os.Open("/proc/" + strconv.Itoa(request.ParentPID) + "/status")
-	if e != nil {
-		return ErrIdentity
-	}
-	status, re := io.ReadAll(io.LimitReader(parent, 65537))
-	ce := parent.Close()
-	if re != nil || ce != nil || !rootRoutedParentStatusV3(status, request.ParentPID) || armMigrationParentDeathV3(request.ParentPID) != nil {
+	if authenticateMigrationFingerprintParentV3(request.ParentPID, request.Identities) != nil {
 		return ErrIdentity
 	}
 	gateway := os.NewFile(3, "migration-inspect-source-namespace")
@@ -346,6 +331,42 @@ func validateMigrationPlanV3(plan routedMigrationPlanV3, accounts []adminauth.Ac
 }
 
 func checkMigrationInspectFDsV3() error {
+	return checkMigrationWorkerFDsV3(3)
+}
+
+func migrationFingerprintControlV3(timeout time.Duration) (*os.File, error) {
+	var in, out unix.Stat_t
+	input, ie := unix.FcntlInt(0, unix.F_GETFL, 0)
+	output, oe := unix.FcntlInt(1, unix.F_GETFL, 0)
+	if ie != nil || oe != nil || input&unix.O_ACCMODE != unix.O_RDONLY || output&unix.O_ACCMODE != unix.O_WRONLY ||
+		unix.Fstat(0, &in) != nil || unix.Fstat(1, &out) != nil || in.Mode&unix.S_IFMT != unix.S_IFIFO ||
+		out.Mode&unix.S_IFMT != unix.S_IFIFO || in.Uid != 0 || out.Uid != 0 ||
+		in.Dev == out.Dev && in.Ino == out.Ino || unix.SetNonblock(0, true) != nil {
+		return nil, ErrIdentity
+	}
+	file := os.NewFile(0, "migration-fingerprint-control")
+	if file == nil {
+		return nil, ErrIdentity
+	}
+	if file.SetReadDeadline(time.Now().Add(timeout)) != nil {
+		_ = file.Close()
+		return nil, ErrUnavailable
+	}
+	return file, nil
+}
+
+func authenticateMigrationFingerprintParentV3(pid int, ids Identities) error {
+	if pid <= 1 || os.Getppid() != pid || ids.Validate() != nil || checkPrivileges(ids, false) != nil {
+		return ErrIdentity
+	}
+	status, err := routedDHCPOwnerReadV3("/proc/"+strconv.Itoa(pid)+"/status", 65536)
+	if err != nil || !rootRoutedParentStatusV3(status, pid) {
+		return ErrIdentity
+	}
+	return armMigrationParentDeathV3(pid)
+}
+
+func checkMigrationWorkerFDsV3(lastProtocolFD int) error {
 	// This is process-local hardening of the dedicated child, never a host limit.
 	var limit unix.Rlimit
 	if unix.Getrlimit(unix.RLIMIT_NOFILE, &limit) != nil || limit.Max < 256 || unix.Setrlimit(unix.RLIMIT_NOFILE, &unix.Rlimit{Cur: 256, Max: 256}) != nil {
@@ -371,7 +392,7 @@ func checkMigrationInspectFDsV3() error {
 			_ = dir.Close()
 			return ErrIdentity
 		}
-		if fd <= 3 || fd == own {
+		if fd <= lastProtocolFD || fd == own {
 			continue
 		}
 		target, e := os.Readlink("/proc/self/fd/" + entry.Name())

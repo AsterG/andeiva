@@ -56,3 +56,11 @@ The activation procedure preserves the classic store and its backups. After
 the cutover marker is published, returning to classic requires authorized
 offline recovery from a coherent pre-cutover backup. There is currently
 no command for returning to classic.
+
+Offline activation uses a private child with the API identity and no
+capabilities. It authenticates its root parent over inherited pipes, reads the
+classic store under its existing writer lock and confirms the same fingerprint
+again before publication. The child consumes only the classic store and lock.
+The installer owns scope and boot verification, service drain and forwarding
+closure. If the child is interrupted, classic startup remains inhibited and
+activation must revalidate the preparation in full before continuing.

@@ -48,3 +48,11 @@ La activación conserva el almacén clásico y sus respaldos. Después de
 publicar el marcador, volver al clásico requiere recuperación offline
 autorizada desde una copia coherente anterior a la transición. Todavía
 no existe un comando de retorno al clásico.
+
+La activación offline usa un hijo privado con la identidad de la API y sin
+capacidades. Autentica al padre root por las tuberías heredadas, lee el
+almacén clásico bajo su bloqueo de escritura y confirma otra vez la huella
+antes de publicar. El hijo usa sólo el almacén clásico y su bloqueo.
+El instalador verifica el ámbito y el arranque, el drenaje de servicios y
+el cierre del reenvío. Si se interrumpe el hijo, el arranque clásico sigue
+inhibido y la activación debe revalidar toda la preparación antes de seguir.
