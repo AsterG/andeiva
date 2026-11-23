@@ -15,6 +15,7 @@ import (
 )
 
 const RoutedActivationSourceRoleV1 = "--andeiva-routed-activation-source-v1"
+const activationSourceTimeoutV1 = 45 * time.Second
 
 type activationSourceRequestV1 struct {
 	Version    int                           `json:"version"`
@@ -34,10 +35,9 @@ func RunRoutedActivationSourceRoleV1(ctx context.Context) (result error) {
 	if checkMigrationWorkerFDsV3(2) != nil {
 		return ErrIdentity
 	}
-	const limit = 45 * time.Second
-	ctx, cancel := context.WithTimeout(ctx, limit)
+	ctx, cancel := context.WithTimeout(ctx, activationSourceTimeoutV1)
 	defer cancel()
-	control, err := migrationFingerprintControlV3(limit)
+	control, err := migrationFingerprintControlV3(activationSourceTimeoutV1)
 	if err != nil {
 		return err
 	}

@@ -39,7 +39,7 @@ func TestMigrationWorkerExecutableDescriptors(t *testing.T) {
 		t.Fatalf("CPU quota file must exist for the regression to be meaningful: %v", err)
 	}
 
-	for _, role := range []string{previewruntime.RoutedMigrationInspectRoleV3, previewruntime.RoutedMigrationPrepareRoleV3, previewruntime.RoutedActivationSourceRoleV1} {
+	for _, role := range []string{previewruntime.RoutedMigrationInspectRoleV3, previewruntime.RoutedMigrationPrepareRoleV3, previewruntime.RoutedActivationSourceRoleV1, previewruntime.RoutedActivationPreparedRoleV1} {
 		t.Run(role, func(t *testing.T) {
 			t.Run("protocol-descriptors", func(t *testing.T) { checkMigrationWorkerExecutable(t, role, false) })
 			t.Run("unexpected-descriptor", func(t *testing.T) { checkMigrationWorkerExecutable(t, role, true) })
@@ -60,7 +60,7 @@ func checkMigrationWorkerExecutable(t *testing.T, role string, unexpected bool) 
 	cmd := exec.CommandContext(ctx, *migrationWorkerExecutable, role)
 	cmd.Env = []string{"PATH=/usr/bin:/usr/sbin", "LC_ALL=C"}
 	cmd.Stdin, cmd.Stdout = input, output
-	if role == previewruntime.RoutedActivationSourceRoleV1 {
+	if role == previewruntime.RoutedActivationSourceRoleV1 || role == previewruntime.RoutedActivationPreparedRoleV1 {
 		gateway = nil
 	} else {
 		cmd.ExtraFiles = []*os.File{gateway}

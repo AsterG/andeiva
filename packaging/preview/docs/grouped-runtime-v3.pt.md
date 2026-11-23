@@ -57,3 +57,19 @@ armazenamento clássico e seu bloqueio. O instalador verifica o escopo e a
 inicialização, a drenagem dos serviços e o fechamento do encaminhamento.
 Se o filho for interrompido, a inicialização clássica continua inibida e a
 ativação precisa revalidar toda a preparação antes de prosseguir.
+
+Em uma instalação Debian Preview autorizada, execute como root
+`/usr/lib/andeiva-preview/andeiva-preview grouped-activate` durante a janela
+fria aprovada. Pare antes a API e o socket clássicos. Os registros preparados
+e os slots de recuperação devem existir. A configuração do socket agrupado
+deve corresponder à configuração de gerenciamento. O comando verifica o
+escopo clássico e o encaminhamento do host, mascara os dois conjuntos de
+unidades de forma persistente e valida Startup com o leitor somente leitura
+antes de publicar o marcador. Verifica a liberação do bloqueio antes de
+iniciar o serviço. Depois verifica a integridade do serviço e o certificado TLS.
+
+Uma impressão digital rejeitada ou uma falha do processo mantém as unidades
+mascaradas. Repita uma tentativa interrompida antes da publicação usando a
+mesma preparação. O instalador confere qualquer marcador pendente com os
+bytes esperados. Com um marcador publicado, recusa outra ativação inicial.
+Preserve o marcador para recuperação offline autorizada.

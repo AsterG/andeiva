@@ -5,6 +5,7 @@ package previewruntime
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
@@ -80,6 +81,10 @@ func decodeActivationEvidenceV1(raw []byte, value any) bool {
 // staging stays in the same directory. A failed publication preserves evidence,
 // including a potentially durable final record after a lost sync acknowledgement.
 func publishActivationRecordV1(area *os.Root, name string, data []byte) error {
+	return publishActivationRecordCheckedV1(area, name, data, nil)
+}
+
+func publishActivationRecordCheckedV1(area *os.Root, name string, data []byte, beforeRename func() error) error {
 	if area == nil || os.Getuid() != 0 || os.Geteuid() != 0 ||
 		(name != "grouped.json" && name != "grouped-cutover.json") || len(data) == 0 || len(data) > 16384 {
 		return ErrIdentity
@@ -98,8 +103,40 @@ func publishActivationRecordV1(area *os.Root, name string, data []byte) error {
 		return ErrStorage
 	}
 	pending := "." + name + ".pending"
-	if writeNew(area, pending, data, 0600, 0, 0) != nil || dir.Sync() != nil ||
-		unix.Renameat2(fd, pending, fd, name, unix.RENAME_NOREPLACE) != nil || dir.Sync() != nil {
+	if _, err := area.Lstat(pending); errors.Is(err, os.ErrNotExist) {
+		if writeNew(area, pending, data, 0600, 0, 0) != nil {
+			return ErrStorage
+		}
+	} else if err != nil || beforeRename == nil || verifyStagedActivationRecordV1(area, pending, data) != nil {
+		return ErrStorage
+	}
+	if dir.Sync() != nil {
+		return ErrStorage
+	}
+	if beforeRename != nil {
+		if err := beforeRename(); err != nil {
+			return err
+		}
+	}
+	if unix.Renameat2(fd, pending, fd, name, unix.RENAME_NOREPLACE) != nil || dir.Sync() != nil {
+		return ErrStorage
+	}
+	return nil
+}
+
+func verifyStagedActivationRecordV1(area *os.Root, name string, data []byte) error {
+	file, err := area.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return ErrStorage
+	}
+	defer file.Close()
+	var stat unix.Stat_t
+	if unix.Fstat(int(file.Fd()), &stat) != nil || stat.Mode != unix.S_IFREG|0600 ||
+		stat.Uid != 0 || stat.Gid != 0 || stat.Nlink != 1 || stat.Size != int64(len(data)) || !fenceNoACLV3(file, false) {
+		return ErrStorage
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, int64(len(data)+1)))
+	if err != nil || !bytes.Equal(raw, data) || file.Sync() != nil {
 		return ErrStorage
 	}
 	return nil
