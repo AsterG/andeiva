@@ -78,6 +78,11 @@ jobs:
           go test -c -o "${RUNNER_TEMP}/andeiva-preview.test" ./cmd/andeiva-preview
           sudo -- "${RUNNER_TEMP}/andeiva-preview.test" -test.run '^TestMigrationWorkerExecutableDescriptors$' \
             -test.v -test.timeout=30s -andeiva-preview-executable="${RUNNER_TEMP}/andeiva-preview"
+      - name: Check exclusive publication in a temporary installation directory
+        run: |
+          go test -c -o "${RUNNER_TEMP}/activation-publisher.test" ./internal/previewruntime
+          sudo -- "${RUNNER_TEMP}/activation-publisher.test" \
+            -test.run '^TestPublishActivationRecordNeverReplaces$' -test.v -test.timeout=30s
       - run: bash scripts/check.sh
       - name: Offline DHCP installer boundaries without privileged effects
         run: |

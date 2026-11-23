@@ -51,3 +51,8 @@ they do not prove migration, native boot or end-to-end traffic qualification.
 Child readiness has a separate 45-second startup/drain bound, accommodating the 30-second full inspection. Effect RPCs remain limited to three seconds. Persisted confirmation deadlines and Boot Started+10 seconds are unchanged. The factory retains its initial full graph validation; qualification is not inferred from a bound socket.
 
 Legacy API/helper/namespace startup is refused once the root-owned grouped-cutover.json marker exists. Malformed, unreadable or dangling markers also require explicit recovery. This guard does not stop an already running writer: cutover must first stop and drain the original writer and retain its lock. No activation marker is created by package installation.
+
+The activation procedure preserves the classic store and its backups. After
+the cutover marker is published, returning to classic requires authorized
+offline recovery from a coherent pre-cutover backup. There is currently
+no command for returning to classic.
