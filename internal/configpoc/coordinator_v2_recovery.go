@@ -11,6 +11,12 @@ func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, ori
 	if current == nil {
 		current = &v2Configuration{}
 	}
+	return c.appendAuditAfterLocked(current, state, operation, origin, lease, subject, kind, result, generation, at, cleanup...)
+}
+
+// Earlier audit objects in the same publication are still reachable through
+// the proposed state's tip even though the selected configuration is unchanged.
+func (c *v2Coordinator) appendAuditAfterLocked(current, state *v2Configuration, operation, origin, lease, subject, kind, result string, generation uint64, at time.Time, cleanup ...RoutedConntrackCleanupV1) (string, error) {
 	if current.AuditSequence == ^uint64(0) {
 		return "", errV2Limited
 	}
@@ -259,6 +265,16 @@ func (c *v2Coordinator) recoveryStatus() (v2RecoveryRecord, error) {
 }
 
 func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
+	if c.store.state.Configuration.Pending == nil {
+		return nil
+	}
+	if err := c.startRecoveryLocked(kind); err != nil {
+		return err
+	}
+	return c.finishRecoveryLocked(ctx)
+}
+
+func (c *v2Coordinator) startRecoveryLocked(kind string) error {
 	s := c.store
 	current := clone(*s.state.Configuration)
 	pending := current.Pending
@@ -326,10 +342,7 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 		return err
 	}
 	c.invalidateLocalLocked()
-	if err = c.point("after_recovery_intent"); err != nil {
-		return err
-	}
-	return c.finishRecoveryLocked(ctx)
+	return c.point("after_recovery_intent")
 }
 
 // Both the writer and independent continuation reader need the same rollback
@@ -415,6 +428,13 @@ func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {
 	if err = c.point("after_recovery_readback"); err != nil {
 		return err
 	}
+	return c.completeRecoveryLocked(intent, origin, target)
+}
+
+// completeRecoveryLocked publishes the exact revert projection. The caller has
+// either read back the restored target or proved that its scope is gone.
+func (c *v2Coordinator) completeRecoveryLocked(intent *v2CoordinatorIntent, origin v2Operation, target v2Configuration) error {
+	s := c.store
 	var record v2RecoveryRecord
 	if s.readObject(s.state.Configuration.LastRecovery, &record) != nil || record.ID != intent.Operation || record.Lease != intent.Lease || record.Origin != origin.ID {
 		return errV2Unavailable

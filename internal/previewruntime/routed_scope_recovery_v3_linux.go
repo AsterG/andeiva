@@ -185,6 +185,10 @@ func validateScopeRecoveryRecordFileV3(f *os.File) error {
 // store all named FDs and verify manager readback before admitting any effect.
 // Returning bytes does not assert that any of those publication steps happened.
 func PrepareRoutedScopeRecoveryRecordV3(ctx context.Context, m Metadata, ids Identities, a RoutedScopeRecoveryAnchorsV3) ([]byte, error) {
+	return prepareRoutedScopeRecoveryRecord(ctx, m, ids, a, "", "")
+}
+
+func prepareRoutedScopeRecoveryRecord(ctx context.Context, m Metadata, ids Identities, a RoutedScopeRecoveryAnchorsV3, lineage, priorSlot string) ([]byte, error) {
 	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 || m.ValidateRouted() != nil || ids.Validate() != nil {
 		return nil, ErrIdentity
 	}
@@ -193,6 +197,9 @@ func PrepareRoutedScopeRecoveryRecordV3(ctx context.Context, m Metadata, ids Ide
 		return nil, err
 	}
 	r := RoutedScopeRecoveryRecordV3{Version: 3, Phase: "pinned", Metadata: m, Identities: ids, MetadataSHA256: retirementDigestV3(marshal(m)), CgroupInvocation: unit.invocation}
+	if lineage != "" || priorSlot != "" {
+		r.Version, r.LineageSHA256, r.PriorSlotSHA256 = 4, lineage, priorSlot
+	}
 	destinations := []*RoutedScopeRecoveryFileV3{&r.Gateway, &r.Mount, &r.Underlay, &r.Directory, &r.Cgroup, &r.CgroupEvents}
 	for i, f := range []*os.File{a.Gateway, a.Mount, a.Underlay, a.Directory, a.Cgroup, a.CgroupEvents} {
 		id, _, err := scopeRecoveryIdentityV3(f)

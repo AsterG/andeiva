@@ -79,7 +79,10 @@ func preservesRoutedDHCPConfigurationReadV4(previous v2State, previousHeader *v4
 	if reflect.DeepEqual(previousHeader, nextHeader) {
 		return legacy
 	}
-	if nextHeader == nil || !hasFeatureV2(next, v4RoutedDHCPConfigurationFeature) || previous.RoutedDHCPLast != next.RoutedDHCPLast || !reflect.DeepEqual(previous.RoutedDHCP, next.RoutedDHCP) || previous.RoutedDHCP == nil || previous.RoutedDHCP.Phase != "applied" {
+	if nextHeader == nil {
+		return validatesRetainedDHCPColdEdgeV1(previous, next, source, load)
+	}
+	if !hasFeatureV2(next, v4RoutedDHCPConfigurationFeature) || previous.RoutedDHCPLast != next.RoutedDHCPLast || !reflect.DeepEqual(previous.RoutedDHCP, next.RoutedDHCP) || previous.RoutedDHCP == nil || previous.RoutedDHCP.Phase != "applied" {
 		return false
 	}
 	// Retain every non-DHCP freeze condition from preservesFeaturesV2.

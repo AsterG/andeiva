@@ -263,11 +263,7 @@ func StartRoutedLaunchV3(ctx context.Context, r RoutedLaunchResourcesV3, stderr 
 	if e != nil || host != r.Metadata.HostNamespace {
 		return nil, ErrIdentity
 	}
-	boot, e := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if e != nil {
-		return nil, ErrIdentity
-	}
-	actual, e := canonicalBoot(boot)
+	actual, e := readRoutedKernelBootID()
 	if e != nil || actual != r.Metadata.BootID {
 		return nil, ErrIdentity
 	}
@@ -368,7 +364,7 @@ func (s *RoutedLaunchSupervisorV3) bootstrap(helper int32, epoch uint64) routedL
 	if r.RebootScope != nil {
 		b.RebootScope = true
 		if helper == 0 {
-			binding := r.RebootScope.Binding
+			binding := r.RebootScope.Binding.detached()
 			b.RebootScopeBinding = &binding
 		}
 	}

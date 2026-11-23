@@ -22,6 +22,8 @@ type RoutedScopeRecoveryRecordV3 struct {
 	Cgroup           RoutedScopeRecoveryFileV3 `json:"cgroup"`
 	CgroupEvents     RoutedScopeRecoveryFileV3 `json:"cgroup_events"`
 	CgroupInvocation string                    `json:"cgroup_invocation"`
+	LineageSHA256    string                    `json:"lineage_sha256,omitempty"`
+	PriorSlotSHA256  string                    `json:"prior_slot_sha256,omitempty"`
 	IntegritySHA256  string                    `json:"integrity_sha256,omitempty"`
 }
 
@@ -30,8 +32,19 @@ type RoutedScopeRecoveryFileV3 struct {
 	Inode  uint64 `json:"inode"`
 }
 
+func (r RoutedScopeRecoveryRecordV3) validLineage() bool {
+	switch r.Version {
+	case 3:
+		return r.LineageSHA256 == "" && r.PriorSlotSHA256 == ""
+	case 4:
+		return retirementHashV3(r.LineageSHA256) && retirementHashV3(r.PriorSlotSHA256)
+	default:
+		return false
+	}
+}
+
 func (r RoutedScopeRecoveryRecordV3) valid() bool {
-	if !validHex(r.CgroupInvocation, 16) || r.Version != 3 || r.Phase != "pinned" || r.Metadata.ValidateRouted() != nil || r.Identities.Validate() != nil || r.MetadataSHA256 != retirementDigestV3(marshal(r.Metadata)) || r.Gateway.Inode != r.Metadata.GatewayNamespace {
+	if !r.validLineage() || !validHex(r.CgroupInvocation, 16) || r.Phase != "pinned" || r.Metadata.ValidateRouted() != nil || r.Identities.Validate() != nil || r.MetadataSHA256 != retirementDigestV3(marshal(r.Metadata)) || r.Gateway.Inode != r.Metadata.GatewayNamespace {
 		return false
 	}
 	seen := map[RoutedScopeRecoveryFileV3]bool{}

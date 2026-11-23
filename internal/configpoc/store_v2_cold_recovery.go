@@ -13,6 +13,10 @@ func coldCompletedPredecessorV1(v *selectedViewV2, a RoutedColdAnchorV1, p Route
 	if v.store.readObject(p.work.Transition.Previous, &before) != nil || !validV2Configuration(&before) || before.Intent != nil || before.Pending != nil || before.RecoveryRequired {
 		return false
 	}
+	return coldCompletedConfigurationV1(v, a, before)
+}
+
+func coldCompletedConfigurationV1(v *selectedViewV2, a RoutedColdAnchorV1, before v2Configuration) bool {
 	if in := a.configuration.Intent; in != nil && !in.Recovery && (in.Kind == OpCommit || in.Kind == OpRollback || in.Kind == OpConfirm) {
 		return coldCompletedOperationV1(v, a, before)
 	}
@@ -77,7 +81,10 @@ func coldCompletedRecoveryV1(v *selectedViewV2, a RoutedColdAnchorV1, before v2C
 		if !in.Recovery || in.Domain != "routed" || in.RoutedWork != a.reference.WorkHash || (in.Kind != "restart" && in.Kind != "timeout") {
 			return false
 		}
-		if v.store.readObject(in.Previous, &source) != nil {
+		// The anchor captured this exact object when the intent was selected.
+		if a.recoverySource != nil {
+			source = clone(*a.recoverySource)
+		} else if v.store.readObject(in.Previous, &source) != nil {
 			return false
 		}
 		sourceHash = in.Previous

@@ -191,8 +191,14 @@ rules before forwarding resumes. The successful Debian lab run bounded this
 combined outage at 11.350–11.680 s, measured separately from ordinary rule
 changes. If the handover budget is exhausted, forwarding stays closed and the
 appliance reports that recovery is required. The pending rollback record blocks
-the normal service restart and selection of Startup on reboot in this Alpha
-state. A recovery procedure for this state is still pending.
+the normal service restart in this Alpha state. A complete restart of the
+appliance archives the unfinished change in the protected audit and selects the
+saved Startup; confirmed changes that were never saved are discarded. This also
+applies after an abrupt power loss, and the audit then shows a
+`boot_attestation` entry. If power is lost again while that Startup boot is
+still being applied, a later start can stay closed and require authorized
+offline maintenance. This recovery passed component tests; real power-loss
+qualification is still pending.
 
 The Debian 13 laboratory gateway used two vCPUs and 3.79 GiB of RAM. These are
 upper bounds on the kernel forwarding pause, in milliseconds.

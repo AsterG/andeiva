@@ -23,14 +23,15 @@ type RoutedFreshScopeOptionsV3 struct {
 }
 
 type routedFreshScopeV3 struct {
-	mu        sync.Mutex
-	file      *os.File
-	binding   RoutedFreshScopeBindingV3
-	reader    *configpoc.RoutedSelectionReaderV2
-	authority configpoc.RoutedAuthorityV1
-	kernel    *routedKernelV3
-	work      string // Correlation only; every preparation independently rereads selected work.
-	reboot    bool   // Set only by the separate kernel-bound v4 constructor.
+	rebootBinding RoutedRebootScopeBindingV4
+	mu            sync.Mutex
+	file          *os.File
+	binding       RoutedFreshScopeBindingV3
+	reader        *configpoc.RoutedSelectionReaderV2
+	authority     configpoc.RoutedAuthorityV1
+	kernel        *routedKernelV3
+	work          string // Correlation only; every preparation independently rereads selected work.
+	reboot        bool   // Set only by the separate kernel-bound v4 constructor.
 }
 
 func validateRetirementFileV3(file *os.File) error {
@@ -238,7 +239,7 @@ func (p *routedFreshScopeV3) prepareSelected(ctx context.Context, target configp
 	}
 	_, err = p.observeScope(ctx, p.work, func(source configpoc.RoutedFreshScopeSourceV3, _ configpoc.RoutedPrepareViewV2) error {
 		selected, baseline := source.PreparationBundles()
-		if source.Identity() != r.Old || selected.Composite.Hash != target.Composite.Hash || baseline.Composite.Hash != saved {
+		if _, ok := r.retired(source.Identity()); !ok || selected.Composite.Hash != target.Composite.Hash || baseline.Composite.Hash != saved {
 			return configpoc.ErrConflict
 		}
 		var e error

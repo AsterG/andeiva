@@ -43,7 +43,7 @@ func (r *v2ReachabilityReader) routedWork(hash, key string, state v2State, depth
 			}
 		}
 		if proof := plan.work.RebootScope; proof != nil {
-			if !hasFeatureV2(state, v4RoutedRebootScopeFeature) {
+			if !rebootScopeDeclaredV4(state, proof) {
 				return errV2Unavailable
 			}
 			if err := r.routedWork(proof.Work, key, state, depth+1); err != nil {

@@ -132,7 +132,7 @@ func (c *v2Coordinator) openRoutedBootBoundaryV2(ctx context.Context) (bool, err
 	}
 	if b := s.state.RoutedBootBoundary; b != nil {
 		if b.NewIdentity != identity {
-			return true, ErrRecovery
+			return c.finishRetiredRoutedBootBoundaryV4(ctx, *b)
 		}
 		if s.state.Configuration.Intent != nil {
 			return false, nil
@@ -415,7 +415,7 @@ func validateRoutedBootBoundaryV2(state v2State, load func(string, any) error) e
 	if b.FreshScope != nil && !hasFeatureV2(state, v3RoutedFreshScopeFeature) {
 		return ErrRecovery
 	}
-	if b.RebootScope != nil && !hasFeatureV2(state, v4RoutedRebootScopeFeature) {
+	if !rebootScopeDeclaredV4(state, b.RebootScope) {
 		return ErrRecovery
 	}
 	source, _, err := routedBootBoundarySourceV2(*b, state.Lineage, load)

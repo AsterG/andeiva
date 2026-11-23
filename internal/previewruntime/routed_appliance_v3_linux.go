@@ -199,7 +199,7 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 		if e != nil {
 			return out, e
 		}
-		reboot, e := reader.PrepareRebootScopeViewV4(ctx, receipt.Old)
+		reboot, e := reader.PrepareRetiredScopeViewV4(ctx, receipt.identities())
 		if e != nil {
 			return out, e
 		}
@@ -223,6 +223,11 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 	bindings, err := routedApplianceBindingsV3()
 	if err != nil {
 		return out, err
+	}
+	if c.RebootScope != nil && c.RebootScope.Binding.Lineage != nil {
+		if c.LocalOrigin == nil || validateRoutedBootLineageLinksV5(*c.RebootScope.Binding.Lineage, bindings) != nil {
+			return out, ErrIdentity
+		}
 	}
 	var network routedNetworkDriverV4
 	var selector *routedNetworkSelectorV4
@@ -262,6 +267,18 @@ func openRoutedApplianceHelperV3(ctx context.Context, c RoutedLaunchContextV3) (
 		return out, err
 	}
 	return out, nil
+}
+
+func validateRoutedBootLineageLinksV5(lineage routedBootLineageV5, bindings []networkplan.Binding) error {
+	if lineage.digest() == "" || len(bindings) != 2 {
+		return ErrIdentity
+	}
+	for i, binding := range bindings {
+		if binding.Name != routedLinkNameV3(i) || binding.HardwareAddress != routedLinkMACV3(lineage.Node, i) {
+			return ErrIdentity
+		}
+	}
+	return nil
 }
 
 func routedApplianceBindingsV3() ([]networkplan.Binding, error) {

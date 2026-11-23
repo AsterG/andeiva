@@ -39,7 +39,7 @@ func (r *v2ReachabilityReader) selection(hash string, expectedPrevious *string) 
 		}
 		featuresPreserved := true
 		if i > 0 {
-			if !validRoutedBootMarkSourceV1(state, previousState, hash) {
+			if !validRoutedBootMarkSourceV1(state, previousState, hash, r.object) {
 				release()
 				return ErrRecovery
 			}

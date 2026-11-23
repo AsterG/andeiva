@@ -135,6 +135,14 @@ func openCoordinatorV2(ctx context.Context, store *v2Store, firewall, local []En
 	if err := c.recoverRoutedDHCPAtOpenV3(ctx); err != nil {
 		return nil, err
 	}
+	if err := c.finishRetainedDHCPColdRecoveryV1(ctx); err != nil {
+		return c, fmt.Errorf("retained DHCP boot recovery: %w", err)
+	}
+	// A transaction left unfinished by another kernel boot is archived as
+	// terminal first. Startup is then selected by the ordinary boot below.
+	if err := c.archiveInterruptedRoutedV4(ctx); err != nil {
+		return c, fmt.Errorf("boot terminal archive: %w", err)
+	}
 	if handled, err := c.openRoutedBootBoundaryV2(ctx); handled {
 		return c, err
 	}

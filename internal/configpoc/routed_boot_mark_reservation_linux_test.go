@@ -137,3 +137,113 @@ func TestRoutedBootMarksReserveRollbackBeforeEffects(t *testing.T) {
 		t.Fatal("writer loaded a cursor without its durable reservation", err)
 	}
 }
+
+func TestRoutedBootMarkRolloverPreservesWatermarkV1(t *testing.T) {
+	ctx := context.Background()
+	oldReader, c, old, wan, dhcp := selectedDHCPReaderFixtureV3(t, func(cfg *Config) {
+		lan, wan := cfg.Routed.Network.Config.Interfaces[0], cfg.Routed.Network.Config.Interfaces[1]
+		enabled := true
+		cfg.Routed.Rules = []routedmodel.Rule{{
+			ID: "saved-rule", Enabled: &enabled, Action: "allow", Protocol: "tcp",
+			Path:   routedmodel.Path{FromZone: lan.Zone, ToZone: wan.Zone, FromInterface: lan.ID, ToInterface: wan.ID},
+			Source: "198.18.0.0/24", Destination: "198.19.0.2/32",
+			SourcePorts: routedmodel.Ports{From: 1024, To: 65535}, DestinationPorts: routedmodel.Ports{From: 18080, To: 18080},
+		}}
+	})
+	principal := v2TrustedPrincipal{Subject: c.store.state.Subjects[0].ID, Role: RoleAdmin}
+	if _, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpSave}); err != nil {
+		t.Fatal(err)
+	}
+	s := c.store
+	s.retainDHCPV4 = true
+	work, err := wan.Prepare(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dhcp.state = networkexecutor.LeaseSelectedTargetV3
+	if err = wan.Applied(ctx, work); err != nil {
+		t.Fatal(err)
+	}
+	prior := *s.state.RoutedBootMarks
+	fresh, proof := rebootAuthorityFixtureV4(t, c, old)
+	bootAttestedFixtureV4(proof)
+	opened, err := reopenRebootFixtureV4(t, c, fresh, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = opened.store
+	s.retainDHCPV4 = true
+	if *s.state.RoutedBootMarks != prior || !validRoutedBootMarkRolloverV1(s.state, fresh.identity, s.readObject) {
+		t.Fatal("verified Startup changed the old watermark")
+	}
+	options := oldReader.options
+	options.Identity = fresh.identity
+	r, err := NewRoutedSelectionReaderV2(oldReader.area, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened.options.Integrity = &testIntegrityV1{inspect: r.InspectQuiescentV1}
+	if err = (&ServiceV2{coordinator: opened}).InspectRuntimeV1(ctx); err != nil {
+		t.Fatal("helper integrity inspection", err)
+	}
+	newGrant := clone(dhcp.grant)
+	newGrant.Snapshot.Identity = fresh.identity
+	newGrant.Snapshot.OwnerIncarnation = "dddddddddddddddddddddddddddddddd"
+	newGrant.Snapshot.Hash = ""
+	_, newGrant.Snapshot.Hash, err = v2Canonical(newGrant.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newLease := &dhcpAuthorityFixtureV3{grant: newGrant, state: networkexecutor.LeaseSelectedBaselineV3}
+	w, err := NewRoutedDHCPSelectedStoreV3(&ServiceV2{coordinator: opened}, fresh.identity, newLease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("without a verified boot", func(t *testing.T) {
+		record := s.state.Configuration.LastCompletedBoot
+		s.state.Configuration.LastCompletedBoot = ""
+		defer func() { s.state.Configuration.LastCompletedBoot = record }()
+		before := s.selector
+		if _, err := w.Prepare(ctx); !errors.Is(err, ErrRecovery) || s.selector != before || s.state.RoutedDHCP != nil {
+			t.Fatal("unverified boot had effects", err)
+		}
+	})
+	t.Run("exhaustion before DHCP effects", func(t *testing.T) {
+		s.state.RoutedBootMarks.Issued = routedmodel.MaxAdmissionMarks
+		defer func() { s.state.RoutedBootMarks.Issued = prior.Issued }()
+		before, spent := s.selector, s.used
+		if _, err := w.Prepare(ctx); !errors.Is(err, errV2Limited) || err.Error() != "ANDEIVA_OPERATION_LIMITED" ||
+			s.selector != before || s.used != spent || s.state.RoutedDHCP != nil || s.blocked {
+			t.Fatal("exhausted cursor had durable effects", err)
+		}
+	})
+	current, err := w.Prepare(ctx)
+	if err != nil || current == work {
+		t.Fatal("new acquisition was not selected", err)
+	}
+	newLease.state = networkexecutor.LeaseSelectedTargetV3
+	if err = w.Applied(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	cursor := s.state.RoutedBootMarks
+	if !hasFeatureV2(s.state, routedBootMarkRolloverFeatureV1) ||
+		string(cursor.Boot) != fresh.identity.BootID || cursor.BaseIssued != prior.Issued || cursor.Issued <= prior.Issued {
+		t.Fatal("the new cursor reused or reset a prior number")
+	}
+	selected, err := r.ResolveDHCPLeaseAuthorityV4(ctx, current)
+	if err != nil || selected.BaselineAdmissionMarksV4() == nil {
+		t.Fatal("helper could not validate the new admission baseline", err)
+	}
+	for _, item := range selected.BaselineAdmissionMarksV4().Bindings {
+		if item.Mark <= prior.Issued {
+			t.Fatal("helper accepted an old mark")
+		}
+	}
+	reservation, err := loadRoutedBootMarkReservationV1(cursor, s.state.Lineage, s.readObject)
+	if err != nil || reservation.Prior != nil {
+		t.Fatal("a new boot imported an old policy assignment", err)
+	}
+	if err = s.readSelection(); err != nil {
+		t.Fatal("writer could not re-open the cross-boot edge", err)
+	}
+}

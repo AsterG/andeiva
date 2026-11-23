@@ -4,6 +4,7 @@ package configpoc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,71 @@ import (
 
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 )
+
+func TestRoutedRebootScopeV4ReadsInterruptedTransaction(t *testing.T) {
+	for _, interrupted := range []string{OpCommit, "timeout"} {
+		t.Run(interrupted, func(t *testing.T) {
+			ctx := context.Background()
+			c, old, principal, cfg := boundaryCoordinatorFixtureV2(t)
+			original := sharedBoundaryReaderV2(t, c, old)
+			if _, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpStage, Config: &cfg}); err != nil {
+				t.Fatal(err)
+			}
+			checkpoint := "after_intent"
+			if interrupted == "timeout" {
+				checkpoint = "after_recovery_intent"
+			}
+			c.options.Hook = func(point string) error {
+				if point == checkpoint {
+					return ErrInterrupted
+				}
+				return nil
+			}
+			seconds := uint64(90)
+			_, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+			if interrupted == "timeout" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = c.revertLocked(ctx, "timeout")
+			}
+			if !errors.Is(err, ErrInterrupted) {
+				t.Fatal("expected a selected interrupted transaction", err)
+			}
+			state := c.store.state.Configuration
+			work := state.Intent.RoutedWork
+			if !validHash(work) {
+				t.Fatal("interrupted operation does not have a selected work reference")
+			}
+			fresh := freshBoundaryAuthorityV2(old)
+			options := original.options
+			options.Identity = fresh.identity
+			r, err := NewRoutedSelectionReaderV2(original.area, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view, err := r.PrepareRebootScopeViewV4(ctx, old.identity)
+			if err != nil || view.Work != work || view.Target.Composite.Hash != state.Startup.Hash {
+				t.Fatal("reboot reader did not identify the exact work and saved Startup", err)
+			}
+			call := false
+			if _, err = r.ObserveRebootScopeV4(ctx, strings.Repeat("d", 64), func(RoutedFreshScopeSourceV3, RoutedPrepareViewV2) error { call = true; return nil }); err == nil || call {
+				t.Fatal("unselected work reached the proof callback", err)
+			}
+			options.Identity.BootID, options.Identity.Host = old.identity.BootID, old.identity.Host
+			hot, err := NewRoutedSelectionReaderV2(original.area, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = hot.PrepareRebootScopeViewV4(ctx, old.identity); err == nil {
+				t.Fatal("same-boot restart got a reboot view")
+			}
+			if _, err = hot.PrepareServiceRestartViewV3(ctx, old.identity); err == nil {
+				t.Fatal("service restart accepted a durable interrupted transaction")
+			}
+		})
+	}
+}
 
 // Physical authority is explicitly doubled. Selected files, G1/R2, retained
 // work, archive/CAS, and coordinator open are real; this is not native reboot.
@@ -283,5 +349,140 @@ func TestRoutedRebootScopeV4ClockDomainsAndV3RemainSeparate(t *testing.T) {
 	p.New.BootID = p.Old.BootID
 	if ValidRoutedRebootScopeEvidenceV4(p) {
 		t.Fatal("v4 admitted same BootID")
+	}
+}
+
+func bootAttestedFixtureV4(f *rebootScopeFixtureV4) {
+	f.mutate = func(p *RoutedRebootScopeEvidenceV4) { p.BootAttested, p.DrainedAtOldBootNS = true, 0 }
+}
+
+func TestRoutedRebootScopeV4BootAttestedEvidenceNeverClaimsADrain(t *testing.T) {
+	c, old := sharedBoundaryFixtureV3(t)
+	_, f := rebootAuthorityFixtureV4(t, c, old)
+	p := f.proof
+	p.Work = strings.Repeat("c", 64)
+	if !ValidRoutedRebootScopeEvidenceV4(p) {
+		t.Fatal("drain receipt evidence refused")
+	}
+	p.BootAttested = true
+	if ValidRoutedRebootScopeEvidenceV4(p) {
+		t.Fatal("boot attestation carried a drain time")
+	}
+	p.DrainedAtOldBootNS = 0
+	if !ValidRoutedRebootScopeEvidenceV4(p) {
+		t.Fatal("boot attestation refused")
+	}
+	p.BootAttested = false
+	if ValidRoutedRebootScopeEvidenceV4(p) {
+		t.Fatal("receipt evidence without a drain time accepted")
+	}
+	p.BootAttested, p.DrainedAtOldBootNS = true, -1
+	if ValidRoutedRebootScopeEvidenceV4(p) {
+		t.Fatal("negative drain time accepted")
+	}
+	p.DrainedAtOldBootNS = 0
+	p.New.BootID = p.Old.BootID
+	if ValidRoutedRebootScopeEvidenceV4(p) {
+		t.Fatal("boot attestation admitted the same BootID")
+	}
+	receipt, attested := f.proof, f.proof
+	receipt.Work, attested.Work = p.Work, p.Work
+	attested.BootAttested, attested.DrainedAtOldBootNS = true, 0
+	a, validA := compareScopeV4(nil, &receipt)
+	b, validB := compareScopeV4(nil, &attested)
+	if !validA || !validB || a == b || a.attested || !b.attested {
+		t.Fatal("attested and drained evidence compare as equal")
+	}
+}
+
+func TestRoutedRebootScopeV4BootAttestedPendingSelectsStartupAndDeclaresFeature(t *testing.T) {
+	c, old, principal, cfg := boundaryCoordinatorFixtureV2(t)
+	m := c.store.reserves
+	c.store = sharedTestStoreV2(t, c.store)
+	c.store.reserves = m
+	c.options.SharedReader = c.store.access
+	if _, _, err := routedRequestV2(t, c, principal, v2Request{Kind: OpStage, Config: &cfg}); err != nil {
+		t.Fatal(err)
+	}
+	seconds := uint64(90)
+	origin, result, err := routedRequestV2(t, c, principal, v2Request{Kind: OpCommit, ConfirmSeconds: &seconds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	immutable := clone(result.Operation.Outcome)
+	startup := result.Current.Startup.Hash
+	fresh, proof := rebootAuthorityFixtureV4(t, c, old)
+	bootAttestedFixtureV4(proof)
+	opened, err := reopenRebootFixtureV4(t, c, fresh, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := opened.store.state
+	retained, err := opened.store.lookupRetained(principal.Subject, origin.ID)
+	if err != nil || retained.Pinned || !reflect.DeepEqual(retained.Outcome, immutable) || fresh.current != startup || fresh.recovers != 0 || st.Configuration.Running.Hash != startup || st.Configuration.Pending != nil || st.Configuration.Intent != nil {
+		t.Fatal("attested boot did not select Startup or changed the original outcome", err)
+	}
+	if !hasFeatureV2(st, v4RoutedBootAttestationFeature) || !hasFeatureV2(st, v4RoutedRebootScopeFeature) {
+		t.Fatal("attested evidence was persisted without its required features")
+	}
+	p, err := loadRoutedWorkV2(st.RoutedActive.Work, st.Lineage, opened.store.readObject)
+	if err != nil || p.RebootScopeEvidenceV4() == nil || !p.RebootScopeEvidenceV4().BootAttested || p.RebootScopeEvidenceV4().DrainedAtOldBootNS != 0 {
+		t.Fatal("selected boot plan does not carry the attested evidence", err)
+	}
+	// A reader that does not know the attested shape must refuse the store.
+	legacy := clone(st)
+	var features []string
+	for _, feature := range legacy.RequiredFeatures {
+		if feature != v4RoutedBootAttestationFeature {
+			features = append(features, feature)
+		}
+	}
+	legacy.RequiredFeatures = features
+	if rebootScopeDeclaredV4(legacy, p.RebootScopeEvidenceV4()) || !rebootScopeDeclaredV4(st, p.RebootScopeEvidenceV4()) {
+		t.Fatal("attested evidence accepted without its declared feature")
+	}
+	orphan := clone(st)
+	features = nil
+	for _, feature := range orphan.RequiredFeatures {
+		if feature != v4RoutedRebootScopeFeature {
+			features = append(features, feature)
+		}
+	}
+	orphan.RequiredFeatures = features
+	if validFeaturesV2(orphan) || !validFeaturesV2(st) {
+		t.Fatal("attestation feature accepted without the reboot scope feature")
+	}
+}
+
+func TestRoutedRebootScopeV4RetiredScopeViewRequiresARecordedScope(t *testing.T) {
+	oldReader, c, old, _, _ := selectedDHCPReaderFixtureV3(t)
+	ctx := context.Background()
+	fresh, _ := rebootAuthorityFixtureV4(t, c, old)
+	options := oldReader.options
+	options.Identity = fresh.identity
+	r, err := NewRoutedSelectionReaderV2(oldReader.area, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlier := old.identity
+	earlier.BootID, earlier.RunID = "92345678-1234-1234-1234-123456789abc", strings.Repeat("e", 32)
+	single, err := r.PrepareRebootScopeViewV4(ctx, old.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	among, err := r.PrepareRetiredScopeViewV4(ctx, []networkexecutor.OwnedNamespaceIdentity{earlier, old.identity})
+	if err != nil || !reflect.DeepEqual(single, among) {
+		t.Fatal("recorded scope was not selected among the retired scopes", err)
+	}
+	if _, err = r.PrepareRetiredScopeViewV4(ctx, []networkexecutor.OwnedNamespaceIdentity{earlier}); err == nil {
+		t.Fatal("store scope missing from the root record was accepted")
+	}
+	if _, err = r.PrepareRetiredScopeViewV4(ctx, nil); err == nil {
+		t.Fatal("empty root record accepted")
+	}
+	running := fresh.identity
+	running.RunID = strings.Repeat("d", 32)
+	if _, err = r.PrepareRetiredScopeViewV4(ctx, []networkexecutor.OwnedNamespaceIdentity{old.identity, running}); err == nil {
+		t.Fatal("scope of the running boot accepted as retired")
 	}
 }

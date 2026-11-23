@@ -184,8 +184,14 @@ uma execução aprovada no Debian isolado, a interrupção total ficou entre
 11,350 e 11,680 s, medida à parte. Se o tempo previsto para a renovação se
 esgotar, o encaminhamento permanece fechado e o equipamento informa que a
 recuperação é necessária. O registro do rollback pendente impede a reinicialização
-normal do serviço e a seleção de Startup ao reiniciar o equipamento nesse estado
-da versão Alpha. O procedimento de recuperação desse estado segue pendente.
+normal do serviço nesse estado da versão Alpha. Uma reinicialização completa do
+equipamento arquiva a alteração inacabada na auditoria protegida e seleciona o
+Startup salvo; as alterações confirmadas que não foram salvas são descartadas.
+Isso vale também após uma queda abrupta de energia, e a auditoria mostra então
+uma entrada `boot_attestation`. Se a energia cair de novo enquanto esse arranque
+de Startup ainda está sendo aplicado, um início posterior pode permanecer
+fechado e exigir manutenção offline autorizada. Essa recuperação passou nos
+testes de componente; a qualificação com quedas reais de energia segue pendente.
 
 O gateway de laboratório com Debian 13 usou duas vCPUs e 3,79 GiB de RAM.
 A tabela mostra limites superiores da pausa de encaminhamento do kernel em

@@ -183,9 +183,15 @@ reenvío vuelve tras verificar la concesión y las reglas restauradas. En Debian
 aislado, el corte combinado de una ejecución aprobada quedó entre 11,350 y
 11,680 s, medido por separado. Si se agota el presupuesto de traspaso, el reenvío
 queda cerrado y el equipo avisa que requiere recuperación. El registro del
-rollback pendiente impide el reinicio normal del servicio y la selección de
-Startup al reiniciar el equipo en este estado de Alpha. Sigue pendiente un
-procedimiento para recuperarse de este estado.
+rollback pendiente impide el reinicio normal del servicio en este estado de
+Alpha. Un reinicio completo del equipo archiva el cambio inconcluso en la
+auditoría protegida y selecciona el Startup guardado; se descartan los cambios
+confirmados que no se guardaron. Esto vale también tras un corte abrupto de
+energía, y la auditoría muestra entonces una entrada `boot_attestation`. Si la
+energía se corta de nuevo mientras ese arranque de Startup se está aplicando,
+un inicio posterior puede quedar cerrado y requerir mantenimiento offline
+autorizado. Esta recuperación pasó pruebas de componente; la calificación con
+cortes reales de energía sigue pendiente.
 
 El gateway de laboratorio con Debian 13 usó dos vCPU y 3,79 GiB de RAM. La
 tabla muestra cotas superiores de la pausa de reenvío del kernel en milisegundos.

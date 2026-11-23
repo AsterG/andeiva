@@ -85,9 +85,9 @@ func (r *routedManagedNamespaceV3) Close() error {
 
 // Standalone isolated namespace fixtures do not enable the service FD store.
 func prepareRoutedManagedNamespaceV3(ctx context.Context, area *os.Root, node routedNodeLinksV3, ids Identities) (*routedManagedNamespaceV3, error) {
-	return prepareRoutedManagedScopeV3(ctx, area, node, ids, nil)
+	return prepareRoutedManagedScopeV3(ctx, area, node, ids, nil, "", "")
 }
-func prepareRoutedManagedScopeV3(ctx context.Context, area *os.Root, node routedNodeLinksV3, ids Identities, record *routedScopeRecordSlotV3) (out *routedManagedNamespaceV3, result error) {
+func prepareRoutedManagedScopeV3(ctx context.Context, area *os.Root, node routedNodeLinksV3, ids Identities, record *routedScopeRecordSlotV3, lineage, priorSlot string) (out *routedManagedNamespaceV3, result error) {
 	if ctx == nil || ctx.Err() != nil || area == nil || node.validate() != nil || ids.Validate() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return nil, ErrIdentity
 	}
@@ -156,11 +156,7 @@ func prepareRoutedManagedScopeV3(ctx context.Context, area *os.Root, node routed
 	if err != nil {
 		return nil, err
 	}
-	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if err != nil {
-		return nil, err
-	}
-	bootID, err := canonicalBoot(boot)
+	bootID, err := readRoutedKernelBootID()
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +176,7 @@ func prepareRoutedManagedScopeV3(ctx context.Context, area *os.Root, node routed
 		return nil, err
 	}
 	if record != nil {
-		if err = r.publishScopeV3(ctx, record, ids); err != nil {
+		if err = r.publishScopeV3(ctx, record, ids, lineage, priorSlot); err != nil {
 			return nil, err
 		}
 	}
@@ -231,12 +227,18 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 	if err != nil {
 		return err
 	}
-	if verifyRoutedCutoverV3(marker, deployment, links) != nil {
-		return ErrIdentity
+	cutover, err := verifiedRoutedCutoverV3(marker, deployment, links)
+	if err != nil {
+		return err
 	}
 	node, err := decodeRoutedNodeLinksV3(links)
 	if err != nil {
 		return err
+	}
+	lineage := routedBootLineageV5{Node: node.Identity, DeploymentSHA256: cutover.DeploymentSHA256, LinksSHA256: cutover.LinksSHA256}
+	lineageDigest := lineage.digest()
+	if lineageDigest == "" {
+		return ErrIdentity
 	}
 	ids, err := LoadIdentities(c)
 	if err != nil {
@@ -277,14 +279,27 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 	}
 	defer func() { result = errors.Join(result, record.Close()) }()
 	if inherited.Recovery != nil {
+		previous := inherited.Recovery.record
+		if previous.Version == 4 && previous.LineageSHA256 != lineageDigest {
+			return ErrIdentity
+		}
 		if err = retireInheritedRoutedScopeV3(ctx, c, area, slot, record, inherited.Recovery, ids); err != nil {
 			return err
 		}
 	}
+	// A record left by another kernel boot has no drain receipt to wait for.
+	// Root attests it durably first, so a later interruption can repeat this.
+	if err = attestRoutedBootV4(slot, record, ids, lineageDigest); err != nil {
+		return err
+	}
 	if err = record.clearCompleted(ctx, slot); err != nil {
 		return err
 	}
-	owned, err := prepareRoutedManagedScopeV3(ctx, area, node, ids, record)
+	priorSlot, err := slot.read()
+	if err != nil {
+		return err
+	}
+	owned, err := prepareRoutedManagedScopeV3(ctx, area, node, ids, record, lineageDigest, retirementDigestV3(priorSlot))
 	if err != nil {
 		return err
 	}
@@ -294,10 +309,10 @@ func RunRoutedManagedSupervisorV3(ctx context.Context, c Config) (result error) 
 	}()
 	// RunRoutedSupervisorV3 drains both child processes before returning. Only
 	// then may the namespace owner remove links and release its mount pin.
-	return runRoutedSupervisorWithManagementV3(ctx, c, inherited.Management)
+	return runRoutedSupervisorWithManagementV3(ctx, c, inherited.Management, &lineage)
 }
 
-func (r *routedManagedNamespaceV3) publishScopeV3(ctx context.Context, record *routedScopeRecordSlotV3, ids Identities) error {
+func (r *routedManagedNamespaceV3) publishScopeV3(ctx context.Context, record *routedScopeRecordSlotV3, ids Identities, lineage, priorSlot string) error {
 	// Reopen only a previously verified retained underlay descriptor as readonly.
 	// Its pathname is never used as authority.
 	underlay, err := os.Open(fmt.Sprintf("/proc/self/fd/%d", r.namespace.underlay.Fd()))
@@ -327,7 +342,10 @@ func (r *routedManagedNamespaceV3) publishScopeV3(ctx context.Context, record *r
 	events := os.NewFile(uintptr(eventsFD), "root-cgroup-events")
 	defer events.Close()
 	anchors := RoutedScopeRecoveryAnchorsV3{record.reader, r.namespace.File(), mount, underlay, r.namespace.directory, cgroup, events}
-	raw, err := PrepareRoutedScopeRecoveryRecordV3(ctx, r.metadata, ids, anchors)
+	if !retirementHashV3(lineage) || !retirementHashV3(priorSlot) {
+		return ErrIdentity
+	}
+	raw, err := prepareRoutedScopeRecoveryRecord(ctx, r.metadata, ids, anchors, lineage, priorSlot)
 	if err != nil {
 		return err
 	}
