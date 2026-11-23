@@ -49,6 +49,7 @@ type v2ReachabilityReader struct {
 	shared              *recoveryreserve.ReaderAccessV2
 	ownerRead           bool // Writer-owned maintenance only; helper readers remain group-scoped.
 	cache               *selectedReadCacheV2
+	history             *historyReadCacheV2
 }
 
 func (r *v2ReachabilityReader) step() error {
