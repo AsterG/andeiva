@@ -110,7 +110,8 @@ func TestFullHistoryRetentionFallsBackAndRevalidates(t *testing.T) {
 		}
 		read(name)
 		read(name)
-		if graph.active != size || graph.report.BytesRead != size || graph.report.IOCalls != 65 {
+		read(name)
+		if graph.active != size || graph.report.BytesRead != 2*size || graph.report.IOCalls != 129 {
 			t.Fatal("retention failed to charge bytes or service a repeat")
 		}
 		other, err := v2ObjectName(store.store.selector.Current)
@@ -123,14 +124,14 @@ func TestFullHistoryRetentionFallsBackAndRevalidates(t *testing.T) {
 		}
 		read(other)
 		read(other)
-		if graph.active != size || graph.report.IOCalls != 193 || graph.report.BytesRead != size+2*uint64(otherInfo.Size()) {
+		if graph.active != size || graph.report.IOCalls != 257 || graph.report.BytesRead != 2*(size+uint64(otherInfo.Size())) {
 			t.Fatal("a full cache must read an unretained object at the ordinary charge")
 		}
 		if !graph.selectedActiveFitsV2(size+1) || graph.history.bytes != 0 || graph.active != 0 {
 			t.Fatal("optional payload prevented a normal load")
 		}
 		read(name)
-		if graph.report.IOCalls != 257 || graph.report.BytesRead != 2*(size+uint64(otherInfo.Size())) || graph.active != 0 {
+		if graph.report.IOCalls != 321 || graph.report.BytesRead != 3*size+2*uint64(otherInfo.Size()) || graph.active != 0 {
 			t.Fatal("fallback did not use the ordinary load and release")
 		}
 		path := filepath.Join(reader.area.Name(), name)
@@ -156,5 +157,45 @@ func TestFullHistoryRetentionFallsBackAndRevalidates(t *testing.T) {
 		if (mutation == "none" && err != nil) || (mutation != "none" && !errors.Is(err, errV2Unavailable)) {
 			t.Fatalf("revalidation after release, mutation=%s: %v", mutation, err)
 		}
+	}
+}
+
+func TestFullHistoryRetentionPreservesRoutedWorkPinning(t *testing.T) {
+	reader, store, _ := selectedReaderFixtureV2(t)
+	name, err := v2ObjectName(store.store.state.Migration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := &selectedReadCacheV2{files: 1, entries: map[string]selectedCacheEntryV2{}}
+	graph := &v2ReachabilityReader{
+		ctx: context.Background(), area: reader.area, shared: &reader.options.Access, budget: reader.options.Budget,
+		cache: cache, history: &historyReadCacheV2{entries: map[string]historyReadEntryV2{}},
+	}
+	defer func() {
+		if err := graph.closeSelectedV2(); err != nil || graph.active != 0 {
+			t.Errorf("unbalanced accounting: %d, %v", graph.active, err)
+		}
+	}()
+	read := func() {
+		t.Helper()
+		_, release, err := graph.readSharedRecordV2(name, v2ObjectLimit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		release()
+	}
+	read()
+	read()
+	retained := graph.history.bytes
+	if retained == 0 || len(cache.entries) != 0 {
+		t.Fatal("ordinary traversal must leave the Work descriptor available")
+	}
+	cache.workRead = true
+	read()
+	if graph.history.bytes != 0 || graph.active != retained || cache.entries[name].file == nil {
+		t.Fatal("optional bytes displaced the existing Work pin or were double-charged")
+	}
+	if err := graph.revalidateSelectedV2(); err != nil {
+		t.Fatal(err)
 	}
 }
