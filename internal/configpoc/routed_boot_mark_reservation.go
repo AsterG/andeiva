@@ -11,6 +11,7 @@ import (
 )
 
 const routedBootMarkReservationFeatureV1 = "configuration.routed-boot-mark-reservation.v1"
+const routedBootMarkRolloverFeatureV1 = "configuration.routed-boot-mark-rollover.v1"
 
 type routedBootMarkCursorV1 struct {
 	Boot        v2BootID `json:"boot_id"`
@@ -111,9 +112,46 @@ func validRoutedBootMarkCursorV1(st v2State) bool {
 		cursor.Issued <= routedmodel.MaxAdmissionMarks && validHash(cursor.Reservation)
 }
 
-func validRoutedBootMarkSourceV1(previous, next v2State, source string) bool {
+func validRoutedBootMarkSourceV1(previous, next v2State, source string, load func(string, any) error) bool {
 	n, p := next.RoutedBootMarks, previous.RoutedBootMarks
-	return n == nil || p != nil && *p == *n || n.Source == source
+	if n == nil || p != nil && *p == *n {
+		return true
+	}
+	if n.Source != source {
+		return false
+	}
+	if p == nil || p.Boot == n.Boot {
+		return true
+	}
+	if !hasFeatureV2(next, routedBootMarkRolloverFeatureV1) {
+		return false
+	}
+	record, err := loadRoutedBootMarkReservationV1(n, previous.Lineage, load)
+	return err == nil && record.Operation == retainedDHCPBaselineMarksV4 &&
+		record.Prior == nil && record.Before == record.Target &&
+		sameRoutedAdmissionMarksV1(record.Applied, record.Restored) &&
+		validRoutedBootMarkRolloverV1(previous, record.Scope, load)
+}
+
+func validRoutedBootMarkRolloverV1(state v2State, identity networkexecutor.OwnedNamespaceIdentity, load func(string, any) error) bool {
+	cfg := state.Configuration
+	active := state.RoutedActive
+	if cfg == nil || cfg.Intent != nil || cfg.Pending != nil || cfg.RecoveryRequired || !validHash(cfg.LastCompletedBoot) || active == nil ||
+		active.Side != "target" || state.RoutedBootBoundary != nil || cfg.Running.Hash != cfg.Startup.Hash {
+		return false
+	}
+	plan, err := loadRoutedWorkV2(active.Work, state.Lineage, load)
+	if err != nil || plan.Scope().Identity != identity || !plan.Cold() || plan.work.RebootScope == nil ||
+		!rebootScopeDeclaredV4(state, plan.work.RebootScope) || plan.target.Composite.Hash != cfg.Startup.Hash {
+		return false
+	}
+	var record v2RecoveryRecord
+	if load(cfg.LastCompletedBoot, &record) != nil || !routedBootRecordMatchesV2(plan, record) ||
+		record.State != "final" || record.Pinned || record.BootID == nil || string(*record.BootID) != identity.BootID ||
+		routedBootHistoryV2(plan, state, load) != nil {
+		return false
+	}
+	return rebootScopeMatchesV4(plan.work.RebootScope, plan.work.RebootScope.Old, identity, plan.work.RebootScope.Work)
 }
 
 func preservesRoutedBootMarkCursorV1(previous, next v2State) bool {
@@ -128,9 +166,10 @@ func preservesRoutedBootMarkCursorV1(previous, next v2State) bool {
 	if p == nil {
 		return n.BaseIssued == 0
 	}
-	// Same-boot recovery and compensation retain the watermark even if the
-	// DHCP Work goes away. No reset is admitted through this publication.
-	return n.Boot == p.Boot && n.BaseIssued == p.Issued && n.Issued >= p.Issued
+	// The watermark is monotonic in either kernel boot. The full reader checks
+	// the exact Startup proof and that a crossover imports no assignments.
+	return (n.Boot == p.Boot || hasFeatureV2(next, routedBootMarkRolloverFeatureV1)) &&
+		n.BaseIssued == p.Issued && n.Issued >= p.Issued
 }
 
 func loadRoutedBootMarkReservationV1(cursor *routedBootMarkCursorV1, lineage string, load func(string, any) error) (routedBootMarkReservationV1, error) {
@@ -200,8 +239,11 @@ func (s *v2Store) reserveRoutedBootMarksLocked(identity networkexecutor.OwnedNam
 	}
 	boot := v2BootID(identity.BootID)
 	var issued uint32
+	crossover := false
 	if cursor := s.state.RoutedBootMarks; cursor != nil {
-		if cursor.Boot != boot {
+		crossover = cursor.Boot != boot
+		if crossover && (operation != retainedDHCPBaselineMarksV4 || prior != nil || before.Hash != target.Hash ||
+			!validRoutedBootMarkRolloverV1(s.state, identity, s.readObject)) {
 			return applied, restored, false, ErrRecovery
 		}
 		issued = cursor.Issued
@@ -227,6 +269,9 @@ func (s *v2Store) reserveRoutedBootMarksLocked(identity networkexecutor.OwnedNam
 	next.RoutedBootMarks = &routedBootMarkCursorV1{Boot: boot, Work: s.state.RoutedDHCP.Work,
 		Source: s.selector.Current, BaseIssued: issued, Issued: restored.Issued, Reservation: reservation}
 	addFeatureV2(&next, routedBootMarkReservationFeatureV1)
+	if crossover {
+		addFeatureV2(&next, routedBootMarkRolloverFeatureV1)
+	}
 	if err = s.publish(next); err != nil {
 		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
 	}
@@ -249,4 +294,16 @@ func reserveRoutedMarkPairV1(boot string, issued uint32, prior *routedmodel.Admi
 		return routedmodel.AdmissionMarks{}, routedmodel.AdmissionMarks{}, false, err
 	}
 	return applied, restored, close, nil
+}
+
+func (s *v2Store) preflightRoutedBootMarkRolloverV1(identity networkexecutor.OwnedNamespaceIdentity, cursor *routedBootMarkCursorV1) error {
+	if !validRoutedBootMarkRolloverV1(s.state, identity, s.readObject) || s.state.Configuration.Firewall.Running.Config.Routed == nil {
+		return ErrRecovery
+	}
+	rev, err := routedmodel.Canonical(*s.state.Configuration.Firewall.Running.Config.Routed)
+	if err != nil {
+		return err
+	}
+	_, _, _, err = reserveRoutedMarkPairV1(identity.BootID, cursor.Issued, nil, rev, rev)
+	return err
 }

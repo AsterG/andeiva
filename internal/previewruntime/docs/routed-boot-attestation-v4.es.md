@@ -100,3 +100,23 @@ paquete anterior y su copia verificada del estado detenido mediante el
 procedimiento de recuperación offline. Mantén cerrado el reenvío hasta
 verificar el Startup restaurado y el estado del kernel. Restaurar la copia
 descarta los cambios posteriores.
+
+## Transacción inconclusa con WAN por DHCP
+
+En un arranque completo verificado, el helper acredita el retiro del ámbito
+DHCP y del ámbito de la transacción seleccionada. El almacén desvincula la
+continuación y conserva las reservas hasta archivar la operación inconclusa y
+el Work DHCP. El helper comprueba la continuidad hasta Startup. La WAN
+adquiere una concesión nueva después de verificar Startup.
+
+Cuando la primera reserva pertenece a un arranque distinto y verificado, el
+contador continúa desde la última marca emitida. Todas las marcas asignadas
+son nuevas. El agotamiento devuelve `ANDEIVA_OPERATION_LIMITED` antes de
+admitir la concesión o cambiar el reenvío. Al reiniciar solo el servicio se
+mantienen las restricciones existentes.
+
+Los lectores anteriores rechazan los almacenes que declaran cualquiera de
+las dos características nuevas. Para volver atrás, restaura una copia
+offline verificada previa al primer uso de esas características con el
+paquete y los registros operativos correspondientes. Verifica Startup antes
+de volver a usar el appliance.

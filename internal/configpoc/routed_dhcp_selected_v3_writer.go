@@ -114,6 +114,11 @@ func (w *RoutedDHCPSelectedStoreV3) Prepare(ctx context.Context) (string, error)
 	if w.ready(ctx) != nil || !w.c.integrityAllowsV1(false) || s.state.RoutedDHCP != nil {
 		return "", ErrRecovery
 	}
+	if cursor := s.state.RoutedBootMarks; s.retainDHCPV4 && cursor != nil && string(cursor.Boot) != w.identity.BootID {
+		if err := s.preflightRoutedBootMarkRolloverV1(w.identity, cursor); err != nil {
+			return "", err
+		}
+	}
 	if err := s.reserves.maintain(s); err != nil {
 		return "", err
 	}

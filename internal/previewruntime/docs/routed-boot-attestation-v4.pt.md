@@ -100,3 +100,22 @@ anterior e sua cópia verificada do estado parado pelo procedimento de
 recuperação offline. Mantenha o encaminhamento fechado até verificar o Startup
 restaurado e o estado do kernel. A restauração descarta as alterações
 posteriores.
+
+## Transação interrompida com WAN por DHCP
+
+Em um arranque completo verificado, o helper comprova a retirada do escopo
+DHCP e do escopo da transação selecionada. O armazenamento desvincula a
+continuação e mantém as reservas até arquivar a operação interrompida e o
+Work DHCP. O helper verifica a continuação até o Startup. A WAN adquire
+uma nova concessão depois da verificação do Startup.
+
+Quando a primeira reserva pertence a um arranque diferente e verificado, o
+contador continua a partir da última marca emitida. Todas as marcas
+atribuídas são novas. O esgotamento retorna `ANDEIVA_OPERATION_LIMITED` antes
+de admitir a concessão ou alterar o encaminhamento. A reinicialização apenas
+do serviço mantém as restrições existentes.
+
+Leitores anteriores rejeitam o armazenamento que declarar qualquer um dos
+novos recursos. Para voltar, restaure uma cópia offline verificada anterior
+ao primeiro uso dos recursos, com o pacote e os registros operacionais
+correspondentes. Verifique o Startup antes de voltar a usar o appliance.

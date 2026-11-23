@@ -95,3 +95,21 @@ authorized operator stop and drain the grouped service. Restore the earlier
 package and its matching, verified stopped backup using the offline recovery
 procedure. Keep forwarding closed until the restored Startup and kernel state
 have been verified. Restoring the backup discards changes made afterward.
+
+## An interrupted transaction with WAN DHCP
+
+On a verified complete boot, the helper proves retirement of both the DHCP
+scope and the selected transaction scope. The store detaches the continuation
+and keeps the existing reservations until the unfinished operation and the
+DHCP Work have been archived. The helper verifies the resulting continuation
+before applying Startup. WAN obtains a new lease after Startup is verified.
+
+When the first reservation belongs to a different, verified kernel boot, its
+counter starts at the previous high-water mark. Every assigned mark is new.
+Exhaustion returns `ANDEIVA_OPERATION_LIMITED` before lease admission or
+changes to forwarding. Service restarts keep their existing restrictions.
+
+Older readers reject stores that require either new recovery feature. For a
+downgrade, restore a verified offline backup from before the first use of
+those features with the matching package and operational records. Verify
+Startup before returning the appliance to use.
