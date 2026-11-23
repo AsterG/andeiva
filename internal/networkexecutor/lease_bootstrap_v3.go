@@ -156,6 +156,30 @@ func (b *LANBootstrapV3) Verify(ctx context.Context) error {
 	return b.base.Verify(ctx)
 }
 
+// VerifyObservationV4 can return only a closure-only pending error for a proven
+// same-effective update. Effects and legacy Verify retain their exact contract.
+func (b *LANBootstrapV3) VerifyObservationV4(ctx context.Context) error {
+	if b == nil {
+		return ErrScope
+	}
+	b.mu.Lock()
+	if b.lease == nil || b.lease.getObservationV4 == nil {
+		b.mu.Unlock()
+		return b.Verify(ctx)
+	}
+	defer b.mu.Unlock()
+	if b.guard(ctx) != nil || b.base.active == nil {
+		return ErrScope
+	}
+	b.lease.mu.Lock()
+	active := b.lease.base.active != nil
+	b.lease.mu.Unlock()
+	if active {
+		return b.lease.VerifyObservationV4(ctx)
+	}
+	return b.base.Verify(ctx)
+}
+
 func (b *LANBootstrapV3) RestorePrepared(ctx context.Context, s PreparedSnapshot) error {
 	if b == nil {
 		return ErrScope

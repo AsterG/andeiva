@@ -1,8 +1,78 @@
 # Changelog
 
+## Unreleased — shared DHCP service cgroups
+
+- Prepare the optional two-slot DHCP profile. WAN startup consumes a single reservation and a drain cancels it before reporting success. On Debian, draining an empty LAN slot preserved the WAN lease and existing TCP and UDP flows across an API restart. Kea coexistence remains pending.
+
+## Unreleased — retained WAN during API restart (draft)
+
+- Qualify the original applied WAN Work before resuming the optional V4 API on the retained helper. Reuse the existing permit and expiry. During failed qualification, management writes stay unavailable and a verified existing permit can continue until its original expiration or independent revocation.
+
+
+## Unreleased — optional Alpha DHCP early renewal (draft)
+
+- Add a default-off V4 renewal profile with one outstanding request and the approved conservative authority budgets. B2 margin closure waits only for a spontaneous valid grant; no recovery probe is sent.
+- Prepare ten-renewal TCP/UDP measurements, hook-to-Open and interruption guards, and bounded phase diagnostics. Native acceptance and administrator warning/diagnostic integration remain pending.
+- Distinguish authenticated renewal progress during read-only observation from policy drift. The optional profile returns closure-only evidence after complete network, policy and listener checks; effect authorization and existing fences remain unchanged. Integrated native acceptance and final CPU/RAM measurements are pending.
+- Alpha renewals interrupt forwarding; previously measured upper bounds reached9.406s with TCP retained and UDP loss. The provisional10s interruption/12s adoption limits apply only to this Alpha test.
+- New-instance recovery after real expiry is deferred beyond this milestone by the owner. Access remains closed; manual recovery and a generic administrator notice are required. Retained-owner API restart recovery is a separate defect and is not claimed as fixed here.
+
+## Unreleased — internal early DHCP renewal profile
+
+- Add an explicit V4-only early-renewal scheduler using the unchanged conservative deadline and an absolute BOOTTIME timer. One pending signal, bounded response wait and no automatic replacement acquisition. Disabled by default; component resource measurements are recorded, while integrated traffic qualification remains pending. There is a brief interruption per renewal under the approved close-before-refresh handover.
+
+## Unreleased — prepared active-WAN configuration reader
+
+- Prepare a typed, read-only continuation contract that distinguishes the original DHCP Work from the current configuration generation. Bind transitions to the exact selected source, original reservations, operation and final audit. Existing readers reject the required feature.
+- Preserve/replace impact uses the complete canonical network revision. This phase does not enable active-WAN Stage, Save, Commit, Confirm or rollback; runtime, native continuity and comparative CPU/RAM qualification remain pending.
+
+## Unreleased — selected DHCP job reader wiring
+
+- Use the existing action-authority reader for operational selected DHCP job checks, while retaining full-history inspection and preflight. Keep every authority check and RPC deadline.
+
+## Unreleased — internal same-effective DHCP handover
+
+- Prepare an explicit runtime profile that closes forwarding before refreshing identical effective lease evidence while retaining the selected undo Work and consumed gate sequences. Recovery-only requests revoke before owner reads and cannot open traffic. Retiring a renewed V4 instance is terminal; automatic replacement acquisition is separate. No factory or administrative activation is enabled here. There is a brief interruption per renewal; integrated traffic and resource qualification remain pending.
+
+## Unreleased — DHCP renewal rechecks
+
+- Preserve the trusted same-effective renewal classification across final owner reads. Close and verify the old permit without resetting consumed sequences; generic authority changes and uncertain closure retain permanent fencing. This prerequisite does not enable operational renewal.
+
+## Unreleased — closed DHCP token expiry
+
+- Prepare an opt-in verified closure for expected kernel token expiry. Consumed sequences remain unavailable; legacy and uncertain-state fencing are preserved. Runtime wiring and native qualification remain separate.
+
+## Unreleased — same-effective lease evidence
+
+- Add read-only refresh of an identical selected lease delta and closed-gate sequence preflight. Classified renewal closes stale authority without rehabilitating unrelated failures; runtime activation remains separate.
+
+## Unreleased — explicit DHCP renewal transport
+
+- Add an opt-in same-effective renewal capability and bounded mutation RPC budget while preserving legacy limits. Transport alone does not enable renewal or change lease authority.
+
+## Unreleased — DHCP owner exit
+
+- Revoke acquisition and lease evidence on observed producer exit before waiting for stderr drainage. Reject late hooks and controls while preserving process-group termination and reaping.
+
 ## Unreleased — configuration recovery test reliability
 
 - Give the lost-helper-ack recovery test a bounded confirmation window that remains valid under the full race suite load.
+
+## Unreleased — DHCP service reconciliation
+
+- Reconcile DHCP acquisition sockets against a retained service identity and verify physical absence before releasing its resource pins.
+
+## Unreleased — DHCP acquisition service lifetime
+
+- Launch the DHCP producer in an exclusive retained cgroup before exec, validate its bootstrap identity and distinguish process drainage from socket cleanup.
+
+## Unreleased — packet socket inventory
+
+- Add bounded AF_PACKET inventory alongside UDP observations, reusing the read-only netlink transport without claiming cgroup or descriptor-holder attribution.
+
+## Unreleased — bounded DHCP socket observations
+
+- Add read-only Linux IPv4 UDP creation metadata capture with bounded, integrity-checked netlink dumps; policy integration remains separate.
 
 ## Unreleased — LAN DHCP configuration editor
 

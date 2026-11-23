@@ -303,7 +303,7 @@ func (m *v2ReserveManager) verifyBundle(s *v2Store, bundle *v2ReserveBundle) err
 }
 
 func (m *v2ReserveManager) verifySelected(s *v2Store) error {
-	if validateRoutedDHCPSelectedV3(s.state, s.readObject) != nil {
+	if validateRoutedDHCPConfigurationSelectionV4(s.state.RoutedDHCPConfiguration, s.state, s.readObject, s.lookupRetained, routedDHCPConfigurationHeaderV4) != nil {
 		return ErrRecovery
 	}
 	if s.verifyRoutedDHCPLastV3() != nil {

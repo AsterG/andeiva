@@ -1,0 +1,11 @@
+{
+  "advisory": "GHSA-fc5q-39xc-vjpf",
+  "package": "picomatch",
+  "version": "4.0.7",
+  "advisoryRange": "<=4.0.7",
+  "scope": "development",
+  "approvedOn": "2026-11-18",
+  "expiresAt": "2026-12-02T00:00:00Z",
+  "owner": "ANDEIVA release maintainers",
+  "reason": "Approved temporary exception for build tooling while the npm audit feed reports the withdrawn advisory and no corrected release is available."
+}

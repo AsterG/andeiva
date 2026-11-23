@@ -38,6 +38,9 @@ type Scope struct {
 	Interface              string
 	HardwareAddress        string
 	Index                  int
+	// EarlyRenewalV4 is trusted, opt-in acquisition scheduling. It grants no
+	// authority and remains disabled in the installed runtime until qualified.
+	EarlyRenewalV4 bool
 }
 
 // Lease is acquisition evidence only. It authorizes neither L3 writes nor
@@ -60,10 +63,13 @@ type Client struct {
 	iface                string
 	pid                  int
 	failed               bool
+	initialWaiting       bool
 	failure              string
 	lastReason           string
 	exitCode             int
 	stopOnce             sync.Once
+	diagnostic           *clientDiagnostic
+	early                *earlyRenewal
 }
 
 func bootNow() (int64, error) {
@@ -128,6 +134,15 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 			return nil, err
 		}
 	}
+	diagnostic, err := openClientDiagnostic()
+	if err != nil {
+		return nil, ErrScope
+	}
+	defer func() {
+		if failed {
+			diagnostic.close()
+		}
+	}()
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -138,12 +153,18 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		_ = w.Close()
 		return nil, err
 	}
-	c := &Client{lock: lock, output: r, done: make(chan struct{}), iface: scope.Interface, lastGrant: now}
-	cmd := exec.Command("/usr/sbin/dhcpcd", "-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath, scope.Interface) // #nosec G204 -- Fixed engine, hook and config; allowlisted interface bound to pinned namespaces; no shell.
+	c := &Client{lock: lock, output: r, done: make(chan struct{}), iface: scope.Interface, lastGrant: now, initialWaiting: true, diagnostic: diagnostic}
+	if scope.EarlyRenewalV4 {
+		c.early = newEarlyRenewal()
+	}
+	args := []string{"-4", "-B", "-L", "--noconfigure", "--nodev", "-f", configPath, "-c", HookPath}
+	args = append(args, diagnostic.debugArguments()...)
+	args = append(args, scope.Interface)
+	cmd := exec.Command("/usr/sbin/dhcpcd", args...) // #nosec G204 -- Fixed engine, hook and config; allowlisted interface bound to pinned namespaces; no shell.
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin", "LC_ALL=C"}
 	cmd.Stdout = w
 	// No raw lease/options or engine diagnostics escape through public output.
-	cmd.Stderr = io.Discard
+	cmd.Stderr = diagnostic.stderr()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	c.cmd = cmd
 	started := make(chan error, 1)
@@ -159,17 +180,11 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 			return
 		}
 		c.pid = cmd.Process.Pid
+		c.diagnostic.event("started", "", 0)
 		started <- nil
 		// Keep the leader unreaped while signalling its owned process group;
 		// otherwise a recycled numeric PID could identify an unrelated group.
-		var info unix.Siginfo
-		var waitErr error
-		for {
-			waitErr = unix.Waitid(unix.P_PID, c.pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
-			if !errors.Is(waitErr, unix.EINTR) {
-				break
-			}
-		}
+		waitErr := c.observeOwnerExit()
 		if waitErr == nil {
 			_ = unix.Kill(-c.pid, unix.SIGKILL)
 		} else {
@@ -186,6 +201,8 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 			c.exitCode = cmd.ProcessState.ExitCode()
 		}
 		c.mu.Unlock()
+		c.diagnostic.event("owner_exit", "", c.exitCode)
+		c.diagnostic.close()
 		_ = r.Close()
 		close(c.done)
 	}()
@@ -196,6 +213,9 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		return nil, err
 	}
 	failed = false
+	if c.early != nil {
+		go c.runEarlyRenewal(ctx)
+	}
 	go c.readEvents()
 	go func() {
 		select {
@@ -205,6 +225,26 @@ func StartIsolated(ctx context.Context, scope Scope) (*Client, error) {
 		}
 	}()
 	return c, nil
+}
+
+// Revoke evidence as soon as the leader is known to have exited, not after
+// exec.Wait drains stderr. A descendant can retain that pipe beyond leader exit.
+// Keep WNOWAIT until the caller finishes signalling its owned process group.
+func (c *Client) observeOwnerExit() error {
+	var info unix.Siginfo
+	var err error
+	for {
+		err = unix.Waitid(unix.P_PID, c.pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if !errors.Is(err, unix.EINTR) {
+			break
+		}
+	}
+	if err == nil {
+		c.failAt("owner_exit_observed")
+	} else {
+		c.failAt("owner_wait_failed")
+	}
+	return err
 }
 
 func (c *Client) readEvents() {
@@ -218,11 +258,13 @@ func (c *Client) readEvents() {
 			return
 		}
 		now, err := bootNow()
-		if err != nil || c.accept(e, now) != nil {
+		if err != nil || c.acceptEvent(e, now) != nil {
 			c.failAt("event_scope")
 			_ = c.cmd.Process.Kill()
 			return
 		}
+		c.diagnostic.leaseEvent(e)
+		c.notifyEarlyRenewal()
 	}
 	c.failAt("event_channel_closed")
 	_ = c.cmd.Process.Kill()
@@ -249,7 +291,9 @@ func (c *Client) failAt(stage string) {
 	c.lease = Lease{}
 	if c.failure == "" {
 		c.failure = stage
+		c.diagnostic.event(stage, c.lastReason, 0)
 	}
+	c.notifyEarlyRenewal()
 }
 
 func (c *Client) accept(e Event, now int64) error {
@@ -260,6 +304,9 @@ func (c *Client) accept(e Event, now int64) error {
 	}
 	c.lastEvent = e.BootNS
 	c.lastReason = e.Reason
+	if e.Reason != "PREINIT" && e.Reason != "CARRIER" {
+		c.initialWaiting = false
+	}
 	if granting(e.Reason) {
 		// The hook does not expose the ACK acquisition clock. The previous
 		// grant hook (or process start for the first) precedes this ACK. Use
@@ -292,14 +339,98 @@ func (c *Client) Current() (Lease, error) {
 	return c.currentAt(now)
 }
 func (c *Client) currentAt(now int64) (Lease, error) {
+	l, state, err := c.acquisitionAt(now)
+	if state != AcquisitionGranted {
+		return Lease{}, ErrUnavailable
+	}
+	return l, err
+}
+
+// AcquisitionState distinguishes initial waiting from lost or expired evidence.
+// None of these states authorize configuration or traffic.
+type AcquisitionState uint8
+
+const (
+	AcquisitionUnavailable AcquisitionState = iota
+	AcquisitionInitialWaiting
+	AcquisitionGranted
+	AcquisitionNoLease
+	AcquisitionMarginClosed
+)
+
+// AcquisitionObservation separates service progress from a usable lease. The
+// epoch watermark and phase are captured under the same lock as the lease.
+type AcquisitionObservation struct {
+	State         AcquisitionState
+	ObservedEpoch uint64
+	Lease         Lease
+	// ListenerAddress is physical socket-association evidence only, never a
+	// grant. It is present exclusively for AcquisitionMarginClosed.
+	ListenerAddress string
+}
+
+func (c *Client) ObserveAcquisition() (AcquisitionObservation, error) {
+	if c == nil {
+		return AcquisitionObservation{}, ErrUnavailable
+	}
+	now, err := bootNow()
+	if err != nil {
+		return AcquisitionObservation{}, ErrUnavailable
+	}
+	return c.observationAt(now)
+}
+
+// AcquisitionSnapshot observes the lease and initial phase in one critical
+// section. Separate Current/phase reads could straddle BOUND and falsely fence.
+func (c *Client) AcquisitionSnapshot() (Lease, AcquisitionState, error) {
+	if c == nil {
+		return Lease{}, AcquisitionUnavailable, ErrUnavailable
+	}
+	now, err := bootNow()
+	if err != nil {
+		return Lease{}, AcquisitionUnavailable, ErrUnavailable
+	}
+	return c.acquisitionAt(now)
+}
+
+func (c *Client) acquisitionAt(now int64) (Lease, AcquisitionState, error) {
+	o, err := c.observationAt(now)
+	if o.State == AcquisitionNoLease {
+		return Lease{}, AcquisitionUnavailable, ErrUnavailable
+	}
+	return o.Lease, o.State, err
+}
+
+func (c *Client) observationAt(now int64) (AcquisitionObservation, error) {
+	if c.early != nil {
+		c.early.mu.Lock()
+		defer c.early.mu.Unlock()
+		return c.observationWithEarlyLocked(now)
+	}
+	return c.observationLeaseAt(now)
+}
+
+func (c *Client) observationLeaseAt(now int64) (AcquisitionObservation, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.failed || c.lease.DeadlineBootNS <= now || c.lease.DeadlineBootNS == 0 {
-		return Lease{}, ErrUnavailable
+	if c.failed || now <= 0 {
+		return AcquisitionObservation{}, ErrUnavailable
+	}
+	if c.initialWaiting && c.epoch == 0 && c.lease.Epoch == 0 && c.lease.DeadlineBootNS == 0 {
+		return AcquisitionObservation{State: AcquisitionInitialWaiting}, nil
+	}
+	if c.lease.DeadlineBootNS <= now || c.lease.DeadlineBootNS == 0 {
+		if c.epoch > 0 {
+			switch c.lastReason {
+			case "BOUND", "RENEW", "REBIND", "REBOOT", "EXPIRE", "NAK", "NOCARRIER", "NOCARRIER_ROAMING", "RECONFIGURE", "PREINIT", "CARRIER":
+				return AcquisitionObservation{State: AcquisitionNoLease, ObservedEpoch: c.epoch}, nil
+			}
+		}
+		return AcquisitionObservation{}, ErrUnavailable
 	}
 	l := c.lease
 	l.Event.DNS = append([]string(nil), l.Event.DNS...)
-	return l, nil
+	return AcquisitionObservation{State: AcquisitionGranted, ObservedEpoch: c.epoch, Lease: l}, nil
 }
 
 // Renew requests a fresh renewal through dhcpcd 10.1.0's SIGUSR1 operation.
@@ -316,6 +447,13 @@ func (c *Client) Rebind() error {
 func (c *Client) signal(signal syscall.Signal) error {
 	if c == nil {
 		return ErrUnavailable
+	}
+	if c.early != nil {
+		c.early.mu.Lock()
+		defer c.early.mu.Unlock()
+		if c.early.marginEpoch != 0 || c.early.responseBy != 0 {
+			return ErrUnavailable
+		}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -341,6 +479,9 @@ func (c *Client) Stop() {
 			<-c.done
 		}
 		_ = c.lock.Close()
+		if c.early != nil {
+			<-c.early.done
+		}
 	})
 }
 

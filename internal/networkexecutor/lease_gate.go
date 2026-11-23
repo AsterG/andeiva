@@ -15,8 +15,28 @@ import (
 )
 
 var (
-	ErrLeaseGate          = errors.New("ANDEIVA_LEASE_GATE_CLOSED")
-	ErrLeaseGateUncertain = errors.New("ANDEIVA_LEASE_GATE_CLOSURE_UNPROVEN")
+	ErrLeaseGate               = errors.New("ANDEIVA_LEASE_GATE_CLOSED")
+	ErrLeaseGateUncertain      = errors.New("ANDEIVA_LEASE_GATE_CLOSURE_UNPROVEN")
+	ErrLeaseGateCurrent        = errors.New("ANDEIVA_LEASE_GATE_CURRENT_INVALID")
+	ErrLeaseGateSequence       = errors.New("ANDEIVA_LEASE_GATE_SEQUENCE_STALE")
+	ErrLeaseGateAuthority      = errors.New("ANDEIVA_LEASE_GATE_AUTHORITY_INVALID")
+	ErrLeaseGateChanged        = errors.New("ANDEIVA_LEASE_GATE_AUTHORITY_CHANGED")
+	ErrLeaseGateRenewal        = errors.New("ANDEIVA_LEASE_GATE_SAME_EFFECTIVE_RENEWAL")
+	ErrLeaseGateMarginClosed   = errors.New("ANDEIVA_LEASE_GATE_MARGIN_CLOSED")
+	ErrLeaseGateExpired        = errors.New("ANDEIVA_LEASE_GATE_TOKEN_EXPIRED")
+	ErrLeaseGateDeadline       = errors.New("ANDEIVA_LEASE_GATE_DEADLINE_INVALID")
+	ErrLeaseGateReady          = errors.New("ANDEIVA_LEASE_GATE_NOT_READY")
+	ErrLeaseGateState          = errors.New("ANDEIVA_LEASE_GATE_INVALID_STATE")
+	ErrLeaseGateReadback       = errors.New("ANDEIVA_LEASE_GATE_READBACK_INVALID")
+	ErrLeaseGateContext        = errors.New("ANDEIVA_LEASE_GATE_CONTEXT_ENDED")
+	ErrLeaseGateLifetime       = errors.New("ANDEIVA_LEASE_GATE_LIFETIME_ENDED")
+	ErrLeaseGateDisposed       = errors.New("ANDEIVA_LEASE_GATE_DISPOSED")
+	ErrLeaseGateFenced         = errors.New("ANDEIVA_LEASE_GATE_FENCED")
+	ErrLeaseGateFenceCreate    = errors.New("ANDEIVA_LEASE_GATE_FENCE_CREATE")
+	ErrLeaseGateFenceClose     = errors.New("ANDEIVA_LEASE_GATE_FENCE_CLOSE")
+	ErrLeaseGateFenceOperation = errors.New("ANDEIVA_LEASE_GATE_FENCE_OPERATION")
+	ErrLeaseGateFenceReject    = errors.New("ANDEIVA_LEASE_GATE_FENCE_REJECT")
+	ErrLeaseGateFenceRecovery  = errors.New("ANDEIVA_LEASE_GATE_FENCE_RECOVERY")
 )
 
 // LeaseGateGrant is supervisor provenance, never a public request DTO. WorkHash
@@ -39,6 +59,8 @@ type LeaseGateOptions struct {
 	Desired   networkplan.Revision
 	Owner     LeaseOwner
 	Authority LeaseGateAuthority
+	// Internal opt-in: expected token expiry may prove closure, never reopening.
+	CloseOnExpiryV4 bool
 }
 
 // LeaseGate is an isolated, continuous-execution experiment. It only restricts
@@ -56,15 +78,31 @@ type LeaseGate struct {
 	closedForwarding                      func() error
 	release                               func() error
 	initialized, opened, fenced, disposed bool
+	fenceReason                           error
 	seen                                  uint64
 	staged                                LeaseGateGrant
 	timeout                               int64
+	expiryFloorBootNS                     int64
 }
 
 type leaseGateKernel interface {
 	Check(context.Context, []byte) error
 	Apply(context.Context, []byte) error
 	Observe(context.Context) ([]byte, error)
+}
+
+// CheckFreshSequenceV4 rejects consumed grants before a caller prepares work.
+// It grants no forwarding authority; Stage still performs every fresh check.
+func (g *LeaseGate) CheckFreshSequenceV4(ctx context.Context, sequence uint64) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ready(ctx); err != nil {
+		return err
+	}
+	if !g.initialized || g.opened || g.staged != (LeaseGateGrant{}) || sequence <= g.seen {
+		return ErrLeaseGate
+	}
+	return nil
 }
 
 func newLeaseGate(lifetime context.Context, id OwnedNamespaceIdentity, options LeaseGateOptions, kernel leaseGateKernel, now func() (int64, error), closed func() error) (*LeaseGate, error) {
@@ -105,14 +143,26 @@ func leaseGateHex(s string, size int) bool {
 }
 
 func (g *LeaseGate) ready(ctx context.Context) error {
-	if ctx == nil || ctx.Err() != nil || g.lifetime.Err() != nil || g.disposed || g.fenced {
-		return ErrLeaseGate
+	if ctx == nil || ctx.Err() != nil {
+		return errors.Join(ErrLeaseGate, ErrLeaseGateContext)
+	}
+	if g.lifetime.Err() != nil {
+		return errors.Join(ErrLeaseGate, ErrLeaseGateLifetime)
+	}
+	if g.disposed {
+		return errors.Join(ErrLeaseGate, ErrLeaseGateDisposed)
+	}
+	if g.fenced {
+		return errors.Join(ErrLeaseGate, ErrLeaseGateFenced, g.fenceReason)
 	}
 	return nil
 }
 
 func (g *LeaseGate) current(ctx context.Context) (LeaseGateGrant, error) {
 	x, err := g.opts.Authority.Current(ctx)
+	if errors.Is(err, ErrLeaseGateRenewal) || errors.Is(err, ErrLeaseGateMarginClosed) {
+		return LeaseGateGrant{}, errors.Join(ErrLeaseGate, err)
+	}
 	f := x.Fact
 	now, clockErr := g.now()
 	if err != nil || clockErr != nil || now <= 0 || f.Owner != g.opts.Owner || f.Sequence == 0 || f.Revoked || f.DesiredHash != g.opts.Desired.Hash || f.WAN != g.wan.Binding || f.DeadlineBootNS <= now || f.DeadlineBootNS-now > int64(7*24*time.Hour) || !leaseGateHex(x.WorkHash, 64) {
@@ -138,7 +188,7 @@ func (g *LeaseGate) current(ctx context.Context) (LeaseGateGrant, error) {
 func (g *LeaseGate) same(ctx context.Context, x LeaseGateGrant) error {
 	actual, err := g.current(ctx)
 	if err != nil || actual != x {
-		return ErrLeaseGate
+		return errors.Join(ErrLeaseGate, err)
 	}
 	return nil
 }
@@ -170,6 +220,8 @@ func (g *LeaseGate) Initialize(ctx context.Context) error {
 	if err := g.apply(ctx, leaseGateCreate(g.wan.Binding.Name)); err != nil {
 		// A failed create may mean a foreign existing table. Never flush it.
 		g.fenced = true
+		g.fenceReason = ErrLeaseGateFenceCreate
+		nativeLeaseGateFaultV4("create", err, g)
 		return errors.Join(ErrLeaseGateUncertain, err)
 	}
 	g.initialized = true
@@ -191,68 +243,114 @@ func (g *LeaseGate) Close(ctx context.Context) error {
 }
 
 func (g *LeaseGate) closeUnder(ctx context.Context) error {
+	sequence := g.staged.Fact.Sequence
+	marked := g.opened || sequence != 0
+	if marked {
+		nativeLeasePhaseV4("close_start", sequence, g.expiryFloorBootNS)
+	}
 	g.opened = false
 	g.staged = LeaseGateGrant{}
 	g.timeout = 0
+	g.expiryFloorBootNS = 0
 	err := g.apply(ctx, leaseGateClose())
 	_, observed := g.read(ctx, false, false)
 	if observed != nil {
 		g.fenced = true
+		g.fenceReason = errors.Join(ErrLeaseGateFenceClose, observed)
+		nativeLeaseGateFaultV4("close_readback", g.fenceReason, g)
 		return errors.Join(ErrLeaseGateUncertain, err, observed)
 	}
 	// Lost ACK is resolved only by the complete closed readback, never replay.
+	if marked {
+		nativeLeasePhaseV4("closed", sequence, 0)
+	}
 	return nil
 }
 
 func (g *LeaseGate) fail(cause error) error {
 	g.fenced = true
+	g.fenceReason = errors.Join(ErrLeaseGateFenceOperation, cause)
+	nativeLeaseGateFaultV4("fail", g.fenceReason, g)
 	ctx, cancel := context.WithTimeout(g.lifetime, 3*time.Second)
 	defer cancel()
 	return errors.Join(ErrLeaseGate, cause, g.closeUnder(ctx))
+}
+
+// Only trusted classified renewal or margin closure can retain a closed gate
+// for fresh evidence. Generic failures preserve legacy fencing.
+func (g *LeaseGate) rejectClosed(ctx context.Context, cause error) error {
+	if !errors.Is(cause, ErrLeaseGateRenewal) && !errors.Is(cause, ErrLeaseGateMarginClosed) {
+		return g.fail(cause)
+	}
+	// A rejected grant may consume the request deadline. Proving closure is a
+	// safety action and must use the gate lifetime, not the failed RPC context.
+	cleanup, cancel := context.WithTimeout(g.lifetime, 3*time.Second)
+	defer cancel()
+	if err := g.closeUnder(cleanup); err != nil {
+		g.fenced = true
+		g.fenceReason = errors.Join(ErrLeaseGateFenceReject, err)
+		nativeLeaseGateFaultV4("reject", g.fenceReason, g)
+		return errors.Join(ErrLeaseGateUncertain, cause, err)
+	}
+	return errors.Join(ErrLeaseGate, cause)
 }
 
 // Stage is called after Close, namespace forwarding-off and L3/policy/work
 // verification. A sequence is consumed before the first mutation; no retry or
 // rollback can recreate the same grant's timeout.
 func (g *LeaseGate) Stage(ctx context.Context) error {
+	if done := StartNativeLeaseSpanV4("gate_stage"); done != nil {
+		defer done()
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ready(ctx); err != nil {
-		return err
+		nativeLeaseGateFaultV4("ready", err, g)
+		return errors.Join(ErrLeaseGateReady, err)
 	}
 	if !g.initialized || g.opened || g.staged.Fact.Sequence != 0 {
-		return ErrLeaseGate
+		nativeLeaseGateFaultV4("state", ErrLeaseGateState, g)
+		return ErrLeaseGateState
 	}
 	if g.closedForwarding() != nil {
 		return g.fail(ErrScope)
 	}
 	if _, err := g.read(ctx, false, false); err != nil {
-		return g.fail(err)
+		return g.fail(errors.Join(ErrLeaseGateReadback, err))
 	}
 	x, err := g.current(ctx)
-	if err != nil || x.Fact.Sequence <= g.seen {
-		return g.fail(ErrLeaseGate)
+	if err != nil {
+		return g.rejectClosed(ctx, errors.Join(ErrLeaseGateCurrent, err))
+	}
+	if x.Fact.Sequence <= g.seen {
+		return g.rejectClosed(ctx, ErrLeaseGateSequence)
 	}
 	if err := g.opts.Authority.Verify(ctx, x); err != nil {
-		return g.fail(err)
+		return g.rejectClosed(ctx, errors.Join(ErrLeaseGateAuthority, err))
 	}
 	if err := g.same(ctx, x); err != nil {
-		return g.fail(err)
+		return g.rejectClosed(ctx, errors.Join(ErrLeaseGateChanged, err))
 	}
 	now, err := g.now()
 	// libnftables JSON times are seconds. Leave two whole seconds for rounding
 	// and latency, then prove the actual remaining time after kernel readback.
 	ttl := (x.Fact.DeadlineBootNS-now)/int64(time.Second) - 2
 	if err != nil || now <= 0 || ttl <= 0 || ttl > int64(7*24*time.Hour/time.Second) {
-		return g.fail(ErrLeaseGate)
+		return g.rejectClosed(ctx, ErrLeaseGateDeadline)
 	}
 	g.seen, g.staged, g.timeout = x.Fact.Sequence, x, ttl
+	// Sampled before apply: this lower bound may close early, but cannot extend
+	// either the actual kernel timeout or the authenticated lease deadline.
+	g.expiryFloorBootNS = now + ttl*int64(time.Second)
 	applyErr := g.apply(ctx, leaseGateStage(g.wan.Binding.Name, leaseGateDigest(x), ttl))
 	if _, err := g.read(ctx, false, true); err != nil {
 		return g.fail(errors.Join(applyErr, err))
 	}
 	if err := g.same(ctx, x); err != nil {
-		return g.fail(err)
+		// Unclassified changes preserve the legacy permanent fence. Only the
+		// trusted renewal classification permits a verified close and retry;
+		// the consumed sequence remains in g.seen in either case.
+		return g.rejectClosed(ctx, errors.Join(ErrLeaseGateChanged, err))
 	}
 	return nil
 }
@@ -260,6 +358,9 @@ func (g *LeaseGate) Stage(ctx context.Context) error {
 // Open changes only the non-expiring enable set. It never touches the expiring
 // set, including on uncertain ACK. Readback time is sampled after receipt.
 func (g *LeaseGate) Open(ctx context.Context) error {
+	if done := StartNativeLeaseSpanV4("gate_open"); done != nil {
+		defer done()
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ready(ctx); err != nil {
@@ -275,19 +376,41 @@ func (g *LeaseGate) Open(ctx context.Context) error {
 		return g.fail(err)
 	}
 	if err := g.opts.Authority.Verify(ctx, g.staged); err != nil {
+		if errors.Is(err, ErrLeaseGateRenewal) || errors.Is(err, ErrLeaseGateMarginClosed) {
+			return g.rejectClosed(ctx, err)
+		}
 		return g.fail(err)
 	}
 	if err := g.same(ctx, g.staged); err != nil {
-		return g.fail(err)
+		return g.rejectClosed(ctx, err)
 	}
 	applyErr := g.apply(ctx, leaseGateOpen(g.wan.Binding.Name))
 	if _, err := g.read(ctx, true, true); err != nil {
 		return g.fail(errors.Join(applyErr, err))
 	}
 	if err := g.same(ctx, g.staged); err != nil {
-		return g.fail(err)
+		return g.rejectClosed(ctx, err)
 	}
 	g.opened = true
+	return nil
+}
+
+// VerifyRetainedV4 checks only the existing kernel permit. It does not
+// consult selected state, change the permit or fence the gate. The helper
+// independently verifies the retained owner and forwarding state.
+func (g *LeaseGate) VerifyRetainedV4(ctx context.Context, grant LeaseGateGrant) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ready(ctx); err != nil {
+		return err
+	}
+	if !g.opened || grant != g.staged || g.expiryFloorBootNS == 0 {
+		return ErrLeaseGate
+	}
+	observedAt, err := g.read(ctx, true, true)
+	if err != nil || observedAt >= g.expiryFloorBootNS || ctx.Err() != nil {
+		return ErrLeaseGate
+	}
 	return nil
 }
 
@@ -301,16 +424,48 @@ func (g *LeaseGate) Verify(ctx context.Context) error {
 	if !g.opened {
 		return ErrLeaseGate
 	}
+	if due, err := g.closeExpiredV4(); due || err != nil {
+		return err
+	}
 	if _, err := g.read(ctx, true, true); err != nil {
+		// Expiry can cross while querying the kernel. A complete verified close
+		// is still mandatory; the failed read alone never establishes closure.
+		if due, expiryErr := g.closeExpiredV4(); due || expiryErr != nil {
+			return expiryErr
+		}
 		return g.fail(err)
 	}
 	if err := g.opts.Authority.Verify(ctx, g.staged); err != nil {
-		return g.fail(err)
+		if errors.Is(err, ErrLeaseGateRenewal) || errors.Is(err, ErrLeaseGateMarginClosed) {
+			return g.rejectClosed(ctx, err)
+		}
+		return g.fail(errors.Join(ErrLeaseGateAuthority, err))
 	}
 	if err := g.same(ctx, g.staged); err != nil {
-		return g.fail(err)
+		return g.rejectClosed(ctx, errors.Join(ErrLeaseGateChanged, err))
 	}
 	return nil
+}
+
+// Caller holds g.mu. Expected expiry keeps the consumed sequence watermark and
+// grants no retry of that token. Uncertain closure retains the normal fence.
+func (g *LeaseGate) closeExpiredV4() (bool, error) {
+	if !g.opts.CloseOnExpiryV4 || g.staged.Fact.Sequence == 0 || g.expiryFloorBootNS == 0 {
+		return false, nil
+	}
+	now, err := g.now()
+	if err != nil || now <= 0 {
+		return false, g.fail(ErrLeaseGateDeadline)
+	}
+	if now < g.expiryFloorBootNS {
+		return false, nil
+	}
+	cleanup, cancel := context.WithTimeout(g.lifetime, 3*time.Second)
+	defer cancel()
+	if err := g.closeUnder(cleanup); err != nil {
+		return true, errors.Join(ErrLeaseGateUncertain, err)
+	}
+	return true, errors.Join(ErrLeaseGate, ErrLeaseGateExpired)
 }
 
 // Dispose releases namespace pins only after a proven Close. It leaves the

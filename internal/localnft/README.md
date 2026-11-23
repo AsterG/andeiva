@@ -26,8 +26,10 @@ service rules.
 
 Capacity: two services, two interfaces, four addresses per interface, four
 bindings per service, sixteen source prefixes per binding, one endpoint per
-service, 128 permission rules and at most 136 control rules. Configuration is
-limited to 24 KiB, generated batches to 384 KiB, and observations to 512 KiB.
+service, 128 permission rules and at most 136 control rules for the legacy
+entry points. The routed DHCP compiler accepts up to 144 combined controls.
+Configuration is limited to 24 KiB, generated batches to 384 KiB, and
+observations to 512 KiB.
 These bounds do not constitute an IPC framing guarantee for the caller's full
 transaction envelope; previous/target/profile envelopes must also be tested.
 
@@ -58,6 +60,20 @@ solution. It does not authenticate peers, prevent all neighbor spoofing, provide
 router discovery or enable arbitrary IPv6 networks. The typed `icmpv6 taddr`
 selector is documented in the [nftables manual](https://netfilter.org/projects/nftables/manpage.html).
 Native parser/readback and cold-neighbor tests remain required on the target.
+
+## Routed DHCPv4 LAN control
+
+`CompileForRoutedPolicy` takes the canonical selected routed policy. When its
+version 2 DHCP server is enabled, each scope adds one input rule for IPv4 UDP
+source port 68 and destination port 67 on the selected LAN interface and IPv4
+address. This covers unicast requests. The Kea lifecycle separately owns
+broadcast acquisition on the LAN packet socket. WAN acquisition continues to
+use the existing control for the selected WAN interface.
+
+Version 1 and disabled DHCP server policies compile to the network-only bytes.
+The enabled artifact retains the canonical policy for complete readback. The
+caller must bind that policy to the selected revision and recompile the table
+when a scope changes, including on withdrawal or rollback.
 
 ## Observation and failure behavior
 

@@ -44,6 +44,26 @@ func NewRoutedDHCPSelectedStoreV3(service *ServiceV2, identity networkexecutor.O
 	return &RoutedDHCPSelectedStoreV3{c: c, identity: identity, authority: authority}, nil
 }
 
+// RetainedWorkV4 reports the immutable selected Work to trusted launch after
+// full integrity qualification. It neither publishes nor grants a live lease.
+func (w *RoutedDHCPSelectedStoreV3) RetainedWorkV4(ctx context.Context) (string, RoutedDHCPGrantV3, error) {
+	c := w.c
+	c.store.mu.Lock()
+	defer c.store.mu.Unlock()
+	if !c.retainedDHCP {
+		return "", RoutedDHCPGrantV3{}, nil
+	}
+	d := c.store.state.RoutedDHCP
+	if w.ready(ctx) != nil || !c.integrityAllowsV1(false) || d == nil || d.Phase != "applied" {
+		return "", RoutedDHCPGrantV3{}, ErrRecovery
+	}
+	work, err := loadRoutedDHCPWorkV3(d.Work, c.store.state.Lineage, c.store.readObject)
+	if err != nil || work.Snapshot.Identity != w.identity {
+		return "", RoutedDHCPGrantV3{}, ErrRecovery
+	}
+	return d.Work, RoutedDHCPGrantV3{Epoch: work.Epoch, Snapshot: work.Snapshot}, nil
+}
+
 func (w *RoutedDHCPSelectedStoreV3) ready(ctx context.Context) error {
 	if ctx == nil || ctx.Err() != nil || w.c.closed || w.c.store.blocked || w.c.store.readOnly {
 		return ErrRecovery

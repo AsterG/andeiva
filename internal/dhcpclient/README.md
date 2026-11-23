@@ -25,6 +25,12 @@ foreground; the launcher thread remains pinned until its child is reaped. Stop
 invalidates before termination and the outer service must use KillMode=control-group
 to reap every privilege-separated descendant after supervisor death.
 
+Leader exit revokes lease and acquisition evidence as soon as the retained child
+is observed exited, before `exec.Wait` drains stderr. A descendant holding that
+pipe cannot prolong authority. Late hooks and control requests cannot revive it;
+process-group termination and reaping still complete before drainage is reported.
+This does not bound shutdown if a stream reader itself is blocked.
+
 The hook supplies no authenticated ACK acquisition timestamp. The expiry bound
 therefore uses process-start time for the first ACK and the previous grant hook's
 CLOCK_BOOTTIME for later ACKs. This can expire early, but never extends validity by
@@ -81,6 +87,66 @@ The next native run stayed alive after SIGUSR1 but received no renewal hook in
 configuration boundary without increasing that deadline or accepting a silent
 no-op as renewal. A passing renewal still requires a new RENEW hook from the engine.
 
+## Internal early-renewal V4 profile
+
+`Scope.EarlyRenewalV4` is trusted supervisor input, disabled by default. It
+creates no feature worker, timer or descriptor when disabled. The V4 owner
+bootstrap must explicitly enable it; V3 rejects that option. It is not an
+administrative API option or an installed-runtime activation.
+
+Using the unchanged conservative BOOTTIME deadline D, remaining authority R=D-t,
+valid-hook time g and lease duration L, schedule P=(L-28s)/2 and
+I=min(g+P-t, R-22s), only if I>=13s. The owner approved this provisional
+Alpha formula on 2026-11-17. Constants are centralized in early_policy_v4.go:
+12s adoption, 5s response plus 1s dispatch, 3s token margin and 1s safety.
+An absolute CLOCK_BOOTTIME timer includes suspension. Neither scheduling g
+nor SIGUSR1 changes lastGrant, epoch or authority; only a valid hook does.
+There is one pending request, and an unsolicited valid hook may satisfy it
+without proving that the signal caused the ACK.
+
+After B2, no closed recovery request is sent: wait exclusively for a spontaneous
+grant with enough actual remaining authority. The supported Alpha floor is 71 s
+with default T1=floor(L/2) and measured response overhead below 1 s; the actual
+remaining-authority check always applies. 54 s is only the calendar lower bound,
+not a supported continuity/recovery minimum. Below 71 s forwarding remains closed;
+administrator warning integration remains pending.
+
+Late dispatch, short evidence, failed signal/clock and missing valid evidence
+within 5 s revoke acquisition evidence. The existing helper must then close and
+verify forwarding (B2); the client itself does not modify kernel forwarding.
+No synthetic EXPIRE, retry burst or replacement acquisition is introduced.
+External observations also reject an overdue response if the worker is delayed.
+
+Integrated acceptance remains pending: ten consecutive renewals must retain
+the same TCP connection and UDP socket. Every interruption upper bound must be
+<=10s and hook-to-Open <=12s; these limits are provisional for this Alpha test,
+not product guarantees. Report phases, minimum/median/maximum, packet
+observations and measured CPU/memory/goroutines with and without B1.
+
+### Native component measurements, 2026-11-17
+
+Two fresh, isolated Debian laboratories ran the same 55 s observation loop with
+a 60 s server lease. The process measured here owns the client component and
+also contains the native test framework; these are not appliance/API totals.
+
+| B1 | Window (ns) | Process CPU (ns) | Maximum sampled RSS (bytes) | Goroutines min/max | Actual renewals |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Off | 55000796941 | 436522000 | 9007104 | 6 / 6 | 1 |
+| On | 55000182642 | 419576000 | 8978432 | 8 / 9 | 3 |
+
+CPU uses RUSAGE_SELF; RSS samples `/proc/self/statm`; goroutines use the Go
+runtime. One paired run does not establish a CPU/RSS improvement. Both units
+exited successfully; host addresses, routes, forwarding and namespace list
+matched baseline after cleanup. No same-socket traffic survival or interruption
+duration was measured by this component test.
+
+Reproduce with the fixed native harness, root-owned artifacts in a disposable
+Debian laboratory and a bounded systemd unit with KillMode=control-group:
+`scripts/dhcp-native-isolated.sh --early-renewal-off`, then
+`scripts/dhcp-native-isolated.sh --early-renewal-on`. Each requires the working
+directory to contain `dhcp-native.test` built from this package and
+`andeiva-dhcp-hook`; the harness refuses untrusted artifacts and host namespaces.
+
 ## Engine contract sources
 
 - [Debian dhcpcd 10.1.0 manual](https://manpages.debian.org/trixie/dhcpcd-base/dhcpcd.8.en.html):
@@ -93,3 +159,24 @@ no-op as renewal. A passing renewal still requires a new RENEW hook from the eng
 
 The upstream dhcpcd source is BSD-2-Clause. This repository integrates the packaged
 binary without vendoring or redistributing it; package/SBOM closure remains a release gate.
+
+## Alpha interruption measurements — 2026-11-17
+
+The owner provisionally approved a maximum 10s interruption per renewal for this
+Alpha milestone test only. Any measured upper bound above 10s fails the test;
+this is not a product target. Three two-vCPU Debian interruptions measured
+7.897–9.406s,7.813–9.336s and 7.654–9.268s. The same TCP connection delivered 308/308
+messages with 15 retransmissions; the same UDP socket sent 1851 datagrams and
+received 943 echoes, leaving 908 requests unobserved at the sink after bounded
+drain. UDP loss during closure is a limitation. These are application observations,
+not an exact wire-packet capture. The complete trial FAILED 141.15s on subsequent
+API recovery. It is not full acceptance or permission to enable the profile.
+
+Recommended operational Alpha lease: at least 1h;120s is a stress-laboratory
+profile. This recommendation reduces interruption frequency; it cannot change
+leases assigned by a provider or authorize rejecting their valid evidence.
+The approved provisional formula above includes the measured adoption reserve;
+it does not extend authority or relax the 10s/12s acceptance limits. Final native
+qualification and resource comparison remain pending. Atomic handover is required
+before any version after Alpha; it is not designed here. API recovery and
+new-instance recovery remain separate gates.

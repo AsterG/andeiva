@@ -51,6 +51,11 @@ func (s *routedDHCPDeferredStateV4) current() (routedDHCPOwnerLeaseV3, RoutedDHC
 		return routedDHCPOwnerLeaseV3{}, id, true, ErrIdentity
 	}
 	if err != nil {
+		_, noLease := routedDHCPNoLeaseEpochV1(err)
+		_, marginClosed := routedDHCPMarginV4(err)
+		if err == errRoutedDHCPInitialWaitingV1 || noLease || marginClosed {
+			return routedDHCPOwnerLeaseV3{}, a.identity, false, err
+		}
 		return routedDHCPOwnerLeaseV3{}, id, false, ErrUnavailable
 	}
 	return l, a.identity, false, nil
@@ -250,6 +255,16 @@ func serveRoutedDHCPDeferredCurrentV4(ctx context.Context, request, reply *os.Fi
 			return ErrUnavailable
 		}
 		r := routedDHCPDeferredReplyV4{Version: 4, Incarnation: incarnation, Sequence: sequence, Unavailable: err != nil}
+		if err == errRoutedDHCPInitialWaitingV1 {
+			version := 1
+			r.Unavailable, r.WaitingVersion, r.Acquisition = false, &version, &id
+		}
+		if epoch, noLease := routedDHCPNoLeaseEpochV1(err); noLease {
+			r.Unavailable, r.NoLease, r.Acquisition = false, &routedDHCPNoLeaseWireV1{1, epoch}, &id
+		}
+		if closed, ok := routedDHCPMarginV4(err); ok {
+			r.Unavailable, r.MarginClosed, r.Acquisition = false, &routedDHCPMarginClosedWireV4{4, closed.epoch, closed.address}, &id
+		}
 		if err == nil {
 			r.Lease = &l
 			r.Acquisition = &id

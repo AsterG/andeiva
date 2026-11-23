@@ -83,8 +83,12 @@ func TestDHCPColdBootV3SelectedBeforeLANAndExpiryRestoresActualBaseline(t *testi
 			if err != nil {
 				return err
 			}
+			ingress, err := routedLocalIngress(deny[RoutedTable], p.Dependencies)
+			if err != nil {
+				return err
+			}
 			for table, state := range deny {
-				if !e.tableMatches(context.Background(), Table(table), state, p.Dependencies) {
+				if !e.tableMatches(context.Background(), Table(table), state, p.Dependencies, ingress) {
 					return ErrState
 				}
 			}

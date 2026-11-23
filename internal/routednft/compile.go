@@ -3,6 +3,8 @@ package routednft
 import (
 	"encoding/json"
 	"net/netip"
+
+	"github.com/AsterG/andeiva/internal/routedmodel"
 )
 
 type object = map[string]any
@@ -52,12 +54,60 @@ func port(p Ports) any {
 }
 func counter() object { return object{"counter": object{"packets": 0, "bytes": 0}} }
 
+const tcpInitialFlagsMask = 0x17 // FIN, SYN, RST and ACK
+
+func tcpInitialFlags() object {
+	return object{"&": []any{object{"payload": object{"protocol": "tcp", "field": "flags"}}, tcpInitialFlagsMask}}
+}
+
 func Compile(policy Policy) (Artifact, error) {
-	r, e := Canonical(policy)
-	if e != nil {
-		return Artifact{}, e
+	r, err := Canonical(policy)
+	if err != nil {
+		return Artifact{}, err
 	}
-	objects := policyObjects(r)
+	return compileRevision(r, nil), nil
+}
+
+// CompileRetainedWANChange derives the mark reservation and atomic rules for
+// unchanged network and NAT. The caller must select the reservation before
+// applying the batch and authenticate the same reservation at readback.
+func CompileRetainedWANChange(before, target Revision, previous routedmodel.AdmissionMarks, highWater uint32) (Artifact, routedmodel.AdmissionMarks, error) {
+	prior, err := Canonical(before.Policy)
+	if err != nil || prior.Hash != before.Hash {
+		return Artifact{}, routedmodel.AdmissionMarks{}, ErrPolicy
+	}
+	next, err := Canonical(target.Policy)
+	if err != nil || next.Hash != target.Hash ||
+		prior.Policy.Network.Hash != next.Policy.Network.Hash || !equal(prior.Policy.NAT, next.Policy.NAT) {
+		return Artifact{}, routedmodel.AdmissionMarks{}, ErrPolicy
+	}
+	marks, needsClosure, err := routedmodel.ReserveAdmissionMarks(previous.Boot, highWater, &previous, prior, next)
+	if err != nil {
+		return Artifact{}, routedmodel.AdmissionMarks{}, err
+	}
+	if needsClosure {
+		return Artifact{}, routedmodel.AdmissionMarks{}, ErrPolicy
+	}
+	artifact, err := CompileMarkedPolicy(next, marks)
+	return artifact, marks, err
+}
+
+// CompileMarkedPolicy compiles an authenticated selection, including startup
+// and guarded rollback. Legacy marked entries cannot gain authority here.
+func CompileMarkedPolicy(revision Revision, assigned routedmodel.AdmissionMarks) (Artifact, error) {
+	marks, err := assigned.MarkIndex(revision)
+	if err != nil {
+		return Artifact{}, err
+	}
+	canonical, err := Canonical(revision.Policy)
+	if err != nil {
+		return Artifact{}, err
+	}
+	return compileRevision(canonical, marks), nil
+}
+
+func compileRevision(r Revision, marks map[string]uint32) Artifact {
+	objects := compiledObjects(r, marks)
 	create := make([]object, 0, len(objects))
 	for _, o := range objects {
 		create = append(create, object{"add": o})
@@ -65,12 +115,18 @@ func Compile(policy Policy) (Artifact, error) {
 	batch := append([]object{{"delete": object{"table": object{"family": "inet", "name": TableName}}}}, create...)
 	a, _ := json.Marshal(object{"nftables": create})
 	b, _ := json.Marshal(object{"nftables": batch})
-	return Artifact{Revision: r, Create: a, Batch: b}, nil
+	return Artifact{Revision: r, Create: a, Batch: b}
 }
 
-func policyObjects(r Revision) []object {
+func compiledObjects(r Revision, marks map[string]uint32) []object {
+	retainedWAN := marks != nil
+	comment := "andeiva.routed.v1:"
+	if retainedWAN {
+		comment = "andeiva.routed.retained-wan.v1:"
+	}
+	drop := object{"drop": nil}
 	objects := []object{
-		{"table": object{"family": "inet", "name": TableName, "comment": "andeiva.routed.v1:" + r.Hash}},
+		{"table": object{"family": "inet", "name": TableName, "comment": comment + r.Hash}},
 		{"chain": object{"family": "inet", "table": TableName, "name": "forward", "type": "filter", "hook": "forward", "prio": 0, "policy": "drop"}},
 		{"chain": object{"family": "inet", "table": TableName, "name": "postrouting", "type": "nat", "hook": "postrouting", "prio": 100, "policy": "accept"}},
 	}
@@ -84,6 +140,10 @@ func policyObjects(r Revision) []object {
 	for _, rule := range r.Policy.Rules {
 		if !rule.IsEnabled() {
 			continue
+		}
+		mark := ruleMark(rule)
+		if retainedWAN {
+			mark = marks[rule.ID]
 		}
 		for _, reply := range []bool{false, true} {
 			in, out, dir := interfaces[rule.Path.FromInterface], interfaces[rule.Path.ToInterface], "original"
@@ -99,26 +159,40 @@ func policyObjects(r Revision) []object {
 				add("forward", rule.ID+":"+dir+":"+suffix, expr)
 			}
 			if rule.Action == "deny" {
-				emit("deny", counter(), object{"drop": nil})
+				emit("deny", counter(), drop)
 				continue
 			}
 			normal := []object{match(meta("l4proto"), rule.Protocol)}
-			if reply {
-				normal = append(normal, match(ct("state"), "established"), match(ct("mark"), ruleMark(rule)))
+			if retainedWAN && !reply {
+				admit := []object{match(meta("l4proto"), rule.Protocol), match(ct("state"), "new")}
+				if rule.Protocol == "tcp" {
+					// Loose TCP tracking can see midstream traffic as new after
+					// expiry. Only a fresh SYN can gain an admission mark.
+					admit = append(admit, match(tcpInitialFlags(), 0x02))
+				}
+				// Retransmits with the current mark still pass. An old mark
+				// cannot change identity between the helper's dump and delete.
+				emit("new-admitted", append(append([]object{}, admit...), match(ct("mark"), mark),
+					counter(), object{"accept": nil})...)
+				emit("new", append(admit, match(ct("mark"), 0), object{"mangle": object{"key": ct("mark"), "value": mark}},
+					counter(), object{"accept": nil})...)
+			}
+			if reply || retainedWAN {
+				normal = append(normal, match(ct("state"), "established"), match(ct("mark"), mark))
 			} else {
-				normal = append(normal, object{"match": object{"op": "in", "left": ct("state"), "right": []string{"new", "established"}}}, object{"mangle": object{"key": ct("mark"), "value": ruleMark(rule)}})
+				normal = append(normal, object{"match": object{"op": "in", "left": ct("state"), "right": []string{"new", "established"}}}, object{"mangle": object{"key": ct("mark"), "value": mark}})
 			}
 			normal = append(normal, counter(), object{"accept": nil})
 			emit("allow", normal...)
 			// Only ICMP errors attached by conntrack to this admitted, currently
 			// permitted tuple qualify. Echo, redirects and unrelated errors remain denied.
-			emit("related", match(meta("l4proto"), "icmp"), match(ct("state"), "related"), match(ct("mark"), ruleMark(rule)), match(object{"payload": object{"protocol": "icmp", "field": "type"}}, object{"set": []int{3, 11, 12}}), counter(), object{"accept": nil})
+			emit("related", match(meta("l4proto"), "icmp"), match(ct("state"), "related"), match(ct("mark"), mark), match(object{"payload": object{"protocol": "icmp", "field": "type"}}, object{"set": []int{3, 11, 12}}), counter(), object{"accept": nil})
 			// A matching allow whose state/mark is invalid must not fall through to a
 			// later allow; preserve first-match semantics in both directions.
-			emit("unadmitted", counter(), object{"drop": nil})
+			emit("unadmitted", counter(), drop)
 		}
 	}
-	add("forward", "default-deny", []object{counter(), object{"drop": nil}})
+	add("forward", "default-deny", []object{counter(), drop})
 	for _, n := range r.Policy.NAT {
 		add("postrouting", n.ID+":masquerade", []object{match(meta("nfproto"), "ipv4"), match(meta("iifname"), interfaces[n.Path.FromInterface]), match(meta("oifname"), interfaces[n.Path.ToInterface]), match(object{"payload": object{"protocol": "ip", "field": "saddr"}}, address(n.Source)), counter(), object{"masquerade": nil}})
 	}

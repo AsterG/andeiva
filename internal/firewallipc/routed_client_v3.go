@@ -28,11 +28,16 @@ type RoutedClientV3 struct {
 	integrity           bool
 	inventory           bool
 	dhcp                bool
+	dhcpRenewal         bool
+	dhcpServer          bool
 	freshScope          bool
 	rebootScope         bool
 	publicationAllowed  atomic.Bool
 	closingAllowed      atomic.Bool
+	dhcpSelected        atomic.Bool // Scheduling hint only, never an effect grant.
 }
+
+func (c *RoutedClientV3) DHCPSelectedV4() bool { return c != nil && c.dhcpSelected.Load() }
 
 func ConnectRoutedV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64) (*RoutedClientV3, error) {
 	return connectRoutedV3(parent, conn, runtimeRun, namespace, false)
@@ -50,6 +55,9 @@ func connectRoutedFeaturesV3(parent context.Context, conn io.ReadWriteCloser, ru
 	return connectRoutedCapabilitiesV3(parent, conn, runtimeRun, namespace, integrity, inventory, false, false, false)
 }
 func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp, freshScope, rebootScope bool) (*RoutedClientV3, error) {
+	return connectRoutedCapabilitiesRenewalV4(parent, conn, runtimeRun, namespace, integrity, inventory, dhcp, freshScope, rebootScope, false, false)
+}
+func connectRoutedCapabilitiesRenewalV4(parent context.Context, conn io.ReadWriteCloser, runtimeRun string, namespace uint64, integrity, inventory, dhcp, freshScope, rebootScope, renewal, dhcpServer bool) (*RoutedClientV3, error) {
 	if parent == nil || conn == nil {
 		if conn != nil {
 			_ = conn.Close()
@@ -71,6 +79,12 @@ func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser
 	}
 	if rebootScope {
 		h.RequiredFeatures = append(h.RequiredFeatures, RoutedRebootScopeCapabilityV4)
+	}
+	if renewal {
+		h.RequiredFeatures = append(h.RequiredFeatures, RoutedDHCPRenewalCapabilityV4)
+	}
+	if dhcpServer {
+		h.RequiredFeatures = append(h.RequiredFeatures, RoutedDHCPServerCapabilityV1)
 	}
 	data, _ := json.Marshal(h)
 	if _, e := DecodeRoutedHelloV3(data, false); e != nil || parent.Err() != nil {
@@ -100,13 +114,14 @@ func connectRoutedCapabilitiesV3(parent context.Context, conn io.ReadWriteCloser
 			_ = conn.Close()
 			return nil, ErrChannel
 		}
-		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory, dhcp: dhcp, freshScope: freshScope, rebootScope: rebootScope}, nil
+		return &RoutedClientV3{conn: conn, scanner: scanner, run: out.hello.Run, namespace: namespace, sequence: out.hello.Epoch << 32, integrity: integrity, inventory: inventory, dhcp: dhcp, dhcpRenewal: renewal, dhcpServer: dhcpServer, freshScope: freshScope, rebootScope: rebootScope}, nil
 	case <-ctx.Done():
 		_ = conn.Close()
 		return nil, ErrChannel
 	}
 }
 func (c *RoutedClientV3) closeLocked() {
+	c.dhcpSelected.Store(false)
 	c.publicationAllowed.Store(false)
 	c.closingAllowed.Store(false)
 	c.dead = true
@@ -125,15 +140,26 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	if c == nil || parent == nil {
 		return RoutedResultV3{}, ErrChannel
 	}
+	var renewalQueued time.Time
+	if verb == "dhcp_renew" {
+		renewalQueued = RoutedDHCPDiagnosticStartV1(verb)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !renewalQueued.IsZero() {
+		RecordRoutedDHCPDiagnosticV1("queue", verb, renewalQueued, nil, nil)
+	}
+	noEffects := false
+	diagnosticStarted := RoutedDHCPDiagnosticStartV1(verb)
+	diagnosticContextErr := parent.Err()
 	defer func() {
-		if callErr != nil && routedEffectVerbV3(verb) {
+		RecordRoutedDHCPDiagnosticV1("client", verb, diagnosticStarted, callErr, diagnosticContextErr)
+		if callErr != nil && routedEffectVerbV3(verb) && !noEffects {
 			c.publicationAllowed.Store(false)
 			c.closingAllowed.Store(false)
 		}
 	}()
-	if (verb == "reboot_scope" && !c.rebootScope) || (verb == "fresh_scope" && !c.freshScope) || (RoutedDHCPVerbV3(verb) && !c.dhcp) || (verb == "inventory" && !c.inventory) || (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
+	if (verb == "dhcp_renew" && !c.dhcpRenewal) || (verb == "reboot_scope" && !c.rebootScope) || (verb == "fresh_scope" && !c.freshScope) || (RoutedDHCPVerbV3(verb) && !c.dhcp) || (verb == "inventory" && !c.inventory) || (verb == "inspect" && !c.integrity) || c.dead || parent.Err() != nil || c.sequence&0xffffffff == 0xffffffff {
 		return RoutedResultV3{}, ErrChannel
 	}
 	p, e := json.Marshal(payload)
@@ -151,14 +177,19 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 	}
 	if verb == "inspect" && command.Integrity.Mode == "check" {
 		c.publicationAllowed.Store(false)
+		c.dhcpSelected.Store(false)
 	}
 	c.sequence = request.Sequence
 	timeout := 3 * time.Second
+	if c.dhcpRenewal && RoutedDHCPMutationV3(verb) {
+		timeout = RoutedDHCPMutationDeadlineV4
+	}
 	if verb == "inspect" {
 		timeout = configpoc.IntegrityInspectionDeadlineV1
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	defer func() { diagnosticContextErr = ctx.Err() }()
 	type outcome struct {
 		reply  RoutedReplyV3
 		result RoutedResultV3
@@ -188,12 +219,27 @@ func (c *RoutedClientV3) Call(parent context.Context, verb string, payload any) 
 				return RoutedResultV3{}, ErrChannel
 			}
 			if verb == "inspect" && command.Integrity.Mode == "check" && out.result.Integrity.State == configpoc.IntegrityCompleteV1 && out.result.Integrity.Selection == command.Integrity.Selection {
+				if out.result.DHCPSelected && !c.dhcp {
+					c.closeLocked()
+					return RoutedResultV3{}, ErrChannel
+				}
+				c.dhcpSelected.Store(out.result.DHCPSelected)
 				c.publicationAllowed.Store(true)
 			}
 			if verb == "inspect" && out.result.Integrity.State == configpoc.IntegrityCompleteV1 && out.result.Integrity.Selection == command.Integrity.Selection {
 				c.closingAllowed.Store(true)
 			}
 			return out.result, nil
+		case "ANDEIVA_ROUTED_DHCP_WAITING_V1", "ANDEIVA_ROUTED_DHCP_NO_LEASE_V1":
+			if verb != "dhcp_begin" || ctx.Err() != nil {
+				c.closeLocked()
+				return RoutedResultV3{}, ErrChannel
+			}
+			noEffects = true
+			if out.reply.Error == ErrRoutedDHCPNoLeaseV1.Error() {
+				return RoutedResultV3{}, ErrRoutedDHCPNoLeaseV1
+			}
+			return RoutedResultV3{}, ErrRoutedDHCPWaitingV1
 		case "ANDEIVA_CONFIG_RECOVERY_REQUIRED":
 			return RoutedResultV3{}, configpoc.ErrRecovery
 		case "ANDEIVA_CONFIG_CONFLICT":
@@ -222,7 +268,7 @@ func (c *RoutedClientV3) IntegrityEnabled() bool { return c != nil && c.integrit
 
 func routedEffectVerbV3(verb string) bool {
 	switch verb {
-	case "arm", "apply", "confirm", "recover", "bootstrap", "resume", "dhcp_begin", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire":
+	case "arm", "apply", "confirm", "recover", "bootstrap", "resume", "dhcp_begin", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire", "dhcp_renew":
 		return true
 	default:
 		return false

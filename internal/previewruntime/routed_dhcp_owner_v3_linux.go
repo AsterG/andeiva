@@ -86,11 +86,35 @@ func routedDHCPOwnerPIDFDAliveV3(file *os.File, pid int) bool {
 	if !seen {
 		return false
 	}
-	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-	n, err := unix.Poll(poll, 0)
-	return err == nil && n == 0 && poll[0].Revents == 0
+	return routedDHCPOwnerPollAliveV3(int32(fd), unix.Poll) && file.Fd() == fd
+}
+
+func routedDHCPOwnerPollAliveV3(fd int32, poll func([]unix.PollFd, int) (int, error)) bool {
+	if fd < 0 {
+		return false
+	}
+	// Signals, including Go preemption, can interrupt poll on a live pidfd.
+	// Retry only that interruption, always without waiting. Exhaustion and
+	// every event/error still fail closed; EINTR itself never proves liveness.
+	for attempt := 0; attempt < 4; attempt++ {
+		events := []unix.PollFd{{Fd: fd, Events: unix.POLLIN}}
+		n, err := poll(events, 0)
+		if err == unix.EINTR {
+			continue
+		}
+		return err == nil && n == 0 && events[0].Revents == 0
+	}
+	return false
 }
 func routedDHCPOwnerPinV3(pid, parent int, netNS, mountNS uint64) (*os.File, uint64, error) {
+	return pinRoutedDHCPOwnerV1(pid, parent, netNS, mountNS, false)
+}
+
+func pinRoutedSupervisorDHCPOwnerV1(pid, parent int, netNS, mountNS uint64) (*os.File, uint64, error) {
+	return pinRoutedDHCPOwnerV1(pid, parent, netNS, mountNS, os.Getenv(routedDHCPRoleProfileEnvV1) == "1")
+}
+
+func pinRoutedDHCPOwnerV1(pid, parent int, netNS, mountNS uint64, useProcessNamespaces bool) (*os.File, uint64, error) {
 	if pid <= 1 || pid > math.MaxInt32 || parent <= 1 || netNS == 0 || mountNS == 0 {
 		return nil, 0, ErrIdentity
 	}
@@ -104,10 +128,21 @@ func routedDHCPOwnerPinV3(pid, parent int, netNS, mountNS uint64) (*os.File, uin
 	if err != nil || ppid != parent {
 		return fail()
 	}
-	for kind, want := range map[string]uint64{"net": netNS, "mnt": mountNS} {
-		actual, e := namespaceID("/proc/" + strconv.Itoa(pid) + "/ns/" + kind)
-		if e != nil || actual != want {
+	if useProcessNamespaces {
+		namespaces := readRoutedDHCPPinnedNamespacesV1(file, true)
+		if namespaces.err != nil {
 			return fail()
+		}
+		defer namespaces.mount.Close()
+		if namespaces.netID != netNS || !routedDHCPOwnerNamespaceV3(namespaces.mount, unix.CLONE_NEWNS, mountNS) {
+			return fail()
+		}
+	} else {
+		for kind, want := range map[string]uint64{"net": netNS, "mnt": mountNS} {
+			actual, e := namespaceID("/proc/" + strconv.Itoa(pid) + "/ns/" + kind)
+			if e != nil || actual != want {
+				return fail()
+			}
 		}
 	}
 	after, ppid, err := routedDHCPOwnerProcessV3(pid)
@@ -138,39 +173,12 @@ func routedDHCPOwnerCgroupV3() error {
 	if err != nil || string(raw) != "0::"+routedSupervisorCgroupV3+"\n" {
 		return ErrIdentity
 	}
-	root, err := os.OpenRoot("/sys/fs/cgroup" + routedSupervisorCgroupV3)
-	if err != nil {
-		return ErrIdentity
-	}
-	defer root.Close()
-	dir, err := root.Open(".")
+	dir, err := routedDHCPServiceParentV1()
 	if err != nil {
 		return ErrIdentity
 	}
 	defer dir.Close()
-	var st unix.Stat_t
-	var fs unix.Statfs_t
-	if unix.Fstat(int(dir.Fd()), &st) != nil || st.Uid != 0 || st.Mode&0022 != 0 || unix.Fstatfs(int(dir.Fd()), &fs) != nil || fs.Type != unix.CGROUP2_SUPER_MAGIC {
-		return ErrIdentity
-	}
-	entries, err := dir.ReadDir(257)
-	if err != nil && err != io.EOF || len(entries) > 256 {
-		return ErrIdentity
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			return ErrIdentity
-		}
-	}
-	kind, err := root.ReadFile("cgroup.type")
-	if err != nil || string(kind) != "domain\n" {
-		return ErrIdentity
-	}
-	subtree, err := root.ReadFile("cgroup.subtree_control")
-	if err != nil || len(subtree) > 4096 || strings.TrimSpace(string(subtree)) != "" {
-		return ErrIdentity
-	}
-	return nil
+	return routedDHCPServiceTreeV1(dir, "", RoutedDHCPServiceCgroupIdentityV1{})
 }
 
 func NewRoutedDHCPOwnerReaderV3(files RoutedDHCPOwnerFilesV3, binding RoutedDHCPOwnerBindingV3) (*RoutedDHCPOwnerReaderV3, error) {

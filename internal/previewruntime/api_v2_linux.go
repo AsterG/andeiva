@@ -20,18 +20,22 @@ import (
 // OperationsRuntimeOptionsV2 contains only trusted assembly resources. Store,
 // pool roots, identities and BootID are never populated from HTTP requests.
 type OperationsRuntimeOptionsV2 struct {
-	RoutedDHCP        bool // Explicit trusted grouped profile; requires inventory and integrity.
-	RoutedFreshScope  bool // Requires a root receipt held only by the helper.
-	RoutedRebootScope bool // Separate v4 profile; mutually exclusive with same-Boot scope.
-	RoutedInventory   bool // Trusted grouped assembly requires the helper-only inventory capability.
-	Store             *os.Root
-	Budget            configpoc.BudgetV2
-	Auth              *adminauth.Manager
-	Local             []configpoc.Engine
-	Runtime           configpoc.RuntimeOptionsV2
-	Origin            string
-	Static            http.Handler
-	NetworkInventory  func(context.Context) (networkinventory.Snapshot, error)
+	RoutedDHCPServerV1       bool // Trusted profile, never request-decoded.
+	RoutedDHCPRenewalV4      bool // Trusted V4 profile, never request-decoded.
+	RoutedDHCP               bool // Explicit trusted grouped profile; requires inventory and integrity.
+	RoutedFreshScope         bool // Requires a root receipt held only by the helper.
+	RoutedRebootScope        bool // Separate v4 profile; mutually exclusive with same-Boot scope.
+	RoutedInventory          bool // Trusted grouped assembly requires the helper-only inventory capability.
+	Store                    *os.Root
+	Budget                   configpoc.BudgetV2
+	Auth                     *adminauth.Manager
+	Local                    []configpoc.Engine
+	Runtime                  configpoc.RuntimeOptionsV2
+	Origin                   string
+	Static                   http.Handler
+	NetworkInventory         func(context.Context) (networkinventory.Snapshot, error)
+	routedRecoveryAudit      func(adminauth.Event) error
+	routedStartupUnavailable bool
 }
 type OperationsRuntimeV2 struct {
 	Handler http.Handler
@@ -57,7 +61,7 @@ func (r *OperationsRuntimeV2) Close() error {
 // v2 service. It neither opens v1 state nor performs bootstrap outside Intent.
 // Existing cold-boot reservation fences remain enforced by the coordinator.
 func OpenOperationsRuntimeV2(ctx context.Context, m Metadata, ids Identities, options OperationsRuntimeOptionsV2) (*OperationsRuntimeV2, error) {
-	if options.RoutedDHCP || options.RoutedFreshScope || options.RoutedRebootScope || !bootPattern.MatchString(m.BootID) || options.Runtime.BootID != m.BootID {
+	if options.RoutedDHCPServerV1 || options.RoutedDHCPRenewalV4 || options.RoutedDHCP || options.RoutedFreshScope || options.RoutedRebootScope || !bootPattern.MatchString(m.BootID) || options.Runtime.BootID != m.BootID {
 		return nil, ErrIdentity
 	}
 	if options.Runtime.Routed != nil && options.Runtime.RoutedIdentity != (networkexecutor.OwnedNamespaceIdentity{UID: ids.HelperUID, GID: ids.IPCGID, Namespace: m.GatewayNamespace, Host: m.HostNamespace, BootID: m.BootID, RunID: m.RunID}) {
@@ -75,7 +79,7 @@ func OpenOperationsRuntimeV2(ctx context.Context, m Metadata, ids Identities, op
 	return runtime, nil
 }
 func assembleOperationsRuntimeV2(ctx context.Context, client *firewallipc.ClientV2, options OperationsRuntimeOptionsV2) (*OperationsRuntimeV2, error) {
-	if options.RoutedDHCP || options.RoutedFreshScope || options.RoutedRebootScope || client == nil || options.Store == nil || options.Auth == nil {
+	if options.RoutedDHCPServerV1 || options.RoutedDHCPRenewalV4 || options.RoutedDHCP || options.RoutedFreshScope || options.RoutedRebootScope || client == nil || options.Store == nil || options.Auth == nil {
 		return nil, ErrIdentity
 	}
 	observed, err := client.Snapshot(ctx)

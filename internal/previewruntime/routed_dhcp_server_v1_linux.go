@@ -38,6 +38,11 @@ type RoutedDHCPServerResourcesV1 struct {
 	Gateway, Host, HostMount, Configuration, Leases *os.File
 	Config                                          dhcpserver.Config
 	Bindings                                        []dhcpkea.Binding
+	ServiceCgroups                                  []RoutedDHCPServerCgroupPinV1
+	mountPins                                       *routedDHCPServerMountPinsV2
+	socketProof                                     bool
+	requestBoundCleanup                             bool
+	inspect                                         func(context.Context, int, int, uint32, uint32) error
 	// Trusted storage-plan budget for existing lease/LFC files, not a request
 	// option. This preflight bound does not enforce ongoing filesystem quotas.
 	LeaseBudgetBytes int64
@@ -47,8 +52,12 @@ type RoutedDHCPServerResourcesV1 struct {
 // context must have a deadline; Root owns its execution budget. It preserves
 // lease files and drains its children before returning. The role must then exit
 // to release its private mounts; outer cgroup drainage remains mandatory.
-func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResourcesV1) (result error) {
-	if ctx == nil || ctx.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
+func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResourcesV1) error {
+	return runRoutedDHCPServerComponentScopedV2(ctx, ctx, 0, o)
+}
+
+func runRoutedDHCPServerComponentScopedV2(ctx, lifetime context.Context, startupBootNS int64, o RoutedDHCPServerResourcesV1) (result error) {
+	if ctx == nil || ctx.Err() != nil || lifetime == nil || lifetime.Err() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
 		return ErrIdentity
 	}
 	if _, ok := ctx.Deadline(); !ok {
@@ -73,6 +82,9 @@ func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResou
 	}
 	if err = routedDHCPServerLeasesV1(o.Leases, uid, gid, o.LeaseBudgetBytes); err != nil {
 		return err
+	}
+	if o.mountPins == nil || o.mountPins.configuration == nil || o.mountPins.leases == nil {
+		return ErrIdentity
 	}
 	// Lock the owned directory for the whole run. No new configuration database
 	// or package-manager lock is created; cooperating engine owners share this FD.
@@ -115,10 +127,19 @@ func RunRoutedDHCPServerComponentV1(ctx context.Context, o RoutedDHCPServerResou
 	if err = routedDHCPServerLeasesV1(o.Leases, uid, gid, o.LeaseBudgetBytes); err != nil {
 		return err
 	}
-	if err = routedDHCPServerBindV1(o.Leases, "/var/lib/kea", false); err != nil {
+	if err = attachRoutedDHCPServerMountV2(&o.mountPins.leases, o.Leases, "/var/lib/kea", false); err != nil {
 		return err
 	}
-	return routedDHCPServerExecV1(ctx, uid, gid, nil)
+	if ctx.Err() != nil || lifetime.Err() != nil || (startupBootNS != 0 && !routedDHCPServerBeforeBootDeadlineV2(startupBootNS)) {
+		return ErrUnavailable
+	}
+	if o.inspect == nil {
+		return routedDHCPServerExecV1(lifetime, uid, gid, nil)
+	}
+	cmd := routedDHCPServerCommandV1(uid, gid, false)
+	return routedDHCPServerWaitWithInspectionV1(lifetime, cmd, false, func(ctx context.Context, fd, pid int) error {
+		return o.inspect(ctx, fd, pid, uid, gid)
+	})
 }
 
 func routedDHCPServerAccountV1() (uint32, uint32, error) {
@@ -163,7 +184,7 @@ func routedDHCPServerScopeV1(o RoutedDHCPServerResourcesV1) error {
 	}
 	boot, err := routedDHCPOwnerReadV3("/proc/sys/kernel/random/boot_id", 128)
 	id, e := canonicalBoot(boot)
-	if err != nil || e != nil || id != m.BootID || routedDHCPOwnerCgroupV3() != nil {
+	if err != nil || e != nil || id != m.BootID || routedDHCPServerCgroupScopeV1(o.ServiceCgroups) != nil {
 		return ErrIdentity
 	}
 	for _, path := range []string{"/proc/sys/net/ipv4/ip_forward", "/proc/sys/net/ipv6/conf/all/forwarding"} {
@@ -295,14 +316,16 @@ func routedDHCPServerMountsV1(o RoutedDHCPServerResourcesV1, uid, gid uint32) er
 		return err
 	}
 	defer configTarget.Close()
-	if unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, "") != nil {
-		return ErrUnavailable
+	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
+		return routedDHCPServerMountFailureV1("propagation", err, ErrUnavailable)
 	}
 	// Same bounded scratch profile as the existing isolated DHCP owner; the
 	// persistent directory is a bind, never tmpfs or a configuration snapshot.
-	for _, path := range []string{"/run", "/var/lib", fmt.Sprintf("/proc/self/fd/%d", configTarget.Fd())} {
-		if unix.Mount("tmpfs", path, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, fmt.Sprintf("mode=0750,gid=%d,size=4m,nr_inodes=128", gid)) != nil {
-			return ErrUnavailable
+	for _, target := range []struct{ path, stage string }{
+		{"/run", "tmpfs_run"}, {"/var/lib", "tmpfs_var_lib"}, {fmt.Sprintf("/proc/self/fd/%d", configTarget.Fd()), "tmpfs_config"},
+	} {
+		if err := unix.Mount("tmpfs", target.path, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, fmt.Sprintf("mode=0750,gid=%d,size=4m,nr_inodes=128", gid)); err != nil {
+			return routedDHCPServerMountFailureV1(target.stage, err, ErrUnavailable)
 		}
 	}
 	// Packages installed without autostart need not have created /var/lib/kea.
@@ -321,12 +344,12 @@ func routedDHCPServerMountsV1(o RoutedDHCPServerResourcesV1, uid, gid uint32) er
 	// Root-only placeholder; the readonly bind supplies the checked 0440 inode.
 	file, err := os.OpenFile(routedDHCPServerConfigV1, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0000)
 	if err != nil {
-		return ErrUnavailable
+		return routedDHCPServerMountFailureV1("config_create", err, ErrUnavailable)
 	}
-	if file.Close() != nil {
-		return ErrUnavailable
+	if err := file.Close(); err != nil {
+		return routedDHCPServerMountFailureV1("config_close", err, ErrUnavailable)
 	}
-	return routedDHCPServerBindV1(o.Configuration, routedDHCPServerConfigV1, true)
+	return attachRoutedDHCPServerMountV2(&o.mountPins.configuration, o.Configuration, routedDHCPServerConfigV1, true)
 }
 
 // The stock Debian package owns /etc/kea as _kea:_kea 0750. Its contents are
@@ -378,40 +401,26 @@ func routedDHCPServerDirectoryV1(path string, uid, gid uint32, mode os.FileMode)
 	if uid >= 1<<31 || gid == 0 || gid >= 1<<31 || mode != 0700 && mode != 0750 {
 		return ErrIdentity
 	}
-	if os.Mkdir(path, 0700) != nil {
-		return ErrUnavailable
+	if err := os.Mkdir(path, 0700); err != nil {
+		return routedDHCPServerMountFailureV1("directory_mkdir", err, ErrUnavailable)
 	}
 	fd, err := unix.Open(path, unix.O_DIRECTORY|unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return ErrUnavailable
+		return routedDHCPServerMountFailureV1("directory_open", err, ErrUnavailable)
 	}
 	file := os.NewFile(uintptr(fd), "kea-private-directory")
 	defer file.Close()
-	if file.Chown(int(uid), int(gid)) != nil || file.Chmod(mode) != nil {
-		return ErrUnavailable
+	// Apply the mode while root still owns the new inode. The role need not
+	// retain CAP_FOWNER after assigning the dedicated service account.
+	if err := file.Chmod(mode); err != nil {
+		return routedDHCPServerMountFailureV1("directory_chmod", err, ErrUnavailable)
+	}
+	if err := file.Chown(int(uid), int(gid)); err != nil {
+		return routedDHCPServerMountFailureV1("directory_chown", err, ErrUnavailable)
 	}
 	var st unix.Stat_t
 	if unix.Fstat(fd, &st) != nil || st.Mode != unix.S_IFDIR|uint32(mode) || st.Uid != uid || st.Gid != gid || !fenceNoACLV3(file, true) {
-		return ErrIdentity
-	}
-	return nil
-}
-
-func routedDHCPServerBindV1(file *os.File, path string, readonly bool) error {
-	if unix.Mount(fmt.Sprintf("/proc/self/fd/%d", file.Fd()), path, "", unix.MS_BIND, "") != nil {
-		return ErrUnavailable
-	}
-	flags := uintptr(unix.MS_BIND | unix.MS_REMOUNT | unix.MS_NOSUID | unix.MS_NODEV | unix.MS_NOEXEC)
-	if readonly {
-		flags |= unix.MS_RDONLY
-	}
-	if unix.Mount("", path, "", flags, "") != nil {
-		return ErrUnavailable
-	}
-	before, e := file.Stat()
-	after, other := os.Stat(path)
-	if e != nil || other != nil || !os.SameFile(before, after) {
-		return ErrIdentity
+		return routedDHCPServerMountFailureV1("directory_identity", nil, ErrIdentity)
 	}
 	return nil
 }
@@ -496,6 +505,10 @@ func routedDHCPServerStartV1(cmd *exec.Cmd) (int, <-chan error, error) {
 }
 
 func routedDHCPServerWaitV1(ctx context.Context, cmd *exec.Cmd, check bool) error {
+	return routedDHCPServerWaitWithInspectionV1(ctx, cmd, check, nil)
+}
+
+func routedDHCPServerWaitWithInspectionV1(ctx context.Context, cmd *exec.Cmd, check bool, inspect func(context.Context, int, int) error) (result error) {
 	if ctx == nil || ctx.Err() != nil {
 		return ErrUnavailable
 	}
@@ -504,6 +517,22 @@ func routedDHCPServerWaitV1(ctx context.Context, cmd *exec.Cmd, check bool) erro
 		return err
 	}
 	defer unix.Close(fd)
+	var inspector <-chan error
+	if inspect != nil {
+		inspection, cancel := context.WithCancel(ctx)
+		observed := make(chan error, 1)
+		inspector = observed
+		go func() { observed <- inspect(inspection, fd, cmd.Process.Pid) }()
+		defer func() {
+			cancel()
+			if inspector != nil {
+				inspectionErr := <-inspector
+				if inspectionErr != nil && inspectionErr != context.Canceled {
+					result = errors.Join(result, inspectionErr)
+				}
+			}
+		}()
+	}
 	select {
 	case err = <-done:
 		if err != nil || ctx.Err() != nil || !check {
@@ -511,15 +540,25 @@ func routedDHCPServerWaitV1(ctx context.Context, cmd *exec.Cmd, check bool) erro
 		}
 		return nil
 	case <-ctx.Done():
-		_ = unix.PidfdSendSignal(fd, unix.SIGTERM, nil, 0)
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second): // Existing DHCP owner shutdown budget.
-			_ = unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
-			<-done
+		err = ctx.Err()
+	case err = <-inspector:
+		// The inspected engine must never outlive a malformed or lost proof channel.
+		inspector = nil
+		if err == nil {
+			err = ErrUnavailable
 		}
-		return ctx.Err()
 	}
+	_ = unix.PidfdSendSignal(fd, unix.SIGTERM, nil, 0)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second): // Existing DHCP owner shutdown budget.
+		_ = unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
+		<-done
+	}
+	if inspect != nil && err == context.Canceled && ctx.Err() == context.Canceled {
+		return nil
+	}
+	return err
 }
 
 // Bounded private capture; no lease data or engine diagnostics enter public

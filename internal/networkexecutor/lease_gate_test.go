@@ -43,7 +43,10 @@ type gateKernelFake struct {
 }
 
 func (k *gateKernelFake) Check(context.Context, []byte) error { return nil }
-func (k *gateKernelFake) Apply(_ context.Context, b []byte) error {
+func (k *gateKernelFake) Apply(ctx context.Context, b []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	k.applies++
 	var root struct {
 		NFT []map[string]map[string]map[string]any `json:"nftables"`
@@ -89,7 +92,10 @@ func (k *gateKernelFake) Apply(_ context.Context, b []byte) error {
 	}
 	return nil
 }
-func (k *gateKernelFake) Observe(context.Context) ([]byte, error) {
+func (k *gateKernelFake) Observe(ctx context.Context) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if k.objects == nil {
 		return nil, ErrObservation
 	}
@@ -160,6 +166,38 @@ func TestLeaseGateOpenDoesNotRecreateOrExtendToken(t *testing.T) {
 	}
 }
 
+func TestLeaseGateRetainedReadbackDoesNotConsultStoreOrChangePermit(t *testing.T) {
+	ctx := context.Background()
+	g, k, a, now := gateFixture(t)
+	if err := g.Stage(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	grant := a.grant
+	a.grant.Fact.Sequence++ // An authority read no longer agrees with the token.
+	applies, installed := k.applies, k.installed
+	if err := g.VerifyRetainedV4(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.VerifyRetainedV4(ctx, a.grant); err == nil {
+		t.Fatal("accepted a different grant")
+	}
+	k.observe = func(_ []byte) []byte { return nil }
+	if err := g.VerifyRetainedV4(ctx, grant); err == nil {
+		t.Fatal("accepted unreadable kernel state")
+	}
+	k.observe = nil
+	*now = g.expiryFloorBootNS
+	if err := g.VerifyRetainedV4(ctx, grant); err == nil {
+		t.Fatal("accepted a permit at the expiry floor")
+	}
+	if k.applies != applies || k.installed != installed || g.fenced || !g.opened || k.token == nil {
+		t.Fatal("readback changed the existing permit")
+	}
+}
+
 func TestLeaseGateRenewRequiresCloseAndFreshSequence(t *testing.T) {
 	g, k, a, _ := gateFixture(t)
 	if err := g.Stage(context.Background()); err != nil {
@@ -183,6 +221,189 @@ func TestLeaseGateRenewRequiresCloseAndFreshSequence(t *testing.T) {
 	}
 	if k.stages != 2 {
 		t.Fatal(k.stages)
+	}
+}
+
+func TestLeaseGateVerifyRenewalClosesAndFencesStaleSequence(t *testing.T) {
+	g, k, a, _ := gateFixture(t)
+	if err := g.Stage(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Open(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.grant.Fact.Sequence++
+	a.grant.Fact.DeadlineBootNS += int64(30 * time.Second)
+	if err := g.Verify(context.Background()); err == nil {
+		t.Fatal("stale open authority verified")
+	}
+	if !g.fenced || g.opened || k.enabled || k.token != nil || g.seen != 1 {
+		t.Fatal("stale authority survived without a terminal fence")
+	}
+	if err := g.Stage(context.Background()); err == nil {
+		t.Fatal("fenced gate accepted a later owner sequence")
+	}
+}
+
+func TestLeaseGateClassifiedSameEffectiveRenewalClosesAndAllowsFreshSequence(t *testing.T) {
+	g, k, a, _ := gateFixture(t)
+	if err := g.Stage(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Open(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.grant.Fact.Sequence++
+	a.grant.Fact.DeadlineBootNS += int64(30 * time.Second)
+	a.verify = func() error { return ErrLeaseGateRenewal }
+	if err := g.Verify(context.Background()); !errors.Is(err, ErrLeaseGateRenewal) {
+		t.Fatal("classified renewal was not reported", err)
+	}
+	if g.fenced || g.opened || k.enabled || k.token != nil || g.seen != 1 {
+		t.Fatal("classified renewal did not prove closure while preserving sequence")
+	}
+	a.verify = nil
+	if err := g.Stage(context.Background()); err != nil {
+		t.Fatal("fresh renewal sequence could not be staged after closed readback", err)
+	}
+	if err := g.Open(context.Background()); err != nil {
+		t.Fatal("fresh owner grant could not reopen after full verification", err)
+	}
+	if g.seen != 2 || k.stages != 2 {
+		t.Fatalf("sequence reuse or unexpected stage count: seen=%d stages=%d", g.seen, k.stages)
+	}
+}
+
+func TestLeaseGateFreshSequencePreflightIsReadOnlyAndPreservesFences(t *testing.T) {
+	for _, kind := range []string{"consumed", "newer", "fenced", "disposed", "cancelled", "lifetime-ended"} {
+		t.Run(kind, func(t *testing.T) {
+			g, k, _, _ := gateFixture(t)
+			ctx := context.Background()
+			if err := g.Stage(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := g.Open(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := g.Close(ctx); err != nil {
+				t.Fatal(err)
+			}
+			sequence := uint64(2)
+			switch kind {
+			case "consumed":
+				sequence = 1
+			case "fenced":
+				_ = g.fail(ErrScope)
+			case "disposed":
+				if err := g.Dispose(); err != nil {
+					t.Fatal(err)
+				}
+			case "cancelled":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			case "lifetime-ended":
+				life, cancel := context.WithCancel(ctx)
+				g.lifetime = life
+				cancel()
+			}
+			before, floor, fenced, disposed := k.applies, g.seen, g.fenced, g.disposed
+			err := g.CheckFreshSequenceV4(ctx, sequence)
+			if (err == nil) != (kind == "newer") {
+				t.Fatalf("preflight %s: %v", kind, err)
+			}
+			if k.applies != before || g.seen != floor || g.fenced != fenced || g.disposed != disposed || g.opened || k.enabled || k.token != nil {
+				t.Fatal("preflight changed kernel authority, replay floor or terminal state")
+			}
+		})
+	}
+}
+
+func TestLeaseGateUnclassifiedAuthorityFailureRetainsLegacyFence(t *testing.T) {
+	g, k, a, _ := gateFixture(t)
+	if err := g.Stage(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Open(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.grant.Fact.Sequence++
+	a.grant.Fact.DeadlineBootNS += int64(30 * time.Second)
+	a.verify = func() error { return ErrLeaseUnavailable }
+	if err := g.Stage(context.Background()); err == nil {
+		t.Fatal("temporary authority failure staged a token")
+	}
+	if !g.fenced || k.enabled || k.token != nil || k.stages != 1 {
+		t.Fatal("generic authority failure lost its legacy fence or left a token")
+	}
+	a.verify = nil
+	if err := g.Stage(context.Background()); err == nil {
+		t.Fatal("generic authority failure was rehabilitated")
+	}
+	if k.stages != 1 {
+		t.Fatalf("stage count %d", k.stages)
+	}
+}
+
+func TestLeaseGateRejectedGrantUsesLifetimeToProveClosure(t *testing.T) {
+	g, k, a, _ := gateFixture(t)
+	if err := g.Stage(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Open(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.grant.Fact.Sequence++
+	a.grant.Fact.DeadlineBootNS += int64(30 * time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	a.verify = func() error {
+		cancel()
+		return ErrLeaseGateRenewal
+	}
+	if err := g.Stage(ctx); err == nil {
+		t.Fatal("expired request context accepted a rejected grant")
+	}
+	if g.fenced || k.enabled || k.token != nil || k.stages != 1 {
+		t.Fatal("request deadline prevented independent closure proof")
+	}
+	a.verify = nil
+	if err := g.Stage(context.Background()); err != nil {
+		t.Fatal("fresh grant could not be staged after independent closure proof", err)
+	}
+	if k.stages != 2 {
+		t.Fatalf("stage count %d", k.stages)
+	}
+}
+
+func TestLeaseGateUnclassifiedChangedGrantAfterStageRetainsLegacyFence(t *testing.T) {
+	g, k, a, _ := gateFixture(t)
+	changed := false
+	k.observe = func(b []byte) []byte {
+		if k.token != nil && !changed {
+			a.grant.Fact.Sequence++
+			a.grant.Fact.DeadlineBootNS += int64(30 * time.Second)
+			changed = true
+		}
+		return b
+	}
+	if err := g.Stage(context.Background()); err == nil {
+		t.Fatal("grant change during staged-token readback was accepted")
+	}
+	if !changed || !g.fenced || k.enabled || k.token != nil || g.seen != 1 {
+		t.Fatal("staged grant was not retired with its sequence consumed")
+	}
+	k.observe = nil
+	if err := g.Stage(context.Background()); err == nil {
+		t.Fatal("unclassified post-stage change was rehabilitated")
+	}
+	if g.seen != 1 || k.stages != 1 {
+		t.Fatalf("sequence reuse or unexpected stage count: seen=%d stages=%d", g.seen, k.stages)
 	}
 }
 

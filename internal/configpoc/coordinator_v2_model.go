@@ -88,19 +88,20 @@ type v2Configuration struct {
 	RecoveryIndex     string               `json:"recovery_index,omitempty"`
 }
 type v2CoordinatorAudit struct {
-	Format       string    `json:"format"`
-	Sequence     uint64    `json:"sequence,string"`
-	Previous     string    `json:"previous"`
-	Operation    string    `json:"operation_id"`
-	OriginCommit string    `json:"origin_commit_operation_id,omitempty"`
-	Lease        string    `json:"lease,omitempty"`
-	Subject      string    `json:"subject"`
-	Kind         string    `json:"kind"`
-	Result       string    `json:"result"`
-	At           time.Time `json:"at"`
-	Generation   uint64    `json:"generation,string"`
-	Running      string    `json:"running_revision"`
-	Startup      string    `json:"startup_revision"`
+	Cleanup      *routedConntrackCleanupV1 `json:"conntrack_cleanup,omitempty"`
+	Format       string                    `json:"format"`
+	Sequence     uint64                    `json:"sequence,string"`
+	Previous     string                    `json:"previous"`
+	Operation    string                    `json:"operation_id"`
+	OriginCommit string                    `json:"origin_commit_operation_id,omitempty"`
+	Lease        string                    `json:"lease,omitempty"`
+	Subject      string                    `json:"subject"`
+	Kind         string                    `json:"kind"`
+	Result       string                    `json:"result"`
+	At           time.Time                 `json:"at"`
+	Generation   uint64                    `json:"generation,string"`
+	Running      string                    `json:"running_revision"`
+	Startup      string                    `json:"startup_revision"`
 }
 type v2RecoveryRecord struct {
 	ServiceRestart *v3RoutedServiceRestart `json:"service_restart,omitempty"`

@@ -23,6 +23,7 @@ func (g *LeaseGate) RecoverClosedSelectedV3(ctx context.Context, snapshot LeaseS
 	b, err := g.kernel.Observe(ctx)
 	if err != nil || leaseGateRecoveryReadV3(b, s.WAN.Name) != nil {
 		g.fenced = true
+		g.fenceReason = ErrLeaseGateFenceRecovery
 		return ErrLeaseGateUncertain
 	}
 	g.initialized = true
@@ -87,11 +88,46 @@ func (g *LeaseGate) VerifyClosedSelectedV3(ctx context.Context) error {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.ready(ctx) != nil || !g.initialized || g.opened || g.closedForwarding() != nil {
+	return g.verifyTerminalClosedV3(ctx)
+}
+
+// Physical closure remains provable after an irreversible admission fence.
+// This does not consult current lease authority or rehabilitate the old gate.
+func (g *LeaseGate) verifyTerminalClosedV3(ctx context.Context) error {
+	if ctx == nil || ctx.Err() != nil || g.lifetime.Err() != nil || g.disposed || !g.initialized || g.opened || g.staged != (LeaseGateGrant{}) || g.closedForwarding() != nil {
 		return ErrLeaseGate
 	}
 	_, err := g.read(ctx, false, false)
+	if g.closedForwarding() != nil || ctx.Err() != nil || g.lifetime.Err() != nil {
+		return ErrLeaseGate
+	}
 	return err
+}
+
+// DisposeWithdrawnSelectedV3 releases only a physically closed instance. The
+// caller first authenticates this exact terminal snapshot in the selected store
+// and verifies the original L3 baseline. No consumed sequence is forgotten: the
+// replacement must recover from this archived snapshot before staging a grant.
+func (g *LeaseGate) DisposeWithdrawnSelectedV3(ctx context.Context, snapshot LeaseSelectedSnapshotV3) error {
+	if g == nil {
+		return ErrScope
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	s, err := CanonicalLeaseSelectedSnapshotV3(snapshot)
+	if err != nil || s.Identity != g.identity || s.Desired.Hash != g.opts.Desired.Hash || s.WAN != g.wan.Binding || s.Fact().Owner != g.opts.Owner || s.Sequence < g.seen {
+		return ErrScope
+	}
+	if err := g.verifyTerminalClosedV3(ctx); err != nil {
+		return err
+	}
+	// A failed resource release must never permit retrying this instance or
+	// reconstructing another one from an uncertain partial disposal.
+	g.disposed = true
+	if g.release != nil {
+		return g.release()
+	}
+	return nil
 }
 
 // RecoverWithdrawnSelectedV3 requires an independently authenticated archived
@@ -120,6 +156,18 @@ func (g *LeaseGate) RecoverWithdrawnSelectedV3(ctx context.Context, snapshot Lea
 // VerifySelectedStateV3 compares actual kernel state with the retained original
 // LAN baseline. Expired authority permits baseline proof, never target proof.
 func (l *LeaseExecutor) VerifySelectedStateV3(ctx context.Context, snapshot LeaseSelectedSnapshotV3, state LeaseSelectedStateV3) error {
+	return l.verifySelectedStateV3(ctx, snapshot, state, false)
+}
+
+// VerifySelectedObservationV4 preserves the target verifier's full physical
+// checks. Only its final source resolution can classify authenticated renewal
+// or margin closure; an earlier runner or physical error never gains that meaning.
+// The result is an error, not authorization to adopt or open a lease.
+func (l *LeaseExecutor) VerifySelectedObservationV4(ctx context.Context, snapshot LeaseSelectedSnapshotV3, state LeaseSelectedStateV3) error {
+	return l.verifySelectedStateV3(ctx, snapshot, state, true)
+}
+
+func (l *LeaseExecutor) verifySelectedStateV3(ctx context.Context, snapshot LeaseSelectedSnapshotV3, state LeaseSelectedStateV3, classifyProgress bool) error {
 	if l == nil || l.base == nil {
 		return ErrScope
 	}
@@ -146,7 +194,31 @@ func (l *LeaseExecutor) VerifySelectedStateV3(ctx context.Context, snapshot Leas
 		if l.base.active == nil || l.fact != s.Fact() || !l.matches(first, l.base.active.revision, true) {
 			return ErrObservation
 		}
-		return l.sameFact(ctx, s.Fact())
+		if !classifyProgress {
+			return l.sameFact(ctx, s.Fact())
+		}
+		// Retain the first resolution's provenance: a second successful read
+		// cannot turn an earlier runner, scope or physical error into progress.
+		fact, _, err := l.resolve(ctx)
+		if err == ErrLeaseUnavailable && l.getObservationV4 != nil {
+			observed, observationErr := l.readObservationV4(ctx)
+			if observationErr == nil && observed.hasMargin && l.guard(ctx) == nil && l.base.ready(ctx) == nil && ctx.Err() == nil {
+				return NewLeaseObservationPendingV4(s.Fact())
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if fact == s.Fact() {
+			return nil
+		}
+		if l.getObservationV4 != nil && fact.Sequence > s.Sequence && fact.Address == s.Address && fact.Gateway == s.Gateway {
+			observed, observationErr := l.readObservationV4(ctx)
+			if observationErr == nil && !observed.hasMargin && observed.fact == fact && l.guard(ctx) == nil && l.base.ready(ctx) == nil && ctx.Err() == nil {
+				return NewLeaseObservationPendingV4(s.Fact())
+			}
+		}
+		return ErrScope
 	default:
 		return ErrScope
 	}

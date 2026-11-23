@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/firewallipc"
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 	"github.com/AsterG/andeiva/internal/networkplan"
 )
@@ -14,15 +15,16 @@ import (
 // single-writer owner channel and check fixed PID/start/incarnation, sequence
 // and original BOOTTIME deadline. Nothing here is a request-decoded option.
 type RoutedDHCPRuntimeOptionsV3 struct {
-	LAN          *networkexecutor.LANBootstrapV3
-	Target, Host *os.File
-	Desired      networkplan.Revision
-	Owner        networkexecutor.LeaseOwner
-	Current      func(context.Context) (RoutedDHCPOwnerFactV3, error)
+	RenewalProfile RoutedDHCPRenewalProfileV4
+	LAN            *networkexecutor.LANBootstrapV3
+	Target, Host   *os.File
+	Desired        networkplan.Revision
+	Owner          networkexecutor.LeaseOwner
+	Current        func(context.Context) (RoutedDHCPOwnerFactV3, error)
 }
 
 func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptionsV3, id networkexecutor.OwnedNamespaceIdentity, readerGID uint32, reader *configpoc.RoutedSelectionReaderV2, authority configpoc.RoutedAuthorityV1, integrity *routedIntegrityGateV3) (*RoutedDHCPRuntimeV3, func() error, error) {
-	if ctx == nil || ctx.Err() != nil || o.LAN == nil || o.Current == nil || reader == nil || authority == nil || integrity == nil || authority.Identity() != id || o.Owner.Namespace != id.Namespace || o.Owner.BootID != id.BootID || o.Owner.RunID != id.RunID || o.Owner.PID <= 1 || o.Owner.StartTicks == 0 || !ValidRun(o.Owner.Incarnation) {
+	if o.RenewalProfile > RoutedDHCPSameEffectiveRenewalV4 || ctx == nil || ctx.Err() != nil || o.LAN == nil || o.Current == nil || reader == nil || authority == nil || integrity == nil || authority.Identity() != id || o.Owner.Namespace != id.Namespace || o.Owner.BootID != id.BootID || o.Owner.RunID != id.RunID || o.Owner.PID <= 1 || o.Owner.StartTicks == 0 || !ValidRun(o.Owner.Incarnation) {
 		return nil, nil, ErrIdentity
 	}
 	desired, err := networkexecutor.CanonicalLANBootstrapPlanV3(o.Desired)
@@ -34,6 +36,11 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 		return nil, nil, err
 	}
 	r := &RoutedDHCPRuntimeV3{identity: id, owner: o.Owner, current: o.Current, reader: routedDHCPSelectedReaderV3{reader}, forward: f}
+	if err = r.SetRenewalProfileV4(o.RenewalProfile); err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	r.baseline = o.LAN.Verify
 	r.ready = func() error {
 		integrity.mu.Lock()
 		defer integrity.mu.Unlock()
@@ -43,12 +50,26 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 		return nil
 	}
 	r.fenced = func() bool { integrity.mu.Lock(); defer integrity.mu.Unlock(); return integrity.blockedLocked() }
+	if o.RenewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
+		r.adoptionClock = routedDHCPOwnerBootNowV3
+		r.refreshReady = func() bool {
+			integrity.mu.Lock()
+			defer integrity.mu.Unlock()
+			return !integrity.blockedLocked() && integrity.lastComplete != (configpoc.SelectionReferenceV2{}) && (integrity.phase == routedIntegrityReadyV3 || integrity.phase == routedIntegrityReconcilingV3)
+		}
+	}
 	r.policy = func(call context.Context, p routedDHCPWorkV3) error {
 		if r.ready() != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("policy_ready", configpoc.ErrRecovery, call)
 			return configpoc.ErrRecovery
 		}
 		receipt, hash, e := authority.Observe(call)
-		if e != nil || !integrityPhysicalIdleV3(receipt, hash) || hash != p.Running() {
+		if e != nil {
+			firewallipc.RecordRoutedDHCPFailureV1("policy_observe", e, call)
+			return errors.Join(configpoc.ErrRecovery, e)
+		}
+		if !integrityPhysicalIdleV3(receipt, hash) || hash != p.Running() {
+			firewallipc.RecordRoutedDHCPFailureV1("policy_state", configpoc.ErrRecovery, call)
 			return configpoc.ErrRecovery
 		}
 		return nil
@@ -61,6 +82,9 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 		return x.Fact, nil
 	}
 	opts := networkexecutor.LeaseOptions{Desired: desired, Owner: o.Owner, Current: current}
+	if o.RenewalProfile == RoutedDHCPSameEffectiveRenewalV4 {
+		opts.GetObservationV4 = routedDHCPObservationSourceV4(o.Owner, desired.Hash, o.Current)
+	}
 	r.openLease = func(call context.Context) (routedDHCPLeaseV3, error) { return o.LAN.OpenLease(call, opts) }
 	r.recoverLease = func(call context.Context, s networkexecutor.LeaseSelectedSnapshotV3) (routedDHCPLeaseV3, error) {
 		return o.LAN.RecoverSelectedLeaseV3(call, opts, s)
@@ -70,7 +94,7 @@ func assembleRoutedDHCPRuntimeV3(ctx context.Context, o RoutedDHCPRuntimeOptions
 		if call.Err() != nil {
 			return nil, call.Err()
 		}
-		return networkexecutor.NewLeaseGateInOwnedNamespace(ctx, o.Target, o.Host, id, readerGID, networkexecutor.LeaseGateOptions{Desired: desired, Owner: o.Owner, Authority: a})
+		return networkexecutor.NewLeaseGateInOwnedNamespace(ctx, o.Target, o.Host, id, readerGID, networkexecutor.LeaseGateOptions{Desired: desired, Owner: o.Owner, Authority: a, CloseOnExpiryV4: o.RenewalProfile == RoutedDHCPSameEffectiveRenewalV4})
 	}
 	closeResources := func() error {
 		// Cancellation stops watchdog only. Kernel expiry remains independent;

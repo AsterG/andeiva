@@ -1,21 +1,49 @@
 package firewallipc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"reflect"
+	"time"
 
 	"github.com/AsterG/andeiva/internal/networkexecutor"
 )
 
 const RoutedDHCPCapabilityV3 = "routed_dhcp_selected.v3"
+const RoutedDHCPRenewalCapabilityV4 = "routed_dhcp_same_effective.v4"
+const RoutedDHCPServerCapabilityV1 = "routed_dhcp_server.v1"
+
+// Only the explicitly negotiated renewal profile uses this multi-phase budget.
+// Legacy V3 peers retain their original three-second per-RPC limit.
+const RoutedDHCPMutationDeadlineV4 = 10 * time.Second
+
+func RoutedDHCPMutationV3(verb string) bool {
+	switch verb {
+	case "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_retire", "dhcp_renew":
+		return true
+	default:
+		return false
+	}
+}
+
+// This versioned error is a no-effect initial wait, never a grant or readiness.
+// Older peers reject the unknown code; no compatibility fallback is permitted.
+var ErrRoutedDHCPWaitingV1 = errors.New("ANDEIVA_ROUTED_DHCP_WAITING_V1")
+
+// A live acquisition service can temporarily lack a lease after revocation.
+// This pre-effect result is distinct from initial waiting and grants nothing.
+var ErrRoutedDHCPNoLeaseV1 = errors.New("ANDEIVA_ROUTED_DHCP_NO_LEASE_V1")
 
 // Requests carry correlation only. Neither owner identity, route, lease time,
 // epoch nor a serialized selected plan can be supplied by the controller.
 type RoutedDHCPRequestV3 struct {
-	Work     string                               `json:"work,omitempty"`
-	Snapshot string                               `json:"snapshot,omitempty"`
-	State    networkexecutor.LeaseSelectedStateV3 `json:"state,omitempty"`
+	Work        string                               `json:"work,omitempty"`
+	Snapshot    string                               `json:"snapshot,omitempty"`
+	State       networkexecutor.LeaseSelectedStateV3 `json:"state,omitempty"`
+	RefreshOnly bool                                 `json:"refresh_only,omitempty"`
 }
 
 type RoutedDHCPGrantV3 struct {
@@ -25,7 +53,7 @@ type RoutedDHCPGrantV3 struct {
 
 func RoutedDHCPVerbV3(verb string) bool {
 	switch verb {
-	case "dhcp_begin", "dhcp_current", "dhcp_verify", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_live", "dhcp_retire":
+	case "dhcp_begin", "dhcp_current", "dhcp_verify", "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_live", "dhcp_retire", "dhcp_renew":
 		return true
 	default:
 		return false
@@ -35,8 +63,12 @@ func RoutedDHCPVerbV3(verb string) bool {
 func decodeRoutedDHCPRequestV3(verb string, raw []byte) (RoutedDHCPRequestV3, error) {
 	var p RoutedDHCPRequestV3
 	var fields []string
+	var optional []string
 	switch verb {
 	case "dhcp_begin", "dhcp_current", "dhcp_retire":
+	case "dhcp_renew":
+		fields = []string{"work", "snapshot"}
+		optional = []string{"refresh_only"}
 	case "dhcp_verify":
 		fields = []string{"snapshot", "state"}
 	case "dhcp_apply", "dhcp_open", "dhcp_withdraw", "dhcp_live":
@@ -44,10 +76,26 @@ func decodeRoutedDHCPRequestV3(verb string, raw []byte) (RoutedDHCPRequestV3, er
 	default:
 		return p, ErrChannel
 	}
-	if exactRoutedV3(raw, &p, fields) != nil {
+	if exactRoutedV3(raw, &p, fields, optional...) != nil {
 		return p, ErrChannel
 	}
+	if verb == "dhcp_renew" {
+		var members map[string]json.RawMessage
+		if json.Unmarshal(raw, &members) != nil {
+			return p, ErrChannel
+		}
+		if flag, present := members["refresh_only"]; present {
+			flag = bytes.TrimSpace(flag)
+			if !bytes.Equal(flag, []byte("true")) && !bytes.Equal(flag, []byte("false")) {
+				return p, ErrChannel
+			}
+		}
+	}
 	switch verb {
+	case "dhcp_renew":
+		if !hashV2(p.Work) || !hashV2(p.Snapshot) {
+			return p, ErrChannel
+		}
 	case "dhcp_verify":
 		if !hashV2(p.Snapshot) || (p.State != networkexecutor.LeaseSelectedBaselineV3 && p.State != networkexecutor.LeaseSelectedTargetV3) {
 			return p, ErrChannel
@@ -62,7 +110,7 @@ func decodeRoutedDHCPRequestV3(verb string, raw []byte) (RoutedDHCPRequestV3, er
 
 func decodeRoutedDHCPReplyV3(verb string, raw []byte) (RoutedDHCPGrantV3, error) {
 	var g RoutedDHCPGrantV3
-	if verb == "dhcp_current" || verb == "dhcp_begin" {
+	if verb == "dhcp_current" || verb == "dhcp_begin" || verb == "dhcp_renew" {
 		if exactRoutedV3(raw, &g, []string{"epoch", "snapshot"}) != nil || g.Epoch == 0 {
 			return g, ErrChannel
 		}
@@ -83,3 +131,16 @@ func ConnectRoutedDHCPV3(ctx context.Context, conn io.ReadWriteCloser, run strin
 	return connectRoutedCapabilitiesV3(ctx, conn, run, ns, true, true, true, false, false)
 }
 func (c *RoutedClientV3) DHCPEnabled() bool { return c != nil && c.dhcp }
+
+// ConnectRoutedDHCPRenewalV4 opts into the operational same-effective profile.
+// Unknown peers fail the exact handshake; there is no legacy fallback.
+func ConnectRoutedDHCPRenewalV4(ctx context.Context, conn io.ReadWriteCloser, run string, ns uint64, freshScope, rebootScope bool) (*RoutedClientV3, error) {
+	return connectRoutedCapabilitiesRenewalV4(ctx, conn, run, ns, true, true, true, freshScope, rebootScope, true, false)
+}
+func (c *RoutedClientV3) DHCPRenewalEnabledV4() bool { return c != nil && c.dhcpRenewal }
+
+func ConnectRoutedDHCPServerV1(ctx context.Context, conn io.ReadWriteCloser, run string, ns uint64, freshScope, rebootScope bool) (*RoutedClientV3, error) {
+	return connectRoutedCapabilitiesRenewalV4(ctx, conn, run, ns, true, true, true, freshScope, rebootScope, true, true)
+}
+
+func (c *RoutedClientV3) DHCPServerEnabledV1() bool { return c != nil && c.dhcpServer }

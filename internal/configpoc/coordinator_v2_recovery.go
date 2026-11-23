@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, origin, lease, subject, kind, result string, generation uint64, at time.Time) (string, error) {
+func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, origin, lease, subject, kind, result string, generation uint64, at time.Time, cleanup ...RoutedConntrackCleanupV1) (string, error) {
 	current := c.store.state.Configuration
 	if current == nil {
 		current = &v2Configuration{}
@@ -15,6 +15,15 @@ func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, ori
 		return "", errV2Limited
 	}
 	record := v2CoordinatorAudit{Format: v2Format, Sequence: current.AuditSequence + 1, Previous: current.AuditTip, Operation: operation, OriginCommit: origin, Lease: lease, Subject: subject, Kind: kind, Result: result, At: at.UTC(), Generation: generation, Running: state.Running.Hash, Startup: state.Startup.Hash}
+	if len(cleanup) != 0 {
+		if len(cleanup) != 1 || cleanup[0].Operation != operation {
+			return "", ErrRecovery
+		}
+		record.Cleanup = &routedConntrackCleanupV1{Retired: cleanup[0].Retired, Partial: cleanup[0].Partial}
+		if !validRoutedConntrackAuditV1(record) {
+			return "", ErrRecovery
+		}
+	}
 	hash, err := c.store.object(record)
 	if err != nil {
 		return "", err
@@ -24,7 +33,7 @@ func (c *v2Coordinator) appendAuditLocked(state *v2Configuration, operation, ori
 	return hash, nil
 }
 
-func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, generation uint64, code, errorCode string, pin bool, at time.Time) (v2Operation, error) {
+func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, generation uint64, code, errorCode string, pin bool, at time.Time, cleanup ...RoutedConntrackCleanupV1) (v2Operation, error) {
 	s := c.store
 	st := clone(s.state)
 	target.Intent = nil
@@ -37,7 +46,13 @@ func (c *v2Coordinator) completeLocked(op v2Operation, target v2Configuration, g
 		originID = target.Pending.OriginCommit
 		lease = target.Pending.Lease
 	}
-	audit, err := c.appendAuditLocked(&target, op.ID, originID, lease, op.Subject, op.Request.Kind, code, generation, at)
+	if len(cleanup) != 0 {
+		if op.Domain != "routed" || !hasFeatureV2(s.state, v4RoutedDHCPConfigurationFeature) {
+			return v2Operation{}, ErrRecovery
+		}
+		addFeatureV2(&st, routedConntrackAuditFeatureV1)
+	}
+	audit, err := c.appendAuditLocked(&target, op.ID, originID, lease, op.Subject, op.Request.Kind, code, generation, at, cleanup...)
 	if err != nil {
 		s.blocked = true
 		return v2Operation{}, err
@@ -248,42 +263,16 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 		return nil
 	}
 	origin, err := s.lookupRetained(pending.Owner, pending.OriginCommit)
-	if err != nil || origin.State != "final" || !origin.Pinned || origin.Outcome == nil || origin.Outcome.ConfirmationLease != pending.Lease {
+	if err != nil || !pendingOriginMatchesV2(pending, origin) {
 		return ErrRecovery
 	}
 	var previous v2Configuration
 	if s.readObject(pending.Previous, &previous) != nil || !validV2Configuration(&previous) || previous.Intent != nil {
 		return errV2Unavailable
 	}
-	target := clone(current)
-	target.Pending = nil
-	target.Intent = nil
-	target.Candidate = nil
-	target.RecoveryRequired = false
-	domain := domainSnapshotV2(&target, pending.Domain)
-	prior := domainSnapshotV2(&previous, pending.Domain)
-	domain.Running = prior.Running
-	domain.LastGood = prior.LastGood
-	domain.Candidate = nil
-	if pending.Domain == "routed" {
-		localChanged := target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash || target.LocalServices.LastGood.Hash != previous.LocalServices.LastGood.Hash || target.LocalServices.Candidate != nil
-		target.LocalServices.Running = previous.LocalServices.Running
-		target.LocalServices.LastGood = previous.LocalServices.LastGood
-		target.LocalServices.Candidate = nil
-		target.CandidateGroup = nil
-		if localChanged && target.LocalServices.Generation == ^uint64(0) {
-			return errV2Limited
-		}
-		if localChanged {
-			target.LocalServices.Generation++
-		}
-	}
-	if domain.Generation == ^uint64(0) || s.state.Generation == ^uint64(0) {
-		return errV2Limited
-	}
-	domain.Generation++
-	if target.refresh() != nil {
-		return errV2Invalid
+	target, err := rollbackTargetV2(current, previous, s.state.Generation)
+	if err != nil {
+		return err
 	}
 	s.allowance = v2Budget{Bytes: v2OperationReserveBytes, Inodes: v2OperationReserveInodes}
 	defer func() { s.allowance = v2Budget{} }()
@@ -338,6 +327,46 @@ func (c *v2Coordinator) revertLocked(ctx context.Context, kind string) error {
 		return err
 	}
 	return c.finishRecoveryLocked(ctx)
+}
+
+// Both the writer and independent continuation reader need the same rollback
+// projection. The projection does not publish or prove physical restoration.
+func rollbackTargetV2(current, previous v2Configuration, generation uint64) (v2Configuration, error) {
+	pending := current.Pending
+	if pending == nil {
+		return v2Configuration{}, ErrRecovery
+	}
+	target := clone(current)
+	target.Pending = nil
+	target.Intent = nil
+	target.Candidate = nil
+	target.RecoveryRequired = false
+	domain := domainSnapshotV2(&target, pending.Domain)
+	prior := domainSnapshotV2(&previous, pending.Domain)
+	domain.Running = prior.Running
+	domain.LastGood = prior.LastGood
+	domain.Candidate = nil
+	if pending.Domain == "routed" {
+		localChanged := target.LocalServices.Running.Hash != previous.LocalServices.Running.Hash || target.LocalServices.LastGood.Hash != previous.LocalServices.LastGood.Hash || target.LocalServices.Candidate != nil
+		target.LocalServices.Running = previous.LocalServices.Running
+		target.LocalServices.LastGood = previous.LocalServices.LastGood
+		target.LocalServices.Candidate = nil
+		target.CandidateGroup = nil
+		if localChanged && target.LocalServices.Generation == ^uint64(0) {
+			return v2Configuration{}, errV2Limited
+		}
+		if localChanged {
+			target.LocalServices.Generation++
+		}
+	}
+	if domain.Generation == ^uint64(0) || generation == ^uint64(0) {
+		return v2Configuration{}, errV2Limited
+	}
+	domain.Generation++
+	if target.refresh() != nil {
+		return v2Configuration{}, errV2Invalid
+	}
+	return target, nil
 }
 
 func (c *v2Coordinator) finishRecoveryLocked(ctx context.Context) error {

@@ -1,0 +1,412 @@
+//go:build linux
+
+package previewruntime
+
+import (
+	"context"
+	"errors"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/AsterG/andeiva/internal/configpoc"
+	"github.com/AsterG/andeiva/internal/firewallipc"
+	"github.com/AsterG/andeiva/internal/networkexecutor"
+	"github.com/AsterG/andeiva/internal/networkplan"
+)
+
+type routedDHCPJobAssemblyV4 struct {
+	renewal       bool
+	network       *routedNetworkSelectorV4
+	listeners     *routedEmptyListenersV3
+	packetProfile routedDHCPPacketProfileV1
+	target, host  *os.File
+	client        *routedDHCPJobClientV4
+}
+
+type routedDHCPJobsHelperV4 struct {
+	mu           sync.Mutex
+	assembly     routedDHCPJobAssemblyV4
+	ctx          context.Context
+	reader       *configpoc.RoutedSelectionReaderV2
+	actionReader *configpoc.RoutedSelectionReaderV2
+	authority    configpoc.RoutedAuthorityV1
+	integrity    *routedIntegrityGateV3
+	readerGID    uint32
+	runtime      *RoutedDHCPRuntimeV3
+	owner        *RoutedDHCPDeferredReaderV4
+	work         configpoc.RoutedWorkReferenceV1
+	desired      string
+	closeRuntime func() error
+	cancel       context.CancelFunc
+	done         chan struct{}
+	failed       bool
+}
+
+func newRoutedDHCPJobsHelperV4(ctx context.Context, a routedDHCPJobAssemblyV4, reader, actionReader *configpoc.RoutedSelectionReaderV2, authority configpoc.RoutedAuthorityV1, integrity *routedIntegrityGateV3, readerGID uint32) (*routedDHCPJobsHelperV4, error) {
+	if ctx == nil || a.network == nil || a.listeners == nil || a.client == nil || a.target == nil || a.host == nil || reader == nil || actionReader == nil || authority == nil || integrity == nil || readerGID == 0 {
+		return nil, ErrIdentity
+	}
+	h := &routedDHCPJobsHelperV4{assembly: a, ctx: ctx, reader: reader, actionReader: actionReader, authority: authority, integrity: integrity, readerGID: readerGID}
+	a.network.beforeRestore = h.stopBeforeRestore
+	return h, nil
+}
+
+func (h *routedDHCPJobsHelperV4) Inspect(ctx context.Context, selection configpoc.SelectionReferenceV2) (bool, error) {
+	plan, err := h.reader.Resolve(ctx, selection, configpoc.SelectionResumeV2)
+	if err != nil || !plan.Valid() || plan.Scope().Identity != h.authority.Identity() || (plan.Resolution() != "target" && plan.Resolution() != "before") {
+		return false, ErrUnavailable
+	}
+	previous, bundle := plan.Bundles()
+	if plan.Resolution() == "before" {
+		if previous == nil {
+			return false, ErrIdentity
+		}
+		bundle = *previous
+	}
+	if bundle.Firewall.Config.Routed == nil {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.runtime != nil || h.failed {
+			return false, ErrUnavailable
+		}
+		return false, nil
+	}
+	desired, dhcp, err := routedNetworkProfileV4(bundle.Firewall.Config.Routed.Network)
+	if err != nil {
+		return false, err
+	}
+	server := bundle.Firewall.Config.Routed.DHCPServer
+	if server != nil && server.Enabled && (!dhcp || !h.assembly.client.serverEnabled || plan.Resolution() != "target") {
+		return false, ErrUnavailable
+	}
+	if !dhcp {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.runtime != nil || h.failed {
+			return false, ErrUnavailable
+		}
+		return false, nil
+	}
+	receipt, hash, err := h.authority.Observe(ctx)
+	if err != nil || !integrityPhysicalIdleV3(receipt, hash) || hash != bundle.Composite.Hash {
+		return false, ErrUnavailable
+	}
+	err = h.assembly.network.withDHCP(ctx, func(actual networkplan.Revision, lan *networkexecutor.LANBootstrapV3) error {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.failed || actual.Hash != desired.Hash {
+			return ErrIdentity
+		}
+		if h.runtime != nil {
+			if h.desired != desired.Hash {
+				return ErrIdentity
+			}
+			if server != nil && server.Enabled {
+				actual, err := h.assembly.listeners.Observe(ctx)
+				if err != nil || len(actual) != len(server.Scopes) {
+					return ErrUnavailable
+				}
+			} else if h.assembly.client.serverEnabled {
+				return h.assembly.listeners.releaseLANV1(ctx)
+			}
+			return nil // Reader and actual LAN/lease were revalidated above.
+		}
+		if !h.assembly.packetProfile.valid() {
+			return ErrUnavailable
+		}
+		listeners, e := h.assembly.listeners.Observe(ctx)
+		if e != nil || len(listeners) != 0 {
+			return ErrUnavailable
+		}
+		reply, files, e := h.assembly.client.call(ctx, "prepare", plan.Reference())
+		if e != nil {
+			h.failed = true
+			return e
+		}
+		f := RoutedDHCPDeferredFilesV4{Request: files[0], Reply: files[1], ProducerPIDFD: files[2]}
+		binding := *reply.Binding
+		id := h.authority.Identity()
+		if binding.Desired.Hash != desired.Hash || binding.Owner.Namespace != id.Namespace || binding.Owner.RunID != id.RunID || binding.Owner.BootID != id.BootID {
+			_ = f.Close()
+			_ = files[3].Close()
+			h.failed = true
+			return ErrIdentity
+		}
+		owner, e := NewRoutedDHCPDeferredReaderV4(f, binding)
+		if e != nil {
+			_ = f.Close()
+			_ = files[3].Close()
+			h.failed = true
+			return e
+		}
+		var tree func(context.Context, string, RoutedDHCPServiceCgroupIdentityV1) error
+		if h.assembly.client.servicesEnabled {
+			tree = h.assembly.client.verifyWANServiceTreeV2
+		}
+		service, e := newRoutedDHCPServiceObservationTreeV2(ctx, files[3], *reply.ServiceCgroupIdentity, binding, owner, h.assembly.packetProfile, tree)
+		if e != nil {
+			_ = files[3].Close()
+			_ = owner.Close()
+			h.failed = true
+			return e
+		}
+		if e = h.assembly.listeners.installService(ctx, service); e != nil {
+			_ = service.closePins()
+			_ = owner.Close()
+			h.failed = true
+			return e
+		}
+		lifetime, cancel := context.WithCancel(h.ctx)
+		profile := RoutedDHCPLegacyRenewalV4
+		if h.assembly.renewal {
+			profile = RoutedDHCPSameEffectiveRenewalV4
+		}
+		r, closeRuntime, e := assembleRoutedDHCPRuntimeV3(lifetime, RoutedDHCPRuntimeOptionsV3{RenewalProfile: profile, LAN: lan, Target: h.assembly.target, Host: h.assembly.host, Desired: desired, Owner: binding.Owner, Current: owner.Current}, id, h.readerGID, h.actionReader, h.authority, h.integrity)
+		if e != nil {
+			cancel()
+			h.assembly.listeners.revokeService()
+			_ = owner.Close()
+			h.failed = true
+			return e
+		}
+		h.runtime, h.owner, h.work, h.desired, h.closeRuntime, h.cancel = r, owner, plan.Reference(), desired.Hash, closeRuntime, cancel
+		// Root repeats its selected preflight before privately confirming the real
+		// acquisition PID. No grant can be read before that acknowledgement.
+		if e = h.assembly.listeners.activateService(ctx, h.assembly.client, h.work); e != nil {
+			h.failed = true
+			return e
+		}
+		if server != nil && server.Enabled {
+			source := RoutedSelectedPreflightResultV4{Identity: plan.Scope().Identity, Reference: selection,
+				Work: plan.Reference(), Bundle: bundle, Resolution: plan.Resolution()}
+			if e := h.startLANV1(ctx, source); e != nil {
+				h.failed = true
+				return e
+			}
+		}
+		after, e := h.reader.Observe(ctx)
+		if e != nil || after != selection {
+			h.failed = true
+			_ = h.assembly.client.Close()
+			return ErrUnavailable
+		}
+		h.done = make(chan struct{})
+		go func() { defer close(h.done); r.Run(lifetime) }()
+		return nil
+	})
+	return err == nil, err
+}
+
+func (h *routedDHCPJobsHelperV4) startLANV1(ctx context.Context, source RoutedSelectedPreflightResultV4) error {
+	plan, err := routedDHCPServerBindingPlanFromSelectedV1(source, h.authority.Identity(), source.Work)
+	if err != nil {
+		return err
+	}
+	start, err := h.assembly.client.callServerV1(ctx, "server_start", source.Work)
+	installed := false
+	if err == nil {
+		var lan *routedLANServiceObservationV1
+		lan, err = newRoutedLANServiceObservationV1(ctx, h.assembly.client, source, plan, start)
+		if err == nil {
+			installed, err = h.assembly.listeners.installLANV1(ctx, lan)
+		}
+	}
+	if err == nil {
+		return nil
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), routedDHCPServerStopGraceV1+3*time.Second)
+	defer cancel()
+	if !installed {
+		_, stopErr := h.assembly.client.callServerV1(cleanup, "server_stop", source.Work)
+		return errors.Join(err, stopErr)
+	}
+	return errors.Join(err, h.assembly.listeners.releaseLANV1(cleanup))
+}
+
+func (h *routedDHCPJobsHelperV4) SameEffectiveRenewalV4() bool { return h != nil && h.assembly.renewal }
+
+func (h *routedDHCPJobsHelperV4) Dispatch(ctx context.Context, c firewallipc.RoutedCommandV3) (any, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.failed || h.runtime == nil {
+		return nil, ErrUnavailable
+	}
+	return h.runtime.dispatch(ctx, c)
+}
+
+func (h *routedDHCPJobsHelperV4) VerifyRestartLiveV4(ctx context.Context, work string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.failed || h.runtime == nil {
+		return ErrUnavailable
+	}
+	r := h.runtime
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	closeUncertain := func() error {
+		bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		return errors.Join(configpoc.ErrRecovery, r.closeUnder(bounded))
+	}
+	if work == "" || work != r.work || r.verifyRetainedPermitV4(ctx) != nil {
+		return closeUncertain()
+	}
+	p, err := r.reader.Resolve(ctx, work)
+	if errors.Is(err, configpoc.ErrRoutedDHCPBindingMismatchV4) {
+		return closeUncertain()
+	}
+	if err != nil {
+		// A failed read alone cannot prove corruption. Keep only a permit
+		// independently verified against the retained physical guardian.
+		receipt, hash, observeErr := h.authority.Observe(ctx)
+		if observeErr != nil || hash == "" || !integrityPhysicalIdleV3(receipt, hash) || r.verifyRetainedPermitV4(ctx) != nil {
+			return closeUncertain()
+		}
+		return ErrUnavailable
+	}
+	if p == nil || p.Reference().WorkHash != work || p.Phase() != "applied" || p.Snapshot().Identity != r.identity ||
+		p.Snapshot().Fact().Owner != r.owner || !r.selectedGrantV4(p, r.grant) ||
+		r.verifySelectedGrantV4(ctx, p) != nil {
+		return closeUncertain()
+	}
+	grant := networkexecutor.LeaseGateGrant{Fact: r.grant.Snapshot.Fact(), WorkHash: r.work}
+	if r.gate.VerifyRetainedV4(ctx, grant) != nil {
+		return closeUncertain()
+	}
+	return nil
+}
+
+func (h *routedDHCPJobsHelperV4) VerifyRetainedPermitV4(ctx context.Context) error {
+	before, revision, err := h.authority.Observe(ctx)
+	if err != nil || revision == "" || !integrityPhysicalIdleV3(before, revision) {
+		return ErrUnavailable
+	}
+	h.mu.Lock()
+	r := h.runtime
+	if h.failed || r == nil {
+		h.mu.Unlock()
+		return ErrUnavailable
+	}
+	r.mu.Lock()
+	err = r.verifyRetainedPermitV4(ctx)
+	r.mu.Unlock()
+	h.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	after, observed, err := h.authority.Observe(ctx)
+	if err != nil || after != before || observed != revision || ctx.Err() != nil {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+func (h *routedDHCPJobsHelperV4) Invalidate(ctx context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.failed {
+		_ = h.assembly.client.Close()
+	}
+	if h.runtime == nil {
+		return nil
+	}
+	// Checking alone never closes a healthy lease. An authenticated incomplete
+	// inspection does: close the effective token/forwarding, retain selected R2
+	// evidence for normal retirement, and never fabricate an archival success.
+	bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	h.runtime.mu.Lock()
+	defer h.runtime.mu.Unlock()
+	return h.runtime.closeUnder(bounded)
+}
+
+// Called with selector ownership, before any baseline restoration. It refuses
+// an outstanding selected WAN; the existing controller must retire that work.
+func (h *routedDHCPJobsHelperV4) stopBeforeRestore(ctx context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.runtime == nil {
+		if h.failed {
+			return ErrUnavailable
+		}
+		return nil
+	}
+	r := h.runtime
+	r.mu.Lock()
+	if r.work != "" || r.reader.VerifyDHCPReleasedV3(ctx) != nil {
+		r.mu.Unlock()
+		return configpoc.ErrRecovery
+	}
+	err := r.closeUnder(ctx)
+	if err == nil && r.lease != nil {
+		err = r.releaseLease(ctx)
+		if err == nil {
+			r.lease = nil
+		}
+	}
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if h.assembly.client.serverEnabled {
+		if err = h.assembly.listeners.releaseLANV1(ctx); err != nil {
+			h.failed = true
+			return err
+		}
+	}
+	h.assembly.listeners.revokeService()
+	if _, _, err = h.assembly.client.call(ctx, "stop", h.work); err != nil {
+		h.failed = true
+		return err
+	}
+	if err = h.assembly.listeners.releaseService(ctx); err != nil {
+		h.failed = true
+		return err
+	}
+	h.cancel()
+	if h.done != nil {
+		<-h.done
+	}
+	err = errors.Join(h.closeRuntime(), h.owner.Close())
+	if err != nil {
+		h.failed = true
+		return err
+	}
+	h.runtime = nil
+	h.owner = nil
+	h.work = configpoc.RoutedWorkReferenceV1{}
+	h.desired = ""
+	h.done = nil
+	h.cancel = nil
+	h.closeRuntime = nil
+	return nil
+}
+
+func (h *routedDHCPJobsHelperV4) Close() error {
+	// Whole-scope teardown owns drainage. No configuration is published here.
+	_ = h.assembly.client.Close()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.failed = true
+	h.assembly.listeners.revokeService()
+	if h.cancel != nil {
+		h.cancel()
+	}
+	if h.done != nil {
+		<-h.done
+	}
+	var err error
+	cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	err = h.assembly.listeners.releaseService(cleanup)
+	cancel()
+	if h.closeRuntime != nil {
+		err = errors.Join(err, h.closeRuntime())
+		h.closeRuntime = nil
+	}
+	if h.owner != nil {
+		err = errors.Join(err, h.owner.Close())
+		h.owner = nil
+	}
+	return err
+}
